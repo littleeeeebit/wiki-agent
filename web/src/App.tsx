@@ -213,9 +213,15 @@ export default function App() {
       .then(({ project, rows }) => project === expected.current && setPrs({ project, rows }))
       .catch(() => {})
   }, [])
+  // By request order: a slow read from before a turn ended never puts that turn back.
+  const loopsAsked = useRef(0)
+  const loopsShown = useRef(0)
   const readLoops = useCallback(() => {
+    const mine = ++loopsAsked.current
     return api.getLoops()
       .then(({ loops, turns }) => {
+        if (mine < loopsShown.current) return
+        loopsShown.current = mine
         setLoopRows(loops)
         setTurnsElsewhere(turns)
       })
@@ -388,12 +394,35 @@ export default function App() {
     }
   }, [repo, feedEpoch, refresh, readSpecs, readLoops, readPrs, accept])
 
-  const path = selected.startsWith('spec:') ? '' : selected
+  // Open approvals by worktree, as this window's streams know them.
+  // With `turn`, that turn's alone: a shared checkout's streamed turn may not be the listed owner's yet.
+  const asks = (p: string, turn?: string) => (work.turns[p] ?? []).filter((t) => t.pending && (!turn || t.turn === turn))
+    .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
+  // Another project's rows are keyed by task (`loop:` / `turn:`): several share one checkout path.
+  const others = elsewhere(loopRows, turnsElsewhere, repo, asks, (p) => {
+    const last = work.turns[p]?.findLast((t) => t.pending)
+    return last?.turn || work.live[p] || undefined   // the log's turn once the stream dropped
+  })
+  const other = others.find((o) => o.key === selected)
+  const path = other ? other.path : /^(spec|loop|turn):/.test(selected) ? '' : selected
+  // The checkout's running turn is another task's: the pane shows it and steers nothing. By any source: the
+  // stream knows a turn first; the work log and the listing still name it when the stream has dropped.
+  const lastTurn = path ? work.turns[path]?.findLast((t) => t.pending) : undefined   // the running one, wherever it stands
+  const notMine = (turn?: string) => !turn || !other || turn !== other.turn
+  const foreign = !!other && ((!!lastTurn?.pending && notMine(lastTurn.turn)) || (!!work.live[path] && notMine(work.live[path]))
+    || turnsElsewhere.some((t) => t.path === other.path && notMine(t.turn)))
   useEffect(() => {
     if (path) work.load(path)
   }, [path, work])
+  // Held by the log's turn alone (the stream is gone): read it again on each pick and each listing, so a
+  // read that failed as the turn ended never keeps the checkout locked.
+  const heldByLog = !!other && !lastTurn?.pending && !!work.live[path]
+  const recheck = work.recheck
+  useEffect(() => {
+    if (heldByLog) recheck(path)
+  }, [heldByLog, selected, loopRows, path, recheck])
 
-  const running = Object.values(work.turns).filter((turns) => turns.at(-1)?.pending).length
+  const running = Object.values(work.turns).filter((turns) => turns.some((t) => t.pending)).length
   const runningNow = useRef(running)
   useEffect(() => {
     if (running < runningNow.current) readSpecs()
@@ -434,12 +463,9 @@ export default function App() {
     }
   }, [channels, follow])
 
-  // Open approvals by worktree, as this window's streams know them.
-  const asks = (p: string) => (work.turns[p] ?? []).filter((t) => t.pending)
-    .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
   // The server's `busy` is as old as the last listing; a turn this window is
   // streaming is known here first.
-  const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
+  const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.some((t) => t.pending))
   // A turn the server lists for this spec (`/api/loops`, every project's): a path alone, or a turn of no known
   // owner, is a shared checkout's other task as often as this one's.
   const turning = (p: string, s: { repo: string; id: string }) =>
@@ -453,12 +479,11 @@ export default function App() {
   if (moved) setSelected(moved)
   const pickedId = task?.spec?.id ?? null
   useEffect(() => { picked.current = pickedId }, [pickedId])
-  const others = elsewhere(loopRows, turnsElsewhere, repo, asks)
   // A task's work model is keyed by its spec's repository and id, the same
-  // from draft to worktree and under another project. Several tasks share a
-  // checkout path, and spec ids repeat across repositories, so neither alone names one task.
-  const other = others.find((o) => o.path === selected)
+  // from draft to worktree and under another project.
   const owning = task?.spec ?? other?.spec
+  // A task's own, in either project's rail: its spec, or else its checkout (a standalone turn).
+  const sender = owning ? `${owning.repo}/${owning.id}` : `path:${path}`
   // A pane with no worktree — nothing selected, a selection whose task is gone, a spec not started
   // or a PR not checked out — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
   const blank = `new:${repo}`
@@ -477,7 +502,7 @@ export default function App() {
   // A started or reopened task branch: reload its own conversation even though the path did not change.
   const opened = useCallback((path: string) => {
     work.forget(path)
-    work.load(path)
+    work.load(path, true)
     readSpecs()
     refresh()
     setSelected(path)
@@ -504,7 +529,7 @@ export default function App() {
     refresh()
     if (spec.worktree) {
       work.forget(spec.worktree)
-      work.load(spec.worktree)
+      work.load(spec.worktree, true)
       setSelected(spec.worktree)
     }
     setTab('agent')
@@ -567,14 +592,14 @@ export default function App() {
     setTab(next)
   }, [tab, refresh])
 
-  const otherPaths = new Set(others.map((o) => o.path))
+  const otherKeys = new Set(others.map((o) => o.key))
   useEffect(() => {
-    away.current = new Set(otherPaths)
+    away.current = new Set(otherKeys)
   })
   // A worktree of another project has no row in this project's list; the
   // pane still shows it, and a new instruction there is refused by the server.
   const row = task?.row ?? (other
-    ? { path: selected, name: other.name, branch: '', dirty: false, merged: false, live: true, busy: false }
+    ? { path: other.path, name: other.name, branch: '', dirty: false, merged: false, live: true, busy: false }
     : undefined)
   const spec = task?.spec ?? null
   const waiting = (task?.waiting || other?.waiting) ?? false
@@ -794,6 +819,7 @@ export default function App() {
                 options={options}
                 choice={other?.busy && other.cell ? other.cell : choice}   // what runs now; the next instruction keeps `choice`
                 pinned={!!pinned}
+                foreign={foreign}
                 optionsOpen={taskOptionsOpen}
                 on={on}
                 progressOn={full}
@@ -803,8 +829,10 @@ export default function App() {
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
                 onSteer={(turn, text) => void work.steer(path, turn, text)}
                 queued={work.queued[path]}
-                onQueue={(turn, text) => void work.queue(path, turn, text, choice)}
-                refused={work.refused[path]}
+                onQueue={(turn, text) => void work.queue(path, turn, text, choice, sender)}
+                // A shared checkout's refusals are each its sender's, by spec in either project's rail; `at` keeps
+                // the place in the path's list.
+                refused={(work.refused[path] ?? []).map((r, at) => ({ ...r, at })).filter((r) => !r.from || r.from === sender)}
                 onDismiss={(at) => work.dismiss(path, at)}
                 onUnqueue={() => work.unqueue(path).catch((err) => setFault(String(err)))}
                 rules={(path && work.rules[path]?.list) || []}
@@ -825,7 +853,7 @@ export default function App() {
             )}
             {/* Kept mounted: leaving the tab must not end the shell. */}
             <div className={cn('h-full', tab !== 'terminal' && 'hidden')}>
-              <Terminal cwd={path} theme={theme} on={full} />
+              <Terminal cwd={path} theme={theme} on={full} locked={foreign} />
             </div>
           </div>
           {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}

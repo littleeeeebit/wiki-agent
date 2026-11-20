@@ -49,7 +49,7 @@ window.__TAURI_INTERNALS__ = {
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     fake, default, asked = FastAPI(), ["fixture-a"], []
-    live, faults = {"answers": 0}, {"stall": False, "channels": False}
+    live, faults = {"answers": 0}, {"stall": False, "channels": False, "quiet": False}
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
@@ -78,14 +78,22 @@ def main():
             question = {**stop, "repo": "fixture-b", "id": "asked-task", "worktree": ASKED,
                         "stopped": {"reason": "작업 에이전트의 질문", "detail": ""}}
             # Another task's stop on the shared checkout: the turn running there is not its.
-            parked = {**stop, "repo": "fixture-b", "id": "parked-task", "worktree": SHARED,
+            # `waiting` as the server gives it: the checkout's approval, which is the running turn's.
+            parked = {**stop, "repo": "fixture-b", "id": "parked-task", "worktree": SHARED, "waiting": True,
                       "stopped": {"reason": "게이트", "detail": ""}}
-            return {"loops": [question, parked], "turns": [
-                {"path": SHARED, "repo": "fixture-b", "spec": None, "cell": RUNNING},
-                {"path": ASKED, "repo": "fixture-b", "spec": {"repo": "fixture-b", "id": "asked-task"}, "cell": RUNNING}], **live}
+            # Another stop on the same checkout: each row opens its own task.
+            idle = {**parked, "id": "idle-task", "stopped": {"reason": "검증", "detail": ""}}
+            # `quiet`: the listing has not caught up with the shared checkout's turn either.
+            shared = [] if faults["quiet"] else [{"path": SHARED, "repo": "fixture-b", "spec": None, "turn": "turn-b",
+                                                  "cell": RUNNING}]
+            return {"loops": [question, parked, idle], "turns": [*shared,
+                {"path": ASKED, "repo": "fixture-b", "spec": {"repo": "fixture-b", "id": "asked-task"}, "turn": "turn-a",
+                 "cell": RUNNING}], **live}
         if path == "work/log" and request.query_params["path"] == SHARED:
             return {"rows": [], "session_id": "b", "busy": True, "running": {"turn": "turn-b", "session_id": "b", "seq": 0},
-                    "rules": [], "queued": None}
+                    "rules": [{"kind": "tool", "tool": "Bash"}], "queued": "Then run the linter"}
+        if path == "work/events" and request.query_params["path"] == SHARED and faults["quiet"]:
+            return JSONResponse({"detail": "fixture stream down"}, status_code=503)
         if path == "work/events" and request.query_params["path"] == SHARED:
             async def waiting():
                 ev = {"kind": "approval", "text": "Run the checks", "meta": {"id": "ask-b", "tool": "Bash"},
@@ -134,10 +142,25 @@ def main():
         answering = a.get_by_role("button", name="fixture-b/asked-task")
         expect(answering).to_contain_text("작업 중")
         expect(answering).not_to_contain_text("멈춤")
-        # Another task's stop on a checkout running a turn that is not its own steps aside: its pane would show
-        # and steer that turn. The checkout keeps one row, the running one.
-        expect(a.get_by_role("button", name="fixture-b/parked-task")).to_have_count(0)
-        expect(a.locator("nav [aria-current=true]")).to_have_count(1)
+        # The running row's pane steers its own turn, its queue and its session's permissions.
+        expect(a.get_by_role("button", name="멈춤", exact=True)).to_be_visible()
+        for control in ("취소", "해제"):
+            expect(a.get_by_role("button", name=control, exact=True)).to_be_visible()
+        # Two other tasks stopped on the same checkout: each is its own row, with its own reason, and opens alone.
+        parked, idle = (a.get_by_role("button", name=f"fixture-b/{n}") for n in ("parked-task", "idle-task"))
+        expect(parked).to_contain_text("게이트")
+        expect(parked).not_to_contain_text("승인")   # the checkout's approval is the running task's
+        expect(idle).to_contain_text("검증")
+        for row in (parked, idle):
+            row.click()
+            expect(row).to_have_attribute("aria-current", "true")
+            expect(a.locator("nav [aria-current=true]")).to_have_count(1)
+            # The checkout's running turn is not this task's: shown, never stopped, answered or steered here.
+            expect(a.get_by_text("다른 작업의 턴이 돌고 있다")).to_be_visible()
+            for control in ("멈춤", "취소", "해제"):
+                expect(a.get_by_role("button", name=control, exact=True)).to_have_count(0)
+            expect(a.get_by_role("tab", name="에이전트").locator('[title="승인을 기다린다"]')).to_have_count(0)   # nor its dot
+            expect(a.get_by_role("button", name="허용", exact=True)).to_be_disabled()
 
         shell = page_of(context, errors)
         shell.add_init_script(SHELL)
@@ -205,6 +228,16 @@ def main():
         broken.get_by_role("option", name="fixture-a", exact=True).click()
         expect(picker(broken)).to_contain_text("fixture-a")
         broken.get_by_text("fixture-a-task").first.wait_for()
+
+        # Last, since a reload moves the fixture's default. The stream fails and the listing has not caught up,
+        # yet the work log still names the running turn: the parked pane stays read-only on that alone.
+        faults["quiet"] = True
+        a.reload()
+        a.get_by_role("button", name="fixture-b/parked-task").click()
+        expect(a.get_by_text("fixture stream down")).to_be_visible()   # the stream's own turn no longer pends
+        expect(a.get_by_text("다른 작업의 턴이 돌고 있다")).to_be_visible()
+        for control in ("취소", "해제"):
+            expect(a.get_by_role("button", name=control, exact=True)).to_have_count(0)
         browser.close()
     assert not errors, errors
     print("PASS: two windows keep their own projects; the rail and the close question cover every window")

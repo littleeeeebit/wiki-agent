@@ -213,9 +213,10 @@ def test_a_running_turn_names_the_task_that_owns_its_worktree(repo):
         started(web, sid)
     # The model the turn runs on comes with it: under another project the pane showed the default instead.
     running = SimpleNamespace(model="codex:gpt-test", effort="high", fast=False)
-    with patch.dict(work._runs, {str(repo): SimpleNamespace(done=False, chat=running)}):
+    with patch.dict(work._runs, {str(repo): SimpleNamespace(done=False, chat=running, turn="turn-7")}):
         turns = web.get("/api/loops").json()["turns"]
     assert [t["spec"] for t in turns] == [{"repo": repo.name, "id": sid}]
+    assert turns[0]["turn"] == "turn-7"   # the owner's pane alone steers it: a shared checkout's other tasks do not
     assert turns[0]["cell"] == {"model": "codex:gpt-test", "effort": "high", "fast": False}
     # A lookup whose Git call fails keeps the row without its spec; it never fails the whole list.
     with patch.dict(work._runs, {str(repo): SimpleNamespace(done=False)}), \

@@ -28,8 +28,11 @@ function colors() {
  *  character, and xterm.js joins the halves only when it is given bytes.
  *  The listener is attached before the shell is opened and holds what
  *  arrives until it knows its id, or the first prompt is lost. */
-export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: boolean }) {
+/** `locked`: the checkout runs another task's turn; the shell shows, and takes no keys. */
+export function Terminal({ cwd, theme, on, locked = false }: { cwd: string; theme: string; on: boolean; locked?: boolean }) {
   const box = useRef<HTMLDivElement>(null)
+  const held = useRef(locked)
+  useEffect(() => { held.current = locked }, [locked])
   const terminal = useRef<XTerm | null>(null)
   const [fault, setFault] = useState('')
   const [selection, setSelection] = useState('')
@@ -75,7 +78,7 @@ export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: b
       })
       .catch((err) => alive && setFault(String(err)))
 
-    const typed = term.onData((data) => id && void invoke('pty_write', { id, data }))
+    const typed = term.onData((data) => id && !held.current && void invoke('pty_write', { id, data }))
     const resized = new ResizeObserver(() => {
       if (!box.current?.clientWidth || !box.current.clientHeight) return
       fit.fit()
@@ -121,6 +124,8 @@ export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: b
         <p className="p-5 text-[13.5px] text-faint">작업트리가 있는 작업을 고르면 그 안에서 셸이 열린다.</p>
       ) : (
         <>
+          {locked && <p role="status" className="shrink-0 border-b border-border px-4 py-1.5 text-[12.5px] text-muted-foreground">
+            이 작업트리에서 다른 작업의 턴이 돌고 있다 · 입력은 그 작업을 열어 한다</p>}
           <div ref={box} className="min-h-0 flex-1 overflow-hidden px-2 py-1" />
           {on && <section aria-label="터미널 출력 번역" className="max-h-[40%] shrink-0 overflow-y-auto border-t border-border px-4 py-2">
             <p className="mb-1 text-[11px] text-faint">터미널 출력은 자동 전송하지 않는다. 번역할 출력을 선택한 뒤 비밀값·개인정보를 지우고 확인한다.</p>

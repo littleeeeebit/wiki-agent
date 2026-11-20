@@ -68,6 +68,10 @@ export type Turn = {
   sessionId?: string
   /** The server's id for this turn, once an event named it. */
   turn?: string
+  /** A record row's server turn: what a window's own copy of the same send is matched against. */
+  record?: string
+  /** A replay's log read, by request number: a newer accepted read that names no such turn ends it. */
+  from?: number
   /** Until the server's run ends — not at the answer: the gate runs after it,
    *  still holding the worktree. */
   pending?: boolean
@@ -167,6 +171,12 @@ function restored(s: WorkStep): Step {
     answer: s.answer === 'none' ? undefined : s.answer === 'allow' }
 }
 
+/** One record row as a turn on screen. */
+const fromRow = (r: api.WorkTurn): Turn => ({
+  key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
+  tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered, record: r.turn,
+})
+
 /** One event folded into its turn. */
 function apply(t: Turn, ev: WorkEv): Turn {
   const m = ev.meta
@@ -236,11 +246,30 @@ function apply(t: Turn, ev: WorkEv): Turn {
  *  picks up once after the last `seq` it saw. */
 export function useWork() {
   const [turns, setTurns] = useState<Record<string, Turn[]>>({})
+  const seen = useRef(turns)   // the latest turns, for a read to note which pending turns it was asked after
+  useEffect(() => {
+    seen.current = turns
+  }, [turns])
   const [rules, setRules] = useState<Record<string, Rules>>({})
   const loading = useRef(new Set<string>())
   // Paths this window is sending to. The record's running turn is then that
   // send's own, already on screen.
-  const sending = useRef(new Set<string>())
+  // By each send's turn key; one counts only while its turn still pends, so a send a newer read already ended
+  // (`expire`) no longer holds the path while its stream drains.
+  const sending = useRef(new Map<string, Set<number>>())
+  // A full log read in flight for a path: a deferred refresh it already satisfies does not start another.
+  // Held by request number, so a log asked before a deferral cannot settle it.
+  const inflight = useRef(new Map<string, number>())
+  // Each followed entry's server turn, set when its first event names it.
+  const turnOf = useRef(new Map<number, string>())
+  // Sends whose saved reply a full log left out for their own still-running entry.
+  const shadowed = useRef(new Set<number>())
+  const reload = useRef<(path: string) => void>(() => {})   // forget + load(…, true), set once both exist
+  // A key the mirror does not show yet (a send just added, before its render) counts as live.
+  const sendingNow = (path: string) => [...(sending.current.get(path) ?? [])].some((key) => {
+    const t = (seen.current[path] ?? []).find((x) => x.key === key)
+    return !t || !!t.pending
+  })
   // Which worktree a path names. Removing a worktree and making one with the
   // same task name gives the same path, so a record fetched for the old one
   // and landing after `forget` would otherwise fill the new one's pane.
@@ -256,7 +285,17 @@ export function useWork() {
   // it back or lets it go. Here, not in the pane or the box: it outlives a
   // reattach, a switch to another pane, and whatever is typed meanwhile.
   // Every one of them: each was cleared from the box when it was sent.
-  const [refused, setRefused] = useState<Record<string, { text: string; reason: string }[]>>({})
+  const [refused, setRefused] = useState<Record<string, { text: string; reason: string; from?: string }[]>>({})
+  // The server's running turn of each path, as its last log read named it: kept through a dropped stream,
+  // so another task's pane on a shared checkout stays read-only until a read says the turn ended.
+  const [live, setLive] = useState<Record<string, string>>({})
+  const named = useCallback((path: string, running: { turn?: string } | null | undefined) => {
+    setLive((all) => {
+      if ((all[path] ?? '') === (running?.turn ?? '')) return all   // unchanged: no render
+      const { [path]: _gone, ...rest } = all
+      return running?.turn ? { ...rest, [path]: running.turn } : rest
+    })
+  }, [])
   /** One refused instruction by its place, or all of the path's. */
   const dismiss = useCallback((path: string, at?: number) => {
     setRefused(({ [path]: list = [], ...rest }) => {
@@ -266,7 +305,9 @@ export function useWork() {
   }, [])
   // Paths a server-started turn was announced for while this window's own
   // send still followed its turn: read again once that send lets go.
-  const missed = useRef(new Set<string>())
+  // Each holds the log request number at deferral: only a full log asked after it accounts for the notice.
+  const missed = useRef(new Map<string, number>())
+  const defer = (path: string) => missed.current.set(path, logsAsked.current.get(path) ?? 0)
   // The server's turns this window already follows.
   const own = useRef(new Set<string>())
   // The reattached stream of each path's running turn. A browser keeps six
@@ -286,26 +327,123 @@ export function useWork() {
     })
   }, [])
 
+  // A send's turn just got its id: a record that already holds its instruction makes the local copy a duplicate.
+  const settle = useCallback((path: string, key: number, turn: string) => {
+    setTurns((all) => {
+      const list = all[path]
+      const i = list?.findIndex((t) => t.key === key) ?? -1
+      if (!list || i < 1 || list[i - 1].role !== 'user' || list[i - 1].record
+        || !list.some((t) => t.role === 'user' && t.record === turn)) return all
+      return { ...all, [path]: list.filter((_, j) => j !== i - 1) }
+    })
+  }, [])
+
+  // A newer accepted read names the path's running turn (or none): a turn that was already pending, with its id,
+  // when the read was asked and is not that one has ended on the server, whatever its stream still owes. A turn
+  // that began after the request is left alone: the server's answer may predate it.
+  // A replay a log read installed (`from`, that read's number) is as old as that read, whenever it appeared.
+  // An ended turn's reply already on record (`rows`, the same read) takes its place; a turn not yet on record just
+  // stops pending.
+  const expire = useCallback((path: string, n: number, before: Set<string>,
+    running: { turn?: string } | null | undefined, rows: api.WorkTurn[]) => {
+    const over = (t: Turn) => t.pending && !!t.turn && t.turn !== running?.turn
+      && (before.has(t.turn) || (t.from !== undefined && t.from < n))
+    // Sends let go now, not in the render below: the caller reconciles a deferred notice right after.
+    const held = sending.current.get(path)
+    for (const key of [...(held ?? [])]) {
+      const turn = turnOf.current.get(key)
+      if (turn && turn !== running?.turn && before.has(turn)) held?.delete(key)
+    }
+    if (held && !held.size) sending.current.delete(path)
+    setTurns((all) => {
+      const list = all[path]
+      if (!list?.some(over)) return all
+      return { ...all, [path]: list.map((t) => {
+        if (!over(t)) return t
+        // A replay's stream is let go below; idempotent, and read by that replay's own end if it comes first.
+        if (replays.current.has(t.key)) ended.current.add(t.key)
+        sending.current.get(path)?.delete(t.key)   // an ended send no longer holds the path while its stream drains
+        const saved = rows.find((r) => r.role === 'assistant' && r.turn === t.turn)
+        // The saved row under a key of its own: a stream still owing events to `t.key` no longer reaches it.
+        return saved ? fromRow(saved) : { ...t, pending: false }
+      }) }
+    })
+  }, [])
+  // Each live replay's own stream, by its turn's key, and the keys `expire` ended: such a stream is let go once
+  // that state is committed. Its late end (a 410) would otherwise reload the path under a newer send; only its own
+  // controller is touched, never a replacement's. A replay that ends by itself keeps its stream to its end.
+  const replays = useRef(new Map<number, AbortController>())
+  const ended = useRef(new Set<number>())
+  useEffect(() => {
+    for (const key of ended.current) {
+      const control = replays.current.get(key)
+      ended.current.delete(key)
+      replays.current.delete(key)
+      if (!control) continue
+      control.abort()
+      for (const [path, c] of streams.current) if (c === control) drop(path)
+    }
+  }, [turns])
+  const pendingNow = (path: string) =>
+    new Set((seen.current[path] ?? []).filter((t) => t.pending && t.turn).map((t) => t.turn!))
+
   const forget = useCallback((path: string) => {
     streams.current.get(path)?.abort()
-    streams.current.delete(path)
+    drop(path)
     lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
     loading.current.delete(path)
     setTurns(({ [path]: _gone, ...rest }) => rest)
     setRules(({ [path]: _gone, ...rest }) => rest)
     showQueued(path, null)
+    // The transcript's sends go with it: a send still draining no longer holds the path as if just added.
+    sending.current.delete(path)
+    // `live` stays: the last known running turn holds a shared checkout's other panes until the next read.
   }, [showQueued])
+
+  // Work-log reads of each path, in request order: an older answer that arrives after a newer one is not applied,
+  // so an idle snapshot never unlocks a checkout a later read found running.
+  const logsAsked = useRef(new Map<string, number>())
+  const logsShown = useRef(new Map<string, number>())
+  // The running turn the newest applied read named, with its session: what a superseded `load` attaches to.
+  const runs = useRef(new Map<string, { turn: string; session_id: string } | null>())
+  // A reattached stream counts only while it follows the newest read's running turn (an errored replay lingers).
+  const streamTurn = useRef(new Map<string, string>())
+  const drop = (path: string) => streams.current.delete(path) && streamTurn.current.delete(path)
+  const following = (path: string) => streams.current.has(path)
+    && streamTurn.current.get(path) === runs.current.get(path)?.turn
+  const asked = useCallback((path: string) => {
+    const n = (logsAsked.current.get(path) ?? 0) + 1
+    logsAsked.current.set(path, n)
+    return Object.assign(() => {
+      if (n < (logsShown.current.get(path) ?? 0)) return false
+      logsShown.current.set(path, n)
+      return true
+    }, { n })
+  }, [])
 
   const readRules = useCallback((path: string) => {
     const life = lives.current.get(path) ?? 0
+    const latest = asked(path)
+    const before = pendingNow(path)
     api.workLog(path)
-      .then(({ session_id, rules: list, queued: waiting }) => {
-        if ((lives.current.get(path) ?? 0) !== life) return
+      .then(({ session_id, rules: list, queued: waiting, running, rows }) => {
+        if ((lives.current.get(path) ?? 0) !== life || !latest()) return
+        runs.current.set(path, running ?? null)
         setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
         showQueued(path, waiting)
+        named(path, running)
+        expire(path, latest.n, before, running, rows)
+        // This read let go of the last local send: a notice deferred for it is read now, unless a stream has
+        // attached since or a full log asked after the deferral is already reading it.
+        const owed = missed.current.get(path)
+        if (owed !== undefined && !sendingNow(path) && !following(path)
+          && !((inflight.current.get(path) ?? 0) > owed)) {
+          missed.current.delete(path)
+          reload.current(path)
+        }
       })
       .catch(() => {})
-  }, [showQueued])
+  }, [showQueued, named, asked, expire])
 
   /** Follow one turn's events into `key` until it ends. `first` is the
    *  stream that starts it — the instruction's own, or a reattach. */
@@ -323,9 +461,14 @@ export function useWork() {
         if (ev.session_id !== owner) return
       }
       if (ev.turn) {
+        const first = !turn
         turn ||= ev.turn
         if (ev.turn !== turn) return
         own.current.add(turn)
+        if (first) {
+          turnOf.current.set(key, turn)   // read synchronously by `load`, ahead of the render that shows it
+          settle(path, key, turn)
+        }
       }
       if (ev.seq !== undefined) {
         if (ev.seq <= last) return
@@ -364,52 +507,110 @@ export function useWork() {
     // waited was sent, kept for a turn the server started, or dropped by a stop.
     if (!gone) readRules(path)
     return gone
-  }, [patch, readRules])
+  }, [patch, readRules, settle])
 
   // Named, so the reload after a replaced turn calls itself, not the outer binding.
   // Resolves false when the record could not be read, for a screen that tells that from an empty one.
-  const load = useCallback(function load(path: string): Promise<boolean> {
+  const load = useCallback(function load(path: string, again = false): Promise<boolean> {
     if (!path || loading.current.has(path)) return Promise.resolve(true)
     loading.current.add(path)
     const life = lives.current.get(path) ?? 0
+    const latest = asked(path)
+    inflight.current.set(path, latest.n)
     return api.workLog(path)
+      .finally(() => {
+        if (inflight.current.get(path) === latest.n) inflight.current.delete(path)
+      })
       .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
         if ((lives.current.get(path) ?? 0) !== life) return true
-        const past: Turn[] = rows.map((r) => ({
-          key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
-          tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered,
-        }))
-        showQueued(path, waiting)
+        // Read after a deferral, and free to attach (no local send holds the path): this record accounts for its
+        // notice. Under a live send the notice stays owed to that send's end.
+        // Older than a recheck already applied: its transcript still predates this window's sends, so it merges as
+        // ever, but the running turn to attach is the newest read's — the snapshot's may have ended or changed.
+        const fresh = latest()
+        if (fresh) runs.current.set(path, running ?? null)
+        const now = fresh ? running : runs.current.get(path) ?? null
+        // A send whose reply the record already holds has ended, and the merge below replaces its entry: it no
+        // longer holds the path (its key, gone from the transcript, would otherwise count as just added). Its turn
+        // comes from the event that named it, not the render. Still named running, the run is finishing: its own
+        // stream keeps it, and its entry stays in place of the saved reply (one reply, its Stop kept).
+        const held = sending.current.get(path)
+        const finishing = now && [...(held ?? [])].some((key) => turnOf.current.get(key) === now.turn)
+          ? now.turn : undefined
+        // Its end reads the record once more, in case the stream fails before the reply it stands in for.
+        const omits = !!finishing && rows.some((r) => r.role === 'assistant' && r.turn === finishing)
+        for (const key of held ?? []) if (omits && turnOf.current.get(key) === finishing) shadowed.current.add(key)
+        const saved = rows.filter((r) => !(finishing && r.role === 'assistant' && r.turn === finishing))
+        const kept = new Set(saved.map((r) => r.turn && `${r.role}:${r.turn}`).filter(Boolean))
+        for (const key of [...(held ?? [])]) {
+          const done = turnOf.current.get(key)
+          if (done && kept.has(`assistant:${done}`)) held?.delete(key)
+        }
+        if (held && !held.size) sending.current.delete(path)
+        if ((missed.current.get(path) ?? Infinity) < latest.n && !sendingNow(path)) missed.current.delete(path)
+        const past: Turn[] = saved.map(fromRow)
+        if (fresh) showQueued(path, waiting)
+        if (fresh) named(path, running)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
-        const live = running && !sending.current.has(path)
+        const live = now && !sendingNow(path) && (fresh || !streams.current.has(path))   // not while a stream follows it
           ? { key: ++seq, role: 'assistant' as const, text: '', steps: [], pending: true,
-              sessionId: running.session_id, turn: running.turn }
+              sessionId: now.session_id, turn: now.turn,
+              from: fresh ? latest.n : logsShown.current.get(path) }   // the read whose running turn this is
           : null
-        // A turn sent before the record came back stays after it.
-        setTurns((all) => ({ ...all, [path]: [...past, ...(live ? [live] : []), ...(all[path] ?? [])] }))
-        setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
-        if (live && running) {
+        // A turn sent before the record came back stays after it, unless the record already holds it (`kept`): the
+        // server can read its rows after this window's send was written, whatever order the requests went in.
+        setTurns((all) => {
+          const mine = all[path] ?? []
+          // The stream reattached here replaces a local copy of the same turn: the last entry drives Stop.
+          // Matched by the server turn, streamed (`turn`) or restored from a record row (`record`).
+          const id = (t?: Turn) => t?.turn ?? t?.record
+          const shown = mine.filter((t, i) => t.role === 'assistant'
+            ? !(id(t) && (kept.has(`assistant:${id(t)}`) || id(t) === live?.turn))
+            : !(t.record ? kept.has(`user:${t.record}`)
+              : mine[i + 1]?.role === 'assistant' && id(mine[i + 1]) && kept.has(`user:${id(mine[i + 1])}`)))
+          // A replacement takes its local copy's place, after the instruction that copy answered.
+          const at = live ? mine.findIndex((t) => t.role === 'assistant' && t.turn === live.turn) : -1
+          const before = at < 0 ? 0 : shown.filter((t) => mine.indexOf(t) < at).length
+          return { ...all, [path]: [...past, ...shown.slice(0, before), ...(live ? [live] : []), ...shown.slice(before)] }
+        })
+        if (fresh) setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
+        if (live && now) {
           const control = new AbortController()
           streams.current.get(path)?.abort()
           streams.current.set(path, control)
-          follow(path, live.key, (on) => api.workEvents(path, running.turn, -1, on, control.signal),
-            { session: running.session_id, turn: running.turn, signal: control.signal })
+          streamTurn.current.set(path, now.turn)
+          replays.current.set(live.key, control)
+          follow(path, live.key, (on) => api.workEvents(path, now.turn, -1, on, control.signal),
+            { session: now.session_id, turn: now.turn, signal: control.signal })
             .then((gone) => {
-              if (streams.current.get(path) === control) streams.current.delete(path)
-              if (gone) {
+              if (streams.current.get(path) === control) drop(path)
+              replays.current.delete(live.key)
+              const expired = ended.current.delete(live.key)   // every end clears its bookkeeping
+              // A live local send owns the path now: its own end reads the record once (`missed`).
+              if (gone && !control.signal.aborted && !expired && sendingNow(path)) defer(path)
+              else if (gone && !control.signal.aborted && !expired) {
                 forget(path)
-                load(path)
+                load(path, true)
               }
             })
         }
         return true
       })
       .catch(() => {
-        if ((lives.current.get(path) ?? 0) === life) loading.current.delete(path)
+        if ((lives.current.get(path) ?? 0) !== life) return false
+        loading.current.delete(path)
+        // A reload that replaced what the pane showed (`again`), or a read that carried a deferred refresh no send
+        // is left to owe: try once more. ponytail: one retry; a second failure waits for the next notice or sync.
+        if (again || (missed.current.has(path) && !sendingNow(path))) {
+          if (!sendingNow(path)) missed.current.delete(path)   // a live send still owes a notice deferred for it
+          setTimeout(() => {
+            if ((lives.current.get(path) ?? 0) === life) load(path)
+          }, 1000)
+        }
         return false
       })
-  }, [follow, forget, showQueued])
+  }, [follow, forget, showQueued, named, asked])
 
   const send = useCallback(
     async (path: string, text: string, choice: { model: string; effort: string }) => {
@@ -418,18 +619,39 @@ export function useWork() {
         ...all,
         [path]: [...(all[path] ?? []), { key: ++seq, role: 'user', text, steps: [] }, mine],
       }))
-      sending.current.add(path)
+      sending.current.set(path, new Set([...(sending.current.get(path) ?? []), mine.key]))
       let gone = false
       try {
         gone = await follow(path, mine.key, (on) => api.workSay({ path, text, ...choice }, on))
       } catch (err) {
         patch(path, mine.key, (t) => ({ ...t, error: String(err), pending: false }))
-      } finally {
-        sending.current.delete(path)
       }
-      if (gone || missed.current.delete(path)) {
+      // Each send lets go of its own key only: an older send ending while a newer one runs leaves the path to the
+      // newer one, and a reload it owed waits for the last live send rather than clearing that one's turn.
+      const left = sending.current.get(path)
+      // Let go already — ended by a newer read (`expire`) or cleared with the transcript (`forget`): the path
+      // belongs to whatever has followed since, and this late end (a 410 among them) reloads nothing over it.
+      const stale = !left?.has(mine.key)
+      left?.delete(mine.key)
+      turnOf.current.delete(mine.key)
+      const hid = shadowed.current.delete(mine.key)   // its saved reply was left out for it: read the record again
+      if (!left?.size) sending.current.delete(path)
+      // A full log asked after the deferral reads the record anyway: it settles the refresh (on success, in `load`)
+      // without a second read that would supersede it. An older one, or a 410 now, still reloads.
+      const owed = missed.current.has(path)
+      const reading = owed && (inflight.current.get(path) ?? 0) > missed.current.get(path)!
+      if (stale) {
+        if (!sendingNow(path) && !following(path) && owed && !reading) {
+          missed.current.delete(path)
+          forget(path)   // a notice deferred for this send, and nothing attached since: read once now
+          load(path, true)
+        }
+      } else if (sendingNow(path)) {
+        if (gone || hid) defer(path)
+      } else if (gone || hid || (owed && !reading)) {
+        missed.current.delete(path)   // either reason reloads once, and settles the other
         forget(path)
-        load(path)
+        load(path, true)
       }
     },
     [follow, forget, load, patch],
@@ -441,14 +663,15 @@ export function useWork() {
    *  sent it. What the server holds is read again, and the text is kept as
    *  refused for the person to act on. */
   const queue = useCallback(async (path: string, turn: Turn, text: string,
-    choice: { model: string; effort: string }) => {
+    choice: { model: string; effort: string }, from?: string) => {
     try {
       await api.workQueue({ path, turn: turn.turn ?? '', text, ...choice })
       showQueued(path, text)
     } catch (err) {
       readRules(path)
+      // `from`: the task that sent it, on a checkout several share; only its pane shows the card.
       setRefused((all) => ({ ...all, [path]: [...(all[path] ?? []),
-        { text, reason: err instanceof Error ? err.message : String(err) }] }))
+        { text, reason: err instanceof Error ? err.message : String(err), from }] }))
     }
   }, [readRules, showQueued])
 
@@ -508,14 +731,31 @@ export function useWork() {
   }, [rules])
 
   const reset = useCallback(async (path: string, keep: api.Keep) => {
+    const before = streams.current.get(path)
     const kept = await api.workReset(path, keep)
+    // The server cleared the record and announced it before answering, so a read or an attachment begun
+    // meanwhile may predate the clear or follow it: read once more now, after it, and keep only what that shows.
+    const now = streams.current.get(path)
+    if (loading.current.has(path) || (now && now !== before)) {
+      forget(path)
+      load(path, true)
+      return kept
+    }
     // A record read before the clear and landing after it would bring the
     // cleared conversation back.
     lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
+    sending.current.delete(path)   // as in `forget`: the cleared transcript's sends hold the path no longer
     setTurns((all) => ({ ...all, [path]: [] }))
     setRules((all) => ({ ...all, [path]: { session: '', list: [] } }))
     return kept
-  }, [])
+  }, [forget, load])
+
+  useEffect(() => {
+    reload.current = (path) => {
+      forget(path)
+      load(path, true)
+    }
+  }, [forget, load])
 
   /** A turn the server started in `path` — the plan row's, a loop's. A
    *  window that already shows that worktree reads it again, which attaches
@@ -524,12 +764,12 @@ export function useWork() {
     if (!loading.current.has(path) || (turn && own.current.has(turn))) return
     // Announced while this window's send still follows its own turn — the
     // instruction that waited, the plan row's: read once that send lets go.
-    if (sending.current.has(path)) {
-      missed.current.add(path)
+    if (sendingNow(path)) {
+      defer(path)
       return
     }
     forget(path)
-    load(path)
+    load(path, true)
   }, [forget, load])
 
   useEffect(() => {
@@ -555,6 +795,6 @@ export function useWork() {
     }
   }, [attach, readRules])
 
-  return { turns, rules, queued, refused, load, send, queue, unqueue, dismiss, answer, stop, steer, clearRules, reset,
+  return { turns, live, recheck: readRules, rules, queued, refused, load, send, queue, unqueue, dismiss, answer, stop, steer, clearRules, reset,
     forget, attach }
 }
