@@ -10,6 +10,8 @@ from __future__ import annotations
 # First import of the entry point: it keeps the stack from before whatever
 # time limit kills this.
 import hook_diagnostics  # noqa: F401
+# Second: it answers before the host's limit, with the best it has by then.
+import hook_deadline
 import argparse
 import json
 import re
@@ -153,6 +155,23 @@ def recall(wiki: Path | None, session: str, transcript, host: str | None) -> tup
         return set(), {}
 
 
+def answer(body: str, loaded: list, rule_parts: list, trimmed: int, english: str,
+           partial: bool = False) -> dict:
+    """The hook's output: `body` for the agent, one line for the person.
+
+    That line lands on the person's screen as written, so it stays Korean —
+    `operator/english-progress` holds that boundary."""
+
+    names = [label(p) for _s, _b, p in loaded]
+    heads = [part.split("\n", 1)[0] for part in rule_parts]
+    marks = [(sum(", repeated) -->" in h for h in heads), "이미 실림 {}장"),
+             (sum(", rule only) -->" in h for h in heads), "한도로 규칙 문단만 {}장"),
+             (trimmed, "줄임 {}장"), (english, "영어본 첨부"), (partial, "시간이 모자라 번역 없이 넣음")]
+    note = f"위키 주입: {', '.join(names[:6])}" if names else "위키: 걸린 규칙 없음"
+    note += "".join(" · " + text.format(n) for n, text in marks if n)
+    return hook_deadline.output("UserPromptSubmit", body, note)
+
+
 def main() -> int:
     # The utterance coming in and the injection going out are both Korean. The
     # encoding is not left to the environment.
@@ -187,6 +206,13 @@ def main() -> int:
     deadline = time.monotonic() + BUDGET
     available = pages(args.adapter, args.project)
     matched = match_pages(prompt, available)
+    limits = tuple(budget(args.adapter, b, args.project) for b in (RULE_BUDGET, REPO_BUDGET))
+    # Sent by the deadline if translation or `recall` stall: untranslated, not deduplicated.
+    q_rules, q_decisions, q_parts, _q_repo, q_trimmed, quick, _q = compose(
+        matched, limits, "", args.project, set(), repeatable(available), LIMIT.get(args.host or ""))
+    if quick:
+        hook_deadline.best = answer(hook_deadline.PARTIAL + quick, q_rules + q_decisions,
+                                    q_parts, q_trimmed, "", partial=True)
     english = rendering(prompt, deadline)
     matched = localised(matched, deadline)
     # Unlike reading, writing has to work before `.wiki/` exists.
@@ -196,9 +222,7 @@ def main() -> int:
     seen, where = recall(wiki, session, payload.get("transcript_path"), args.host)
     # Without a host the ceiling is unknown, so nothing is squeezed either.
     rules, decisions, rule_parts, repo_parts, trimmed, body, _squeezed = compose(
-        matched,
-        (budget(args.adapter, RULE_BUDGET, args.project),
-         budget(args.adapter, REPO_BUDGET, args.project)),
+        matched, limits,
         english, args.project, seen, repeatable(available), LIMIT.get(args.host or ""),
     )
     parts = rule_parts + repo_parts
@@ -208,34 +232,10 @@ def main() -> int:
     # it — `tool/session_state.py`.
 
     loaded = [label(p) for _s, _b, p in rules + decisions]
-    if body:
-        # This one line lands on the person's screen as written. The rule
-        # inverted and this stayed Korean, because the reader here is the
-        # person. `operator/english-progress` holds that boundary.
-        note = f"위키 주입: {', '.join(loaded[:6])}" if loaded else "위키: 걸린 규칙 없음"
-        heads = [part.split("\n", 1)[0] for part in rule_parts]
-        again = sum(", repeated) -->" in head for head in heads)
-        squeezed = sum(", rule only) -->" in head for head in heads)
-        if again:
-            note += f" · 이미 실림 {again}장"
-        if squeezed:
-            note += f" · 한도로 규칙 문단만 {squeezed}장"
-        if trimmed:
-            note += f" · 줄임 {trimmed}장"
-        if english:
-            note += " · 영어본 첨부"
-        json.dump(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "UserPromptSubmit",
-                    "additionalContext": body,
-                },
-                "systemMessage": note,
-            },
-            sys.stdout,
-            ensure_ascii=False,
-        )
-        sys.stdout.flush()
+    if body and not hook_deadline.send(answer(body, rules + decisions, rule_parts, trimmed, english)):
+        # The deadline answered with the quick version and is exiting; a row
+        # for this body would claim pages the session never received.
+        return 0
 
     # Recorded last, after the output is out. `sent` is only known once the
     # body is, and a row written before the output would keep `full` for a

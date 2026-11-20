@@ -12,8 +12,9 @@ from __future__ import annotations
 # First import of the entry point: it keeps the stack from before whatever
 # time limit kills this.
 import hook_diagnostics  # noqa: F401
+# Second: it answers before the host's limit when this never gets that far.
+import hook_deadline
 import argparse
-import json
 import re
 import subprocess
 import sys
@@ -329,17 +330,7 @@ def main() -> int:
     if text.count("\n") < 4:
         return 0  # one branch line on its own is not worth injecting
 
-    json.dump(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": text,
-            },
-            "systemMessage": "위키: 현재 상태 주입",
-        },
-        sys.stdout,
-        ensure_ascii=False,
-    )
+    hook_deadline.send(hook_deadline.output("SessionStart", text, "위키: 현재 상태 주입"))
     return 0
 
 

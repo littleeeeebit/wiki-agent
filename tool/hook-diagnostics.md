@@ -42,3 +42,16 @@ The stack is only visible after Python starts. External observation identifies
 the shell and native hooks, but cannot establish the host's termination judgment.
 OS load or permission failures can lose records. Read `process-*.log` and
 `wiki-*.log` from the same time together.
+
+## Answering before the limit
+
+A host that times a hook out drops whatever it printed, so a killed
+`inject.py` or `session_state.py` left the turn with no injection at all.
+`hook_deadline.py`, the second import of both, answers first: 12 seconds after
+arming for `inject.py` (limit 15) and 22 for `session_state.py` (limit 25), it
+writes the best output so far and exits 0. For `inject.py` that is the matched
+pages untranslated and not deduplicated, with `시간이 모자라 번역 없이 넣음` on
+the person's line; before the pages are read, it is a notice telling the agent
+nothing was injected. `sync.py` is left out: it writes `corpus.json` and
+decision records, an early exit could cut one mid-write, and the next Stop
+picks the work up again.
