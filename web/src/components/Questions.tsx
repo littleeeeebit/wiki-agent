@@ -45,7 +45,8 @@ export function Questions({ questions, korean, disabled, onSubmit, onDecline, al
         </a>)}
       </nav>}
       {translated.map((q, i) => (
-        <fieldset id={`${id}-${i}`} key={i} className="min-w-0 scroll-mt-4 space-y-3" disabled={disabled}>
+        // The answers are disabled one by one, not the fieldset: a preview's picture still enlarges on a closed question.
+        <fieldset id={`${id}-${i}`} key={i} className="min-w-0 scroll-mt-4 space-y-3">
           <legend className="mb-3 w-full text-[16px] font-semibold leading-relaxed break-words">
             <span className="mb-1 block text-[14px] text-muted-foreground">{i + 1} / {questions.length}{q.header && ` · ${q.header}`}</span>
             {q.question}
@@ -54,16 +55,19 @@ export function Questions({ questions, korean, disabled, onSubmit, onDecline, al
           {q.options.map((o, j) => {
             const original = questions[i].options![j].label
             const selected = picked[i].includes(original)
-            return <label key={j} className={cn('flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border p-4 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary',
-              selected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-secondary', disabled && 'cursor-default opacity-60')}>
-              <input type={q.multiSelect ? 'checkbox' : 'radio'} name={`${id}-${i}`} value={original}
+            const pick = () => setPicked((all) => all.map((now, k) => k !== i ? now : q.multiSelect
+              ? selected ? now.filter((s) => s !== original) : [...now, original] : [original]))
+            // The option is the card; only its input and title are the label, since a preview's picture is a
+            // button of its own and a label may hold no control but the one it names.
+            return <div key={j} className={cn('flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border p-4 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary',
+              selected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-secondary', disabled && 'cursor-default opacity-60')}
+              onClick={(e) => { if (!disabled && e.target === e.currentTarget) pick() }}>
+              <input id={`${id}-${i}-${j}`} type={q.multiSelect ? 'checkbox' : 'radio'} name={`${id}-${i}`} value={original}
                 aria-label={o.label} aria-describedby={o.description || o.preview ? `${id}-${i}-${j}-detail` : undefined}
-                checked={selected} className="mt-1 size-4 shrink-0 accent-primary"
-                onChange={() => setPicked((all) => all.map((now, k) => k !== i ? now : q.multiSelect
-                  ? selected ? now.filter((s) => s !== original) : [...now, original] : [original]))} />
+                checked={selected} disabled={disabled} className="mt-1 size-4 shrink-0 accent-primary" onChange={pick} />
               <div className="min-w-0 flex-1 space-y-2 break-words">
-                <span className="block text-[16px] font-semibold leading-relaxed">{j + 1}. {o.label}</span>
-                <div id={`${id}-${i}-${j}-detail`} className="space-y-2">
+                <label htmlFor={`${id}-${i}-${j}`} className={cn('block text-[16px] font-semibold leading-relaxed', !disabled && 'cursor-pointer')}>{j + 1}. {o.label}</label>
+                <div id={`${id}-${i}-${j}-detail`} className="space-y-2" onClick={() => { if (!disabled) pick() }}>
                 {o.description && <div className="question-preview text-[14px] leading-relaxed text-muted-foreground">
                   <Markdown remarkPlugins={[remarkGfm]} urlTransform={keepSources} components={{ a: ({ children }) => <span>{children}</span>,
                     img: ({ src, alt }) => <Picture src={typeof src === 'string' ? src : undefined} alt={alt} />, pre: ({ children }) => <pre className="overflow-x-auto whitespace-pre font-mono text-[12px]">{children}</pre> }}>{o.description}</Markdown>
@@ -77,11 +81,11 @@ export function Questions({ questions, korean, disabled, onSubmit, onDecline, al
                 </div>}
                 </div>
               </div>
-            </label>
+            </div>
           })}
           {allowCustom && <label className="block text-[14px] leading-relaxed">
             직접 적기 <span className="text-muted-foreground">· 적으면 선택 대신 이 답을 보낸다</span>
-            <textarea value={typed[i]} rows={2} placeholder="다른 의견이나 구체적인 조건을 적어라"
+            <textarea value={typed[i]} rows={2} disabled={disabled} placeholder="다른 의견이나 구체적인 조건을 적어라"
               onChange={(e) => setTyped((all) => all.map((t, j) => j === i ? e.target.value : t))}
               className="mt-2 w-full resize-y rounded-md border border-input bg-background p-3 text-[16px]" />
           </label>}

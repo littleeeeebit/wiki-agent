@@ -1,4 +1,5 @@
 import { useContext, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Zoom } from '@/components/Modal'
 import { PictureRoot } from '@/lib/picture'
 
@@ -18,13 +19,14 @@ export function Picture({ src, alt, fallback }: { src?: string; alt?: string; fa
     // Half the width less the space Markdown leaves between two images, so a before and an after compare side by
     // side; a narrow pane wraps them.
     <span className="my-2 inline-block w-[calc(50%-0.5rem)] min-w-[200px] max-w-full align-top">
-      <button type="button" onClick={() => setZoomed(true)} title="크게 본다"
+      <button type="button" onClick={(e) => { e.stopPropagation(); setZoomed(true) }} title="크게 본다"
         aria-label={alt ? `${alt} 크게 보기` : '크게 보기'} className="block w-full cursor-zoom-in rounded-md">
         <img src={url} alt={alt ?? ''} loading="lazy" onError={() => setBroken(true)}
           className="max-h-[480px] w-full rounded-md border border-border bg-background object-contain" />
       </button>
       {alt && <span className="mt-1 block text-[12px] text-muted-foreground">{alt}</span>}
-      {zoomed && <Zoom src={url} alt={alt} close={() => setZoomed(false)} />}
+      {/* On the body, not in the paragraph: a dialog is flow content, and an enclosing link must not own its clicks. */}
+      {zoomed && createPortal(<Zoom src={url} alt={alt} close={() => setZoomed(false)} />, document.body)}
     </span>
   )
 }
