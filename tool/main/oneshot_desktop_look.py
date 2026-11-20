@@ -79,22 +79,11 @@ def features(state: dict, shown: bool, windows: set | None = None) -> set[str]:
 
 
 def partial(state: dict, windows: set) -> bool:
-    """Whether a scrolling list in `windows` holds fewer items in the tree than its provider counts (`items`,
-    realized or not), or will not count them: a virtualized list, whose unrealized items the tree does not hold,
-    so absence off it is not proven. Its items in the tree are its children: the nodes one level below it."""
+    """Whether an open item container in `windows` holds items its provider counts that the read did not reach
+    (`unread`, matched by identity, groups and headers aside), or will not say: a virtualized list or branch,
+    whose unrealized items the tree does not hold, so absence off it is not proven."""
 
-    nodes = [node for node, _ in walk(state)]
-    for i, node in enumerate(nodes):
-        if "items" not in node or node["window"] not in windows:
-            continue
-        children = 0
-        for later in nodes[i + 1:]:
-            if later["depth"] <= node["depth"] or later["window"] != node["window"]:
-                break
-            children += later["depth"] == node["depth"] + 1
-        if node["items"] is None or children < node["items"]:
-            return True
-    return False
+    return any(node["window"] in windows and "unread" in node and node["unread"] != 0 for node, _ in walk(state))
 
 
 def drawn(state: dict, hwnd) -> bool:
@@ -308,8 +297,10 @@ def one_action(runs: Launches, s: dict, start: dict, owned: bool, hwnd: int, fid
         if not complete(report) or not done.get("acted") or done.get("state") not in states:
             continue
         fresh, after = report["states"][0], states[done["state"]]
+        main = report["main"]["hwnd"]   # the window the driver acted in: the main one, or the one it owns
+        acted_in = mine(report, fresh) - {main} if owned else {main}
         reachable = any(node.get("id") == target and visible(node, scrollers) and node.get("enabled", True)
-                        for node, scrollers in walk(fresh) if node["window"] in mine(report, fresh))
+                        for node, scrollers in walk(fresh) if node["window"] in acted_in)
         if reachable and fid not in features(fresh, shown=True, windows=mine(report, fresh)) \
                 and fid in features(after, shown=True, windows=mine(report, after)):
             return True, carried, saw, cut

@@ -45,9 +45,10 @@ acts only through automation patterns, never synthetic input.
   `parent`), so the look sizes the main window and shoots both. At startup
   the program shows one main window and no other window it does not own, and
   the main window owns one window at most. While either variable is set,
-  lists are not virtualized (WPF's `VirtualizingPanel.IsVirtualizing="False"`),
-  so the look reads every item its list counts. A release build ignores both
-  variables.
+  lists, grids and trees are not virtualized (WPF's
+  `VirtualizingPanel.IsVirtualizing="False"`, and a `DataGrid`'s
+  `EnableRowVirtualization="False"`), so the look reads every item a list or
+  an expanded branch holds. A release build ignores both variables.
 - Every control for a feature has the `AutomationId` `feature:<feature id>`:
   in a web view, the element's `id`; in XAML,
   `AutomationProperties.AutomationId`. A `never` feature has no control

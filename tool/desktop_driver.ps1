@@ -124,6 +124,29 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
   [ordered]@{ hwnd = $window.hwnd; drawn = $true; file = $file; size = @($frame[2], $frame[3]) }
 }
 
+function Rid($element) { ($element.GetRuntimeId()) -join "." }   # the element's identity while it lives
+
+function Items {   # each open item container's items, realized or not, against the nodes the walk read
+  # `items`: how many its provider holds; `unread`: how many of them the walk did not read, null when the
+  # provider will not say, holds more than the driver counts, or the container (an expanded tree item) has none.
+  foreach ($pair in $script:lists) {
+    $element, $node = $pair
+    $node.items, $node.unread = $null, $null
+    try {
+      $container = $element.GetCurrentPattern([System.Windows.Automation.ItemContainerPattern]::Pattern)
+      $count, $unread, $item = 0, 0, $null
+      do {
+        $item = $container.FindItemByProperty($item, $null, $null)
+        if ($item) {
+          $count++
+          try { if (-not $script:seen.Contains((Rid $item))) { $unread++ } } catch { $unread++ }
+        }
+      } while ($item -and $count -lt $MAX_ITEMS)
+      if (-not $item) { $node.items, $node.unread = $count, $unread }
+    } catch { }
+  }
+}
+
 function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0, [bool]$scrolled = $false) {
   # `scrolled`: inside a container that scrolls, so a person reaches what lies past its edge by scrolling.
   # The process first, and nothing else of an element outside the app's job: an embedded fragment of another
@@ -141,19 +164,15 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     name = $c.Name; id = $c.AutomationId; enabled = $c.IsEnabled; offscreen = $c.IsOffscreen;
     rect = if ($b.IsEmpty) { $null } else { @([int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height) };
     patterns = $patterns; scrolled = $scrolled }
-  if ($patterns -contains "Scroll" -and $patterns -contains "ItemContainer" -and $patterns -notcontains "ExpandCollapse") {
-    # A scrolling list: how many items it holds, realized or not, as its provider counts them; null when the
-    # provider will not say or holds more than the driver counts. The tree holds only its realized items.
+  [void]$script:seen.Add((Rid $element))
+  $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded
+  if (-not $open) {
     try {
-      $container = $element.GetCurrentPattern([System.Windows.Automation.ItemContainerPattern]::Pattern)
-      $count, $item = 0, $null
-      do {
-        $item = $container.FindItemByProperty($item, $null, $null)
-        if ($item) { $count++ }
-      } while ($item -and $count -lt $MAX_ITEMS)
-      $node.items = if ($item) { $null } else { $count }
-    } catch { $node.items = $null }
+      $open = $element.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -in
+        @([System.Windows.Automation.ExpandCollapseState]::Expanded, [System.Windows.Automation.ExpandCollapseState]::PartiallyExpanded)
+    } catch { $open = $true }   # its state unread: its items are owed
   }
+  if ($open -and ($patterns -contains "ItemContainer" -or $node.type -eq "TreeItem")) { $script:lists += , @($element, $node) }
   $script:nodes += $node
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $inner = $scrolled -or $patterns -contains "Scroll"
@@ -173,11 +192,13 @@ function State([string]$name) {   # every window of the app in this state, shot 
     $state.shots += $shot
     if (-not $shot.drawn) { continue }
     Enter "read $id $($w.hwnd)"
-    $script:nodes = @()
+    $script:nodes, $script:lists = @(), @()
+    $script:seen = New-Object 'System.Collections.Generic.HashSet[string]'
     $read = [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
     if (Current $w) {
       try {
         Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd
+        Items
         if (-not $script:nodes.Count -or $script:nodes[0].foreign) { $read.error = "the tree's root is not the app's" }
         else { $read = [ordered]@{ hwnd = $w.hwnd; read = $true } }
       } catch { $read.error = "the tree could not be read: $($_.Exception.Message)" }

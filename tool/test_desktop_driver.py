@@ -186,32 +186,51 @@ def test_operations_each_within_their_own_deadline_are_never_summed(tmp_path, mo
     assert desktop_driver.findings(report) == []
 
 
-WPF_LIST = """param([string]$virtual)
+WPF_LISTS = """param([string]$kind, [string]$virtual)
 Add-Type -AssemblyName PresentationFramework
+$V = [System.Windows.Controls.VirtualizingPanel]; $on = $virtual -eq "on"
 $w = New-Object System.Windows.Window
 $w.Title = "list"; $w.Width = 400; $w.Height = 300
-$list = New-Object System.Windows.Controls.ListBox
-[System.Windows.Controls.VirtualizingPanel]::SetIsVirtualizing($list, $virtual -eq "on")
-1..80 | ForEach-Object { [void]$list.Items.Add("item $_") }
-$w.Content = $list
+$items = 1..80 | ForEach-Object { [pscustomobject]@{ Name = "item $_"; Group = "group $($_ % 2)" } }
+switch ($kind) {
+  "listbox" { $c = New-Object System.Windows.Controls.ListBox; $c.DisplayMemberPath = "Name"; $c.ItemsSource = $items }
+  "grouped" {
+    $c = New-Object System.Windows.Controls.ListView; $c.DisplayMemberPath = "Name"
+    $view = New-Object System.Windows.Data.ListCollectionView (, [System.Collections.ArrayList]@($items))
+    $view.GroupDescriptions.Add((New-Object System.Windows.Data.PropertyGroupDescription "Group"))
+    $c.ItemsSource = $view
+    $c.GroupStyle.Add((New-Object System.Windows.Controls.GroupStyle))
+    $V::SetIsVirtualizingWhenGrouping($c, $on)
+  }
+  "grid" { $c = New-Object System.Windows.Controls.DataGrid; $c.ItemsSource = $items; $c.EnableRowVirtualization = $on }
+  "tree" {
+    $c = New-Object System.Windows.Controls.TreeView
+    $top = New-Object System.Windows.Controls.TreeViewItem; $top.Header = "all"; $top.IsExpanded = $true
+    $items | ForEach-Object { [void]$top.Items.Add($_.Name) }
+    [void]$c.Items.Add($top)
+  }
+}
+$V::SetIsVirtualizing($c, $on)
+$w.Content = $c
 [void]$w.ShowDialog()
 """
 
 
+@pytest.mark.parametrize("kind", ["listbox", "grouped", "grid", "tree"])
 @pytest.mark.parametrize("virtual", ["on", "off"])
-def test_a_wpf_list_counts_its_items_whether_or_not_the_tree_holds_them(tmp_path, virtual):
+def test_a_wpf_list_counts_the_items_its_read_did_not_reach(tmp_path, kind, virtual):
+    # 80 items: in a list, a grouped list, a grid with its header, and a tree's one expanded branch
     from main import oneshot_desktop_look
 
-    script = tmp_path / "list.ps1"
-    script.write_text(WPF_LIST, encoding="utf-8")
-    with desktop_session.look(tmp_path, f"list-{virtual}") as look:
+    script = tmp_path / "lists.ps1"
+    script.write_text(WPF_LISTS, encoding="utf-8")
+    with desktop_session.look(tmp_path, f"{kind}-{virtual}") as look:
         look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                           str(script), virtual], tmp_path)
-        report = desktop_driver.drive(look, "app", (400, 300), [], wait=20, settle_ms=800)
+                           str(script), kind, virtual], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [], wait=30, settle_ms=1000)
     start = report["states"][0]
-    [box] = [n for n in start["nodes"] if "items" in n]
-    rows = [n for n in start["nodes"] if n.get("type") == "ListItem"]
-    assert box["items"] == 80 and (len(rows) < 80) == (virtual == "on"), report
+    [box] = [n for n in start["nodes"] if n.get("items") == 80]
+    assert (box["unread"] > 0) == (virtual == "on"), report
     assert oneshot_desktop_look.partial(start, {w["hwnd"] for w in start["windows"]}) == (virtual == "on")
     assert not [f for f in desktop_driver.findings(report) if "outside its window" in f]   # scrolled rows reachable
 

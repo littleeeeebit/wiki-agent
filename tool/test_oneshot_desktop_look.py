@@ -424,7 +424,7 @@ def scroller(items: int | None, realized: int, step: int = 40) -> dict:
     rows = [node(f"row{i}", depth=2, type="ListItem", rect=[0, 100 + i * step, 200, step], patterns=[], id=f"row{i}")
             for i in range(realized)]
     box = {**node("list", depth=1, type="List", id="list", patterns=["Scroll", "ItemContainer"]),
-           "rect": [0, 100, 200, 160], "items": items}
+           "rect": [0, 100, 200, 160], "items": items, "unread": None if items is None else items - realized}
     return {"windows": [{"hwnd": MAIN}], "nodes": [window(MAIN), box, *rows]}
 
 
@@ -457,6 +457,22 @@ def test_a_probe_never_starts_from_a_control_scrolled_out_of_view(tmp_path):
 
     what = [f["what"] for f in inspect(tmp_path, clipped)[0]]
     assert "open-search" not in tried and "가끔 쓰는 기능 `search` 가 한 번 눌러서 보이지 않는다" in what
+
+
+def test_a_probe_is_proven_by_the_control_it_acted_on_never_one_in_another_window(tmp_path):
+    (tmp_path / "shots").mkdir()
+
+    def elsewhere(sid, state, steps):   # at the fresh start the opener is disabled; an owned window shows a copy
+        got = shown(sid, state, steps)
+        if steps:
+            fresh = got["states"][0]
+            next(n for n in fresh["nodes"] if n["id"] == "open-search")["enabled"] = False
+            fresh["windows"].append({"hwnd": DIALOG, "frame": [0, 0, 300, 200], "owner": MAIN})
+            fresh["nodes"].append(node("open-search", window=DIALOG, id="open-search", name="찾기"))
+        return got
+
+    what = [f["what"] for f in inspect(tmp_path, elsewhere)[0]]
+    assert "가끔 쓰는 기능 `search` 가 한 번 눌러서 보이지 않는다" in what
 
 
 def test_a_control_scrolled_past_its_window_is_reachable_not_outside_it():
