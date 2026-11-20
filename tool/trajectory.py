@@ -138,6 +138,9 @@ def record(
         with path.open("a+b") as handle:
             # A row cut before its newline (`hook_deadline` exits mid-write)
             # is closed first, or this row would run onto it and break too.
+            # ponytail: no lock across processes, so a row cut between this
+            # check and the write still swallows this one; it reads as a reset,
+            # one turn resends everything. A file lock if that ever shows up.
             # Appending mode writes at the end wherever the read left off.
             end = handle.seek(0, os.SEEK_END)
             torn = False

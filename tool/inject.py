@@ -207,13 +207,13 @@ def main() -> int:
     matched = match_pages(prompt, available)
     limits = tuple(budget(args.adapter, b, args.project) for b in (RULE_BUDGET, REPO_BUDGET))
     # The deadline's answer if translation or `recall` stall: untranslated, not deduplicated,
-    # fitted to the ceiling less its own heading.
+    # fitted to the ceiling less the notice that follows it.
     ceiling = LIMIT.get(args.host or "")
     q_rules, q_decisions, q_parts, _q_repo, q_trimmed, quick, _q = compose(
         matched, limits, "", args.project, set(), repeatable(available),
         None if ceiling is None else ceiling - len(hook_deadline.PARTIAL.encode("utf-8")))
     if quick:
-        hook_deadline.best = answer(hook_deadline.PARTIAL + quick, q_rules + q_decisions,
+        hook_deadline.best = answer(quick + hook_deadline.PARTIAL, q_rules + q_decisions,
                                     q_parts, q_trimmed, "", partial=True)
     english = rendering(prompt, deadline)
     matched = localised(matched, deadline)

@@ -38,11 +38,15 @@ def dispatch(body: str, stdin: str | None, env: dict | None = None) -> tuple[sub
     return done, time.monotonic() - started
 
 
-def test_the_dispatcher_arms_before_it_reads_stdin_and_stays_silent_unattached():
-    # stdin that never ends: the read blocks as a stalled host pipe would.
-    body = "import threading; sys.stdin = open(os.devnull); sys.stdin.buffer.read = lambda: time.sleep(20)"
-    done, took = dispatch(body, None)
-    assert done.returncode == 0 and took < 10 and done.stdout == ""
+def test_a_deadline_with_no_fallback_yet_leaves_the_hook_running():
+    """Past the deadline before the project was known, the hook still answers
+    if it gets there inside the host's limit — the timer does not cut it."""
+
+    body = ("hook.project_for = lambda cwd: (Path(cwd), Path(cwd))\n"
+            "hook.legacy = lambda *a: time.sleep(1.5) or False\n"
+            "hook.runpy.run_path = lambda *a, **k: d.send({'answer': 'late'})")
+    done, _took = dispatch(body, json.dumps({"cwd": str(HERE)}))
+    assert done.returncode == 0 and json.loads(done.stdout) == {"answer": "late"}
 
 
 def test_the_probe_forwards_and_records_the_deadline_answer(tmp_path):

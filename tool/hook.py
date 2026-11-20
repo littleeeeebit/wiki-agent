@@ -24,7 +24,6 @@ import os
 import re
 import runpy
 import sys
-import threading
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -98,17 +97,18 @@ def legacy(top: Path, host: str, script: str) -> bool:
 def main(argv: list[str]) -> int:
     # Whatever the script it runs prints goes out through this stream.
     sys.stdout.reconfigure(encoding="utf-8")
+    # First, before the script check, reading stdin and resolving the project:
+    # all of it counts against the host's limit. Its fallback stays empty until
+    # the project is known to be attached, and an empty one never exits — the
+    # host decides then. Only as the host's process: a test calling `main`
+    # would be ended by the timer.
+    timed = len(argv) > 1 and argv[1] in hook_deadline.LIMITS and Path(sys.argv[0]).name == "hook.py"
+    if timed:
+        hook_deadline.arm(hook_deadline.LIMITS[argv[1]][0], None)
     if len(argv) < 2 or argv[0] not in LEGACY or not (HERE / argv[1]).is_file():
         print("hook skipped: usage hook.py <claude|codex> <script> [args]", file=sys.stderr)
         return 0
     host, script, extra = argv[0], argv[1], argv[2:]
-    # Before reading stdin and resolving the project: both count against the
-    # host's limit. With no fallback yet, a stall here still exits silently,
-    # as an unattached checkout must. Only as the host's process: a test calling
-    # `main` would be ended by the timer.
-    timed = script in hook_deadline.LIMITS and Path(sys.argv[0]).name == "hook.py"
-    if timed:
-        hook_deadline.arm(hook_deadline.LIMITS[script][0], None)
     raw = sys.stdin.buffer.read()
     try:
         cwd = Path(json.loads(raw.decode("utf-8") or "{}").get("cwd") or os.getcwd())
@@ -152,13 +152,14 @@ def main(argv: list[str]) -> int:
     # A text stream over bytes, not `StringIO`: every script calls
     # `sys.stdout.reconfigure`, which `StringIO` does not have.
     held = io.BytesIO()
-    out, sys.stdout = sys.stdout, io.TextIOWrapper(held, encoding="utf-8", write_through=True)
-    once, done = threading.Lock(), []
+    done: list[bool] = []
 
     def forward() -> None:
         # Once, from the `finally` or from the deadline's hard exit, which
-        # skips the `finally`; the second caller waits for the first.
-        with once:
+        # skips the `finally`; the second caller waits for the first. Under the
+        # lock the deadline writes its answer under, so the buffer is never
+        # read halfway through an answer.
+        with hook_deadline.lock:
             if done:
                 return
             done.append(True)
@@ -169,7 +170,11 @@ def main(argv: list[str]) -> int:
             out.flush()
             probed(nonce, host, script, raw, printed)
 
-    hook_deadline.before_exit = forward
+    # The buffer and its forwarding go in together: an answer written between
+    # the two would land in a buffer nothing forwards.
+    with hook_deadline.lock:
+        out, sys.stdout = sys.stdout, io.TextIOWrapper(held, encoding="utf-8", write_through=True)
+        hook_deadline.before_exit = forward
     try:
         runpy.run_path(str(HERE / script), run_name="__main__")
     finally:

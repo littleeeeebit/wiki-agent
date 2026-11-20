@@ -37,14 +37,17 @@ LIMITS = {
         "plans under `docs/plans/`, and the recent records in `.wiki/decisions/`."
     ), "위키: 시간 안에 현재 상태를 못 읽어 넣지 못했다"),
 }
-# Heads the pages the hook found but could not finish: not translated, and not
-# checked against what this session already holds.
+# Follows the pages the hook found but could not finish: not translated, and
+# not checked against what this session already holds. After them, not before,
+# so a body over the ceiling still opens with its rule index in the preview.
 PARTIAL = (
-    "<!-- wiki:deadline -->\nThe wiki hook ran short of time: the repository pages below are the "
-    "untranslated Korean originals and pages already seen this session were not left out.\n\n"
+    "\n\n<!-- wiki:deadline -->\nThe wiki hook ran short of time: the repository pages above are the "
+    "untranslated Korean originals and pages already seen this session were not left out.\n"
 )
 
-_lock = threading.Lock()
+# Held while an answer is written, and by whoever forwards stdout, so a reader
+# of the stream never sees half an answer.
+lock = threading.Lock()
 _sent = False
 _armed = False
 best: dict | None = None
@@ -59,7 +62,7 @@ def send(answer: dict) -> bool:
     """Write the hook's one answer. False when the deadline answered first."""
 
     global _sent
-    with _lock:
+    with lock:
         if _sent:
             return False
         json.dump(answer, sys.stdout, ensure_ascii=False)
@@ -77,9 +80,16 @@ before_exit = None
 
 
 def _expire() -> None:
+    with lock:
+        answered, fallback = _sent, best
+    if not answered and fallback is None:
+        # Nothing chosen yet — the dispatcher has not seen an attached project.
+        # The host's own limit decides, as before this existed: exiting now
+        # would cut a hook that might still answer inside it.
+        return
     try:
-        if best is not None:
-            send(best)
+        if not answered:
+            send(fallback)
         if before_exit is not None:
             before_exit()
     finally:
@@ -98,7 +108,7 @@ def stalled(script: str) -> dict:
 
 
 def arm(seconds: float, fallback: dict | None) -> None:
-    """Start the timer. With no `fallback` yet, expiry only exits — silently."""
+    """Start the timer. With no `fallback` by expiry, it does nothing."""
 
     global best, _armed
     best, _armed = fallback, True
