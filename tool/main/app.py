@@ -38,7 +38,7 @@ import agent
 from common import errorlog
 from common import settings as settings_file
 
-from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, release_api, runtime, specs, suite, survey, update, verification, wiring, work
+from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_needs, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, release_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
 from . import onboarding
 
@@ -155,6 +155,7 @@ app.include_router(planning.router)
 app.include_router(oneshot.router)
 app.include_router(oneshot_android.router)
 app.include_router(oneshot_spec.router)
+app.include_router(oneshot_needs.router)
 app.include_router(oneshot_front.router)
 app.include_router(oneshot_critique.router)
 app.include_router(oneshot_phone.router)

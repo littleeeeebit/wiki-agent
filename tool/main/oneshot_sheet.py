@@ -35,7 +35,7 @@ BLOCKS = ",".join(block for block, _, _ in KINDS.values())
 CORE = {
     "modules": ("oneshot-modules", re.compile(r"M[1-9]\d*"),
                 ("name", "contract", "inputs", "outputs", "errors", "state", "stores", "calls")),
-    "outside": ("oneshot-outside", re.compile(r"X[1-9]\d*"), ("target", "does", "failure")),
+    "outside": ("oneshot-outside", re.compile(r"X[1-9]\d*"), ("target", "does", "failure", "needs")),
     "assumptions": KINDS["assumptions"],
     "tests": KINDS["tests"],
 }
@@ -189,6 +189,8 @@ def _kind(name: str, item: dict, where: str) -> dict:
     elif name == "outside":
         for key in ("target", "does", "failure"):
             item[key] = _text(item, key, where)
+        from . import oneshot_needs   # what the owner gives it; that module imports this one
+        item["needs"] = oneshot_needs.parsed(item["needs"], where)
     elif name == "assumptions":
         for key in ("what", "why", "rejected"):
             item[key] = _text(item, key, where)
@@ -308,6 +310,8 @@ def core_checked(design: dict, reqs: list[dict], glossary: list[dict], profile: 
         raise ValueError(f"{', '.join(loose)}: 어떤 요구에도, 요구를 맡은 모듈의 호출에도 쓰이지 않는다 — 범위 밖이다")
     if unused := sorted(outside - {c for m in modules.values() for c in m["calls"]}):
         raise ValueError(f"{', '.join(unused)}: 이 바깥 호출을 부르는 모듈이 없다")
+    from . import oneshot_needs   # it imports this module
+    oneshot_needs.owed(design)   # one id per need, one need per `env`
     for t in design["tests"]:
         if not req_ids & set(t["depends_on"]) or not set(modules) & set(t["depends_on"]):
             raise ValueError(f"{t['id']}: 시험하는 요구와 그 계약을 확인하는 모듈을 `depends_on` 에 적어야 한다")
@@ -604,6 +608,8 @@ def core_sheet(spec: dict) -> str:
                   "| --- | --- | --- | --- |"]
         lines += [f"| {x['id']}{mark(x['id'])} | {_cell(x['target'])} | {_cell(x['does'])} | {_cell(x['failure'])} |"
                   for x in design["outside"]]
+        from . import oneshot_needs   # it imports this module
+        lines += oneshot_needs.section(design)
     lines += tested_scenarios(design, reqs, mark)
     lines += ["", "<details><summary>모듈의 입력·출력·상태, 테스트, 용어집</summary>", ""]
     for n, m in enumerate(design["modules"]):   # a module past the table shows its contract and calls here
