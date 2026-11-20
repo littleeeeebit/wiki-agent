@@ -458,19 +458,23 @@ def test_a_committed_credential_holds_the_approval_for_the_owner_even_after_a_de
 
 def test_a_credential_in_a_pinned_file_stops_at_its_refusal_and_is_dead_once_revoked(reviewed):
     _, head, sent = reviewed
-    leak = {"location": "test_budget.py:1", "severity": "P0", "reason": "키가 커밋됐다", "evidence": "1행",
-            "area": "credential exposure", "secret": True}
+    leak = {"location": "`./test_budget.py:1`", "severity": "P0", "reason": "키가 커밋됐다", "evidence": "1행",
+            "area": "credential exposure", "secret": True}   # the pinned file in another spelling
+    other = {**leak, "location": "settings.py:4"}
     with patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
-        _, asking = answers(verdict(head, "refuse", leak))
+        _, asking = answers(verdict(head, "refuse", leak, other))
         with asking:
             oneshot_review.review("budget")
         assert not sent and o()["stopped"]["exposed"] == head   # the build may not change a pinned file
+        assert "settings.py:4" in o()["stopped"]["detail"]   # the `[재개]` clears both, so both are shown
+        assert oneshot_review.canonical("a\\b/../c.py") == "a/c.py"
         with patch.object(oneshot_review, "begin", lambda repo: None):
             oneshot_spec.resume("budget")
         said, asking = answers(verdict(head, "approve"))
         with asking, patch.object(oneshot_spec, "start", lambda *a, **k: None):
             oneshot_review.review("budget")
-    assert "owner revoked the credentials committed at `test_budget.py:1`" in said[0][1] and o()["stage"] == "split"
+    assert "owner revoked the credentials committed at `./test_budget.py:1`, `settings.py:4`" in said[0][1]
+    assert o()["stage"] == "split"
 
 
 def test_a_line_count_git_cannot_make_is_left_unknown(reviewed):

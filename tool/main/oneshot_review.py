@@ -10,6 +10,7 @@ refusal that reaches it stops the run with `review`. Nothing here pushes.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import subprocess
 import time
@@ -100,7 +101,7 @@ def review_text(spec: dict, head: str, how: str, rules: dict | None = None) -> s
 def revoked_text(o: dict) -> str:
     """The credentials the owner revoked at a hold: a value left in a file, a pinned one included, is dead."""
 
-    gone = sorted({f["location"] for r in (o.get("reviews") or [])[:int(o.get("secrets_cleared") or 0)]
+    gone = sorted({f["location"].strip("` ") for r in (o.get("reviews") or [])[:int(o.get("secrets_cleared") or 0)]
                    for f in r["findings"] if exposed(f)})
     return ("\nThe owner revoked the credentials committed at " + ", ".join(f"`{g}`" for g in gone) + ". A value "
             "still there is dead: do not report it again.\n") if gone else ""
@@ -180,7 +181,13 @@ def unquoted(text: str) -> str:
 
 def touched(location: str, changed: dict[str, list[tuple[int, int]]]) -> bool:
     m = re.match(r"\s*`?(.+?):(\d+)", location)
-    return bool(m) and any(a <= int(m[2]) <= b for a, b in changed.get(m[1].strip().replace("\\", "/"), []))
+    return bool(m) and any(a <= int(m[2]) <= b for a, b in changed.get(canonical(m[1]), []))
+
+
+def canonical(path: str) -> str:
+    """A worktree-relative path in one spelling: `./a\\b/../c` is `a/c`, as Git writes it."""
+
+    return posixpath.normpath(path.strip().replace("\\", "/"))
 
 
 def ruled(spec: dict, tree: Path, head: str) -> dict:
@@ -421,8 +428,10 @@ def decided(repo: str, store, spec: dict, found: dict):
 
     o = spec["oneshot"]
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
-    stuck = [f for f in found["findings"] if exposed(f) and file_of(f["location"]) in (o.get("contract") or [])]
-    if (found["verdict"] == "approve" and (shown := exposures(o, reviews))) or (shown := stuck):
+    pins = {canonical(name) for name in o.get("contract") or []}
+    stuck = [f for f in found["findings"] if exposed(f) and file_of(f["location"]) in pins]
+    # Every credential the reviews found since the last clearing is shown: the `[재개]` clears them all.
+    if (shown := exposures(o, reviews)) and (found["verdict"] == "approve" or stuck):
         # A credential a review found committed stays in the history a later deletion leaves behind, and the
         # first pull request pushes that history: the owner revokes it, then `[재개]`. Rewriting the history
         # instead would move the pinned tests' commit the build checks its ancestry against. One in a pinned
@@ -537,7 +546,7 @@ def exposures(o: dict, reviews: list[dict]) -> list[dict]:
 
 def file_of(location: str) -> str:
     m = re.match(r"\s*`?(.+?)(?::\d+.*)?`?\s*$", location)
-    return (m[1] if m else location).strip().replace("\\", "/")
+    return canonical(m[1] if m else location)
 
 
 def exposed(f: dict) -> bool:
