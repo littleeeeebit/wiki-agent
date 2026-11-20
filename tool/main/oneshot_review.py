@@ -94,17 +94,7 @@ def review_text(spec: dict, head: str, how: str, rules: dict | None = None) -> s
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe environment profile and the stack:\n\n"
             f"{environment(o)}\n\nThe pinned contract tests, unchanged since "
             f"`{o['tests_head']}`: {', '.join(o['contract'])}.\n\nThe whole diff from the base commit "
-            f"`{spec['start_head']}` to HEAD: {how}.\n" + earlier_text(o.get("reviews") or []) + rules_text(rules or {})
-            + revoked_text(o))
-
-
-def revoked_text(o: dict) -> str:
-    """The credentials the owner revoked at a hold: a value left in a file, a pinned one included, is dead."""
-
-    gone = sorted({f["location"].strip("` ") for r in (o.get("reviews") or [])[:int(o.get("secrets_cleared") or 0)]
-                   for f in r["findings"] if exposed(f)})
-    return ("\nThe owner revoked the credentials committed at " + ", ".join(f"`{g}`" for g in gone) + ". A value "
-            "still there is dead: do not report it again.\n") if gone else ""
+            f"`{spec['start_head']}` to HEAD: {how}.\n" + earlier_text(o.get("reviews") or []) + rules_text(rules or {}))
 
 
 def anchors(spec: dict) -> set[str]:
@@ -290,8 +280,6 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
                          + "), 그 종류에 걸린 요구, 기기에서 볼 `check` 를 적는다 — PC 앱(`desktop`)은 `source` 로 "
                          "`look`(UI Automation 상태) 이나 `owner`(주인 화면에서만 보이는 캡처·합성) 를 적고, 둘 다 "
                          "아니면 미루지 못한다. 안드로이드는 `source` 를 적지 않는다")
-    if any("secret" in f and not exposed(f) for f in findings):
-        raise ValueError("`secret` 는 커밋된 자격 증명을 적은 P0 에만, 기기로 미루지 않고 `true` 로 붙는다")
     serious = [f for f in findings if f["severity"] != "P2" and "device" not in f]
     if not all(area_of(f) for f in serious):
         raise ValueError("P0·P1 발견마다 그것이 걸린 동작 방식의 이름 `area` 를 적는다")
@@ -304,7 +292,7 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
     return {"verdict": value["verdict"], "head": head,
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
                           **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
-                          **({k: f[k] for k in ("breaks", "repro", "secret") if f.get(k)}),
+                          **({k: f[k] for k in ("breaks", "repro") if f.get(k)}),
                           **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source")
                                          if k in f["device"]}}
                              if "device" in f else {})} for f in findings]}
@@ -428,20 +416,6 @@ def decided(repo: str, store, spec: dict, found: dict):
 
     o = spec["oneshot"]
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
-    pins = {canonical(name) for name in o.get("contract") or []}
-    stuck = [f for f in found["findings"] if exposed(f) and file_of(f["location"]) in pins]
-    # Every credential the reviews found since the last clearing is shown: the `[재개]` clears them all.
-    if (shown := exposures(o, reviews)) and (found["verdict"] == "approve" or stuck):
-        # A credential a review found committed stays in the history a later deletion leaves behind, and the
-        # first pull request pushes that history: the owner revokes it, then `[재개]`. Rewriting the history
-        # instead would move the pinned tests' commit the build checks its ancestry against. One in a pinned
-        # contract file stops at once: the build may not change that file, so no repair could remove it.
-        detail = ("커밋된 자격 증명이 첫 PR 이 올릴 커밋 기록에 남아 있다 — " + " / ".join(f["location"] for f in shown)
-                  + " — 그 키를 폐기하고 새 키로 바꾼 뒤 [재개]")
-        with oneshot._lock:
-            store.put(reviews=reviews, working=None, stopped={
-                "reason": "review", "detail": detail, "state": store.get()[store.state], "exposed": found["head"]})
-        return None
     if found["verdict"] == "approve":
         # `working` names the split before its worker starts: a server that dies in between leaves it for `recover`.
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "owed": owing(found),
@@ -538,30 +512,10 @@ def capped(o: dict) -> bool:
     return last is not None and (o.get("stopped") or {}).get("capped") == last["head"]
 
 
-def exposures(o: dict, reviews: list[dict]) -> list[dict]:
-    """The committed credentials the reviews found since the owner last cleared them (`secrets_cleared`)."""
-
-    return [f for r in reviews[int(o.get("secrets_cleared") or 0):] for f in r["findings"] if exposed(f)]
-
-
-def file_of(location: str) -> str:
-    m = re.match(r"\s*`?(.+?)(?::\d+.*)?`?\s*$", location)
-    return canonical(m[1] if m else location)
-
-
-def exposed(f: dict) -> bool:
-    """A committed credential, as only a blocking P0 records it."""
-
-    return f.get("secret") is True and f.get("severity") == "P0" and "device" not in f
-
-
 def resume(repo: str) -> None:
-    """`[재개]` in `review`, the built HEAD not refused at the cap: the review run again on the current HEAD. A
-    stop for a committed credential is the owner saying it is revoked."""
+    """`[재개]` in `review`, the built HEAD not refused at the cap: the review run again on the current HEAD."""
 
-    o = oneshot_spec.spec_of(repo)["oneshot"]
-    cleared = {"secrets_cleared": len(o.get("reviews") or [])} if (o.get("stopped") or {}).get("exposed") else {}
-    oneshot_spec.saved(repo, oneshot={"refused": 0, **cleared})
+    oneshot_spec.saved(repo, oneshot={"refused": 0})
     begin(repo)
 
 

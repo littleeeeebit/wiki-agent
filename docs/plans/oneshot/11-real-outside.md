@@ -110,6 +110,22 @@ The card counts, per run, the gate runs that reached each outside call (the
 tests that name a need), shown beside the run's spending. Nothing is limited
 until the owner has seen those numbers.
 
+### A credential the build commits anyway
+
+The backend review grades a committed credential P0. A repair that deletes
+it leaves it in the history the first pull request pushes, and a later
+review that sees only the aggregate diff cannot tell. The leak check above
+covers the values the owner gave. A value the agent obtained some other way
+is this step's to handle too. PR #410 tried a hold the owner cleared by
+revoking, and its review found new cases six rounds in a row:
+
+- a value in a pinned file;
+- a replacement key on the same line;
+- a case alias of a path on Windows.
+
+The owner moved it here on 2026-11-20. The check belongs where the server
+knows the values, at commit time, rather than in the reviewer's reading.
+
 ## Steps
 
 | # | Step | Status |

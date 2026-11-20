@@ -34,11 +34,7 @@ P0 or P1. A P1 changes requested behaviour, so it names that request: its
 `breaks` lists the ids of the design items or requirements it breaks
 (`["R8", "M1"]`), from the list the input gives. A finding that breaks none of
 them is P2. A P0 may carry `breaks` too. A credential, key or token
-committed to the repository is P0, whatever the design says, and carries
-`"secret": true`. A later commit that deletes it does not take it out of
-the history the first pull request pushes; the server holds the run for
-the owner to revoke it once it is found, so leave it out once the file no
-longer holds it.
+committed to the repository is P0, whatever the design says.
 
 ## Earlier rounds
 
