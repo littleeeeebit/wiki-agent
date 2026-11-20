@@ -61,7 +61,7 @@ def begin(repo: str) -> None:
         oneshot_spec.store(repo).stop("restart", "서버가 꺼지는 중이라 백엔드 리뷰를 시작하지 못했다")
 
 
-def frozen(spec: dict) -> tuple[str, str, int]:
+def frozen(spec: dict) -> tuple[str, str, int | None]:
     """`(head, how to read the diff, lines it adds)`, the diff from the base commit written for `pr_diff` and kept
     as the record."""
 
@@ -76,8 +76,9 @@ def frozen(spec: dict) -> tuple[str, str, int]:
     how = ("read it with the `pr_diff` tool" if oneshot.codex_role("review", store) else
            f"read it from `{read_tools.diff_file(tree).resolve()}`; a line starting with ~ continues the line before it")
     counted = specs.sh(["git", "diff", "--numstat", spec["start_head"], head], tree, 120)
-    added = sum(int(n) for n, *_ in (line.split("\t") for line in counted.stdout.splitlines()) if n.isdigit())
-    return head, how, added
+    added = None if counted.returncode else \
+        sum(int(n) for n, *_ in (line.split("\t") for line in counted.stdout.splitlines()) if n.isdigit())
+    return head, how, added   # `None`: Git could not count, and the card says it does not know
 
 
 def review_text(spec: dict, head: str, how: str, rules: dict | None = None) -> str:
@@ -92,12 +93,17 @@ def review_text(spec: dict, head: str, how: str, rules: dict | None = None) -> s
 
 
 def anchors(spec: dict) -> set[str]:
-    """The ids a P1 may say it breaks: the design's items and the requirements they depend on. A requirement no
-    item depends on is not this build's to meet."""
+    """The ids a P1 may say it breaks: the design's items and the requirements they depend on, through the
+    requirements those depend on. A requirement nothing of the design reaches is not this build's to meet."""
 
     items = [it for v in spec["oneshot"]["design"].values() if isinstance(v, list) for it in v if isinstance(it, dict)]
-    return {str(it["id"]) for it in items if it.get("id")} | \
-        {str(d) for it in items for d in it.get("depends_on") or [] if str(d).startswith("R")}
+    under = {str(r["id"]): [str(d) for d in r.get("depends_on") or []] for r in spec.get("requirements") or []}
+    reached, todo = set(), [str(d) for it in items for d in it.get("depends_on") or [] if str(d).startswith("R")]
+    while todo:
+        if (r := todo.pop()) not in reached:
+            reached.add(r)
+            todo += under.get(r, [])
+    return {str(it["id"]) for it in items if it.get("id")} | reached
 
 
 def blocking(found: dict) -> list[dict]:
@@ -125,9 +131,8 @@ def changed_lines(tree: Path, since: str, head: str) -> dict[str, list[tuple[int
             path, header = None, True
         elif header and line.startswith("+++ "):
             name = line[4:].rstrip("\t")   # Git ends a path holding a space with a tab
-            if name.startswith('"') and name.endswith('"'):   # a quoted path: `\"`, `\\` and `\t` inside
-                name = name[1:-1].encode("latin-1", "backslashreplace").decode("unicode_escape").encode(
-                    "latin-1").decode("utf-8", "replace")
+            if name.startswith('"') and name.endswith('"'):
+                name = unquoted(name[1:-1])
             path = name[2:] if name.startswith("b/") else None   # `/dev/null`: the file is gone
         elif line.startswith("@@") and (m := re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)):
             header, start, count = False, int(m[1]), int(m[2] or 1)
@@ -135,6 +140,28 @@ def changed_lines(tree: Path, since: str, head: str) -> dict[str, list[tuple[int
                 ranges.setdefault(path, []).append((max(start, 1), start + count - 1) if count else
                                                     (max(start, 1), start + 1))
     return ranges
+
+
+ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def unquoted(text: str) -> str:
+    """A path Git quoted: its C escapes and octal bytes read back to bytes, literal UTF-8 kept, then decoded."""
+
+    out, i = bytearray(), 0
+    while i < len(text):
+        if text[i] == "\\" and i + 1 < len(text):
+            if text[i + 1] in ESCAPES:
+                out.append(ESCAPES[text[i + 1]])
+                i += 2
+                continue
+            if text[i + 1:i + 4].isdigit() and len(text[i + 1:i + 4]) == 3:
+                out.append(int(text[i + 1:i + 4], 8) & 0xFF)
+                i += 4
+                continue
+        out += text[i].encode("utf-8")
+        i += 1
+    return out.decode("utf-8", "replace")
 
 
 def touched(location: str, changed: dict[str, list[tuple[int, int]]]) -> bool:
@@ -254,7 +281,7 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
     return {"verdict": value["verdict"], "head": head,
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
                           **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
-                          **({k: f[k] for k in ("breaks", "repro") if f.get(k)}),
+                          **({k: f[k] for k in ("breaks", "repro", "secret") if f.get(k)}),
                           **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source")
                                          if k in f["device"]}}
                              if "device" in f else {})} for f in findings]}
@@ -270,6 +297,8 @@ def held(f: dict, rules: dict) -> None:
         raise ValueError("P1 발견마다 그것이 깨뜨리는 설계 항목·요구 번호를 `breaks` 에 적는다 — 아무것도 "
                          "깨뜨리지 않으면 P2 다")
     repro = f.get("repro")
+    if "secret" in f and (f["secret"] is not True or f["severity"] != "P0"):
+        raise ValueError("`secret` 는 커밋된 자격 증명을 적은 P0 에만 `true` 로 붙는다")
     if repro is not None and not (isinstance(repro, str) and repro.strip()):
         raise ValueError("`repro` 는 평범한 입력과 순서, 그 결과를 적은 비어 있지 않은 글이다")
     if area_of(f) in rules.get("repeated", ()) and not repro:
@@ -378,6 +407,15 @@ def decided(repo: str, store, spec: dict, found: dict):
 
     o = spec["oneshot"]
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
+    if found["verdict"] == "approve" and (shown := exposures(o, reviews)):
+        # A credential a review found committed stays in the history a later deletion leaves behind, and the
+        # first pull request pushes that history: the owner revokes it or rewrites the history, then `[재개]`.
+        detail = ("커밋된 자격 증명이 첫 PR 이 올릴 커밋 기록에 남아 있다 — " + " / ".join(f["location"] for f in shown)
+                  + " — 폐기했거나 기록에서 지운 뒤 [재개]")
+        with oneshot._lock:
+            store.put(reviews=reviews, working=None, stopped={
+                "reason": "review", "detail": detail, "state": store.get()[store.state], "exposed": found["head"]})
+        return None
     if found["verdict"] == "approve":
         # `working` names the split before its worker starts: a server that dies in between leaves it for `recover`.
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "owed": owing(found),
@@ -410,7 +448,8 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
     found = oneshot.turned(store, "review", oneshot.prompt("review", shape(spec["oneshot"])),
                            review_text(spec, head, how, rules), "oneshot-review",
                            lambda value: verdict_of(value, head, deferrable(spec), rules), tree)
-    return None if found is None else {**found, "added": added, "focus": "narrow" if rules["changed"] is not None else "full"}
+    return None if found is None else {**found, **({"added": added} if added is not None else {}),
+                                       "focus": "narrow" if rules["changed"] is not None else "full"}
 
 
 def rebuild(repo: str, store, why: str, build: str = "build") -> None:
@@ -473,10 +512,19 @@ def capped(o: dict) -> bool:
     return last is not None and (o.get("stopped") or {}).get("capped") == last["head"]
 
 
-def resume(repo: str) -> None:
-    """`[재개]` in `review`, the built HEAD not refused at the cap: the review run again on the current HEAD."""
+def exposures(o: dict, reviews: list[dict]) -> list[dict]:
+    """The committed credentials the reviews found since the owner last cleared them (`secrets_cleared`)."""
 
-    oneshot_spec.saved(repo, oneshot={"refused": 0})
+    return [f for r in reviews[int(o.get("secrets_cleared") or 0):] for f in r["findings"] if f.get("secret")]
+
+
+def resume(repo: str) -> None:
+    """`[재개]` in `review`, the built HEAD not refused at the cap: the review run again on the current HEAD. A
+    stop for a committed credential is the owner saying it is revoked or out of the history."""
+
+    o = oneshot_spec.spec_of(repo)["oneshot"]
+    cleared = {"secrets_cleared": len(o.get("reviews") or [])} if (o.get("stopped") or {}).get("exposed") else {}
+    oneshot_spec.saved(repo, oneshot={"refused": 0, **cleared})
     begin(repo)
 
 

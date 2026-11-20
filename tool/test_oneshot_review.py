@@ -413,3 +413,56 @@ def test_the_added_lines_count_a_line_that_starts_with_two_plus_signs(reviewed):
     git(tree, "commit", "-m", "count")
     oneshot_spec.saved("budget", oneshot={"built_head": git(tree, "rev-parse", "HEAD")})
     assert oneshot_review.frozen(specs.load("budget", oneshot.BRANCH))[2] == 3   # budget_app.py's two lines and this
+
+
+def test_a_quoted_path_keeps_its_escapes_and_its_literal_hangul():
+    assert oneshot_review.unquoted(r"a\t한글.py") == "a\t한글.py"
+    assert oneshot_review.unquoted(r"\355\225\234.py") == "한.py" and oneshot_review.unquoted(r'q\"\\.py') == 'q"\\.py'
+
+
+def test_a_requirement_reached_through_another_is_one_a_p1_may_name():
+    spec = {"oneshot": {"design": {"modules": [{"id": "M1", "depends_on": ["R1"]}]}},
+            "requirements": [{"id": "R1", "depends_on": ["R2"]}, {"id": "R2", "depends_on": ["R3"]}, {"id": "R3"},
+                             {"id": "R9"}]}
+    assert oneshot_review.anchors(spec) == {"M1", "R1", "R2", "R3"}   # R9: nothing of the design reaches it
+
+
+def test_a_committed_credential_holds_the_approval_for_the_owner_even_after_a_deletion(reviewed):
+    tree, head, sent = reviewed
+    leak = {"location": "config.py:1", "severity": "P0", "reason": "키가 커밋됐다", "evidence": "config.py 1행",
+            "area": "credential exposure", "secret": True}
+    with pytest.raises(ValueError, match="secret"):   # only a P0 is a committed credential
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [{**leak, "severity": "P1"}]}, head,
+                                  rules={"anchors": set()})
+    with patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        _, asking = answers(verdict(head, "refuse", leak))
+        with asking:
+            oneshot_review.review("budget")
+        assert sent and o()["reviews"][-1]["findings"][0]["secret"] is True
+        oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review"})
+        _, asking = answers(verdict(head, "approve"))   # the file no longer holds it; the history still does
+        with asking:
+            oneshot_review.review("budget")
+        assert o()["stage"] == "review" and o()["stopped"]["exposed"] == head and "config.py:1" in o()["stopped"]["detail"]
+        begun = []
+        with patch.object(oneshot_review, "begin", begun.append):
+            oneshot_spec.resume("budget")   # the owner revoked it or rewrote the history
+        assert begun == ["budget"] and o()["secrets_cleared"] == 2
+        _, asking = answers(verdict(head, "approve"))
+        with asking, patch.object(oneshot_spec, "start", lambda *a, **k: None):
+            oneshot_review.review("budget")
+    assert o()["stage"] == "split"
+
+
+def test_a_line_count_git_cannot_make_is_left_unknown(reviewed):
+    _, head, _ = reviewed
+    real = specs.sh
+
+    def numstat(argv, *a, **k):
+        return SimpleNamespace(returncode=1, stdout="", stderr="no") if "--numstat" in argv else real(argv, *a, **k)
+
+    _, asking = answers(verdict(head, "refuse", P1))
+    with asking, patch.object(specs, "sh", numstat), \
+         patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        oneshot_review.review("budget")
+    assert "added" not in o()["reviews"][-1]
