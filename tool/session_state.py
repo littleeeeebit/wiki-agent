@@ -9,11 +9,10 @@ the last of those is translated, and only at the one point where it crosses over
 
 from __future__ import annotations
 
-# First import of the entry point: it keeps the stack from before whatever
-# time limit kills this.
-import hook_diagnostics  # noqa: F401
-# Second: it answers before the host's limit when this never gets that far.
+# First import: it answers before the host's limit when this never gets that far.
 import hook_deadline
+# Then the stack from before whatever time limit kills this.
+import hook_diagnostics  # noqa: F401
 import argparse
 import re
 import subprocess

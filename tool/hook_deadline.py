@@ -7,8 +7,9 @@ was anything to print. So a timer answers first: a few seconds before the
 host's limit, the best output assembled so far goes out once and the process
 exits 0. The hook keeps `best` current as it gets further.
 
-Armed by the entry point's own first imports, like `hook_diagnostics`, so the
-stalls in the imports after it are covered too.
+Armed as early as the process allows: by `hook.py` before it resolves the
+project, or, run directly, by the hook's first import — ahead of
+`hook_diagnostics`, whose log scan can stall too.
 """
 
 from __future__ import annotations
@@ -69,19 +70,36 @@ def send(answer: dict) -> bool:
         return True
 
 
+# Run after the answer and before the hard exit. The dispatcher's probe mode
+# holds stdout in a buffer and forwards it from a `finally` that `os._exit`
+# skips, so it hangs its forwarding here.
+before_exit = None
+
+
 def _expire() -> None:
     try:
         if best is not None:
             send(best)
+        if before_exit is not None:
+            before_exit()
     finally:
         # Also after the hook's own answer: it is still recording, and a host
-        # that kills it drops the answer it already has.
-        # ponytail: a trajectory row cut mid-write reads back as nothing seen,
-        # so the next turn resends pages whole; tolerable, it errs on cost.
+        # that kills it drops the answer it already has. The files a cut can
+        # touch are written to survive it: `.wiki/.gitignore` is replaced
+        # whole, and a torn trajectory row is closed and skipped (`trajectory`).
         os._exit(0)
 
 
-def arm(seconds: float, fallback: dict) -> None:
+def stalled(script: str) -> dict:
+    """What `script` sends when it got nowhere."""
+
+    _seconds, event, context, note = LIMITS[script]
+    return output(event, context, note)
+
+
+def arm(seconds: float, fallback: dict | None) -> None:
+    """Start the timer. With no `fallback` yet, expiry only exits — silently."""
+
     global best, _armed
     best, _armed = fallback, True
     # Pinned before anything is written: a Korean `systemMessage` on a cp949
@@ -92,9 +110,10 @@ def arm(seconds: float, fallback: dict) -> None:
     timer.start()
 
 
+# Run directly by the host. Through `hook.py` the dispatcher arms instead, and
+# earlier: resolving the project counts against the host's limit too.
 if Path(sys.argv[0]).name in LIMITS:
-    _seconds, _event, _context, _note = LIMITS[Path(sys.argv[0]).name]
     try:
-        arm(_seconds, output(_event, _context, _note))
+        arm(LIMITS[Path(sys.argv[0]).name][0], stalled(Path(sys.argv[0]).name))
     except Exception:  # noqa: BLE001 — a deadline that fails to arm leaves the hook as it was
         pass

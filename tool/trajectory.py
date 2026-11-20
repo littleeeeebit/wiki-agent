@@ -44,7 +44,11 @@ def hush(wiki: Path) -> None:
     # The line ending is not left to the environment. Written with the Windows
     # default, the lines already there flip to CRLF too, and adding one line
     # shows up as a diff of the whole file.
-    ignore.write_text("\n".join([*lines, FILENAME]) + "\n", encoding="utf-8", newline="\n")
+    # Replaced whole, never truncated in place: `hook_deadline` can end the
+    # process mid-write, and an emptied ignore file exposes what it hid.
+    fresh = ignore.with_name(f".gitignore.{os.getpid()}.tmp")
+    fresh.write_text("\n".join([*lines, FILENAME]) + "\n", encoding="utf-8", newline="\n")
+    os.replace(fresh, ignore)
 
 
 def last_row(path: Path) -> dict | None:
@@ -131,8 +135,16 @@ def record(
         previous = last_row(path)
         if session and previous and previous.get("session") == session:
             row["prev"] = verdict(prompt, Markers.load(DEFAULT_MARKERS))
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        with path.open("a+b") as handle:
+            # A row cut before its newline (`hook_deadline` exits mid-write)
+            # is closed first, or this row would run onto it and break too.
+            # Appending mode writes at the end wherever the read left off.
+            end = handle.seek(0, os.SEEK_END)
+            torn = False
+            if end:
+                handle.seek(end - 1)
+                torn = handle.read(1) != b"\n"
+            handle.write((b"\n" if torn else b"") + (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8"))
     except Exception as error:  # noqa: BLE001
         return type(error).__name__
     return None
@@ -145,8 +157,10 @@ def session_rows(path: Path, session: str) -> list[dict]:
     `json.loads` — a thousand rows cost a few milliseconds that way. If the
     file ever reaches tens of thousands of rows, read the tail instead.
 
-    A broken line that names this session raises. Whatever it recorded is
-    lost, and the caller treats an exception as nothing seen.
+    A broken line that may be this session's — a row the hook's deadline cut —
+    drops the rows before it. It may have recorded a compact, so nothing older
+    is trusted and the next turn sends everything; the rows written after it
+    count again, so one cut row does not blind the session for good.
     """
 
     if not session or not path.exists():
@@ -156,7 +170,11 @@ def session_rows(path: Path, session: str) -> list[dict]:
         for line in handle:
             if session not in line:
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except ValueError:
+                found = []
+                continue
             if row.get("session") == session:
                 found.append(row)
     return found

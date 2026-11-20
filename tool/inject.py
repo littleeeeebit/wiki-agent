@@ -7,11 +7,10 @@ out rather than in the files.
 
 from __future__ import annotations
 
-# First import of the entry point: it keeps the stack from before whatever
-# time limit kills this.
-import hook_diagnostics  # noqa: F401
-# Second: it answers before the host's limit, with the best it has by then.
+# First import: it answers before the host's limit, with the best it has by then.
 import hook_deadline
+# Then the stack from before whatever time limit kills this.
+import hook_diagnostics  # noqa: F401
 import argparse
 import json
 import re
@@ -207,9 +206,12 @@ def main() -> int:
     available = pages(args.adapter, args.project)
     matched = match_pages(prompt, available)
     limits = tuple(budget(args.adapter, b, args.project) for b in (RULE_BUDGET, REPO_BUDGET))
-    # Sent by the deadline if translation or `recall` stall: untranslated, not deduplicated.
+    # The deadline's answer if translation or `recall` stall: untranslated, not deduplicated,
+    # fitted to the ceiling less its own heading.
+    ceiling = LIMIT.get(args.host or "")
     q_rules, q_decisions, q_parts, _q_repo, q_trimmed, quick, _q = compose(
-        matched, limits, "", args.project, set(), repeatable(available), LIMIT.get(args.host or ""))
+        matched, limits, "", args.project, set(), repeatable(available),
+        None if ceiling is None else ceiling - len(hook_deadline.PARTIAL.encode("utf-8")))
     if quick:
         hook_deadline.best = answer(hook_deadline.PARTIAL + quick, q_rules + q_decisions,
                                     q_parts, q_trimmed, "", partial=True)
@@ -222,9 +224,7 @@ def main() -> int:
     seen, where = recall(wiki, session, payload.get("transcript_path"), args.host)
     # Without a host the ceiling is unknown, so nothing is squeezed either.
     rules, decisions, rule_parts, repo_parts, trimmed, body, _squeezed = compose(
-        matched, limits,
-        english, args.project, seen, repeatable(available), LIMIT.get(args.host or ""),
-    )
+        matched, limits, english, args.project, seen, repeatable(available), ceiling)
     parts = rule_parts + repo_parts
 
     # Repository documents are not selected here. The whole listing goes in

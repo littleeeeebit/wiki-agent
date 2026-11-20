@@ -24,10 +24,13 @@ import os
 import re
 import runpy
 import sys
+import threading
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+
+import hook_deadline  # noqa: E402
 
 from common import layout  # noqa: E402
 from common.paths import RAW  # noqa: E402
@@ -99,6 +102,13 @@ def main(argv: list[str]) -> int:
         print("hook skipped: usage hook.py <claude|codex> <script> [args]", file=sys.stderr)
         return 0
     host, script, extra = argv[0], argv[1], argv[2:]
+    # Before reading stdin and resolving the project: both count against the
+    # host's limit. With no fallback yet, a stall here still exits silently,
+    # as an unattached checkout must. Only as the host's process: a test calling
+    # `main` would be ended by the timer.
+    timed = script in hook_deadline.LIMITS and Path(sys.argv[0]).name == "hook.py"
+    if timed:
+        hook_deadline.arm(hook_deadline.LIMITS[script][0], None)
     raw = sys.stdin.buffer.read()
     try:
         cwd = Path(json.loads(raw.decode("utf-8") or "{}").get("cwd") or os.getcwd())
@@ -110,6 +120,8 @@ def main(argv: list[str]) -> int:
     project, top = found
     if legacy(top, host, script):
         return 0
+    if timed:
+        hook_deadline.best = hook_deadline.stalled(script)
     if script == "claude_pretool.py":
         # Each check it holds keeps the rule it had as a hook of its own.
         from claude_pretool import MEMBERS
@@ -141,14 +153,27 @@ def main(argv: list[str]) -> int:
     # `sys.stdout.reconfigure`, which `StringIO` does not have.
     held = io.BytesIO()
     out, sys.stdout = sys.stdout, io.TextIOWrapper(held, encoding="utf-8", write_through=True)
+    once, done = threading.Lock(), []
+
+    def forward() -> None:
+        # Once, from the `finally` or from the deadline's hard exit, which
+        # skips the `finally`; the second caller waits for the first.
+        with once:
+            if done:
+                return
+            done.append(True)
+            sys.stdout.flush()
+            printed = held.getvalue().decode("utf-8", "replace")
+            sys.stdout = out
+            out.write(printed)
+            out.flush()
+            probed(nonce, host, script, raw, printed)
+
+    hook_deadline.before_exit = forward
     try:
         runpy.run_path(str(HERE / script), run_name="__main__")
     finally:
-        sys.stdout.flush()
-        printed, sys.stdout = held.getvalue().decode("utf-8", "replace"), out
-        out.write(printed)
-        out.flush()
-        probed(nonce, host, script, raw, printed)
+        forward()
     return 0
 
 
