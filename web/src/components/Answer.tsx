@@ -3,7 +3,7 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Candidates } from '@/components/Candidates'
 import { Picture } from '@/components/Picture'
-import { IMAGE, keepSources } from '@/lib/picture'
+import { IMAGE, InLink, keepSources } from '@/lib/picture'
 import { fileLink } from '@/lib/links'
 
 // Inline code that looks like a citation: `tool/main/app.py:118`, `docs/x.md`, a
@@ -63,19 +63,17 @@ export const Answer = memo(function Answer({ text, korean, remote, onPeek, onDec
         urlTransform={(href, key) => fileLink(href) ? href : keepSources(href, key)}
         components={{
           img: ({ src, alt }) => <Picture src={typeof src === 'string' ? src : undefined} alt={alt} />,
-          a: ({ href, children, node }) => {
+          a: ({ href, children }) => {
             const file = fileLink(href ?? '')
-            // A picture inside a link is its own control, the one that enlarges it; the link stands beside it.
-            const pictured = node?.children.some((c) => c.type === 'element' && c.tagName === 'img')
-            const label = pictured ? '링크 열기' : children
+            // A picture inside the link, however deep in its formatting, is its content and opens the link.
+            const text = <InLink.Provider value>{children}</InLink.Provider>
             const cite = file && <button type="button" className="cite" onClick={() => onPeek(file.path, file.line)}>
-              {label}
+              {text}
             </button>
             // Agents link a result picture more often than they embed it: drawn, with the link where it cannot be.
             if (file && IMAGE.test(file.path)) return <Picture src={file.path} fallback={cite}
               alt={typeof children === 'string' ? children : file.path.split('/').pop()} />
-            const link = cite || <a href={href} target="_blank" rel="noreferrer">{label}</a>
-            return pictured ? <>{children} {link}</> : link
+            return cite || <a href={href} target="_blank" rel="noreferrer">{text}</a>
           },
           table: ({ children }) => (
             <div className="overflow-x-auto">

@@ -215,7 +215,7 @@ def main():
             reply += "[Encoded file](file:///C:/fixture/My%20Project/app.ts#L20) "
             reply += "[Relative source](src/app.ts:3) [PR](https://example.com/pull/7)"
             reply += "\n\n![Synthetic before](C:/fixture/shots/before.png) ![Synthetic after](C:/fixture/shots/after.png)"
-            reply += " ![Synthetic outside](https://example.com/x.png) [![Synthetic wrapped](C:/fixture/shots/before.png)](https://example.com/target)"
+            reply += " ![Synthetic outside](https://example.com/x.png) [**![Synthetic wrapped](C:/fixture/shots/before.png)**](https://example.com/target)"
             # Agents link a result picture more often than they embed it (ai-generation's panorama reports).
             reply += "\n\n[Synthetic linked result](C:/fixture/shots/result.webp)"
             return {"rows": [{"role": "assistant", "text": reply,
@@ -712,14 +712,16 @@ def main():
             assert all(q["repo"][0] for q in pictures), pictures
             boxes = [page.get_by_role("img", name=n, exact=True).bounding_box() for n in ("Synthetic before", "Synthetic after")]
             assert boxes[0]["y"] == boxes[1]["y"] and boxes[0]["x"] < boxes[1]["x"], boxes   # side by side at 1440px
-            for name in ("Synthetic before", "Synthetic wrapped", "Synthetic preview"):   # in a link, on a closed question
+            for name in ("Synthetic before", "Synthetic preview"):   # in the answer, and on a closed question
                 page.get_by_role("button", name=f"{name} 크게 보기", exact=True).click()   # enlarged here, no window
                 zoom = page.get_by_role("dialog", name=name, exact=True)
                 expect(zoom.get_by_role("img", name=name, exact=True)).to_be_visible()
                 page.keyboard.press("Escape")
                 expect(zoom).to_have_count(0)
             assert len(page.context.pages) == 1, page.context.pages
-            assert page.get_by_role("link", name="링크 열기", exact=True).get_attribute("href") == "https://example.com/target"
+            wrapped = page.locator('a[href="https://example.com/target"]')   # under formatting too, the link's content
+            expect(wrapped.get_by_role("img", name="Synthetic wrapped")).to_be_visible()
+            assert wrapped.get_by_role("button").count() == 0
             assert page.get_by_role("img", name="Synthetic outside").count() == 0   # a web address stays its alt text
             page.route("https://example.com/**", lambda route: route.fulfill(body="Synthetic PR"))
             with page.expect_popup() as popup:
