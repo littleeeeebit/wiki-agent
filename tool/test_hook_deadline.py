@@ -49,6 +49,16 @@ def test_a_deadline_with_no_fallback_yet_leaves_the_hook_running():
     assert done.returncode == 0 and json.loads(done.stdout) == {"answer": "late"}
 
 
+def test_a_timer_that_fails_to_start_still_runs_the_hook():
+    body = ("def broken(*a): raise RuntimeError(\"can't start new thread\")\n"
+            "d.arm = broken\n"
+            "hook.project_for = lambda cwd: (Path(cwd), Path(cwd))\n"
+            "hook.legacy = lambda *a: False\n"
+            "hook.runpy.run_path = lambda *a, **k: d.send({'answer': 'ran'})")
+    done, _took = dispatch(body, json.dumps({"cwd": str(HERE)}))
+    assert done.returncode == 0 and json.loads(done.stdout) == {"answer": "ran"}
+
+
 def test_the_probe_forwards_and_records_the_deadline_answer(tmp_path):
     body = ("hook.project_for = lambda cwd: (Path(cwd), Path(cwd))\n"
             "hook.legacy = lambda *a: False\n"

@@ -73,6 +73,13 @@ def send(answer: dict) -> bool:
         return True
 
 
+def close() -> None:
+    """No answer goes out after this — the stream was forwarded. Under `lock`."""
+
+    global _sent
+    _sent = _armed
+
+
 # Run after the answer and before the hard exit. The dispatcher's probe mode
 # holds stdout in a buffer and forwards it from a `finally` that `os._exit`
 # skips, so it hangs its forwarding here.

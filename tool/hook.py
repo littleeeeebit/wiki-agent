@@ -104,7 +104,10 @@ def main(argv: list[str]) -> int:
     # would be ended by the timer.
     timed = len(argv) > 1 and argv[1] in hook_deadline.LIMITS and Path(sys.argv[0]).name == "hook.py"
     if timed:
-        hook_deadline.arm(hook_deadline.LIMITS[argv[1]][0], None)
+        try:
+            hook_deadline.arm(hook_deadline.LIMITS[argv[1]][0], None)
+        except Exception:  # noqa: BLE001 — without a deadline the hook still runs, as it did before one
+            timed = False
     if len(argv) < 2 or argv[0] not in LEGACY or not (HERE / argv[1]).is_file():
         print("hook skipped: usage hook.py <claude|codex> <script> [args]", file=sys.stderr)
         return 0
@@ -120,8 +123,6 @@ def main(argv: list[str]) -> int:
     project, top = found
     if legacy(top, host, script):
         return 0
-    if timed:
-        hook_deadline.best = hook_deadline.stalled(script)
     if script == "claude_pretool.py":
         # Each check it holds keeps the rule it had as a hook of its own.
         from claude_pretool import MEMBERS
@@ -144,7 +145,11 @@ def main(argv: list[str]) -> int:
     sys.argv = [str(HERE / script), *extra]
     sys.stdin = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8")
     nonce = os.environ.get("WIKI_PROBE", "")
+    # The fallback goes live only now, the project known to be attached, and
+    # in probe mode only once the buffer that forwards it is in place.
+    fallback = hook_deadline.stalled(script) if timed else None
     if not nonce:
+        hook_deadline.best = fallback
         runpy.run_path(str(HERE / script), run_name="__main__")
         return 0
     # A connection test (`main/connect.probe`) started the host that started
@@ -168,13 +173,17 @@ def main(argv: list[str]) -> int:
             sys.stdout = out
             out.write(printed)
             out.flush()
+            # Final: what the probe recorded is what went out, so no answer
+            # may follow it.
+            hook_deadline.close()
             probed(nonce, host, script, raw, printed)
 
-    # The buffer and its forwarding go in together: an answer written between
-    # the two would land in a buffer nothing forwards.
+    # The buffer, its forwarding and the fallback go in together: an answer
+    # written in between would miss the buffer or the record.
     with hook_deadline.lock:
         out, sys.stdout = sys.stdout, io.TextIOWrapper(held, encoding="utf-8", write_through=True)
         hook_deadline.before_exit = forward
+        hook_deadline.best = fallback
     try:
         runpy.run_path(str(HERE / script), run_name="__main__")
     finally:
