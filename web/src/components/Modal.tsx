@@ -102,6 +102,30 @@ export function ClearAsk({ onClear, onClose }: {
   )
 }
 
+/** A picture enlarged in its own modal dialog: Escape, the backdrop or [닫기] close only it, and the
+ *  focus goes back to whatever opened it. React passes a dialog's `close` and `cancel` up its tree,
+ *  so they stop here before an enclosing window's own close. */
+export function Zoom({ src, alt = '', close }: { src: string; alt?: string; close: () => void }) {
+  const box = useRef<HTMLDialogElement>(null)
+  const opener = useRef<Element | null>(null)
+  useEffect(() => {
+    if (!box.current || box.current.open) return
+    opener.current = document.activeElement
+    box.current.showModal()
+  }, [])
+  return (
+    <dialog ref={box} aria-label={alt || '화면 사진'} onCancel={(e) => e.stopPropagation()}
+      onClose={(e) => { e.stopPropagation(); close(); (opener.current as HTMLElement | null)?.focus() }}
+      onClick={(e) => { e.stopPropagation(); if (e.target === box.current) box.current.close() }}
+      className="m-auto max-h-[95dvh] max-w-[95vw] bg-transparent p-0 backdrop:bg-black/70">
+      <div className="flex flex-col items-end gap-2">
+        <Btn autoFocus onClick={() => box.current?.close()}>닫기</Btn>
+        <img src={src} alt={alt} className="max-h-[85dvh] max-w-full" />
+      </div>
+    </dialog>
+  )
+}
+
 /** The window's buttons: one height (28px), three weights. `primary` is the
  *  one action a modal or card exists for; `wait` answers a person-waiting
  *  write; everything else is plain. */

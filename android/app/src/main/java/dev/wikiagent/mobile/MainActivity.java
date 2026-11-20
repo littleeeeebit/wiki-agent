@@ -322,9 +322,20 @@ public final class MainActivity extends Activity {
         back();
     }
 
+    // The page's topmost open dialog (an enlarged picture, a modal) takes Back first, as Escape would close it: it
+    // leaves no history entry, so Back went past it and could leave the task. A WebView without `requestClose` gets a
+    // cancelable `cancel` first, so a dialog that refuses to close while a request runs stays open.
+    private static final String CLOSE_DIALOG = "(() => { const d = [...document.querySelectorAll('dialog[open]')].pop();"
+            + " if (!d) return false; if (d.requestClose) d.requestClose();"
+            + " else if (d.dispatchEvent(new Event('cancel', { cancelable: true }))) d.close(); return true })()";
+
     private void back() {
-        if (webView != null && webView.isShown() && webView.canGoBack()) webView.goBack();
-        else finish();
+        if (webView == null || !webView.isShown()) finish();
+        else webView.evaluateJavascript(CLOSE_DIALOG, closed -> {
+            if ("true".equals(closed)) return;
+            if (webView.canGoBack()) webView.goBack();
+            else finish();
+        });
     }
 
     @Override
