@@ -41,12 +41,13 @@ acts only through automation patterns, never synthetic input.
   `dialog`, `floating` or `tray` screen opens its dialog, its floating
   window, or its menu or flyout over a plain main window of the program's
   own, and that window is owned by the main window (its Win32 owner, such as
-  WPF's `Owner` or a Tauri window's `parent`), so the look sizes the main
-  window and shoots both. At startup the program shows one main window and no
-  other window it does not own, and the main window owns one window at most.
-  While either variable is set, lists are not virtualized (WPF's
-  `VirtualizingPanel.IsVirtualizing="False"`), so the look reads every item.
-  A release build ignores both variables.
+  WPF's `Owner`, set once the main window is shown, or a Tauri window's
+  `parent`), so the look sizes the main window and shoots both. At startup
+  the program shows one main window and no other window it does not own, and
+  the main window owns one window at most. While either variable is set,
+  lists are not virtualized (WPF's `VirtualizingPanel.IsVirtualizing="False"`),
+  so the look reads every item its list counts. A release build ignores both
+  variables.
 - Every control for a feature has the `AutomationId` `feature:<feature id>`:
   in a web view, the element's `id`; in XAML,
   `AutomationProperties.AutomationId`. A `never` feature has no control

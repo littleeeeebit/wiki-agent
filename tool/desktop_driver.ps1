@@ -63,6 +63,7 @@ $ask = Get-Content -Raw -Encoding UTF8 $Request | ConvertFrom-Json
 $out = $ask.out
 $report = [ordered]@{ phase = "starting"; main = $null; size = $null; states = @(); steps = @(); refusal = $null; error = $null }
 $UTILITY = @("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator", "IME", "MSCTFIME UI")
+$MAX_ITEMS = 2000   # a list's items counted at most: more is an unknown count, so its tree is not taken as whole
 $script:seq = 0
 
 function Put([string]$name, $value) {   # UTF-8 without a byte order mark, replaced whole
@@ -140,11 +141,18 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     name = $c.Name; id = $c.AutomationId; enabled = $c.IsEnabled; offscreen = $c.IsOffscreen;
     rect = if ($b.IsEmpty) { $null } else { @([int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height) };
     patterns = $patterns; scrolled = $scrolled }
-  if ($patterns -contains "Scroll") {   # how much of its content it shows, in percent: under 100, some lies past it
+  if ($patterns -contains "Scroll" -and $patterns -contains "ItemContainer" -and $patterns -notcontains "ExpandCollapse") {
+    # A scrolling list: how many items it holds, realized or not, as its provider counts them; null when the
+    # provider will not say or holds more than the driver counts. The tree holds only its realized items.
     try {
-      $view = $element.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).Current
-      $node.view = @([double]$view.HorizontalViewSize, [double]$view.VerticalViewSize)
-    } catch { $node.view = $null }
+      $container = $element.GetCurrentPattern([System.Windows.Automation.ItemContainerPattern]::Pattern)
+      $count, $item = 0, $null
+      do {
+        $item = $container.FindItemByProperty($item, $null, $null)
+        if ($item) { $count++ }
+      } while ($item -and $count -lt $MAX_ITEMS)
+      $node.items = if ($item) { $null } else { $count }
+    } catch { $node.items = $null }
   }
   $script:nodes += $node
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
@@ -181,9 +189,9 @@ function State([string]$name) {   # every window of the app in this state, shot 
   $state
 }
 
-function Nested($element, [int64]$root, $others) {   # inside another top-level window shown under `root`
+function Nested($element, [int64]$root, $others) {   # another top-level window shown under `root`, or inside one
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-  $e = $walker.GetParent($element)
+  $e = $element
   while ($e) {
     $h = [int64]$e.Current.NativeWindowHandle
     if ($h -eq $root) { return $false }

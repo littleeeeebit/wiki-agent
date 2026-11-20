@@ -75,10 +75,11 @@ class Runs:
 def shown(sid, state, steps):
     """A program that shows every feature where the owner's map wants it: `search` one invocation away."""
 
-    if steps:   # only `open-search` opens it
+    if steps:   # a fresh start, as the first screen shows it; only `open-search` opens it
         after = [node("search")] if steps[0]["id"] == "open-search" else [node("history")]
-        return report([node("history")], steps=[{"name": "try", "action": "invoke", "id": steps[0]["id"],
-                                                 "expect": steps[0]["expect"], "shows": after}])
+        return report([node("history"), node("open-search", id="open-search", name="찾기")],
+                      steps=[{"name": "try", "action": "invoke", "id": steps[0]["id"], "expect": steps[0]["expect"],
+                              "shows": after}])
     if sid == "S1":
         return report([node("history"), node("open-search", id="open-search", name="찾기")])
     return report([node("export", window=DIALOG)], windows=(MAIN, DIALOG))
@@ -416,23 +417,46 @@ def test_an_unproven_end_stops_the_look_even_when_the_driver_failed(tmp_path, ho
         runs.drive("S1", "full", [])
 
 
-def scroller(view: float, items: int, step: int = 40) -> dict:
-    """A state whose list shows 4 rows of 40 pixels at a time and holds `items` rows in its tree."""
+def scroller(items: int | None, realized: int, step: int = 40) -> dict:
+    """A state whose list shows 4 rows of 40 pixels at a time, holds `items` rows as its provider counts them, and
+    `realized` of them in its tree, the first ones."""
 
     rows = [node(f"row{i}", depth=2, type="ListItem", rect=[0, 100 + i * step, 200, step], patterns=[], id=f"row{i}")
-            for i in range(items)]
-    box = {**node("list", depth=1, type="List", id="list", patterns=["Scroll"]), "rect": [0, 100, 200, 160],
-           "view": [100.0, view]}
+            for i in range(realized)]
+    box = {**node("list", depth=1, type="List", id="list", patterns=["Scroll", "ItemContainer"]),
+           "rect": [0, 100, 200, 160], "items": items}
     return {"windows": [{"hwnd": MAIN}], "nodes": [window(MAIN), box, *rows]}
 
 
-def test_a_list_whose_tree_holds_less_than_its_scroll_extent_is_partial():
-    assert pc_look.partial(scroller(view=20.0, items=6), {MAIN})   # 20 rows' extent, 6 realized
-    assert not pc_look.partial(scroller(view=20.0, items=20), {MAIN})   # every row in the tree
-    assert not pc_look.partial(scroller(view=20.0, items=6), {DIALOG})   # another window's list
-    state = scroller(view=20.0, items=20)
+def test_a_list_whose_tree_holds_fewer_items_than_its_provider_counts_is_partial():
+    assert pc_look.partial(scroller(items=80, realized=6), {MAIN})   # virtualized: 6 of 80 realized
+    assert pc_look.partial(scroller(items=22, realized=20), {MAIN})   # the last two not in the tree
+    assert pc_look.partial(scroller(items=None, realized=20), {MAIN})   # a count the provider would not give
+    assert not pc_look.partial(scroller(items=80, realized=80), {MAIN})   # not virtualized: every row read
+    assert not pc_look.partial(scroller(items=80, realized=6), {DIALOG})   # another window's list
+    state = scroller(items=20, realized=20)
     state["nodes"][-1]["id"] = "feature:history"   # the last row, scrolled out of view
     assert pc_look.features(state, shown=False) == {"history"} and pc_look.features(state, shown=True) == set()
+
+
+def test_a_probe_never_starts_from_a_control_scrolled_out_of_view(tmp_path):
+    (tmp_path / "shots").mkdir()
+    tried = []
+
+    def clipped(sid, state, steps):   # the opener lies in a list, below its view
+        got = shown(sid, state, steps)
+        tried.extend(step["id"] for step in steps)
+        if sid == "S1":
+            got["states"][0]["nodes"] = [*scroller(items=1, realized=0)["nodes"][1:2],
+                                         *got["states"][0]["nodes"]]
+            opener = next(n for n in got["states"][0]["nodes"] if n["id"] == "open-search")
+            opener.update(depth=2, rect=[0, 400, 200, 40])
+            got["states"][0]["nodes"].remove(opener)
+            got["states"][0]["nodes"].insert(1, opener)
+        return got
+
+    what = [f["what"] for f in inspect(tmp_path, clipped)[0]]
+    assert "open-search" not in tried and "가끔 쓰는 기능 `search` 가 한 번 눌러서 보이지 않는다" in what
 
 
 def test_a_control_scrolled_past_its_window_is_reachable_not_outside_it():

@@ -63,42 +63,37 @@ def walk(state: dict):
                 stack.append(node)
 
 
+def visible(node: dict, scrollers: list) -> bool:
+    """Laid out on screen, and not scrolled out of any container it lies in."""
+
+    return bool(node.get("rect")) and not node.get("offscreen") and all(inside(node["rect"], s["rect"]) for s in scrollers)
+
+
 def features(state: dict, shown: bool, windows: set | None = None) -> set[str]:
     """The feature ids a state's own nodes carry as `feature:<id>`, in `windows` if named; with `shown`, only
-    those laid out on screen and not scrolled out of any container they lie in."""
+    those `visible`."""
 
     return {node["id"][len(PREFIX):] for node, scrollers in walk(state)
             if (node.get("id") or "").startswith(PREFIX) and (windows is None or node["window"] in windows)
-            and (not shown or node.get("rect") and not node.get("offscreen")
-                 and all(inside(node["rect"], s["rect"]) for s in scrollers))}
+            and (not shown or visible(node, scrollers))}
 
 
 def partial(state: dict, windows: set) -> bool:
-    """Whether a scrolling container in `windows` holds less of its content in the tree than its scroll extent:
-    a virtualized list, whose unrealized items the tree does not hold, so absence off it is not proven. The extent
-    is the container's size over its view size; the content, the span its descendants cover.
-    ponytail: geometry, not the list's item count; a list whose realized items happen to span it is not seen."""
+    """Whether a scrolling list in `windows` holds fewer items in the tree than its provider counts (`items`,
+    realized or not), or will not count them: a virtualized list, whose unrealized items the tree does not hold,
+    so absence off it is not proven. Its items in the tree are its children: the nodes one level below it."""
 
-    spans: dict[int, list] = {}
-    for node, scrollers in walk(state):
-        if node["window"] not in windows:
+    nodes = [node for node, _ in walk(state)]
+    for i, node in enumerate(nodes):
+        if "items" not in node or node["window"] not in windows:
             continue
-        for s in scrollers:
-            if node.get("rect"):
-                r, span = node["rect"], spans.setdefault(id(s), [s, None])
-                box = (r[0], r[1], r[0] + r[2], r[1] + r[3])
-                span[1] = box if span[1] is None else (min(span[1][0], box[0]), min(span[1][1], box[1]),
-                                                       max(span[1][2], box[2]), max(span[1][3], box[3]))
-    for node, _ in walk(state):
-        view = node.get("view") if node["window"] in windows else None
-        if not view or not node.get("rect"):
-            continue
-        cover = (spans.get(id(node)) or [None, None])[1]
-        for axis, size in ((0, 2), (1, 3)):
-            if 0 < view[axis] < 100:
-                extent = node["rect"][size] * 100 / view[axis]
-                if cover is None or cover[axis + 2] - cover[axis] < 0.9 * extent:
-                    return True
+        children = 0
+        for later in nodes[i + 1:]:
+            if later["depth"] <= node["depth"] or later["window"] != node["window"]:
+                break
+            children += later["depth"] == node["depth"] + 1
+        if node["items"] is None or children < node["items"]:
+            return True
     return False
 
 
@@ -117,7 +112,7 @@ def complete(report: dict) -> bool:
 
     states = report.get("states") or []
     return (report.get("phase") == "done" and not report.get("ended") and not report.get("error") and bool(states)
-            and not (report.get("end") and not report["end"]["clean"])
+            and not (report.get("end") and not report["end"]["clean"]) and not report.get("unsaved")
             and all(st["windows"] and all(drawn(st, w["hwnd"]) for w in st["windows"]) for st in states))
 
 
@@ -296,8 +291,8 @@ def one_action(runs: Launches, s: dict, start: dict, owned: bool, hwnd: int, fid
 
     import desktop_driver
 
-    targets = [node["id"] for node, _ in walk(start)
-               if node["window"] == hwnd and node.get("id") and node.get("rect") and not node.get("offscreen")
+    targets = [node["id"] for node, scrollers in walk(start)
+               if node["window"] == hwnd and node.get("id") and visible(node, scrollers) and node.get("enabled", True)
                and "Invoke" in node.get("patterns", [])]
     carried, saw, cut = [], set(), False
     for target in list(dict.fromkeys(targets))[:MAX_TAPS]:
@@ -313,7 +308,9 @@ def one_action(runs: Launches, s: dict, start: dict, owned: bool, hwnd: int, fid
         if not complete(report) or not done.get("acted") or done.get("state") not in states:
             continue
         fresh, after = report["states"][0], states[done["state"]]
-        if fid not in features(fresh, shown=True, windows=mine(report, fresh)) \
+        reachable = any(node.get("id") == target and visible(node, scrollers) and node.get("enabled", True)
+                        for node, scrollers in walk(fresh) if node["window"] in mine(report, fresh))
+        if reachable and fid not in features(fresh, shown=True, windows=mine(report, fresh)) \
                 and fid in features(after, shown=True, windows=mine(report, after)):
             return True, carried, saw, cut
     return False, carried, saw, cut

@@ -290,7 +290,8 @@ def test_a_file_resolved_under_another_case_of_its_folder_is_never_read(pc_build
 
 
 @pytest.mark.parametrize("record, kept", [
-    ("unreadable", True), ("no-head", False), ("nul", False), ("unreadable-and-missing", False)])
+    ("unreadable", True), ("no-head", False), ("nul", False), ("unreadable-and-missing", False),
+    ("unreadable-and-moved", False)])
 def test_an_unreadable_snapshot_is_kept_and_one_shown_gone_or_malformed_is_built_again(pc_build, record, kept,
                                                                                         monkeypatch):
     checked(pc_build)
@@ -299,9 +300,12 @@ def test_an_unreadable_snapshot_is_kept_and_one_shown_gone_or_malformed_is_built
         oneshot_spec.saved("budget", oneshot={"desktop_build": {k: v for k, v in build.items() if k != "head"}})
     elif record == "nul":
         oneshot_spec.saved("budget", oneshot={"desktop_build": {**build, "folder": build["folder"] + "\0x"}})
-    else:   # the program unreadable; with the manifest also gone, gone wins
+    else:   # the program unreadable; with the manifest also gone, or the worktree at another HEAD, that wins
         if record == "unreadable-and-missing":
             (Path(build["folder"]).parent / "manifest.json").unlink()
+        elif record == "unreadable-and-moved":
+            write(pc_build, "strings.txt", "번역 끄기")
+            git(pc_build, "commit", "-am", "moved on")
         real = Path.stat
 
         def denied(path, *a, **kw):
@@ -346,7 +350,7 @@ def test_a_frozen_build_that_cannot_be_saved_leaves_no_copy(pc_build):
     assert not staging() or not any(staging()[0].iterdir())
 
 
-@pytest.mark.parametrize("gone", ["copy", "program", "manifest", "companion", "identity", "head"])
+@pytest.mark.parametrize("gone", ["copy", "program", "manifest", "companion", "identity", "shape", "head"])
 def test_a_frozen_build_whose_copy_is_gone_or_whose_head_moved_is_built_again(pc_build, gone):
     checked(pc_build)
     app = Path(o()["desktop_build"]["folder"])
@@ -362,6 +366,8 @@ def test_a_frozen_build_whose_copy_is_gone_or_whose_head_moved_is_built_again(pc
         manifest = json.loads((app.parent / "manifest.json").read_text(encoding="utf-8"))
         manifest["files"] = {name: "0" * 64 for name in manifest["files"]}
         (app.parent / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    elif gone == "shape":   # JSON, but no manifest: recovery must not raise on it
+        (app.parent / "manifest.json").write_text("[]", encoding="utf-8")
     else:
         write(pc_build, "strings.txt", "번역 끄기")
         git(pc_build, "commit", "-am", "moved on")

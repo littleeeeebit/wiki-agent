@@ -385,7 +385,8 @@ def altered(build: dict) -> str:
     cannot be read now raises OSError: it is not shown changed."""
 
     app = Path(build["folder"])
-    files = json.loads((app.parent / "manifest.json").read_text(encoding="utf-8")).get("files")
+    manifest = json.loads((app.parent / "manifest.json").read_text(encoding="utf-8"))
+    files = manifest.get("files") if isinstance(manifest, dict) else None   # `[]` is no manifest: damaged
     if not isinstance(files, dict) or hashlib.sha256(json.dumps(
             {"files": files, "launch": build.get("launch")}, sort_keys=True).encode()).hexdigest() != build.get("identity"):
         return "얼린 PC 앱 빌드의 매니페스트가 그 빌드의 식별자와 맞지 않는다 — 다시 빌드한다"

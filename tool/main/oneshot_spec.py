@@ -514,21 +514,21 @@ def standing(repo: str, build: dict) -> bool:
             return False
         except OSError:   # there, but unreadable now: not shown gone
             unread = True
+    try:   # read whatever else is unreadable: a moved HEAD shows the build stale on its own
+        done = specs.sh(["git", "rev-parse", "HEAD"], Path(spec_of(repo)["worktree"]))
+        if done.returncode == 0 and done.stdout.strip() != head:
+            return False
+    except Exception:   # a timeout, a missing Git or worktree: unread, so not shown changed
+        pass
     if unread:
         return True
     from . import oneshot_desktop   # the copy against its manifest and the saved identity
     try:
-        if oneshot_desktop.altered(build):
-            return False
+        return not oneshot_desktop.altered(build)
     except ValueError:   # a manifest that is no JSON: damaged
         return False
     except OSError:   # unreadable now: not shown changed
         return True
-    try:
-        done = specs.sh(["git", "rev-parse", "HEAD"], Path(spec_of(repo)["worktree"]))
-    except Exception:   # a timeout, a missing Git or worktree: unread, so not shown changed
-        return True
-    return done.returncode != 0 or done.stdout.strip() == head
 
 
 def kind_stop(stage: str) -> dict:

@@ -186,6 +186,77 @@ def test_operations_each_within_their_own_deadline_are_never_summed(tmp_path, mo
     assert desktop_driver.findings(report) == []
 
 
+WPF_LIST = """param([string]$virtual)
+Add-Type -AssemblyName PresentationFramework
+$w = New-Object System.Windows.Window
+$w.Title = "list"; $w.Width = 400; $w.Height = 300
+$list = New-Object System.Windows.Controls.ListBox
+[System.Windows.Controls.VirtualizingPanel]::SetIsVirtualizing($list, $virtual -eq "on")
+1..80 | ForEach-Object { [void]$list.Items.Add("item $_") }
+$w.Content = $list
+[void]$w.ShowDialog()
+"""
+
+
+@pytest.mark.parametrize("virtual", ["on", "off"])
+def test_a_wpf_list_counts_its_items_whether_or_not_the_tree_holds_them(tmp_path, virtual):
+    from main import oneshot_desktop_look
+
+    script = tmp_path / "list.ps1"
+    script.write_text(WPF_LIST, encoding="utf-8")
+    with desktop_session.look(tmp_path, f"list-{virtual}") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script), virtual], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [], wait=20, settle_ms=800)
+    start = report["states"][0]
+    [box] = [n for n in start["nodes"] if "items" in n]
+    rows = [n for n in start["nodes"] if n.get("type") == "ListItem"]
+    assert box["items"] == 80 and (len(rows) < 80) == (virtual == "on"), report
+    assert oneshot_desktop_look.partial(start, {w["hwnd"] for w in start["windows"]}) == (virtual == "on")
+    assert not [f for f in desktop_driver.findings(report) if "outside its window" in f]   # scrolled rows reachable
+
+
+WPF_OWNED = """Add-Type -AssemblyName PresentationFramework
+$A = [System.Windows.Automation.AutomationProperties]
+$w = New-Object System.Windows.Window
+$w.Title = "main"; $w.Width = 400; $w.Height = 300
+$b = New-Object System.Windows.Controls.Button
+$b.Content = "Search"; $b.Width = 120; $b.Height = 40; $A::SetAutomationId($b, "open-search")
+$w.Content = $b
+$d = New-Object System.Windows.Window
+$d.Title = "dialog"; $d.Width = 240; $d.Height = 160; $A::SetAutomationId($d, "open-search")
+$w.Add_ContentRendered({ $d.Owner = $w; $d.Show() })   # owned once the main window has its handle
+[void]$w.ShowDialog()
+"""
+
+
+def test_an_owned_window_that_carries_the_id_is_no_second_target_in_the_main_window(tmp_path):
+    script = tmp_path / "owned.ps1"
+    script.write_text(WPF_OWNED, encoding="utf-8")
+    step = {"name": "try", "action": "invoke", "id": "open-search", "expect": {"id": "open-search"}}
+    with desktop_session.look(tmp_path, "owned-id") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [step], wait=20, settle_ms=800)
+    assert report["steps"][0].get("acted") and not report["steps"][0].get("error"), report
+
+
+def test_a_result_that_cannot_be_saved_still_returns_the_unproven_end(tmp_path, monkeypatch):
+    look = types.SimpleNamespace(folder=tmp_path, jobs={"app": types.SimpleNamespace(name="job"), "driver": None},
+                                 check_key=lambda key: None, start=lambda *a, **k: None)
+    (tmp_path / "evidence").mkdir()
+    monkeypatch.setattr(desktop_driver, "_watch", lambda *a: (None, {"clean": False, "reasons": ["pid 3 runs"]}))
+
+    def full(path, record):
+        raise OSError(28, "the disk is full")
+
+    monkeypatch.setattr(desktop_driver, "write_record", full)
+    report = desktop_driver.drive(look, "app", (640, 480), [])
+    assert report["end"] == {"clean": False, "reasons": ["pid 3 runs"]} and "disk is full" in report["unsaved"]
+    assert desktop_driver.findings(report)[:2] == ["the driver's end was not proven: pid 3 runs",
+                                                   "the driver's result could not be saved: [Errno 28] the disk is full"]
+
+
 def test_a_driver_that_exits_before_any_report_leaves_a_finding(tmp_path, monkeypatch):
     report, _ = stand_in(tmp_path, monkeypatch, [])
 

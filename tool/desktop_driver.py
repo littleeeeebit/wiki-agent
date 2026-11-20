@@ -67,7 +67,10 @@ def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: f
     report = _read(folder / "driver.json") or {"phase": None}
     marker = _read(folder / "progress.json")
     report.update(last=marker["op"] if _valid(marker) else None, ended=ended, end=end)
-    write_record(folder / RESULT, report)   # a name the driver never writes: the evidence holds the server's verdict
+    try:   # a name the driver never writes: the evidence holds the server's verdict
+        write_record(folder / RESULT, report)
+    except OSError as exc:   # the verdict, its end proof first, is returned whatever the evidence write does
+        report["unsaved"] = str(exc)
     return report
 
 
@@ -128,6 +131,8 @@ def findings(report: dict) -> list[str]:
         found.append(f"the driver passed its deadline at {report['ended']}")
     if report.get("end") and not report["end"]["clean"]:
         found.append(f"the driver's end was not proven: {'; '.join(report['end']['reasons'])}")
+    if report.get("unsaved"):
+        found.append(f"the driver's result could not be saved: {report['unsaved']}")
     if report.get("phase") is None:
         return [*found, "the driver left no report"]
     if report.get("refusal"):
