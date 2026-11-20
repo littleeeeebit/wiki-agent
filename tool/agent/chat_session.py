@@ -37,7 +37,7 @@ from common.process import SUSPENDED, contained, killed, resumed, terminated
 
 from .chat_events import Event, _claude_hook, _hook, _patch_meta, _result_meta, _tool_brief, _tool_meta, _user, merged
 from .chat_local import claude_usage, cli_command, codex_usage, end_servers, quota_windows, reopen_servers
-from . import chat_busy, read_tools
+from . import chat_busy, deepseek, read_tools
 
 # Something opened in a browser that edits files is not a chat, it is a remote
 # shell. So `Edit` and `Write` are not on the list.
@@ -289,7 +289,8 @@ class ChatSession:
                     if self.is_codex:
                         self._quota_at = self._quota_poll_at
                     try:
-                        self.quota = codex_usage(env=self._env, cwd=self.repo) if self.is_codex else claude_usage(env=self._env)
+                        self.quota = (codex_usage(env=self._env, cwd=self.repo) if self.is_codex else []
+                                      if self.model == deepseek.MODEL else claude_usage(env=self._env))
                         self._quota_at = time.monotonic()
                         self._quota_error = ""
                     except Exception:
@@ -369,8 +370,8 @@ class ChatSession:
             cmd += ["--settings", json.dumps({"fastMode": self.fast})]
         if self.model:
             cmd += ["--model", self.model]
-        if self.effort:
-            cmd += ["--effort", self.effort]
+        if effort := deepseek.effort(self.model, self.effort):
+            cmd += ["--effort", effort]
         if self._resume:
             cmd += ["--resume", self._resume]
         if self.app:
@@ -429,7 +430,7 @@ class ChatSession:
                 cmd += ["--system-prompt-file" if self.isolated else "--append-system-prompt-file", prompt]
             cmd = [*cli_command(cmd[0]), *cmd[1:]]
             proc = subprocess.Popen(
-                cmd, cwd=str(self.repo), env=self._env,
+                cmd, cwd=str(self.repo), env=deepseek.environment(self.model, self._env),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, encoding="utf-8",
                 errors="replace", bufsize=1, creationflags=SUSPENDED, start_new_session=os.name != "nt",
@@ -1324,7 +1325,7 @@ class ChatSession:
                     self.close()
                 usage = ev.get("usage") or {}
                 self.usage = {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
-                              "cost_usd": ev.get("total_cost_usd"), "scope": "turn"}
+                              "cost_usd": deepseek.cost(self.model, ev), "scope": "turn"}
                 # Worded to match `work.REFUSED`: never resent, the next turn opens a new conversation.
                 # What the turn went on to answer rides apart, for the review loop to judge; a failed result is no answer (PR #275).
                 answer = str(ev.get("result") or "")
@@ -1340,7 +1341,7 @@ class ChatSession:
                      # This wiki is cost-sensitive enough to draw injected
                      # character counts as node sizes. What an effort level
                      # costs has to be visible here too.
-                     "cost_usd": ev.get("total_cost_usd"),
+                     "cost_usd": deepseek.cost(self.model, ev),
                      "tokens": {
                          "in": usage.get("input_tokens"),
                          "out": usage.get("output_tokens"),
