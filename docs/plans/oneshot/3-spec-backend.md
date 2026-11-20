@@ -383,7 +383,9 @@ any turn (`work.dispatch`); after a refusal it waits behind the build turn:
    pushes, so an approval after one stops the run for the owner to revoke it,
    and that `[재개]` reviews again. Rewriting the history is not offered: it
    would move the pinned tests' commit the build checks its ancestry
-   against. The rules
+   against. One in a pinned contract file stops the run at its refusal,
+   since no repair may change that file, and the reviews after the owner's
+   `[재개]` are told which committed values are now dead. The rules
    adapt to the rounds before, and the server checks each blocking finding
    against them (`oneshot_review.ruled`, `held`), asking again once like any
    other shape it refuses:

@@ -456,6 +456,23 @@ def test_a_committed_credential_holds_the_approval_for_the_owner_even_after_a_de
     assert o()["stage"] == "split"
 
 
+def test_a_credential_in_a_pinned_file_stops_at_its_refusal_and_is_dead_once_revoked(reviewed):
+    _, head, sent = reviewed
+    leak = {"location": "test_budget.py:1", "severity": "P0", "reason": "키가 커밋됐다", "evidence": "1행",
+            "area": "credential exposure", "secret": True}
+    with patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        _, asking = answers(verdict(head, "refuse", leak))
+        with asking:
+            oneshot_review.review("budget")
+        assert not sent and o()["stopped"]["exposed"] == head   # the build may not change a pinned file
+        with patch.object(oneshot_review, "begin", lambda repo: None):
+            oneshot_spec.resume("budget")
+        said, asking = answers(verdict(head, "approve"))
+        with asking, patch.object(oneshot_spec, "start", lambda *a, **k: None):
+            oneshot_review.review("budget")
+    assert "owner revoked the credentials committed at `test_budget.py:1`" in said[0][1] and o()["stage"] == "split"
+
+
 def test_a_line_count_git_cannot_make_is_left_unknown(reviewed):
     _, head, _ = reviewed
     real = specs.sh

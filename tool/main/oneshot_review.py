@@ -93,7 +93,17 @@ def review_text(spec: dict, head: str, how: str, rules: dict | None = None) -> s
             f"{json.dumps(spec.get('requirements') or [], ensure_ascii=False)}\n\nThe environment profile and the stack:\n\n"
             f"{environment(o)}\n\nThe pinned contract tests, unchanged since "
             f"`{o['tests_head']}`: {', '.join(o['contract'])}.\n\nThe whole diff from the base commit "
-            f"`{spec['start_head']}` to HEAD: {how}.\n" + earlier_text(o.get("reviews") or []) + rules_text(rules or {}))
+            f"`{spec['start_head']}` to HEAD: {how}.\n" + earlier_text(o.get("reviews") or []) + rules_text(rules or {})
+            + revoked_text(o))
+
+
+def revoked_text(o: dict) -> str:
+    """The credentials the owner revoked at a hold: a value left in a file, a pinned one included, is dead."""
+
+    gone = sorted({f["location"] for r in (o.get("reviews") or [])[:int(o.get("secrets_cleared") or 0)]
+                   for f in r["findings"] if exposed(f)})
+    return ("\nThe owner revoked the credentials committed at " + ", ".join(f"`{g}`" for g in gone) + ". A value "
+            "still there is dead: do not report it again.\n") if gone else ""
 
 
 def anchors(spec: dict) -> set[str]:
@@ -411,10 +421,12 @@ def decided(repo: str, store, spec: dict, found: dict):
 
     o = spec["oneshot"]
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
-    if found["verdict"] == "approve" and (shown := exposures(o, reviews)):
+    stuck = [f for f in found["findings"] if exposed(f) and file_of(f["location"]) in (o.get("contract") or [])]
+    if (found["verdict"] == "approve" and (shown := exposures(o, reviews))) or (shown := stuck):
         # A credential a review found committed stays in the history a later deletion leaves behind, and the
         # first pull request pushes that history: the owner revokes it, then `[재개]`. Rewriting the history
-        # instead would move the pinned tests' commit the build checks its ancestry against.
+        # instead would move the pinned tests' commit the build checks its ancestry against. One in a pinned
+        # contract file stops at once: the build may not change that file, so no repair could remove it.
         detail = ("커밋된 자격 증명이 첫 PR 이 올릴 커밋 기록에 남아 있다 — " + " / ".join(f["location"] for f in shown)
                   + " — 그 키를 폐기하고 새 키로 바꾼 뒤 [재개]")
         with oneshot._lock:
@@ -521,6 +533,11 @@ def exposures(o: dict, reviews: list[dict]) -> list[dict]:
     """The committed credentials the reviews found since the owner last cleared them (`secrets_cleared`)."""
 
     return [f for r in reviews[int(o.get("secrets_cleared") or 0):] for f in r["findings"] if exposed(f)]
+
+
+def file_of(location: str) -> str:
+    m = re.match(r"\s*`?(.+?)(?::\d+.*)?`?\s*$", location)
+    return (m[1] if m else location).strip().replace("\\", "/")
 
 
 def exposed(f: dict) -> bool:
