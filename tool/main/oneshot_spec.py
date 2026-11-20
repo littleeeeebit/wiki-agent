@@ -317,6 +317,10 @@ def briefing(repo: str, gate: str, fields: dict):
     """A review opened from a stage that holds the worktree (`oneshot_review.holding`): saved under
     `working: brief`, and the brief written by what this returns, once the tree is let go: it reads none."""
 
+    o = {**spec_of(repo)["oneshot"], **fields}
+    if held(o):   # this version ends before the review it would open: the run waits there, its rounds kept
+        saved(repo, oneshot={**fields, "working": None, "stopped": kind_stop(o["stage"], o)})
+        return None
     saved(repo, oneshot={**fields, "working": "brief"})
     return lambda: briefed(repo, gate)
 
@@ -491,7 +495,7 @@ def waiting(repo: str, o: dict) -> dict:
                                              "detail": "얼린 PC 앱 빌드에서 멈췄다 — [재개]를 누르면 다시 빌드하고 검사한다"}})[
             "oneshot"]
     if held(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
-        return saved(repo, oneshot={"stopped": kind_stop(o["stage"])})["oneshot"]
+        return saved(repo, oneshot={"stopped": kind_stop(o["stage"], o)})["oneshot"]
     return o
 
 
@@ -531,9 +535,14 @@ def standing(repo: str, build: dict) -> bool:
         return True
 
 
-def kind_stop(stage: str) -> dict:
-    """The `kind` stop at `stage`, where this version's run ends."""
+def kind_stop(stage: str, o: dict | None = None) -> dict:
+    """The `kind` stop at `stage`, where this version's run ends. Before R3, a PC app's run names the checks the
+    owner's desktop round still owes: they stay pending through the owned rounds."""
 
+    if stage == "r3" and o is not None:
+        owner = [x["id"] for x in o.get("owed") or [] if x["kind"] == "desktop" and x.get("source") == "owner"]
+        return {"reason": "kind", "state": stage, "detail": "PC 앱 화면 비평을 두 번 깨끗하게 마쳤다 — "
+                + (f"주인 화면에서 확인할 {', '.join(owner)} 와 " if owner else "") + "R3 는 다음 버전에서 이어진다"}
     return {"reason": "kind", "state": stage, "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}
 
 

@@ -80,7 +80,10 @@ End the turn with exactly one fenced block whose info string is
 ```oneshot-desktop
 {"run": {"folder": "dist-pc", "program": "app.exe", "args": [], "cwd": ".",
          "env": {"WEBVIEW2_USER_DATA_FOLDER": "{data}/webview", "APP_DATA_DIR": "{data}"}},
- "installer": "src-tauri/target/release/bundle/nsis/app-setup.exe"}
+ "installer": "src-tauri/target/release/bundle/nsis/app-setup.exe",
+ "checks": {"O1": {"screen": "S1", "state": "full", "steps": [
+   {"name": "open", "action": "invoke", "id": "feature:translate", "expect": {"id": "translate-status"}},
+   {"name": "on", "action": "toggle", "id": "translate-on", "expect": {"id": "translate-on", "toggle": "On"}}]}}}
 ```
 
 - `run.folder` is the folder `gate_cmd` builds that holds everything the
@@ -114,6 +117,22 @@ End the turn with exactly one fenced block whose info string is
 - `installer` is the file a release build packages for S8 to attach. The
   final gate builds it, not this turn's `gate_cmd`; this turn only names it,
   and it is never the program `run` starts.
+- `checks` scripts, by its id, each check the backend review left for the
+  look of the PC app, and nothing else; `{}` when there is none:
+
+{desktop_owed}
+
+  Each starts the debug build on its `screen` in its `state`, as the
+  conventions say, and the look performs its `steps` in order, at most 20,
+  through UI Automation patterns. A step has a `name` (letters, digits, `-`
+  and `_`, unique in the check) and an `action`: `invoke`, `set_value` with
+  its `value`, `toggle`, `select`, `expand`, `collapse` or
+  `scroll_into_view`. Its `id` is the control's `AutomationId`, in the main
+  window, or with `"in": "owned"` in the one window the main window owns.
+  Its `expect` is the element the step leaves, by its `id`, with its
+  `name`, `value` or `toggle` (`On`, `Off`, `Indeterminate`) as UI Automation
+  reads them. The last step's `expect` reads the check's postcondition: a
+  `name`, `value` or `toggle`. A value is at most 1000 characters.
 
 `run.folder` and `installer` are relative to the repository root;
 `run.program` and `run.cwd` are relative to `run.folder`. Every path uses
@@ -151,8 +170,9 @@ The server checks, in order:
    controls not read, a control with no name, one outside its window or under
    24×24 physical pixels, a placement the owner's map forbids, a feature
    whose `feature:<id>` never appears, a `never` feature with a control, a
-   virtualized list where absence must be read, and a `sometimes` feature not
-   one invocation from the first screen. A look whose program or desktop the
+   virtualized list where absence must be read, a `sometimes` feature not
+   one invocation from the first screen, and a `checks` scenario that fails
+   or whose postcondition is not read. A look whose program or desktop the
    server cannot prove it ended and cleaned up stops the stage.<!-- /shared -->
 
 A refusal comes back with the reason, at most three times in all.

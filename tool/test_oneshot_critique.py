@@ -101,6 +101,36 @@ def test_the_critic_sees_each_screenshot_and_two_clean_rounds_open_r3(judged):
     assert len(images) == 12 and "S3-desktop-loading.png" in text
 
 
+def pc_look(n: int, build: str) -> dict:
+    """A PC app's passed look on frozen `build`: each screen's window shot in each state."""
+
+    shots = critique.folder("budget", n)
+    shots.mkdir(parents=True, exist_ok=True)
+    for s in FRONT["screens"]:
+        for state in critique.STATES:
+            (shots / f"{s['id']}-window-{state}.png").write_bytes(PNG)
+    return {"round": n, "head": "a" * 40, "findings": [], "build": build}
+
+
+def test_a_pc_apps_two_clean_rounds_on_one_build_wait_before_r3_with_its_owner_checks_pending(judged):
+    owner = {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처에 글이 있다"}
+    screens = [{**{k: v for k, v in s.items() if k != "route"}, "surface": "window"} for s in FRONT["screens"]]
+    oneshot_spec.saved("budget", oneshot={"intent": {"restated": "가계부", "kind": "desktop"}, "owed": [owner],
+                                          "front": {**FRONT, "screens": screens}, "looks": [pc_look(1, "a" * 64)],
+                                          "profile": {**o()["profile"], "window": "1280x800"}})
+    heard, asking = critic(said(), said(), said())
+    with asking:
+        critique.critique("budget")
+        oneshot_spec.saved("budget", oneshot={"looks": [*o()["looks"], pc_look(2, "b" * 64)]})   # rebuilt, same HEAD
+        critique.critique("budget")
+        assert o()["stage"] == "critique" and not o().get("stopped")   # the first build's clean round is cleared
+        critique.critique("budget")
+    assert [p.name for p in heard[0][2]][:1] == ["S1-window-full.png"] and o()["stage"] == "r3"
+    assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"] and not o().get("working")
+    assert not (o().get("r3") or {}).get("brief") and [c.get("build") for c in o()["critiques"]] == \
+        ["a" * 64, "b" * 64, "b" * 64]
+
+
 def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts(judged):
     _, sent = judged
     _, asking = critic(said(HIGH, LOW), said(LOW), said())

@@ -98,7 +98,10 @@ def build_front_text(spec: dict) -> str:
     if "{viewports}" in text:   # a web app's, alone or among the kinds
         text = text.replace("{viewports}", ", ".join(views(o["profile"], "webapp" if shape(o) == "kinds" else "")))
     text = text.replace("{profile}", environment(o)).replace("{tools}", oneshot_build.tools_text(o)) \
-        .replace("{window}", o["profile"].get("window", ""))
+        .replace("{window}", o["profile"].get("window", "")) \
+        .replace("{desktop_owed}", "\n".join(f"- `{x['id']}` ({x['requirement']}, `{x['location']}`): {x['check']} — "
+                                             f"{x['reason']}" for x in o.get("owed") or []
+                                             if x["kind"] == "desktop" and x.get("source") == "look") or "- (none)")
     if "android" not in kinds_of(o):
         return text
     if shape(o) == "kinds":   # the Android parts read only what applies to the Android app
@@ -143,7 +146,10 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         phone = as_kind(spec, "android") if several else spec
         device = oneshot_device.declared(path, final, oneshot_device.reads_screen(phone), oneshot_device.suffix(o))
     # A PC app's block names the program its look starts, apart from the installer S8 attaches.
+    # Its `checks` script each `look` check the backend review left for it, as a driver scenario.
     desktop = oneshot_desktop.declared(path, final) if "desktop" in kinds else None
+    if desktop is not None and (why := oneshot_desktop.scripted(desktop["checks"], spec)):
+        return why
     if "webapp" in kinds and not live:
         return "어댑터의 `live_cmd` 가 비었다 — 백엔드와 화면을 함께 띄우는 명령을 적는다"
     # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs. Several
@@ -205,8 +211,7 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
             for f in high[:12])
     # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
     # The fixes this turn was sent with are built now: a resumed build no longer carries them. A run this version
-    # holds at the critique (a PC app's critic is 9e4b's) is saved stopped in the same write, so no poll sees it
-    # resumable.
+    # holds at the critique is saved stopped in the same write, so no poll sees it resumable.
     passed = {"stage": "critique", "front_built_head": verdict["head"], "looks": looks, "attempts": 0,
               "working": "critique", "fix": None, **({"device": device, "apks": apks} if android else {})}
     if oneshot_spec.held({**o, "stage": "critique"}):
@@ -226,7 +231,7 @@ def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> tuple[dict |
     staging = oneshot_spec.store(spec["repo"]).folder / "desktop"
     into = staging / f"build-{time.time_ns()}"
     try:
-        build = {**oneshot_desktop.frozen(path, desktop, into), "head": head}
+        build = {**oneshot_desktop.frozen(path, desktop, into), "head": head, "checks": desktop["checks"]}
     except BaseException:
         shutil.rmtree(into, ignore_errors=True)
         raise

@@ -19,6 +19,10 @@ RESULT = "result.json"   # the server's final report: the driver's report, its l
 INTERACTIVE = {"Button", "CheckBox", "ComboBox", "Edit", "Hyperlink", "ListItem", "MenuItem", "RadioButton",
                "Slider", "Spinner", "SplitButton", "TabItem", "TreeItem"}
 ACTING = {"Invoke", "Toggle", "SelectionItem", "ExpandCollapse", "Value"}
+ACTIONS = ("invoke", "set_value", "toggle", "select", "expand", "collapse", "scroll_into_view")   # the driver's `Act`
+PROPERTIES = ("id", "name", "value", "toggle")   # what a postcondition reads on an element
+TOGGLES = ("On", "Off", "Indeterminate")
+MAX_VALUE = 1000   # the driver's `$MAX_VALUE`: a longer value is recorded as null
 SMALLEST = 24   # physical pixels, each side
 
 
@@ -111,12 +115,20 @@ def expectation(expect) -> tuple[str, str] | None:
     return None
 
 
-def holds(state: dict, expect: dict) -> bool:
-    """A step's postcondition, read off the state it left: an element of the app with the expected id or name. A
-    node of another process, an embedded fragment, never satisfies one."""
+def wanted(expect: dict) -> dict:
+    """What a postcondition reads on one element: its non-blank `id` and `name`, and its `value` and `toggle` state."""
 
-    key, value = expectation(expect)
-    return any(not node.get("foreign") and node.get(key) == value for node in state["nodes"])
+    return {k: v for k, v in expect.items() if k in PROPERTIES and isinstance(v, str)
+            and (v.strip() or k in ("value", "toggle"))}
+
+
+def holds(state: dict, expect: dict) -> bool:
+    """A step's postcondition, read off the state it left: one element of the app with every property it names, an
+    id or a name among them. A node of another process, an embedded fragment, never satisfies one."""
+
+    want = wanted(expect)
+    return bool(expectation(expect)) and any(not node.get("foreign") and all(node.get(k) == v for k, v in want.items())
+                                             for node in state["nodes"])
 
 
 def findings(report: dict) -> list[str]:

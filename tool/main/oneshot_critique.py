@@ -28,7 +28,7 @@ SEVERITIES = ("high", "medium", "low")
 STATES = ("full", "empty", "error", "loading")   # the order the critic sees them in
 MAX_ROUNDS = 6
 MAX_IMAGES = 24
-SHOT = re.compile(r"S[1-9]\d*-(desktop|phone)-(empty|full|loading|error)\.png")
+SHOT = re.compile(r"S[1-9]\d*-(desktop|phone|window)-(empty|full|loading|error)\.png")
 
 router = APIRouter()
 
@@ -128,11 +128,12 @@ def critique(repo: str) -> None:
     review.holding(repo, "화면 비평", body, "front_built_head", front_build.STAGE)
 
 
-def passed(rounds: list[dict], head: str | None = None) -> bool:
+def passed(rounds: list[dict], head: str | None = None, build: str | None = None) -> bool:
     """Two clean critiques in a row, the last two of these; with `head`, of those on the HEAD the look passed
-    (several kinds: a kind that passed before a fix is judged again on the fix)."""
+    (several kinds: a kind that passed before a fix is judged again on the fix). Only rounds of the look's frozen
+    PC app `build` count: a new build, even under the same HEAD, clears the clean rounds."""
 
-    on = [r for r in rounds if head is None or r["head"] == head]
+    on = [r for r in rounds if (head is None or r["head"] == head) and r.get("build") == build]
     return len(on) >= 2 and on[-1]["clean"] and on[-2]["clean"]
 
 
@@ -148,8 +149,8 @@ def critic_kind(o: dict) -> str | None:
     """Several kinds: the first kind, in the owner's order, without two clean critiques on the HEAD the last look
     passed. A new HEAD has none, so every kind that passed before is judged again."""
 
-    rounds, head = o.get("critiques") or [], o["looks"][-1]["head"]
-    return next((k for k in kinds_of(o) if not passed(counted(o, rounds, k), head)), None)
+    rounds, look = o.get("critiques") or [], o["looks"][-1]
+    return next((k for k in kinds_of(o) if not passed(counted(o, rounds, k), look["head"], look.get("build"))), None)
 
 
 def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: str | None = None):
@@ -159,9 +160,10 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
     o = spec["oneshot"]
     rounds = [*(o.get("critiques") or []), {"look": look["round"], "head": look["head"], "findings": found,
                                             "clean": not any(f["severity"] == "high" for f in found + look["findings"]),
-                                            "ts": time.time(), **({"kind": kind} if kind else {})}]
+                                            "ts": time.time(), **({"kind": kind} if kind else {}),
+                                            **({"build": look["build"]} if look.get("build") else {})}]
     mine = counted(o, rounds, kind)   # the cap counts each kind's own
-    done = passed(mine, look["head"] if kind else None)
+    done = passed(mine, look["head"] if kind else None, look.get("build"))
     if done and kind and critic_kind({**o, "critiques": rounds}):   # the next kind's turn, on the same shots
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
         return lambda: oneshot_spec.handoff(repo, "critique") or True

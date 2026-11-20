@@ -38,6 +38,8 @@ ELEVATED = ("requireAdministrator", "highestAvailable")   # a manifest's levels 
 MAX_FILES, MAX_BYTES = 5000, 1 << 30   # a folder of what the launch loads, never a whole build tree
 MANIFEST_BYTES = 1 << 20
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+STEP_NAME = re.compile(r"[A-Za-z0-9_-]{1,40}")   # a check's step: it names the driver's operations and states
+MAX_STEPS = 20
 # A setting the look passes is one of two things, so a path to another place on this PC has no spelling left to
 # take, however Windows, a C runtime, a web view or the app's own expansion would read it:
 # - a whole remote URL with a host, an optional `name=` before it, in printable ASCII but `,` and `;`, so no list
@@ -170,7 +172,72 @@ def declared(tree: Path, final: str) -> dict:
         raise ValueError(f"`{BLOCK}` 의 installer 는 S8 이 붙일 설치 파일(.exe, .msi, .msix)이다 — {installer}")
     if installer.casefold() == f"{out['folder']}/{out['program']}".casefold():   # one file to Windows
         raise ValueError(f"`{BLOCK}` 의 installer 와 run.program 이 같은 파일이다 — run 은 설치하지 않고 띄우는 빌드다")
-    return {"run": out, "installer": installer}
+    return {"run": out, "installer": installer, "checks": _checks(value.get("checks", {}))}
+
+
+def _checks(value) -> dict:
+    """The block's `checks`: for each `look` owed check, by its id, the screen and state its scenario starts in
+    and the driver's steps, each naming its control by `AutomationId` and ending with a postcondition; the last
+    one reads the element's name, value or toggle state."""
+
+    import desktop_driver
+
+    if not isinstance(value, dict):
+        raise ValueError(f"`{BLOCK}` 의 checks 는 미룬 검사 id 마다 {{screen, state, steps}} 를 담은 객체다")
+    out = {}
+    for cid, c in value.items():
+        where = f"`{BLOCK}` 의 checks.{cid}"
+        if not isinstance(c, dict) or not isinstance(c.get("steps"), list) or not 1 <= len(c["steps"]) <= MAX_STEPS:
+            raise ValueError(f"{where} 는 screen, state 와 1~{MAX_STEPS}개의 steps 를 담는다")
+        steps, names = [], set()
+        for n, s in enumerate(c["steps"], 1):
+            at = f"{where}.steps[{n}]"
+            if not isinstance(s, dict) or not isinstance(s.get("name"), str) or not STEP_NAME.fullmatch(s["name"]) \
+                    or s["name"] in names:
+                raise ValueError(f"{at} 의 name 은 겹치지 않는 영문·숫자·`-_` 이름이다")
+            names.add(s["name"])
+            if s.get("action") not in desktop_driver.ACTIONS:
+                raise ValueError(f"{at} 의 action 은 {', '.join(desktop_driver.ACTIONS)} 중 하나다")
+            if not isinstance(s.get("id"), str) or not s["id"].strip():
+                raise ValueError(f"{at} 는 누를 컨트롤을 `AutomationId`(id) 로 적는다")
+            if ("value" in s) != (s["action"] == "set_value") or "value" in s and not (
+                    isinstance(s["value"], str) and len(s["value"]) <= desktop_driver.MAX_VALUE):
+                raise ValueError(f"{at} 의 value 는 set_value 에만, {desktop_driver.MAX_VALUE}자 이하 문자열로 적는다")
+            if s.get("in", "main") not in ("main", "owned"):
+                raise ValueError(f"{at} 의 in 은 main(주 창) 이나 owned(주 창이 가진 창) 이다")
+            expect = s.get("expect")
+            if not isinstance(expect, dict) or set(expect) - set(desktop_driver.PROPERTIES) \
+                    or not isinstance(expect.get("id"), str) or not expect["id"].strip() \
+                    or desktop_driver.wanted(expect) != expect:
+                raise ValueError(f"{at} 의 expect 는 결과로 볼 요소의 id 에 name, value, toggle 을 더한 문자열 객체다")
+            if "toggle" in expect and expect["toggle"] not in desktop_driver.TOGGLES or \
+                    len(expect.get("value", "")) > desktop_driver.MAX_VALUE:
+                raise ValueError(f"{at} 의 toggle 은 {', '.join(desktop_driver.TOGGLES)} 중 하나, value 는 "
+                                 f"{desktop_driver.MAX_VALUE}자 이하다")
+            steps.append({k: s[k] for k in ("name", "action", "id", "value", "in", "expect") if k in s})
+        if not {"name", "value", "toggle"} & set(steps[-1]["expect"]):
+            raise ValueError(f"{where} 의 마지막 step 은 요소의 name, value, toggle 중 하나를 결과로 읽는다")
+        out[cid] = {"screen": c.get("screen"), "state": c.get("state"), "steps": steps}
+    return out
+
+
+def scripted(checks: dict, spec: dict) -> str:
+    """Why the block's `checks` do not script exactly the PC app's `look` owed checks, each from one of its
+    screens in one of its states; empty when they do."""
+
+    from .oneshot_device import STATES
+
+    owed = [x["id"] for x in spec["oneshot"].get("owed") or [] if x["kind"] == "desktop" and x.get("source") == "look"]
+    if missing := [i for i in owed if i not in checks]:
+        return (f"`{BLOCK}` 의 checks 에 PC 앱에서 확인할 {', '.join(missing)} 의 시나리오가 없다 — 미룬 검사마다 "
+                "screen, state, steps 를 적는다")
+    if extra := sorted(set(checks) - set(owed)):
+        return f"`{BLOCK}` 의 checks 의 {', '.join(extra)} 는 화면 검사가 맡은 미룬 검사가 아니다 — {', '.join(owed) or '없음'}"
+    ids = {s["id"] for s in spec["oneshot"]["front"]["screens"] if s.get("kind", "desktop") == "desktop"}
+    for cid, c in checks.items():
+        if c["screen"] not in ids or c["state"] not in STATES:
+            return f"`{BLOCK}` 의 checks.{cid} 는 PC 앱의 화면({', '.join(sorted(ids))})과 상태({', '.join(STATES)})에서 시작한다"
+    return ""
 
 
 def _inside(tree: Path, relative: str) -> Path | None:

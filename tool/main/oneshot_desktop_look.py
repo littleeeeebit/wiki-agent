@@ -11,6 +11,7 @@ whose cleanup is not proven stops the stage instead of passing it.
 from __future__ import annotations
 
 import shutil
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ VIEW = "window"
 PREFIX = "feature:"
 END_SECONDS = 30
 SETTLE_MS = 1000
+LOOK_SECONDS = 30 * 60   # a whole look: every screen and state, the probes and the owed checks
 TRY = "try"   # the one step a `sometimes` probe takes; a probe that does not show the feature misses this one
 MISSED = f"step {TRY}: its postcondition was not read"
 
@@ -133,7 +135,21 @@ class Launches:
 
     def __init__(self, look, build: dict, window: tuple[int, int], stopped):
         self.look, self.build, self.window, self.stopped, self.n = look, build, window, stopped, 0
-        self.halt = SimpleNamespace(is_set=stopped)   # the start and the driver end at once on the owner's stop
+        self.began = time.monotonic()
+        # The start and the driver end at once on the owner's stop, and once the whole look is past its deadline:
+        # each operation has its own, and this bounds their sum.
+        self.halt = SimpleNamespace(is_set=lambda: stopped() or self.over())
+
+    def over(self) -> bool:
+        return time.monotonic() - self.began > LOOK_SECONDS
+
+    def due(self) -> None:
+        """Stopped by the owner, or the look past its deadline: a slow program goes back to the build."""
+
+        halted(self.stopped)
+        if self.over():
+            raise ValueError(f"PC 앱 화면 검사가 {LOOK_SECONDS // 60}분 안에 끝나지 않았다 — 화면과 상태마다 띄우고 "
+                             "읽는 데 너무 오래 걸린다")
 
     def drive(self, sid: str, state: str, steps: list[dict]) -> dict:
         """One start of the program opening `sid` in `state`, driven through `steps`: the driver's report. No
@@ -143,7 +159,7 @@ class Launches:
         import desktop_driver   # Windows only, as a PC app is
         import desktop_session
 
-        halted(self.stopped)
+        self.due()
         self.n += 1
         key = f"app{self.n}"
         launch, folder = self.build["launch"], Path(self.build["folder"])
@@ -154,6 +170,7 @@ class Launches:
         try:
             self.look.start(key, argv, folder / launch["cwd"], extra, halt=self.halt)
         except desktop_session.Halted:
+            self.due()
             halted(lambda: True)
         except desktop_session.Refused as exc:
             raise ValueError(f"PC 앱을 띄우지 못했다 — {exc}") from exc
@@ -171,7 +188,7 @@ class Launches:
                     from failed
         if failed is not None:
             raise failed
-        halted(self.stopped)
+        self.due()
         if why := oneshot_desktop.altered(self.build):
             raise ValueError(why)
         return report
@@ -190,10 +207,39 @@ def look(spec: dict, build: dict, folder: Path, stopped=never) -> list[dict]:
         old.unlink()
     try:
         with desktop_session.look(looks, f"look-{build['identity'][:12]}-{uuid.uuid4().hex[:8]}") as session:
-            return inspect(Launches(session, build, size(spec["oneshot"]["profile"]), stopped), spec, folder,
-                           session.folder / "evidence")
+            runs = Launches(session, build, size(spec["oneshot"]["profile"]), stopped)
+            return inspect(runs, spec, folder, session.folder / "evidence") + checks(runs, spec, build)
     except desktop_session.Refused as exc:
         raise RuntimeError(f"PC 앱 화면 검사의 데스크톱을 정리하지 못했다 — {exc}") from exc
+
+
+def checks(runs: Launches, spec: dict, build: dict) -> list[dict]:
+    """Each `look` check the backend review left for the PC app, its scenario run from a fresh start of its screen
+    and state: it passes only on a complete read whose every step acted and left its postcondition read off the
+    state it names. A failed or unread one is a high finding for the builder, never a skip."""
+
+    import desktop_driver
+
+    o, out = spec["oneshot"], []
+    owed = [x for x in o.get("owed") or [] if x["kind"] == "desktop" and x.get("source") == "look"]
+    lead = next(s for s in o["front"]["screens"] if s["primary"])["id"] if owed else None
+    for x in owed:
+        failed = f"PC 앱에서 확인할 {x['id']}({x['requirement']}) 이 통과하지 못했다"
+        scenario = (build.get("checks") or {}).get(x["id"])
+        if scenario is None:
+            out.append(finding(lead, "full", f"{failed} — 빌드에 그 시나리오가 없다 · 확인: {x['check']}"))
+            continue
+        report = runs.drive(scenario["screen"], scenario["state"], scenario["steps"])
+        states = {s["id"]: s for s in report.get("states") or []}
+        steps = report.get("steps") or []
+        if complete(report) and len(steps) == len(scenario["steps"]) and all(
+                s.get("acted") and s.get("state") in states and desktop_driver.holds(states[s["state"]], want["expect"])
+                for s, want in zip(steps, scenario["steps"])):
+            continue
+        why = [f for f in desktop_driver.findings(report) if f.startswith("step ")][:2] or \
+            ["the driver's read was not complete"]
+        out.append(finding(scenario["screen"], scenario["state"], f"{failed} — {'; '.join(why)} · 확인: {x['check']}"))
+    return out
 
 
 def inspect(runs: Launches, spec: dict, folder: Path, evidence: Path) -> list[dict]:

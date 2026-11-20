@@ -65,7 +65,8 @@ def pc_build(staged):  # noqa: F811 — the imported fixture, requested by name
 
 def checked(tree, block=BLOCK, found=(), looked=None):
     """The build turn handed to the check, each kind's look a stand-in: the PC app's records the build it was
-    given and finds `found`, a web app's records that it ran and finds nothing."""
+    given and finds `found`, a web app's records that it ran and finds nothing. A critique a pass would start
+    never runs."""
 
     sent, looked = [], [] if looked is None else looked
 
@@ -74,6 +75,7 @@ def checked(tree, block=BLOCK, found=(), looked=None):
         return list(found)
 
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)), \
+            patch.object(oneshot, "start_worker", lambda *a, **k: None), \
             patch.object(front_build.oneshot_desktop_look, "look", look), \
             patch.object(front_build.oneshot_look, "look", lambda *a: looked.append("webapp") or []):
         then = oneshot_build.checked(tree, Run(), spec(), report() + fenced(pc.BLOCK, block))
@@ -87,13 +89,13 @@ def staging() -> list:
     return sorted(folder.iterdir()) if folder.is_dir() else []
 
 
-def test_a_pc_apps_build_is_frozen_looked_at_and_the_run_waits_at_the_critique(pc_build):
+def test_a_pc_apps_build_is_frozen_looked_at_and_its_critique_follows(pc_build):
     looked = []
     assert not checked(pc_build, looked=looked)
     build = o()["desktop_build"]
     assert looked == [build] and o()["looks"][-1]["build"] == build["identity"]   # the look launched the frozen copy
-    assert o()["stage"] == "critique" and o()["working"] is None and o()["stopped"]["reason"] == "kind"
-    assert oneshot_profile.held(o()) and build["head"] == git(pc_build, "rev-parse", "HEAD")
+    assert o()["stage"] == "critique" and o()["working"] == "critique" and not o().get("stopped")
+    assert not oneshot_profile.held(o()) and build["head"] == git(pc_build, "rev-parse", "HEAD")
     [into] = staging()
     manifest = json.loads((into / "manifest.json").read_text("utf-8"))
     assert build["folder"] == str(into / "app") and (into / "app" / "app.exe").is_file() and build["files"] == 2
@@ -101,10 +103,7 @@ def test_a_pc_apps_build_is_frozen_looked_at_and_the_run_waits_at_the_critique(p
                                                                 "res/strings.txt": manifest["files"]["res/strings.txt"]},
                         "launch": {"program": "app.exe", "args": ["--data", "{data}"], "cwd": ".",
                                    "env": {"WEBVIEW2_USER_DATA_FOLDER": "{data}/webview"}}}
-    assert build["installer"] == "dist-pc-release/app-setup.exe"
-    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")):
-        oneshot_build.send("budget", "build-front", "again")   # a stopped run that tries the next stage
-    assert o()["stopped"]["reason"] == "kind" and o()["desktop_build"] == build
+    assert build["installer"] == "dist-pc-release/app-setup.exe" and build["checks"] == {}
 
 
 @pytest.mark.parametrize("kinds", [["webapp", "desktop"], ["desktop", "webapp"]])
@@ -118,7 +117,19 @@ def test_among_several_kinds_the_pc_app_is_frozen_and_looked_at_in_the_owners_or
     assert not (sent := checked(pc_build, looked=looked)), sent
     assert [k if k == "webapp" else "desktop" for k in looked] == kinds and looked[kinds.index("desktop")] == \
         o()["desktop_build"]
-    assert o()["stopped"]["reason"] == "kind" and oneshot_profile.held(o()) and o()["stage"] == "critique"
+    assert not o().get("stopped") and not oneshot_profile.held(o()) and o()["stage"] == "critique"
+
+
+def test_a_look_check_owed_to_the_pc_app_needs_its_scenario_and_the_frozen_build_keeps_it(pc_build):
+    oneshot_spec.saved("budget", oneshot={"owed": [{"id": "O1", "kind": "desktop", "source": "look",
+                                                     "requirement": "R1", "check": "켜짐", "location": "core/a.rs:1",
+                                                     "reason": "UI 에서만 보인다"}]})
+    sent = checked(pc_build)
+    assert sent and "O1 의 시나리오가 없다" in sent[0][2] and not o().get("desktop_build")
+    scenario = {"screen": "S1", "state": "full", "steps": [
+        {"name": "on", "action": "toggle", "id": "translate-on", "expect": {"id": "translate-on", "toggle": "On"}}]}
+    assert not checked(pc_build, {**BLOCK, "checks": {"O1": scenario}})
+    assert o()["desktop_build"]["checks"] == {"O1": scenario} and o()["stage"] == "critique"
 
 
 def test_a_pc_look_finding_sends_the_build_back_and_keeps_the_frozen_build(pc_build):
@@ -316,7 +327,7 @@ def test_an_unreadable_snapshot_is_kept_and_one_shown_gone_or_malformed_is_built
         monkeypatch.setattr(Path, "stat", denied)
     oneshot_spec.recover()
     monkeypatch.undo()
-    assert bool(o()["desktop_build"]) is kept and oneshot_profile.held(o()) is kept   # a dropped build: rebuilt
+    assert bool(o()["desktop_build"]) is kept and o()["stage"] == ("critique" if kept else "build-front")   # rebuilt
 
 
 def test_a_worktree_named_by_its_extended_length_path_is_copied(pc_build, tmp_path):
@@ -389,7 +400,41 @@ def test_a_head_that_cannot_be_read_keeps_the_frozen_build_and_the_startup(pc_bu
 
     with patch.object(oneshot_spec.specs, "sh", reading):
         oneshot_spec.recover()
-    assert o()["desktop_build"] == before and oneshot_profile.held(o())
+    assert o()["desktop_build"] == before and o()["stage"] == "critique"
+
+
+TOGGLE = {"name": "on", "action": "toggle", "id": "translate-on", "expect": {"id": "translate-on", "toggle": "On"}}
+CHECK = {"screen": "S1", "state": "full", "steps": [
+    {"name": "type", "action": "set_value", "id": "source", "value": "hello", "expect": {"id": "source", "value": "hello"}},
+    {**TOGGLE, "in": "owned"}]}
+
+
+@pytest.mark.parametrize("step, why", [
+    ({**TOGGLE, "action": "click"}, "action"),
+    ({**TOGGLE, "id": " "}, "AutomationId"),
+    ({**TOGGLE, "value": "x"}, "set_value 에만"),
+    ({**TOGGLE, "in": "desktop"}, "in 은"),
+    ({**TOGGLE, "name": "a b"}, "name"),
+    ({**TOGGLE, "expect": {"toggle": "On"}}, "expect"),
+    ({**TOGGLE, "expect": {"id": "translate-on", "toggle": "Yes"}}, "toggle 은"),
+    ({**TOGGLE, "expect": {"id": "translate-on", "name": ""}}, "expect"),
+    ({**TOGGLE, "expect": {"id": "translate-on"}}, "마지막 step"),   # the postcondition reads a property
+])
+def test_a_look_checks_scenario_outside_the_drivers_steps_is_refused(pc_build, step, why):
+    assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "checks": {"O1": CHECK}}))["checks"] == {"O1": CHECK}
+    with pytest.raises(ValueError, match=why):
+        pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "checks": {"O1": {**CHECK, "steps": [step]}}}))
+
+
+@pytest.mark.parametrize("checks, why", [
+    ({"O1": CHECK}, ""), ({}, "O1 의 시나리오가 없다"), ({"O1": CHECK, "O9": CHECK}, "O9"),
+    ({"O1": {**CHECK, "screen": "S9"}}, "PC 앱의 화면"), ({"O1": {**CHECK, "state": "busy"}}, "PC 앱의 화면")])
+def test_the_checks_script_exactly_the_look_checks_owed_to_the_pc_app(pc_build, checks, why):
+    owed = [{"id": "O1", "kind": "desktop", "source": "look"}, {"id": "O2", "kind": "desktop", "source": "owner"},
+            {"id": "O3", "kind": "android"}]
+    run = {"oneshot": {"owed": owed, "front": {"screens": [{"id": "S1"}, {"id": "S2", "kind": "webapp"}]}}}
+    got = pc.scripted(checks, run)
+    assert (why in got if why else got == "") and (not why or got)
 
 
 def test_the_build_text_names_the_window_and_the_declared_tools(pc_build):

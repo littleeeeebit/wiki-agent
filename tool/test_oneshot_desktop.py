@@ -557,15 +557,15 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    # A PC app runs its frontend build and its look, alone or among other kinds (9e4a), and is held at the critique.
-    assert oneshot_profile.waits_at(o()) == "critique" and not oneshot_profile.held({**o(), "stage": "build-front"})
-    oneshot_spec.saved("budget", oneshot={"stage": "build-front",
+    # A PC app runs through its critique, alone or among other kinds (9e4b), and is held before R3.
+    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held({**o(), "stage": "critique"})
+    oneshot_spec.saved("budget", oneshot={"stage": "critique",
                                           "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
-    assert oneshot_profile.waits_at(o()) == "critique" and not oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held(o())
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
-        START("budget", "design", stage="critique")
-    assert o()["stage"] == "build-front"
+        START("budget", "design", stage="r3")
+    assert o()["stage"] == "critique"
 
 
 def frozen_in(tree, tmp_path) -> dict:
@@ -583,33 +583,41 @@ def frozen_in(tree, tmp_path) -> dict:
     return {"identity": identity, "folder": str(tmp_path / "app"), "head": git_head(tree), "launch": launch}
 
 
-def test_a_resume_or_a_shutdown_after_the_looks_passed_never_starts_the_critique(desktop, tmp_path):
-    # Every look passed on the frozen build, then the stop was lost (a restart that replaced it): the run is held
-    # at the critique with its build, never resumable into it.
+def test_a_resume_or_a_shutdown_after_two_clean_rounds_never_opens_r3(desktop, tmp_path):
+    # Two clean critiques passed on the frozen build, then the stop was lost (a restart that replaced it): the run
+    # is held before R3 with its build, never resumable into it, and its stop names the owner's pending checks.
     frozen = frozen_in(desktop, tmp_path)
-    oneshot_spec.saved("budget", oneshot={"stage": "critique", "working": None, "features": [],
+    owner = {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처에 글이 있다"}
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "features": [], "owed": [owner],
                                           "desktop_build": frozen,
-                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다",
-                                                      "state": "critique"}})
+                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "r3"}})
     assert oneshot_profile.held(o())
     with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
-    assert o()["stopped"]["reason"] == "kind"
-    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "critique", "detail": "x"}})
+    assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"]
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "r3", "detail": "x"}})
     oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "critique" and o()["desktop_build"] == frozen
+    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "r3" and o()["desktop_build"] == frozen
 
 
-def test_several_kinds_an_earlier_version_held_past_the_build_stay_held(desktop):
+def test_a_mixed_run_whose_phone_round_passed_waits_before_r3_instead_of_opening_it(desktop):
+    from main import oneshot_phone
+
+    oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
+                                          "stage": "phone", "working": "phone", "phone": {"status": "running"}})
+    assert oneshot_phone.settled("budget", {"status": "passed", "detail": ""}) is None   # no brief is written
+    assert o()["stage"] == "r3" and o()["phone"]["status"] == "passed" and o()["stopped"]["reason"] == "kind"
+    assert not o().get("working") and "R3 는 다음 버전에서" in o()["stopped"]["detail"]
+
+
+def test_several_kinds_an_earlier_versions_run_held_at_the_critique_is_resumable(desktop):
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "critique", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "critique"}})
-    assert oneshot_profile.waits_at(o()) == "critique" and oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held(o())
     oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind"
-    with pytest.raises(HTTPException, match="다음 버전"):
-        oneshot_spec.resume("budget")
+    assert o()["stopped"]["reason"] == "restart" and o()["stage"] == "critique"   # `[재개]` starts the critique
 
 
 @pytest.mark.parametrize("stop", [None, {"reason": "kind", "detail": "다음 버전", "state": "build-front"}])
@@ -630,8 +638,8 @@ def test_an_earlier_versions_frozen_run_at_the_build_is_resumable(desktop, tmp_p
 
 
 def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage_nor_its_build_again(desktop, tmp_path):
-    # Every look passed and the run waits at the critique (9e4a): neither the hand-off nor a start moves it back.
-    stage = "critique"
+    # Two clean critiques passed and the run waits before R3 (9e4b): neither the hand-off nor a start moves it back.
+    stage = "r3"
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": stage, "working": None, "stopped": None, "features": [],
                                           "desktop_build": frozen_in(desktop, tmp_path)})

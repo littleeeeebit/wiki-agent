@@ -247,6 +247,19 @@ def launches(tmp_path, desk, env=None, altered=""):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_a_look_past_its_whole_deadline_halts_its_driver_and_goes_back_to_the_build(tmp_path, monkeypatch):
+    desk = Desk(tmp_path)
+    runs, driving, kept = launches(tmp_path, desk)
+    with driving, kept:
+        runs.drive("S1", "full", [])   # within the deadline
+        monkeypatch.setattr(pc_look, "LOOK_SECONDS", 0)
+        assert runs.halt.is_set()   # a driver still running ends at once
+        with pytest.raises(ValueError, match="0분 안에 끝나지 않았다"):
+            runs.drive("S1", "empty", [])
+    assert len(desk.started) == 1   # no start after the deadline
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
 def test_a_start_whose_end_is_not_proven_stops_the_look_before_another_start(tmp_path):
     desk = Desk(tmp_path, clean=False)
     runs, driving, kept = launches(tmp_path, desk)
@@ -495,3 +508,27 @@ def test_a_manifest_that_no_longer_digests_to_the_saved_identity_is_altered(tmp_
     assert pc_look.oneshot_desktop.altered(build) == ""
     assert "식별자와 맞지 않는다" in pc_look.oneshot_desktop.altered({**build, "launch": {"program": "other.exe"}})
     assert "식별자와 맞지 않는다" in pc_look.oneshot_desktop.altered({**build, "identity": "0" * 64})
+
+
+OWED = [{"id": "O1", "kind": "desktop", "source": "look", "requirement": "R2", "check": "번역을 켜면 켜짐으로 보인다"},
+        {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R3", "check": "캡처에 글이 있다"}]
+SCENARIO = {"O1": {"screen": "S1", "state": "full", "steps": [
+    {"name": "on", "action": "toggle", "id": "translate-on", "expect": {"id": "translate-on", "toggle": "On"}}]}}
+
+
+@pytest.mark.parametrize("after, scenarios, why", [
+    ("On", SCENARIO, None), ("Off", SCENARIO, "step on: its postcondition was not read"),
+    ("On", {}, "빌드에 그 시나리오가 없다")])
+def test_a_look_check_passes_only_on_its_postcondition_read_and_an_owner_check_waits(tmp_path, after, scenarios, why):
+    started = []
+
+    def answer(sid, state, steps):   # the toggle leaves the switch `after`
+        started.append((sid, state, [s["name"] for s in steps]))
+        switch = node("translate-on", id="translate-on", name="번역", patterns=["Toggle"])
+        return report([switch], steps=[{**steps[0], "shows": [{**switch, "toggle": after}]}])
+
+    spec = {"oneshot": {"front": {"screens": SCREENS}, "owed": OWED}}
+    found = pc_look.checks(Runs(tmp_path / "evidence", answer), spec, {"checks": scenarios})
+    assert started == ([("S1", "full", ["on"])] if scenarios else [])   # the owner's check never runs here
+    assert [f["what"] for f in found] == ([] if why is None else [
+        f"PC 앱에서 확인할 O1(R2) 이 통과하지 못했다 — {why} · 확인: 번역을 켜면 켜짐으로 보인다"])
