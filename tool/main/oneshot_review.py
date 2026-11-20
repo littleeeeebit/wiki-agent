@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -75,7 +76,10 @@ def frozen(spec: dict) -> tuple[str, str, int | None]:
     read_tools.save_diff(tree, done.stdout)
     how = ("read it with the `pr_diff` tool" if oneshot.codex_role("review", store) else
            f"read it from `{read_tools.diff_file(tree).resolve()}`; a line starting with ~ continues the line before it")
-    counted = specs.sh(["git", "diff", "--numstat", spec["start_head"], head], tree, 120)
+    try:
+        counted = specs.sh(["git", "diff", "--numstat", spec["start_head"], head], tree, 120)
+    except subprocess.TimeoutExpired:   # the count is for the card; the frozen patch is what the review reads
+        counted = subprocess.CompletedProcess([], 1)
     added = None if counted.returncode else \
         sum(int(n) for n, *_ in (line.split("\t") for line in counted.stdout.splitlines()) if n.isdigit())
     return head, how, added   # `None`: Git could not count, and the card says it does not know
@@ -269,6 +273,8 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
                          + "), 그 종류에 걸린 요구, 기기에서 볼 `check` 를 적는다 — PC 앱(`desktop`)은 `source` 로 "
                          "`look`(UI Automation 상태) 이나 `owner`(주인 화면에서만 보이는 캡처·합성) 를 적고, 둘 다 "
                          "아니면 미루지 못한다. 안드로이드는 `source` 를 적지 않는다")
+    if any("secret" in f and not exposed(f) for f in findings):
+        raise ValueError("`secret` 는 커밋된 자격 증명을 적은 P0 에만, 기기로 미루지 않고 `true` 로 붙는다")
     serious = [f for f in findings if f["severity"] != "P2" and "device" not in f]
     if not all(area_of(f) for f in serious):
         raise ValueError("P0·P1 발견마다 그것이 걸린 동작 방식의 이름 `area` 를 적는다")
@@ -297,8 +303,6 @@ def held(f: dict, rules: dict) -> None:
         raise ValueError("P1 발견마다 그것이 깨뜨리는 설계 항목·요구 번호를 `breaks` 에 적는다 — 아무것도 "
                          "깨뜨리지 않으면 P2 다")
     repro = f.get("repro")
-    if "secret" in f and (f["secret"] is not True or f["severity"] != "P0"):
-        raise ValueError("`secret` 는 커밋된 자격 증명을 적은 P0 에만 `true` 로 붙는다")
     if repro is not None and not (isinstance(repro, str) and repro.strip()):
         raise ValueError("`repro` 는 평범한 입력과 순서, 그 결과를 적은 비어 있지 않은 글이다")
     if area_of(f) in rules.get("repeated", ()) and not repro:
@@ -409,9 +413,10 @@ def decided(repo: str, store, spec: dict, found: dict):
     reviews = [*(o.get("reviews") or []), {**found, "ts": time.time()}]
     if found["verdict"] == "approve" and (shown := exposures(o, reviews)):
         # A credential a review found committed stays in the history a later deletion leaves behind, and the
-        # first pull request pushes that history: the owner revokes it or rewrites the history, then `[재개]`.
+        # first pull request pushes that history: the owner revokes it, then `[재개]`. Rewriting the history
+        # instead would move the pinned tests' commit the build checks its ancestry against.
         detail = ("커밋된 자격 증명이 첫 PR 이 올릴 커밋 기록에 남아 있다 — " + " / ".join(f["location"] for f in shown)
-                  + " — 폐기했거나 기록에서 지운 뒤 [재개]")
+                  + " — 그 키를 폐기하고 새 키로 바꾼 뒤 [재개]")
         with oneshot._lock:
             store.put(reviews=reviews, working=None, stopped={
                 "reason": "review", "detail": detail, "state": store.get()[store.state], "exposed": found["head"]})
@@ -515,12 +520,18 @@ def capped(o: dict) -> bool:
 def exposures(o: dict, reviews: list[dict]) -> list[dict]:
     """The committed credentials the reviews found since the owner last cleared them (`secrets_cleared`)."""
 
-    return [f for r in reviews[int(o.get("secrets_cleared") or 0):] for f in r["findings"] if f.get("secret")]
+    return [f for r in reviews[int(o.get("secrets_cleared") or 0):] for f in r["findings"] if exposed(f)]
+
+
+def exposed(f: dict) -> bool:
+    """A committed credential, as only a blocking P0 records it."""
+
+    return f.get("secret") is True and f.get("severity") == "P0" and "device" not in f
 
 
 def resume(repo: str) -> None:
     """`[재개]` in `review`, the built HEAD not refused at the cap: the review run again on the current HEAD. A
-    stop for a committed credential is the owner saying it is revoked or out of the history."""
+    stop for a committed credential is the owner saying it is revoked."""
 
     o = oneshot_spec.spec_of(repo)["oneshot"]
     cleared = {"secrets_cleared": len(o.get("reviews") or [])} if (o.get("stopped") or {}).get("exposed") else {}

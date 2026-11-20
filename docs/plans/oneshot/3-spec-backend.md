@@ -380,8 +380,10 @@ any turn (`work.dispatch`); after a refusal it waits behind the build turn:
    or a failure the design names no handling for is P2 unless it loses or
    corrupts data. A credential committed to the repository is P0 and marked
    `secret`: a later deletion leaves it in the history the first pull request
-   pushes, so an approval after one stops the run for the owner to revoke it
-   or rewrite the history, and that `[재개]` reviews again. The rules
+   pushes, so an approval after one stops the run for the owner to revoke it,
+   and that `[재개]` reviews again. Rewriting the history is not offered: it
+   would move the pinned tests' commit the build checks its ancestry
+   against. The rules
    adapt to the rounds before, and the server checks each blocking finding
    against them (`oneshot_review.ruled`, `held`), asking again once like any
    other shape it refuses:

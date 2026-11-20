@@ -431,9 +431,11 @@ def test_a_committed_credential_holds_the_approval_for_the_owner_even_after_a_de
     tree, head, sent = reviewed
     leak = {"location": "config.py:1", "severity": "P0", "reason": "키가 커밋됐다", "evidence": "config.py 1행",
             "area": "credential exposure", "secret": True}
-    with pytest.raises(ValueError, match="secret"):   # only a P0 is a committed credential
-        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [{**leak, "severity": "P1"}]}, head,
-                                  rules={"anchors": set()})
+    for wrong, kind in (({**leak, "severity": "P1"}, "refuse"), ({**P2, "secret": True}, "approve"),
+                        ({**leak, "secret": "false"}, "refuse")):   # only a blocking P0, exactly `true`
+        with pytest.raises(ValueError, match="secret"):
+            oneshot_review.verdict_of({"verdict": kind, "head": head, "findings": [wrong]}, head, rules={"anchors": set()})
+    assert not oneshot_review.exposures({}, [{"findings": [{**P2, "secret": True}]}])   # an older record, read alike
     with patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
         _, asking = answers(verdict(head, "refuse", leak))
         with asking:
@@ -446,7 +448,7 @@ def test_a_committed_credential_holds_the_approval_for_the_owner_even_after_a_de
         assert o()["stage"] == "review" and o()["stopped"]["exposed"] == head and "config.py:1" in o()["stopped"]["detail"]
         begun = []
         with patch.object(oneshot_review, "begin", begun.append):
-            oneshot_spec.resume("budget")   # the owner revoked it or rewrote the history
+            oneshot_spec.resume("budget")   # the owner revoked it
         assert begun == ["budget"] and o()["secrets_cleared"] == 2
         _, asking = answers(verdict(head, "approve"))
         with asking, patch.object(oneshot_spec, "start", lambda *a, **k: None):
@@ -458,11 +460,17 @@ def test_a_line_count_git_cannot_make_is_left_unknown(reviewed):
     _, head, _ = reviewed
     real = specs.sh
 
-    def numstat(argv, *a, **k):
-        return SimpleNamespace(returncode=1, stdout="", stderr="no") if "--numstat" in argv else real(argv, *a, **k)
+    for failed in (SimpleNamespace(returncode=1, stdout="", stderr="no"), subprocess.TimeoutExpired(["git"], 120)):
+        def numstat(argv, *a, failed=failed, **k):
+            if "--numstat" not in argv:
+                return real(argv, *a, **k)
+            if isinstance(failed, Exception):
+                raise failed
+            return failed
 
-    _, asking = answers(verdict(head, "refuse", P1))
-    with asking, patch.object(specs, "sh", numstat), \
-         patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
-        oneshot_review.review("budget")
-    assert "added" not in o()["reviews"][-1]
+        oneshot_spec.saved("budget", oneshot={"stage": "review", "working": "review", "stopped": None})
+        _, asking = answers(verdict(head, "refuse", P1))
+        with asking, patch.object(specs, "sh", numstat), \
+             patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+            oneshot_review.review("budget")
+        assert "added" not in o()["reviews"][-1] and o()["stage"] == "build"   # read, refused, never stopped
