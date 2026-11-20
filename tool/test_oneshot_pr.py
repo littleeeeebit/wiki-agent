@@ -96,6 +96,14 @@ def test_r3s_approval_sends_the_readme_turn_for_both_systems_and_no_workflow_for
     assert o()["reading"]["r3"][0]["edited"] == []
 
 
+def test_s8_refuses_an_adapter_changed_outside_release_before_its_gate_runs(finished):
+    tree, sent = finished
+    readme(tree, (".wiki/adapter.toml", adapter(gate=GATE + " && python -c \"open('ran.txt', 'w')\"")))
+    check(tree, answer(report()))()
+    assert sent[-1][1] == "pr" and "`[release]` 밖이 바뀌었다" in sent[-1][2] and "final_head" not in o()
+    assert not (tree / "ran.txt").exists()   # the changed gate never ran
+
+
 @pytest.mark.parametrize("change, said", [
     (lambda tree: None, "README.md"),
     (lambda tree: readme(tree, (".github/workflows/ci.yml", "on: push\n")), "CI 워크플로를 두지 않는다"),
@@ -191,10 +199,11 @@ def test_the_gate_green_asks_for_the_text_then_opens_the_pull_request_attached_b
 
 
 @pytest.mark.parametrize("change, said", [
-    # an adapter gate that dropped the contract's command
-    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "로 시작하고"),
+    # an adapter gate that dropped the contract's command: refused as any change outside `[release]`, unrun
+    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "`[release]` 밖이"),
     # the contract's command in a comment: the published gate would run only the rest
-    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass" # {GATE}')), "로 시작하고"),
+    (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass" # {GATE}')),
+     "`[release]` 밖이"),
     # a configuration the tests turn never listed, skipping every pinned case: the gate still exits 0
     (lambda tree: write(tree, "conftest.py", "import pytest\n\n\ndef pytest_collection_modifyitems(items):\n"
                                              "    for item in items:\n        item.add_marker(pytest.mark.skip)\n"),
