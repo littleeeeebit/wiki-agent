@@ -407,6 +407,10 @@ export function useWork() {
   const logsShown = useRef(new Map<string, number>())
   // The running turn the newest applied read named, with its session: what a superseded `load` attaches to.
   const runs = useRef(new Map<string, { turn: string; session_id: string } | null>())
+  // A reattached stream counts only while it follows the newest read's running turn (an errored replay lingers).
+  const streamTurn = useRef(new Map<string, string>())
+  const following = (path: string) => streams.current.has(path)
+    && streamTurn.current.get(path) === runs.current.get(path)?.turn
   const asked = useCallback((path: string) => {
     const n = (logsAsked.current.get(path) ?? 0) + 1
     logsAsked.current.set(path, n)
@@ -432,7 +436,7 @@ export function useWork() {
         // This read let go of the last local send: a notice deferred for it is read now, unless a stream has
         // attached since or a full log asked after the deferral is already reading it.
         const owed = missed.current.get(path)
-        if (owed !== undefined && !sendingNow(path) && !streams.current.has(path)
+        if (owed !== undefined && !sendingNow(path) && !following(path)
           && !((inflight.current.get(path) ?? 0) > owed)) {
           missed.current.delete(path)
           reload.current(path)
@@ -534,7 +538,8 @@ export function useWork() {
         const finishing = now && [...(held ?? [])].some((key) => turnOf.current.get(key) === now.turn)
           ? now.turn : undefined
         // Its end reads the record once more, in case the stream fails before the reply it stands in for.
-        for (const key of held ?? []) if (finishing && turnOf.current.get(key) === finishing) shadowed.current.add(key)
+        const omits = !!finishing && rows.some((r) => r.role === 'assistant' && r.turn === finishing)
+        for (const key of held ?? []) if (omits && turnOf.current.get(key) === finishing) shadowed.current.add(key)
         const saved = rows.filter((r) => !(finishing && r.role === 'assistant' && r.turn === finishing))
         const kept = new Set(saved.map((r) => r.turn && `${r.role}:${r.turn}`).filter(Boolean))
         for (const key of [...(held ?? [])]) {
@@ -574,6 +579,7 @@ export function useWork() {
           const control = new AbortController()
           streams.current.get(path)?.abort()
           streams.current.set(path, control)
+          streamTurn.current.set(path, now.turn)
           replays.current.set(live.key, control)
           follow(path, live.key, (on) => api.workEvents(path, now.turn, -1, on, control.signal),
             { session: now.session_id, turn: now.turn, signal: control.signal })
@@ -635,7 +641,7 @@ export function useWork() {
       const owed = missed.current.has(path)
       const reading = owed && (inflight.current.get(path) ?? 0) > missed.current.get(path)!
       if (stale) {
-        if (!sendingNow(path) && !streams.current.has(path) && owed && !reading) {
+        if (!sendingNow(path) && !following(path) && owed && !reading) {
           missed.current.delete(path)
           forget(path)   // a notice deferred for this send, and nothing attached since: read once now
           load(path, true)
