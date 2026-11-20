@@ -137,7 +137,9 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
         "--root=%ProgramFiles(x86)%", "--page=res/%2e%2e/%2e%2e/escape", "--first\u0000second", "NUL",
         "--out=nul.txt", "--assets=res\\strings.txt", "$HOME/x", "~/x", "--title=\"quoted\"", "{other}/x",
         "--page=file:x", "--sources=https://cdn.example/a.js;C:/elsewhere", "--base=../#top", "--base=web/..",
-        "@../args.txt", "@args.txt", "--port=COM¹", "--title=what?", "https:///", "https://"]],
+        "@../args.txt", "@args.txt", "--port=COM¹", "--title=what?", "https:///", "https://", "shell:Profile",
+        "--start=shell:Downloads", "https://cdn.example:99999/a.js"]],
+    ({"env": {"APPDATA": "{data}/named"}}, "look 이"),
     ({"args": ["--remote=https://cdn.example/{data}"], "env": {}}, "{data}"),
     ({"env": {"webview2_user_data_folder": "{data}/webview", "WEBVIEW2_USER_DATA_FOLDER": "{data}/w"}}, "대소문자만"),
     ({"env": {"APP_DATA": "{data}", "ASSETS": "<tree>/web"}}, "사본 밖을 가리킬 수 있다"),
@@ -223,7 +225,7 @@ def test_a_folder_turned_into_a_junction_after_its_check_is_never_read(pc_build,
     "--cdn=https://cdn.example/web/app.js", "--socket=ws://127.0.0.1:5173/live", "--assets=res/strings.txt",
     "--cache={data}/cache", "--size=1280x800", "--langs=ko,en;fallback=en", "--name=file-viewer",
     "--title=Translator: on", "--title=번역 켜기", "https://x.example/?return=/home",
-    "https://x.example/search?q=%ED%95%9C"])
+    "https://x.example/search?q=%ED%95%9C", "--api=https://[::1]:8443/v1"])
 def test_a_setting_naming_the_copy_data_or_a_remote_url_is_kept(pc_build, setting):
     run = {**BLOCK["run"], "args": ["--data", "{data}", setting]}
     assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["args"][-1] == setting
