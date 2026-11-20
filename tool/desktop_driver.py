@@ -168,8 +168,9 @@ def findings(report: dict) -> list[str]:
                 found.append(f"{where} has no name")
             if node["offscreen"] or node["depth"] == 0:   # the window itself: its frame is the bound
                 continue
-            if frame and (rect[0] < frame[0] or rect[1] < frame[1] or rect[0] + rect[2] > frame[0] + frame[2]
-                          or rect[1] + rect[3] > frame[1] + frame[3]):
+            if frame and not node.get("scrolled") and (   # inside a scrolling container: reached by scrolling
+                    rect[0] < frame[0] or rect[1] < frame[1] or rect[0] + rect[2] > frame[0] + frame[2]
+                    or rect[1] + rect[3] > frame[1] + frame[3]):
                 found.append(f"{where} lies outside its window")
             if acting and (rect[2] < SMALLEST or rect[3] < SMALLEST):
                 found.append(f"{where} is {rect[2]}x{rect[3]}, under {SMALLEST}x{SMALLEST}")

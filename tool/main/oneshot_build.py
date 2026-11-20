@@ -12,6 +12,7 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -491,9 +492,10 @@ def chained(command: str) -> bool:
     try:
         parts = commands(command)
         safe = not windows or quote_safe(command)
+        words = [p.split() if windows else shlex.split(p) for p in parts]   # the word the POSIX shell runs
     except (RecursionError, ValueError):   # nesting deeper than the masker reads, a quote left open: unreadable
         return False
-    return safe and all(p.split() and not leaves(p.split()[0]) for p in parts)
+    return safe and all(w and not leaves(w[0]) for w in words)
 
 
 def published(gate: str, backend: str) -> str:

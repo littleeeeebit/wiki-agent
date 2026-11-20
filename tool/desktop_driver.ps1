@@ -123,7 +123,8 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
   [ordered]@{ hwnd = $window.hwnd; drawn = $true; file = $file; size = @($frame[2], $frame[3]) }
 }
 
-function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0) {
+function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0, [bool]$scrolled = $false) {
+  # `scrolled`: inside a container that scrolls, so a person reaches what lies past its edge by scrolling.
   # The process first, and nothing else of an element outside the app's job: an embedded fragment of another
   # process is marked by its pid alone and never walked. `Current` reads each property when it is asked for.
   $c = $element.Current; $owner = $c.ProcessId
@@ -134,13 +135,22 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
   # A window the app owns shows under its owner too: it is read as a top-level window of its own, against its frame.
   if ($depth -gt 0 -and $script:tops -contains [int64]$c.NativeWindowHandle) { return }
   $b = $c.BoundingRectangle
-  $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $false; type = $c.ControlType.ProgrammaticName -replace "ControlType\.", "";
+  $patterns = @($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace "PatternIdentifiers\.Pattern", "" })
+  $node = [ordered]@{ window = $hwnd; depth = $depth; foreign = $false; type = $c.ControlType.ProgrammaticName -replace "ControlType\.", "";
     name = $c.Name; id = $c.AutomationId; enabled = $c.IsEnabled; offscreen = $c.IsOffscreen;
     rect = if ($b.IsEmpty) { $null } else { @([int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height) };
-    patterns = @($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace "PatternIdentifiers\.Pattern", "" }) }
+    patterns = $patterns; scrolled = $scrolled }
+  if ($patterns -contains "Scroll") {   # how much of its content it shows, in percent: under 100, some lies past it
+    try {
+      $view = $element.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).Current
+      $node.view = @([double]$view.HorizontalViewSize, [double]$view.VerticalViewSize)
+    } catch { $node.view = $null }
+  }
+  $script:nodes += $node
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $inner = $scrolled -or $patterns -contains "Scroll"
   $child = $walker.GetFirstChild($element)
-  while ($child) { Nodes $child $hwnd ($depth + 1); $child = $walker.GetNextSibling($child) }
+  while ($child) { Nodes $child $hwnd ($depth + 1) $inner; $child = $walker.GetNextSibling($child) }
 }
 
 function State([string]$name) {   # every window of the app in this state, shot and read
@@ -171,15 +181,36 @@ function State([string]$name) {   # every window of the app in this state, shot 
   $state
 }
 
-function Target($step) {   # by AutomationId within the main window, or by a name only one element carries
-  $root = [System.Windows.Automation.AutomationElement]::FromHandle((Main))
+function Nested($element, [int64]$root, $others) {   # inside another top-level window shown under `root`
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $e = $walker.GetParent($element)
+  while ($e) {
+    $h = [int64]$e.Current.NativeWindowHandle
+    if ($h -eq $root) { return $false }
+    if ($others -contains $h) { return $true }
+    $e = $walker.GetParent($e)
+  }
+  $false
+}
+
+function Target($step) {
+  # By AutomationId, or by a name only one element carries, within one window and none it shows nested: the main
+  # window, or with `in: owned` the one window the main window owns.
+  $root = [int64](Main)
+  if ($step.in -eq "owned") {
+    $owned = @(Windows | Where-Object { $_.owner -eq $root })
+    if ($owned.Count -ne 1) { return [ordered]@{ error = "the main window owns $($owned.Count) windows, not one" } }
+    $root = [int64]$owned[0].hwnd
+  }
+  $others = @(Windows | ForEach-Object { [int64]$_.hwnd } | Where-Object { $_ -ne $root })
   $A = [System.Windows.Automation.AutomationElement]
   $property, $value = if ($step.id) { $A::AutomationIdProperty, $step.id } else { $A::NameProperty, $step.control }
-  $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+  $all = $A::FromHandle([IntPtr]$root).FindAll([System.Windows.Automation.TreeScope]::Descendants,
                        (New-Object System.Windows.Automation.PropertyCondition $property, $value))
-  if ($all.Count -ne 1) { return [ordered]@{ error = "$($all.Count) elements match $value" } }
-  if (-not [Desk]::InApp([uint32]$all[0].Current.ProcessId)) { return [ordered]@{ error = "the element is not the app's" } }
-  [ordered]@{ element = $all[0] }
+  $mine = @($all | Where-Object { -not (Nested $_ $root $others) })
+  if ($mine.Count -ne 1) { return [ordered]@{ error = "$($mine.Count) elements match $value" } }
+  if (-not [Desk]::InApp([uint32]$mine[0].Current.ProcessId)) { return [ordered]@{ error = "the element is not the app's" } }
+  [ordered]@{ element = $mine[0] }
 }
 
 function Act($element, $step) {

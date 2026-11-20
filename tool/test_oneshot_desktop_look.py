@@ -273,16 +273,23 @@ def test_the_look_alone_names_the_screen_and_state_and_a_changed_copy_or_a_refus
         runs.drive("S1", "full", [])
 
 
-def test_a_copy_is_altered_when_a_file_changes_goes_or_is_added(tmp_path):
+def copy(tmp_path) -> tuple[Path, dict]:
+    """A frozen copy of one program, its manifest beside it, and the build the run saved for it."""
+
     import hashlib
     import json
 
     app = tmp_path / "app"
     app.mkdir()
     (app / "app.exe").write_bytes(b"exe")
-    digest = hashlib.sha256(b"exe").hexdigest()
-    (tmp_path / "manifest.json").write_text(json.dumps({"files": {"app.exe": digest}}), encoding="utf-8")
-    build = {"folder": str(app)}
+    files, launch = {"app.exe": hashlib.sha256(b"exe").hexdigest()}, {"program": "app.exe"}
+    identity = hashlib.sha256(json.dumps({"files": files, "launch": launch}, sort_keys=True).encode()).hexdigest()
+    (tmp_path / "manifest.json").write_text(json.dumps({"files": files}), encoding="utf-8")
+    return app, {"folder": str(app), "identity": identity, "launch": launch}
+
+
+def test_a_copy_is_altered_when_a_file_changes_goes_or_is_added(tmp_path):
+    app, build = copy(tmp_path)
     assert pc_look.oneshot_desktop.altered(build) == ""
     (app / "settings.ini").write_text("x")
     assert "`settings.ini`" in pc_look.oneshot_desktop.altered(build)
@@ -351,3 +358,98 @@ def test_a_feature_in_any_state_is_covered_and_absence_needs_reads_that_complete
     assert "start: window 1's tree was not read: the tree could not be read" in what
     assert "첫 화면의 `full` 상태를 읽지 못해 배치를 확인하지 못했다" in what
     assert not [w for w in what if "트리에도 없다" in w or "보이지 않는다" in w]
+
+
+def test_a_state_that_shows_no_window_is_no_evidence_of_absence(tmp_path):
+    (tmp_path / "shots").mkdir()
+
+    def empty(sid, state, steps):
+        got = shown(sid, state, steps)
+        if (sid, state) == ("S1", "full") and not steps:
+            got["states"][0].update(windows=[], shots=[], reads=[], nodes=[])
+        return got
+
+    what = [f["what"] for f in inspect(tmp_path, empty)[0]]
+    assert "start: no app window to shoot" in what and "첫 화면의 `full` 상태를 읽지 못해 배치를 확인하지 못했다" in what
+    assert not [w for w in what if "트리에도 없다" in w or "보이지 않는다" in w]
+
+
+@pytest.mark.parametrize("failure", ["not-acted", "never-seen"])
+def test_a_probe_that_did_not_act_is_a_finding_and_a_never_control_it_saw_is_one(tmp_path, failure):
+    (tmp_path / "shots").mkdir()
+    probes = []
+
+    def answer(sid, state, steps):
+        got = shown(sid, state, steps)
+        if steps:
+            probes.append(steps[0])
+            if failure == "not-acted":   # two elements matched, or the control was disabled
+                got["steps"][0].update(acted=False, state=None)
+            else:
+                got["states"][-1]["nodes"].append(node("admin"))
+        return got
+
+    what = [f["what"] for f in inspect(tmp_path, answer)[0]]
+    assert all("in" not in step for step in probes)   # the first screen is the main window: searched there
+    if failure == "not-acted":
+        assert "step try: it was not performed" in what and "가끔 쓰는 기능 `search` 가 한 번 눌러서 보이지 않는다" in what
+    else:
+        assert "화면에 없기로 한 `admin` 의 컨트롤이 화면에 있다" in what
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+@pytest.mark.parametrize("how", ["driver-raised", "driver-end"])
+def test_an_unproven_end_stops_the_look_even_when_the_driver_failed(tmp_path, how):
+    import desktop_driver
+
+    desk = Desk(tmp_path)   # the app's end unproven only once the driver raised
+    runs, _, kept = launches(tmp_path, desk)
+
+    def drive(*a, **k):
+        if how == "driver-raised":
+            desk.clean = False
+            raise OSError("the driver's folder is gone")
+        return {**shown("S1", "full", []), "end": {"clean": False, "reasons": ["pid 7 runs"]}}
+
+    who = "드라이버를" if how == "driver-end" else "앱을"
+    with patch.object(desktop_driver, "drive", drive), kept, pytest.raises(RuntimeError, match=f"{who} 끝내지 못했다"):
+        runs.drive("S1", "full", [])
+
+
+def scroller(view: float, items: int, step: int = 40) -> dict:
+    """A state whose list shows 4 rows of 40 pixels at a time and holds `items` rows in its tree."""
+
+    rows = [node(f"row{i}", depth=2, type="ListItem", rect=[0, 100 + i * step, 200, step], patterns=[], id=f"row{i}")
+            for i in range(items)]
+    box = {**node("list", depth=1, type="List", id="list", patterns=["Scroll"]), "rect": [0, 100, 200, 160],
+           "view": [100.0, view]}
+    return {"windows": [{"hwnd": MAIN}], "nodes": [window(MAIN), box, *rows]}
+
+
+def test_a_list_whose_tree_holds_less_than_its_scroll_extent_is_partial():
+    assert pc_look.partial(scroller(view=20.0, items=6), {MAIN})   # 20 rows' extent, 6 realized
+    assert not pc_look.partial(scroller(view=20.0, items=20), {MAIN})   # every row in the tree
+    assert not pc_look.partial(scroller(view=20.0, items=6), {DIALOG})   # another window's list
+    state = scroller(view=20.0, items=20)
+    state["nodes"][-1]["id"] = "feature:history"   # the last row, scrolled out of view
+    assert pc_look.features(state, shown=False) == {"history"} and pc_look.features(state, shown=True) == set()
+
+
+def test_a_control_scrolled_past_its_window_is_reachable_not_outside_it():
+    import desktop_driver
+
+    row = {**node("row", type="ListItem", rect=[0, 900, 200, 40], patterns=[], id="row"), "scrolled": True}
+    state = {"id": "s00", "name": "start", "windows": [{"hwnd": MAIN, "frame": [0, 0, 1280, 800]}],
+             "shots": [{"hwnd": MAIN, "drawn": True, "file": "s00-1.png"}], "reads": [{"hwnd": MAIN, "read": True}],
+             "nodes": [window(MAIN), row]}
+    got = {**report([]), "states": [state]}
+    assert desktop_driver.findings(got) == []
+    state["nodes"][1]["scrolled"] = False
+    assert desktop_driver.findings(got) == ["start: ListItem 'row' lies outside its window"]
+
+
+def test_a_manifest_that_no_longer_digests_to_the_saved_identity_is_altered(tmp_path):
+    _, build = copy(tmp_path)
+    assert pc_look.oneshot_desktop.altered(build) == ""
+    assert "식별자와 맞지 않는다" in pc_look.oneshot_desktop.altered({**build, "launch": {"program": "other.exe"}})
+    assert "식별자와 맞지 않는다" in pc_look.oneshot_desktop.altered({**build, "identity": "0" * 64})

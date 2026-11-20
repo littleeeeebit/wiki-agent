@@ -496,8 +496,9 @@ def waiting(repo: str, o: dict) -> dict:
 
 
 def standing(repo: str, build: dict) -> bool:
-    """A frozen build still stands unless it is shown not to: its copy, program or manifest is gone, or the worktree
-    is read at another HEAD than the one its gate passed. A HEAD that cannot be read keeps it, never a startup."""
+    """A frozen build still stands unless it is shown not to: its copy, program or manifest is gone, the copy is no
+    longer what its manifest and saved identity record (`oneshot_desktop.altered`), or the worktree is read at
+    another HEAD than the one its gate passed. A file or HEAD that cannot be read keeps it, never a startup."""
 
     try:   # a record missing what a frozen build always carries holds nothing to start
         app, head = Path(build["folder"]), str(build["head"])
@@ -514,6 +515,14 @@ def standing(repo: str, build: dict) -> bool:
         except OSError:   # there, but unreadable now: not shown gone
             unread = True
     if unread:
+        return True
+    from . import oneshot_desktop   # the copy against its manifest and the saved identity
+    try:
+        if oneshot_desktop.altered(build):
+            return False
+    except ValueError:   # a manifest that is no JSON: damaged
+        return False
+    except OSError:   # unreadable now: not shown changed
         return True
     try:
         done = specs.sh(["git", "rev-parse", "HEAD"], Path(spec_of(repo)["worktree"]))

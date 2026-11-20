@@ -83,17 +83,19 @@ def _remote(setting: str) -> bool:
 
 
 def _punycode(label: str) -> bool:
-    """A label that is not `xn--`, or one whose Punycode decodes to letters, marks or digits beyond ASCII and
-    encodes back to it. ponytail: no full UTS 46 validity table; the browser's parser refuses more."""
+    """A label that is not `xn--`, or a valid IDNA A-label: its Punycode decodes, the decoded label passes
+    IDNA 2008 (no leading combining mark, joiners only in context) and encodes back to it. `idna` comes with
+    FastAPI (starlette, anyio). ponytail: IDNA 2008 is stricter than a browser's UTS 46 for symbols such as emoji,
+    which this refuses."""
+
+    import idna
 
     if not label.startswith("xn--"):
         return True
     try:
-        text = label[4:].encode("ascii").decode("punycode")
-    except UnicodeError:
+        return idna.encode(idna.decode(label)).decode("ascii") == label
+    except (idna.IDNAError, UnicodeError):
         return False
-    return (not text.isascii() and not any(unicodedata.category(c)[0] in "CZ" for c in text)
-            and "xn--" + text.encode("punycode").decode("ascii") == label)
 
 
 PARTS = re.compile(r"[/\s;,=:]+")
@@ -377,11 +379,16 @@ def frozen(tree: Path, desktop: dict, into: Path) -> dict:
 
 
 def altered(build: dict) -> str:
-    """Why the frozen copy is no longer the build its identity names, or empty: a file the manifest records was
-    changed or removed, or one was added. The program runs inside its copy, so each start is checked after it."""
+    """Why the frozen copy is no longer the build its identity names, or empty: the manifest's files and the saved
+    launch settings no longer digest to the run's saved identity, or a file the manifest records was changed or
+    removed, or one was added. The program runs inside its copy, so each start is checked after it. A file that
+    cannot be read now raises OSError: it is not shown changed."""
 
     app = Path(build["folder"])
-    files = json.loads((app.parent / "manifest.json").read_text(encoding="utf-8"))["files"]
+    files = json.loads((app.parent / "manifest.json").read_text(encoding="utf-8")).get("files")
+    if not isinstance(files, dict) or hashlib.sha256(json.dumps(
+            {"files": files, "launch": build.get("launch")}, sort_keys=True).encode()).hexdigest() != build.get("identity"):
+        return "얼린 PC 앱 빌드의 매니페스트가 그 빌드의 식별자와 맞지 않는다 — 다시 빌드한다"
     there = sorted(p.relative_to(app).as_posix() for p in app.rglob("*") if p.is_file())
     changed = sorted(set(there) ^ set(files)) or [
         n for n in there if hashlib.sha256((app / n).read_bytes()).hexdigest() != files[n]]

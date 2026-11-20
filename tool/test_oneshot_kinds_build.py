@@ -110,6 +110,7 @@ def test_a_posix_gate_is_counted_where_its_check_cuts_it(monkeypatch):
     assert len(oneshot_build.commands('echo core && echo one "&&" two')) == 2   # a quoted `&&` argument alone
     assert len(oneshot_build.commands("a && echo 'x\\' && b")) == 3   # no escape inside single quotes
     assert not oneshot_build.chained('pytest && echo "open')   # a quote left open is no chain the shell reads
+    assert not oneshot_build.chained("pytest && 'ex'ec sh")   # the word the shell runs, its quotes joined: `exec`
     assert oneshot_build.published('pytest "a && b" && x', 'pytest "a')   # a backend cut inside a quote
 
 

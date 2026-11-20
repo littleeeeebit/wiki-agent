@@ -569,13 +569,18 @@ def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
 
 
 def frozen_in(tree, tmp_path) -> dict:
-    """A frozen build's record whose copy is still there, at the worktree's HEAD."""
+    """A frozen build's record whose copy is still there and still what its manifest and identity record, at the
+    worktree's HEAD."""
+
+    import hashlib
+    import json
 
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "app.exe").write_bytes(b"MZ")
-    (tmp_path / "manifest.json").write_text("{}")
-    return {"identity": "f" * 64, "folder": str(tmp_path / "app"), "head": git_head(tree),
-            "launch": {"program": "app.exe"}}
+    files, launch = {"app.exe": hashlib.sha256(b"MZ").hexdigest()}, {"program": "app.exe"}
+    (tmp_path / "manifest.json").write_text(json.dumps({"files": files}))
+    identity = hashlib.sha256(json.dumps({"files": files, "launch": launch}, sort_keys=True).encode()).hexdigest()
+    return {"identity": identity, "folder": str(tmp_path / "app"), "head": git_head(tree), "launch": launch}
 
 
 def test_a_resume_or_a_shutdown_after_the_looks_passed_never_starts_the_critique(desktop, tmp_path):

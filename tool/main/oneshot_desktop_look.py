@@ -24,9 +24,6 @@ END_SECONDS = 30
 SETTLE_MS = 1000
 TRY = "try"   # the one step a `sometimes` probe takes; a probe that does not show the feature misses this one
 MISSED = f"step {TRY}: its postcondition was not read"
-# A realized item of a virtualized list: the tree holds only what is realized, so absence off it is not proven.
-# ponytail: read off the realized items' pattern; a list that realizes none of its items is not seen.
-VIRTUAL = "VirtualizedItem"
 
 
 def finding(sid: str, state: str, what: str) -> dict:
@@ -47,28 +44,81 @@ def size(profile: dict) -> tuple[int, int]:
     return int(width), int(height)
 
 
+def inside(rect, box) -> bool:
+    x, y = rect[0] + rect[2] / 2, rect[1] + rect[3] / 2
+    return box[0] <= x < box[0] + box[2] and box[1] <= y < box[1] + box[3]
+
+
+def walk(state: dict):
+    """Each of the state's own nodes with the scrolling containers it lies in. The nodes come depth first, each
+    window's from depth 0, so a container's descendants are the nodes after it deeper than it."""
+
+    stack = []
+    for node in state["nodes"]:
+        while stack and stack[-1]["depth"] >= node["depth"]:
+            stack.pop()
+        if not node.get("foreign"):
+            yield node, list(stack)
+            if "Scroll" in node.get("patterns", []) and node.get("rect"):
+                stack.append(node)
+
+
 def features(state: dict, shown: bool, windows: set | None = None) -> set[str]:
     """The feature ids a state's own nodes carry as `feature:<id>`, in `windows` if named; with `shown`, only
-    those laid out on screen."""
+    those laid out on screen and not scrolled out of any container they lie in."""
 
-    return {node["id"][len(PREFIX):] for node in state["nodes"]
-            if not node.get("foreign") and (node.get("id") or "").startswith(PREFIX)
-            and (windows is None or node["window"] in windows)
-            and (not shown or node.get("rect") and not node.get("offscreen"))}
+    return {node["id"][len(PREFIX):] for node, scrollers in walk(state)
+            if (node.get("id") or "").startswith(PREFIX) and (windows is None or node["window"] in windows)
+            and (not shown or node.get("rect") and not node.get("offscreen")
+                 and all(inside(node["rect"], s["rect"]) for s in scrollers))}
+
+
+def partial(state: dict, windows: set) -> bool:
+    """Whether a scrolling container in `windows` holds less of its content in the tree than its scroll extent:
+    a virtualized list, whose unrealized items the tree does not hold, so absence off it is not proven. The extent
+    is the container's size over its view size; the content, the span its descendants cover.
+    ponytail: geometry, not the list's item count; a list whose realized items happen to span it is not seen."""
+
+    spans: dict[int, list] = {}
+    for node, scrollers in walk(state):
+        if node["window"] not in windows:
+            continue
+        for s in scrollers:
+            if node.get("rect"):
+                r, span = node["rect"], spans.setdefault(id(s), [s, None])
+                box = (r[0], r[1], r[0] + r[2], r[1] + r[3])
+                span[1] = box if span[1] is None else (min(span[1][0], box[0]), min(span[1][1], box[1]),
+                                                       max(span[1][2], box[2]), max(span[1][3], box[3]))
+    for node, _ in walk(state):
+        view = node.get("view") if node["window"] in windows else None
+        if not view or not node.get("rect"):
+            continue
+        cover = (spans.get(id(node)) or [None, None])[1]
+        for axis, size in ((0, 2), (1, 3)):
+            if 0 < view[axis] < 100:
+                extent = node["rect"][size] * 100 / view[axis]
+                if cover is None or cover[axis + 2] - cover[axis] < 0.9 * extent:
+                    return True
+    return False
+
+
+def drawn(state: dict, hwnd) -> bool:
+    """Whether `hwnd` is among the state's windows, shot and its tree read."""
+
+    return (any(w["hwnd"] == hwnd for w in state["windows"])
+            and any(sh["hwnd"] == hwnd and sh.get("drawn") for sh in state["shots"])
+            and any(r["hwnd"] == hwnd and r.get("read") for r in state.get("reads", [])))
 
 
 def complete(report: dict) -> bool:
-    """Whether the driver finished and made every observation: every state's windows drawn and read. What a
-    read found (an unnamed control, a small target) leaves it complete; absence counts only off such a read."""
+    """Whether the driver finished and made every observation: every state shows a window, each drawn and read,
+    and the driver's own end was proven. What a read found (an unnamed control, a small target) leaves it
+    complete; absence counts only off such a read."""
 
     states = report.get("states") or []
     return (report.get("phase") == "done" and not report.get("ended") and not report.get("error") and bool(states)
-            and all(len(st.get("reads", [])) == len(st["shots"]) and all(sh.get("drawn") for sh in st["shots"])
-                    and all(r.get("read") for r in st.get("reads", [])) for st in states))
-
-
-def virtual(state: dict) -> bool:
-    return any(VIRTUAL in node.get("patterns", []) for node in state["nodes"] if not node.get("foreign"))
+            and not (report.get("end") and not report["end"]["clean"])
+            and all(st["windows"] and all(drawn(st, w["hwnd"]) for w in st["windows"]) for st in states))
 
 
 def surface(report: dict, kind: str) -> tuple[int | None, str]:
@@ -123,14 +173,20 @@ class Launches:
             halted(lambda: True)
         except desktop_session.Refused as exc:
             raise ValueError(f"PC 앱을 띄우지 못했다 — {exc}") from exc
+        report, failed = {}, None
         try:
             report = desktop_driver.drive(self.look, key, self.window, steps, settle_ms=SETTLE_MS,
                                           key=f"driver{self.n}", halt=self.halt)
-        finally:   # its members recorded first, so recovery names them however the end goes
-            self.look.observe()
-            end = self.look.jobs[key].end(END_SECONDS)
-        if not end["clean"]:
-            raise RuntimeError(f"PC 앱 화면 검사에서 앱을 끝내지 못했다 — {'; '.join(end['reasons'])}")
+        except Exception as exc:   # the ends are proven first: an unproven one stops the stage, never a retry
+            failed = exc
+        self.look.observe()   # its members recorded first, so recovery names them however the end goes
+        end = self.look.jobs[key].end(END_SECONDS)
+        for who, proof in (("앱을", end), ("드라이버를", report.get("end"))):
+            if proof and not proof["clean"]:
+                raise RuntimeError(f"PC 앱 화면 검사에서 {who} 끝내지 못했다 — {'; '.join(proof['reasons'])}") \
+                    from failed
+        if failed is not None:
+            raise failed
         halted(self.stopped)
         if why := oneshot_desktop.altered(self.build):
             raise ValueError(why)
@@ -171,8 +227,9 @@ def inspect(runs: Launches, spec: dict, folder: Path, evidence: Path) -> list[di
             found = desktop_driver.findings(report)
             hwnd, why = surface(report, kind)
             start = (report.get("states") or [None])[0]
-            file = next((shot["file"] for shot in (start or {"shots": []})["shots"]
-                         if shot["hwnd"] == hwnd and shot.get("drawn")), None)
+            if hwnd is not None and not (start and drawn(start, hwnd)):
+                hwnd = None   # the screen's window is evidence only once the state shows it, shot and read
+            file = next(sh["file"] for sh in start["shots"] if sh["hwnd"] == hwnd) if hwnd is not None else None
             if file:
                 shutil.copyfile(evidence / f"driver{runs.n}" / file, folder / f"{s['id']}-{VIEW}-{state}.png")
             elif why or not found:
@@ -180,71 +237,83 @@ def inspect(runs: Launches, spec: dict, folder: Path, evidence: Path) -> list[di
             findings += [finding(s["id"], state, what) for what in found]
             if start:   # presence counts off any read; absence only off reads that all completed
                 anywhere |= features(start, shown=False)
-                hidden |= virtual(start)
+                hidden |= partial(start, {w["hwnd"] for w in start["windows"]})
             whole = whole and complete(report) and hwnd is not None
             if s["primary"] and state == "full" and first is None:
                 first = (s, report, start, hwnd) if complete(report) and hwnd is not None else False
-    out, shown = placement(runs, front, frequency, first)
+    out, shown, observed, probed = placement(runs, front, frequency, first)
     findings += out
-    anywhere |= shown
+    anywhere |= shown | observed   # a `never` control a probe saw is one too
     lead = next(s for s in front["screens"] if s["primary"])["id"]
     for f, cls in frequency.items():
         if cls == "never" and f in anywhere:
             findings.append(finding(lead, "full", f"화면에 없기로 한 `{f}` 의 컨트롤이 화면에 있다"))
         if cls != "never" and f not in anywhere and whole:
             findings.append(finding(lead, "full", f"`{PREFIX}{f}` 가 어느 화면의 트리에도 없다"))
-    if hidden and whole and any(cls in ("rarely", "never") for cls in frequency.values()):
-        findings.append(finding(lead, "full", "가상화된 목록이 있어 첫 화면에 없어야 할 기능이 없다는 것을 확인하지 "
-                                              "못했다 — 화면 검사 중에는 목록 가상화를 끈다"))
+    if (hidden or probed) and whole and "never" in frequency.values():
+        findings.append(finding(lead, "full", "목록이 내용을 다 담지 않아 쓰지 않기로 한 기능이 어디에도 없다는 것을 "
+                                              "확인하지 못했다 — 화면 검사 중에는 목록 가상화를 끈다"))
     return [dict(f) for f in dict.fromkeys(tuple(f.items()) for f in findings)]   # a probe repeats a screen's
 
 
-def placement(runs: Launches, front: dict, frequency: dict, first) -> tuple[list[dict], set[str]]:
+def placement(runs: Launches, front: dict, frequency: dict, first) -> tuple[list[dict], set[str], set[str], bool]:
     """The owner's map read off the first screen's `full` state, its own window's controls only; each breach is
     high. A first screen whose read did not complete is a finding of its own: absence counts only off a read
-    that completed. The findings, and the features one invocation showed."""
+    that completed, and off a window whose lists hold all their content. The findings, the features one
+    invocation showed, every feature the probes saw, and whether a probe read a list holding only part of it."""
 
     if not first:
         sid = next(s for s in front["screens"] if s["primary"])["id"]
-        return [finding(sid, "full", "첫 화면의 `full` 상태를 읽지 못해 배치를 확인하지 못했다")], set()
+        return [finding(sid, "full", "첫 화면의 `full` 상태를 읽지 못해 배치를 확인하지 못했다")], set(), set(), False
     s, report, start, hwnd = first
     visible, there = features(start, shown=True, windows={hwnd}), features(start, shown=False, windows={hwnd})
-    out, shown = [], set()
+    out, shown, observed, probed = [], set(), set(), False
+    if partial(start, {hwnd}) and any(cls in ("rarely", "never") for cls in frequency.values()):
+        out.append(finding(s["id"], "full", "첫 화면의 목록이 내용을 다 담지 않아 첫 화면에 없어야 할 기능이 없다는 것을 "
+                                            "확인하지 못했다 — 화면 검사 중에는 목록 가상화를 끈다"))
     for f, cls in frequency.items():
         if cls == "every" and f not in visible:
             out.append(finding(s["id"], "full", f"늘 쓰는 기능 `{f}` 가 첫 화면에 바로 보이지 않는다"))
         if cls in ("rarely", "never") and f in there:
             out.append(finding(s["id"], "full", f"`{f}` 는 첫 화면에 없어야 한다"))
         if cls == "sometimes" and f not in visible:
-            ok, carried = one_action(runs, s, start, hwnd, f)
+            ok, carried, saw, cut = one_action(runs, s, start, hwnd != report["main"]["hwnd"], hwnd, f)
             out += [finding(s["id"], "full", what) for what in carried]
+            observed, probed = observed | saw, probed or cut
             if ok:
                 shown.add(f)
             else:
                 out.append(finding(s["id"], "full", f"가끔 쓰는 기능 `{f}` 가 한 번 눌러서 보이지 않는다"))
-    return out, shown
+    return out, shown, observed, probed
 
 
-def one_action(runs: Launches, s: dict, start: dict, hwnd: int, fid: str) -> tuple[bool, list[str]]:
-    """Whether invoking one of the first screen's controls in view, by its `AutomationId`, from a fresh start
-    where the feature was not shown, shows it in the main window or a window it owns; and what the probes could
-    not prove, which is a finding, never a miss."""
+def one_action(runs: Launches, s: dict, start: dict, owned: bool, hwnd: int, fid: str) \
+        -> tuple[bool, list[str], set[str], bool]:
+    """Whether invoking one of the first screen's controls in view, by its `AutomationId` within that screen's
+    window (`owned`: the one window the main window owns), from a fresh start where the feature was not shown,
+    shows it in the main window or a window it owns. Also what the probes could not prove, a finding and never
+    a miss; every feature any probe state held; and whether one read a list holding only part of its content."""
 
     import desktop_driver
 
-    targets = [node["id"] for node in start["nodes"]
-               if not node.get("foreign") and node["window"] == hwnd and node.get("id") and node.get("rect")
-               and not node.get("offscreen") and "Invoke" in node.get("patterns", [])]
-    carried = []
+    targets = [node["id"] for node, _ in walk(start)
+               if node["window"] == hwnd and node.get("id") and node.get("rect") and not node.get("offscreen")
+               and "Invoke" in node.get("patterns", [])]
+    carried, saw, cut = [], set(), False
     for target in list(dict.fromkeys(targets))[:MAX_TAPS]:
-        report = runs.drive(s["id"], "full", [{"name": TRY, "action": "invoke", "id": target,
-                                               "expect": {"id": PREFIX + fid}}])
+        step = {"name": TRY, "action": "invoke", "id": target, "expect": {"id": PREFIX + fid},
+                **({"in": "owned"} if owned else {})}
+        report = runs.drive(s["id"], "full", [step])
         carried += [f for f in desktop_driver.findings(report) if f != MISSED and f not in carried]
-        if not complete(report) or not report.get("steps"):
+        for state in report.get("states") or []:
+            saw |= features(state, shown=False)
+            cut = cut or partial(state, {w["hwnd"] for w in state["windows"]})
+        states = {state["id"]: state for state in report.get("states") or []}
+        done = (report.get("steps") or [{}])[0]
+        if not complete(report) or not done.get("acted") or done.get("state") not in states:
             continue
-        states = {state["id"]: state for state in report["states"]}
-        fresh, after = report["states"][0], states[report["steps"][0]["state"]]
+        fresh, after = report["states"][0], states[done["state"]]
         if fid not in features(fresh, shown=True, windows=mine(report, fresh)) \
                 and fid in features(after, shown=True, windows=mine(report, after)):
-            return True, carried
-    return False, carried
+            return True, carried, saw, cut
+    return False, carried, saw, cut
