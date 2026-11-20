@@ -272,8 +272,12 @@ class Look:
         save(self.folder, self.record)
         owned = {"APPDATA": str(folders["Roaming"]), "LOCALAPPDATA": str(folders["Local"]),
                  "TEMP": str(folders["Temp"]), "TMP": str(folders["Temp"])}
-        # Windows reads names without case: no spelling of an owned name from the server or `extra` survives.
-        env = {name: value for name, value in {**os.environ, **(extra or {})}.items()
+        # Windows reads names without case: a name `extra` sets drops every inherited spelling of it, and no
+        # spelling of an owned name from the server or `extra` survives.
+        extra = extra or {}
+        given = {name.upper() for name in extra}
+        env = {name: value for name, value in [*((n, v) for n, v in os.environ.items() if n.upper() not in given),
+                                               *extra.items()]
                if name.upper() not in owned} | owned
 
         def recorded(root: dict) -> None:

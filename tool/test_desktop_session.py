@@ -122,9 +122,10 @@ def test_a_halt_while_the_root_is_recorded_ends_it_before_it_runs(tmp_path, monk
     assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
 
 
-def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path):
+def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("EXTRA", "inherited")   # a setting spelt in another case still replaces it
     with desktop_session.look(tmp_path, "data") as look:
-        look.start("app", python(ENVIRONMENT), tmp_path, {"EXTRA": "kept", "temp": str(tmp_path), "TMP": "x"})
+        look.start("app", python(ENVIRONMENT), tmp_path, {"extra": "kept", "temp": str(tmp_path), "TMP": "x"})
         log = tmp_path / "data" / "evidence" / "app.log"
         assert waited(lambda: log.stat().st_size > 0)
         seen = json.loads(log.read_text(encoding="utf-8"))

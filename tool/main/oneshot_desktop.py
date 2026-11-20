@@ -37,15 +37,15 @@ MANIFEST_BYTES = 1 << 20
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 # A setting the look passes is one of two things, so a path to another place on this PC has no spelling left to
 # take, however Windows, a C runtime, a web view or the app's own expansion would read it:
-# - a whole remote URL, an optional `name=` before it, in printable ASCII but `,` and `;`, so no list hides a
-#   second field after it;
-# - a value of letters, digits, spaces and `_-.,;=:+/@#` alone (no `%`, `\`, `$`, `~`, quote, brace or control
-#   character: nothing expands, escapes, decodes or ends a string), naming the copy by a path relative to
-#   `run.cwd`, or `{data}`: no file URI, no drive, no path from a root, no `//`, no `..` step and no Windows device
-#   name.
-REMOTE = re.compile(r"(?i)(?:[a-z0-9_.-]+=)?(?:https?|wss?)://[!-+\--:<-~]+")
-PLAIN = set(" _-.,;=:+/@#")
-OUTSIDE = re.compile(r"(?i)file:|(?<![a-z0-9])[a-z]:|(?:^|[\s;,=:])/|//|(?:^|[/\s;,=:])\.\.(?:[/\s;,=:]|$)")
+# - a whole remote URL with a host, an optional `name=` before it, in printable ASCII but `,` and `;`, so no list
+#   hides a second field after it;
+# - a value of letters, digits, spaces and `_-.,;=:+/` alone (no `%`, `\`, `$`, `~`, `@`, `#`, `?`, quote, brace or
+#   control character: nothing expands, escapes, decodes, names a response file or ends a string), naming the
+#   copy by a path relative to `run.cwd`, or `{data}`: no file URI, no drive, no path from a root, no `//`, no `..`
+#   anywhere and no Windows device name.
+REMOTE = re.compile(r"(?i)(?:[a-z0-9_.-]+=)?(?:https?|wss?)://[a-z0-9][a-z0-9.-]*(?::\d{1,5})?(?:[/?#][!-+\--:<-~]*)?")
+PLAIN = set(" _-.,;=:+/")
+OUTSIDE = re.compile(r"(?i)file:|(?<![a-z0-9])[a-z]:|(?:^|[\s;,=:])/|//|\.\.")
 PARTS = re.compile(r"[/\s;,=:]+")
 
 
@@ -92,8 +92,10 @@ def declared(tree: Path, final: str) -> dict:
     if not isinstance(out["env"], dict) or not all(isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str)
                                                     for k, v in out["env"].items()):
         raise ValueError(f"`{BLOCK}` 의 run.env 는 환경 변수 이름과 문자열 값의 객체다")
+    if len({k.upper() for k in out["env"]}) != len(out["env"]):   # one variable to Windows
+        raise ValueError(f"`{BLOCK}` 의 run.env 에 대소문자만 다른 이름이 있다 — Windows 에는 한 변수다")
     settings = [*out["args"], *out["env"].values()]
-    if not any(DATA in s for s in settings):
+    if not any(DATA in s and not REMOTE.fullmatch(s) for s in settings):   # a local setting, never a URL's text
         raise ValueError(f"`{BLOCK}` 의 run 은 앱의 데이터를 `{DATA}` 에 두는 인자나 환경 변수를 하나 이상 적는다")
     if outside := [s for s in settings if _reaches_out(s)]:
         raise ValueError(f"`{BLOCK}` 의 run 설정 `{outside[0]}` 은 사본 밖을 가리킬 수 있다 — 실행은 얼린 사본과 "

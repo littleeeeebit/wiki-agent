@@ -82,13 +82,20 @@ End the turn with exactly one fenced block whose info string is
   argument or variable names it.
 - Each argument or variable is one of two things, and the server refuses any
   other before the gate runs:
-  - a whole remote URL (`http`, `https`, `ws`, `wss`), with an optional
-    `name=` before it and no `,` or `;` in it;
-  - a value made only of letters, digits, spaces and `_-.,;=:+/@#`, naming
+  - a whole remote URL (`http`, `https`, `ws`, `wss`) with a host, an
+    optional `name=` before it and no `,` or `;` in it;
+  - a value made only of letters, digits, spaces and `_-.,;=:+/`, naming
     the copy by a path relative to `run.cwd` written with `/`, or `{data}`.
     It holds no drive (`C:`), file URI, path from a root (`/Users/...`),
-    `//`, `..` step, or Windows device name such as `NUL`. With no `%`, `\`,
-    `$`, `~`, quote or brace, nothing in it expands, escapes or decodes.
+    `//`, `..`, or Windows device name such as `NUL`. With no `%`, `\`,
+    `$`, `~`, `@`, `#`, `?`, quote or brace, nothing in it expands,
+    escapes, decodes or names a response file.
+- `{data}` counts only in such a local value, never inside a URL. A variable
+  that holds several switches, such as
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, is one value: a URL switch cannot
+  share it with another switch, so pass a URL switch alone or by `run.args`.
+- Each variable name appears once whatever its case; it replaces any
+  inherited spelling of the same name.
 - `installer` is the file a release build packages for S8 to attach. The
   final gate builds it, not this turn's `gate_cmd`; this turn only names it,
   and it is never the program `run` starts.
