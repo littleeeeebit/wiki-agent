@@ -264,8 +264,7 @@ export function useWork() {
   const turnOf = useRef(new Map<number, string>())
   // Sends whose saved reply a full log left out for their own still-running entry.
   const shadowed = useRef(new Set<number>())
-  // forget + load(…, true), for callbacks defined before `load`; set once both exist.
-  const reload = useRef<(path: string) => void>(() => {})
+  const reload = useRef<(path: string) => void>(() => {})   // forget + load(…, true), set once both exist
   // A key the mirror does not show yet (a send just added, before its render) counts as live.
   const sendingNow = (path: string) => [...(sending.current.get(path) ?? [])].some((key) => {
     const t = (seen.current[path] ?? []).find((x) => x.key === key)
@@ -382,7 +381,7 @@ export function useWork() {
       replays.current.delete(key)
       if (!control) continue
       control.abort()
-      for (const [path, c] of streams.current) if (c === control) streams.current.delete(path)
+      for (const [path, c] of streams.current) if (c === control) drop(path)
     }
   }, [turns])
   const pendingNow = (path: string) =>
@@ -390,7 +389,7 @@ export function useWork() {
 
   const forget = useCallback((path: string) => {
     streams.current.get(path)?.abort()
-    streams.current.delete(path)
+    drop(path)
     lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
     loading.current.delete(path)
     setTurns(({ [path]: _gone, ...rest }) => rest)
@@ -409,6 +408,7 @@ export function useWork() {
   const runs = useRef(new Map<string, { turn: string; session_id: string } | null>())
   // A reattached stream counts only while it follows the newest read's running turn (an errored replay lingers).
   const streamTurn = useRef(new Map<string, string>())
+  const drop = (path: string) => streams.current.delete(path) && streamTurn.current.delete(path)
   const following = (path: string) => streams.current.has(path)
     && streamTurn.current.get(path) === runs.current.get(path)?.turn
   const asked = useCallback((path: string) => {
@@ -584,7 +584,7 @@ export function useWork() {
           follow(path, live.key, (on) => api.workEvents(path, now.turn, -1, on, control.signal),
             { session: now.session_id, turn: now.turn, signal: control.signal })
             .then((gone) => {
-              if (streams.current.get(path) === control) streams.current.delete(path)
+              if (streams.current.get(path) === control) drop(path)
               replays.current.delete(live.key)
               const expired = ended.current.delete(live.key)   // every end clears its bookkeeping
               // A live local send owns the path now: its own end reads the record once (`missed`).
