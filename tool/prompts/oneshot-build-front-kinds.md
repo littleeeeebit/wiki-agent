@@ -187,24 +187,16 @@ The server checks, in order:
    The PC app's `run.folder` and `run.program` are there.
    {desktop_freeze}
 <!-- /kind -->
-<!-- kind:desktop -->
-5. The run then waits here, the PC app frozen. Every kind's screens are
-   checked later, in the order the owner picked the kinds, each against only
-   the features that apply to it; a kind that fails sends its findings back to
-   a build turn like this one.
-<!-- /kind -->
-<!-- kind:!desktop -->
 5. Each kind's screens are then checked in the order the owner picked the
    kinds, each against only the features that apply to it.
-<!-- /kind -->
-<!-- kind:webapp,!desktop -->
+<!-- kind:webapp -->
    - The web app: the server starts it with `live_cmd` on a fresh data folder
      and again after `e2e/seed.json`, and shoots every web screen at
      {viewports} in each state. A console or page error, a placement the
      owner's map forbids, a feature that never appears, or a `sometimes`
      feature not one click from the first screen is refused.
 <!-- /kind -->
-<!-- kind:android,!desktop -->
+<!-- kind:android -->
    - The Android app: the server boots its own emulator, installs the APKs,
      and opens every Android screen in each state, shooting it and reading its
      hierarchy. A crash or ANR, a view past the screen's edge, a touch target
@@ -213,11 +205,12 @@ The server checks, in order:
      `never` feature with a control, a `sometimes` feature not one tap from the
      first screen, or a failed or missing scenario or owed test is refused.
 <!-- /kind -->
-<!-- kind:!desktop -->
+<!-- kind:desktop -->
+   - The PC app: {desktop_look}
+<!-- /kind -->
 
    A kind that fails sends its findings back here, and on the next HEAD every
    kind is checked again from the first.
-<!-- /kind -->
 
 A refusal comes back with the reason, at most three times in all.
 

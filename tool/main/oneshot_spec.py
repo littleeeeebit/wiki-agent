@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled
+from .oneshot_profile import STAGE_ORDER, current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -427,10 +427,13 @@ WORKERS = {"talk": talk, "design": design, "redesign": redesign}   # a later sta
 
 def start(repo: str, work: str, *args, **fields) -> None:
     """Starts a stage's worker. A run held at its kind's stop (`held`), or moving into it with `fields`, starts
-    nothing past S2 whatever its saved stop says: the stop is put back and the start refused."""
+    nothing past S2 whatever its saved stop says: the stop is put back and the start refused. A held run moved
+    back to the frontend build or later is refused too: its frozen build and looks are what it waits with."""
 
     o = specs.load(repo, oneshot.BRANCH)["oneshot"]
-    if work != "talk" and held({**o, "stage": fields.get("stage") or o.get("stage")}):
+    stage = fields.get("stage") or o.get("stage")
+    back = held(o) and stage in STAGE_ORDER and STAGE_ORDER.index(stage) >= STAGE_ORDER.index("build-front")
+    if work != "talk" and (back or held({**o, "stage": stage})):
         stop = waiting(repo, o).get("stopped") or {}
         raise HTTPException(409, stop.get("detail") or "이 실행의 다음 단계는 다음 버전에서 이어진다")
     oneshot.start_worker(store(repo), work, WORKERS[work], (repo, *args), fields)
@@ -472,20 +475,30 @@ def recover() -> None:
 def waiting(repo: str, o: dict) -> dict:
     """A run at the stage this version waits at keeps its `kind` stop: a stop or a shutdown that landed between
     that stage's save and its hand-off replaced it, and must not make the stage resumable. A PC app's frozen build
-    whose copy is gone, or whose HEAD the worktree has left, holds nothing: it is dropped, and `[재개]` builds again."""
+    whose copy is gone, or whose HEAD the worktree has left, holds nothing: it is dropped, a run past the frontend
+    build goes back to it, and `[재개]` builds again. An earlier version's run held at `build-front` with its build
+    frozen and its stop lost is left resumable too: this version looks at that build in the same check."""
 
+    front = STAGE_ORDER.index("build-front")
     if (build := o.get("desktop_build")) and not o.get("working") and not standing(repo, build):
-        o = saved(repo, oneshot={"desktop_build": None, "stopped": {
-            "reason": "restart", "state": o.get("stage"),
+        stage = "build-front" if o.get("stage") in STAGE_ORDER and STAGE_ORDER.index(o["stage"]) > front \
+            else o.get("stage")
+        o = saved(repo, oneshot={"desktop_build": None, "stage": stage, "stopped": {
+            "reason": "restart", "state": stage,
             "detail": "얼린 PC 앱 빌드가 없거나 작업트리의 HEAD 가 바뀌었다 — [재개]를 누르면 다시 빌드한다"}})["oneshot"]
+    elif build and o.get("stage") == "build-front" and not o.get("working") and not o.get("stopped"):
+        o = saved(repo, oneshot={"stopped": {"reason": "restart", "state": "build-front",
+                                             "detail": "얼린 PC 앱 빌드에서 멈췄다 — [재개]를 누르면 다시 빌드하고 검사한다"}})[
+            "oneshot"]
     if held(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
         return saved(repo, oneshot={"stopped": kind_stop(o["stage"])})["oneshot"]
     return o
 
 
 def standing(repo: str, build: dict) -> bool:
-    """A frozen build still stands unless it is shown not to: its copy, program or manifest is gone, or the worktree
-    is read at another HEAD than the one its gate passed. A HEAD that cannot be read keeps it, never a startup."""
+    """A frozen build still stands unless it is shown not to: its copy, program or manifest is gone, the copy is no
+    longer what its manifest and saved identity record (`oneshot_desktop.altered`), or the worktree is read at
+    another HEAD than the one its gate passed. A file or HEAD that cannot be read keeps it, never a startup."""
 
     try:   # a record missing what a frozen build always carries holds nothing to start
         app, head = Path(build["folder"]), str(build["head"])
@@ -501,13 +514,21 @@ def standing(repo: str, build: dict) -> bool:
             return False
         except OSError:   # there, but unreadable now: not shown gone
             unread = True
+    try:   # read whatever else is unreadable: a moved HEAD shows the build stale on its own
+        done = specs.sh(["git", "rev-parse", "HEAD"], Path(spec_of(repo)["worktree"]))
+        if done.returncode == 0 and done.stdout.strip() != head:
+            return False
+    except Exception:   # a timeout, a missing Git or worktree: unread, so not shown changed
+        pass
     if unread:
         return True
+    from . import oneshot_desktop   # the copy against its manifest and the saved identity
     try:
-        done = specs.sh(["git", "rev-parse", "HEAD"], Path(spec_of(repo)["worktree"]))
-    except Exception:   # a timeout, a missing Git or worktree: unread, so not shown changed
+        return not oneshot_desktop.altered(build)
+    except ValueError:   # a manifest that is no JSON: damaged
+        return False
+    except OSError:   # unreadable now: not shown changed
         return True
-    return done.returncode != 0 or done.stdout.strip() == head
 
 
 def kind_stop(stage: str) -> dict:

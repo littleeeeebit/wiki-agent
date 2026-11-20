@@ -12,6 +12,7 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -451,10 +452,28 @@ def leaves(word: str) -> bool:
 
 
 def commands(command: str) -> list[str]:
-    """`command`'s chain parts as the shell that runs the gate cuts them: on Windows `links`, at an unquoted `&&`
-    (the masker reads PowerShell); elsewhere at every `&&`, as `chained` checks them."""
+    """`command`'s chain parts as the shell that runs the gate cuts them, at an unquoted `&&`: on Windows `links`
+    (the masker reads PowerShell); elsewhere as the POSIX shell quotes, a backslash escaping the next character
+    outside single quotes. A quote left open raises ValueError."""
 
-    return links(command) if os.name == "nt" else command.split("&&")
+    if os.name == "nt":
+        return links(command)
+    parts, start, quote, i = [], 0, "", 0
+    while i < len(command):
+        c = command[i]
+        if c == "\\" and quote != "'":
+            i += 1
+        elif quote:
+            quote = "" if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif command.startswith("&&", i):
+            parts.append(command[start:i])
+            start, i = i + 2, i + 1
+        i += 1
+    if quote:
+        raise ValueError("a quote left open")
+    return [*parts, command[start:]]
 
 
 def chained(command: str) -> bool:
@@ -463,7 +482,7 @@ def chained(command: str) -> bool:
     On Windows, where the gate runs in PowerShell, the parts are those `links` cuts, at an unquoted `&&`, so a
     quoted argument holding `&&` stays one command, and a typographic quote that PowerShell could read as a
     delimiter and `links` does not (`quote_safe`) is refused, so the two readings cannot differ. Elsewhere the POSIX
-    shell runs it, and the parts are cut at every `&&`.
+    shell runs it, and the parts are cut at the `&&` it reads unquoted; a quote left open is refused.
     ponytail: by character and first word, not shell syntax: it stops a command that ends the chain by
     mistake, not one written to get past it; a quoted `;` or `(` is refused too, and a project script takes it."""
 
@@ -473,9 +492,10 @@ def chained(command: str) -> bool:
     try:
         parts = commands(command)
         safe = not windows or quote_safe(command)
-    except RecursionError:   # nesting deeper than the masker reads is refused like any other unreadable chain
+        words = [p.split() if windows else shlex.split(p) for p in parts]   # the word the POSIX shell runs
+    except (RecursionError, ValueError):   # nesting deeper than the masker reads, a quote left open: unreadable
         return False
-    return safe and all(p.split() and not leaves(p.split()[0]) for p in parts)
+    return safe and all(w and not leaves(w[0]) for w in words)
 
 
 def published(gate: str, backend: str) -> str:
@@ -484,7 +504,7 @@ def published(gate: str, backend: str) -> str:
 
     gate = gate.strip()
     rest = gate[len(backend):] if gate.startswith(backend) else None
-    if rest is None or rest and not rest.lstrip().startswith("&&") or not chained(gate):
+    if rest is None or rest and not rest.lstrip().startswith("&&") or not chained(gate) or not chained(backend):
         return f"어댑터의 `gate_cmd` 는 계약 테스트 `{backend}` 로 시작하고, 그 뒤로 {CHAIN} — `{gate}`"
     return ""
 

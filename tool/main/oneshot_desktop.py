@@ -48,10 +48,13 @@ ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 #   anywhere and no Windows device name.
 # A URL holds no `,`, `;` or `\`: a browser reads `\` as `/`, so the host it sees may not be the one checked.
 REMOTE = re.compile(r"(?i)(?:[a-z0-9_.-]+=)?((?:https?|wss?)://[!-+\--:<-\[\]-~]+)")
+# The WHATWG URL standard's forbidden domain code points: a host holding one is no host a browser opens.
+FORBIDDEN_HOST = re.compile(r"[\x00-\x20#%/:<>?@\[\\\]^|\x7f]")
 PLAIN = set(" _-.,;=:+/")
 # A `:` before anything but a space opens a namespace (`file:`, `shell:`, a drive), and a drive alone is one too.
 OUTSIDE = re.compile(r"(?i):(?=\S)|(?<![a-z0-9])[a-z]:|(?:^|[\s;,=:])/|//|\.\.")
 OWNED_ENV = {"APPDATA", "LOCALAPPDATA", "TEMP", "TMP"}   # the look sets these to its own folders, whatever run says
+LOOK_ENV = {"ONESHOT_SCREEN", "ONESHOT_STATE"}   # the look names the screen and state to open, in any case
 
 
 def _remote(setting: str) -> bool:
@@ -70,10 +73,28 @@ def _remote(setting: str) -> bool:
         bare = host[:-1] if host.endswith(".") else host   # the parser drops one empty last label
         if ":" in host:
             ipaddress.IPv6Address(host)
+        elif FORBIDDEN_HOST.search(host) or not all(map(_punycode, bare.split("."))):   # no domain a parser takes
+            return False
         elif re.fullmatch(r"(?i)\d+|0x[0-9a-f]*", bare.rsplit(".", 1)[-1]):
             ipaddress.IPv4Address(bare)   # dotted decimal only: the hex, octal and short forms are refused
         return bool(host)
     except ValueError:   # a port out of range, a bracket left open, a number that is no address
+        return False
+
+
+def _punycode(label: str) -> bool:
+    """A label that is not `xn--`, or a valid IDNA A-label: its Punycode decodes, the decoded label passes
+    IDNA 2008 (no leading combining mark, joiners only in context) and encodes back to it. `idna` comes with
+    FastAPI (starlette, anyio). ponytail: IDNA 2008 is stricter than a browser's UTS 46 for symbols such as emoji,
+    which this refuses."""
+
+    import idna
+
+    if not label.startswith("xn--"):
+        return True
+    try:
+        return idna.encode(idna.decode(label)).decode("ascii") == label
+    except (idna.IDNAError, UnicodeError):
         return False
 
 
@@ -131,6 +152,9 @@ def declared(tree: Path, final: str) -> dict:
     if len({k.upper() for k in out["env"]}) != len(out["env"]):   # one variable to Windows
         raise ValueError(f"`{BLOCK}` 의 run.env 에 대소문자만 다른 이름이 있다 — Windows 에는 한 변수다")
     settings = [*out["args"], *out["env"].values()]
+    if named := sorted(k for k in out["env"] if k.upper() in LOOK_ENV):
+        raise ValueError(f"`{BLOCK}` 의 run.env 는 `{named[0]}` 를 정하지 않는다 — 화면 검사가 "
+                         f"{', '.join(sorted(LOOK_ENV))} 로 열 화면과 상태를 넘긴다")
     if owned := sorted(k for k in out["env"] if k.upper() in OWNED_ENV):
         raise ValueError(f"`{BLOCK}` 의 run.env 는 `{owned[0]}` 를 정하지 않는다 — look 이 {', '.join(sorted(OWNED_ENV))} 를 "
                          f"자기 폴더로 둔다. 앱 데이터는 `{DATA}` 를 받는 다른 인자나 변수로 넘긴다")
@@ -352,3 +376,23 @@ def frozen(tree: Path, desktop: dict, into: Path) -> dict:
                                                    indent=1, sort_keys=True), encoding="utf-8")
     return {"identity": identity, "folder": str(app), "files": len(files), "launch": launch,
             "installer": desktop["installer"]}
+
+
+def altered(build: dict) -> str:
+    """Why the frozen copy is no longer the build its identity names, or empty: the manifest's files and the saved
+    launch settings no longer digest to the run's saved identity, or a file the manifest records was changed or
+    removed, or one was added. The program runs inside its copy, so each start is checked after it. A file that
+    cannot be read now raises OSError: it is not shown changed."""
+
+    app = Path(build["folder"])
+    manifest = json.loads((app.parent / "manifest.json").read_text(encoding="utf-8"))
+    files = manifest.get("files") if isinstance(manifest, dict) else None   # `[]` is no manifest: damaged
+    if not isinstance(files, dict) or hashlib.sha256(json.dumps(
+            {"files": files, "launch": build.get("launch")}, sort_keys=True).encode()).hexdigest() != build.get("identity"):
+        return "얼린 PC 앱 빌드의 매니페스트가 그 빌드의 식별자와 맞지 않는다 — 다시 빌드한다"
+    there = sorted(p.relative_to(app).as_posix() for p in app.rglob("*") if p.is_file())
+    changed = sorted(set(there) ^ set(files)) or [
+        n for n in there if hashlib.sha256((app / n).read_bytes()).hexdigest() != files[n]]
+    if changed:
+        return f"PC 앱이 얼린 사본의 `{changed[0]}` 를 바꿨다 — 실행은 사본을 읽기만 하고, 앱의 데이터는 `{DATA}` 에 쓴다"
+    return ""

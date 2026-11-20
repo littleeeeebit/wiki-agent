@@ -22,6 +22,7 @@ public static class Desk {
   [DllImport("user32")] public static extern bool EnumWindows(Visit v, IntPtr l);
   [DllImport("user32")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
   [DllImport("user32")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
   [DllImport("user32")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
@@ -62,6 +63,7 @@ $ask = Get-Content -Raw -Encoding UTF8 $Request | ConvertFrom-Json
 $out = $ask.out
 $report = [ordered]@{ phase = "starting"; main = $null; size = $null; states = @(); steps = @(); refusal = $null; error = $null }
 $UTILITY = @("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator", "IME", "MSCTFIME UI")
+$MAX_ITEMS = 2000   # a list's items counted at most: more is an unknown count, so its tree is not taken as whole
 $script:seq = 0
 
 function Put([string]$name, $value) {   # UTF-8 without a byte order mark, replaced whole
@@ -94,7 +96,12 @@ function Main {   # the main window, proven still the one chosen before every us
 function Windows {   # every visible top-level window of the app's job on this desktop, input indicators set apart
   @([Desk]::Visible() | Where-Object { [Desk]::InApp([Desk]::Owner($_)) } | ForEach-Object {
     [ordered]@{ hwnd = [int64]$_; pid = [Desk]::Owner($_); class = [Desk]::Cls($_); title = [Desk]::Title($_);
-                frame = [Desk]::Frame($_); utility = $UTILITY -contains [Desk]::Cls($_) } })
+                frame = [Desk]::Frame($_); utility = $UTILITY -contains [Desk]::Cls($_);
+                owner = [int64][Desk]::GetWindow($_, 4) } })   # GW_OWNER: the window that owns it, or 0
+}
+
+function Candidates {   # a main window: not an input indicator, a menu (#32768) or a window another one owns
+  @(Windows | Where-Object { -not $_.utility -and -not $_.owner -and $_.class -ne "#32768" })
 }
 
 function Shoot($window, [string]$state) {   # the whole window, then cut to its visible frame
@@ -117,7 +124,38 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
   [ordered]@{ hwnd = $window.hwnd; drawn = $true; file = $file; size = @($frame[2], $frame[3]) }
 }
 
-function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0) {
+function Rid($element) { ($element.GetRuntimeId()) -join "." }   # the element's identity while it lives
+
+function Items([string]$at) {   # each open item container's items, realized or not, against the nodes the walk read
+  # `items`: how many its provider holds; `unread`: how many of them the walk did not read, null when the
+  # provider will not say, holds more than the driver counts, or the container (an expanded tree item) has none.
+  # The walk's identities, then each container, are operations of their own: none grows with the whole tree.
+  if (-not $script:lists.Count) { return }
+  Enter "identify $at"
+  $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+  foreach ($e in $script:walked) { try { [void]$seen.Add((Rid $e)) } catch { } }   # unread: its items stay unread
+  $n = 0
+  foreach ($pair in $script:lists) {
+    $element, $node = $pair
+    Enter "items $at $(($n++))"
+    $node.items, $node.unread = $null, $null
+    try {
+      $container = $element.GetCurrentPattern([System.Windows.Automation.ItemContainerPattern]::Pattern)
+      $count, $unread, $item = 0, 0, $null
+      do {   # one call past the bound: a container of exactly $MAX_ITEMS is seen to end
+        $item = $container.FindItemByProperty($item, $null, $null)
+        if ($item) {
+          $count++
+          try { if (-not $seen.Contains((Rid $item))) { $unread++ } } catch { $unread++ }
+        }
+      } while ($item -and $count -le $MAX_ITEMS)
+      if (-not $item) { $node.items, $node.unread = $count, $unread }
+    } catch { }
+  }
+}
+
+function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0, [bool]$scrolled = $false) {
+  # `scrolled`: inside a container that scrolls, so a person reaches what lies past its edge by scrolling.
   # The process first, and nothing else of an element outside the app's job: an embedded fragment of another
   # process is marked by its pid alone and never walked. `Current` reads each property when it is asked for.
   $c = $element.Current; $owner = $c.ProcessId
@@ -125,20 +163,35 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $true; pid = $owner }
     return
   }
+  # A window the app owns shows under its owner too: it is read as a top-level window of its own, against its frame.
+  if ($depth -gt 0 -and $script:tops -contains [int64]$c.NativeWindowHandle) { return }
   $b = $c.BoundingRectangle
-  $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $false; type = $c.ControlType.ProgrammaticName -replace "ControlType\.", "";
+  $patterns = @($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace "PatternIdentifiers\.Pattern", "" })
+  $node = [ordered]@{ window = $hwnd; depth = $depth; foreign = $false; type = $c.ControlType.ProgrammaticName -replace "ControlType\.", "";
     name = $c.Name; id = $c.AutomationId; enabled = $c.IsEnabled; offscreen = $c.IsOffscreen;
     rect = if ($b.IsEmpty) { $null } else { @([int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height) };
-    patterns = @($element.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName -replace "PatternIdentifiers\.Pattern", "" }) }
+    patterns = $patterns; scrolled = $scrolled }
+  $script:walked.Add($element)   # its identity is read by `Items`, under that operation's own deadline
+  $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded
+  if (-not $open) {
+    try {
+      $open = $element.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -in
+        @([System.Windows.Automation.ExpandCollapseState]::Expanded, [System.Windows.Automation.ExpandCollapseState]::PartiallyExpanded)
+    } catch { $open = $true }   # its state unread: its items are owed
+  }
+  if ($open -and ($patterns -contains "ItemContainer" -or $node.type -eq "TreeItem")) { $script:lists += , @($element, $node) }
+  $script:nodes += $node
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $inner = $scrolled -or $patterns -contains "Scroll"
   $child = $walker.GetFirstChild($element)
-  while ($child) { Nodes $child $hwnd ($depth + 1); $child = $walker.GetNextSibling($child) }
+  while ($child) { Nodes $child $hwnd ($depth + 1) $inner; $child = $walker.GetNextSibling($child) }
 }
 
 function State([string]$name) {   # every window of the app in this state, shot and read
   $id = "s{0:D2}" -f $report.states.Count   # unique and plain: it names the shots; the label stays in the report
   Enter "list $id"
   $windows = @(Windows | Where-Object { -not $_.utility })
+  $script:tops = @($windows | ForEach-Object { [int64]$_.hwnd })
   $state = [ordered]@{ id = $id; name = $name; windows = $windows; shots = @(); reads = @(); nodes = @() }
   foreach ($w in $windows) {
     Enter "shoot $id $($w.hwnd)"
@@ -146,11 +199,13 @@ function State([string]$name) {   # every window of the app in this state, shot 
     $state.shots += $shot
     if (-not $shot.drawn) { continue }
     Enter "read $id $($w.hwnd)"
-    $script:nodes = @()
+    $script:nodes, $script:lists = @(), @()
+    $script:walked = New-Object 'System.Collections.Generic.List[object]'
     $read = [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
     if (Current $w) {
       try {
         Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd
+        Items "$id $($w.hwnd)"
         if (-not $script:nodes.Count -or $script:nodes[0].foreign) { $read.error = "the tree's root is not the app's" }
         else { $read = [ordered]@{ hwnd = $w.hwnd; read = $true } }
       } catch { $read.error = "the tree could not be read: $($_.Exception.Message)" }
@@ -162,15 +217,36 @@ function State([string]$name) {   # every window of the app in this state, shot 
   $state
 }
 
-function Target($step) {   # by AutomationId within the main window, or by a name only one element carries
-  $root = [System.Windows.Automation.AutomationElement]::FromHandle((Main))
+function Nested($element, [int64]$root, $others) {   # another top-level window shown under `root`, or inside one
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $e = $element
+  while ($e) {
+    $h = [int64]$e.Current.NativeWindowHandle
+    if ($h -eq $root) { return $false }
+    if ($others -contains $h) { return $true }
+    $e = $walker.GetParent($e)
+  }
+  $false
+}
+
+function Target($step) {
+  # By AutomationId, or by a name only one element carries, within one window and none it shows nested: the main
+  # window, or with `in: owned` the one window the main window owns.
+  $root = [int64](Main)
+  if ($step.in -eq "owned") {
+    $owned = @(Windows | Where-Object { $_.owner -eq $root })
+    if ($owned.Count -ne 1) { return [ordered]@{ error = "the main window owns $($owned.Count) windows, not one" } }
+    $root = [int64]$owned[0].hwnd
+  }
+  $others = @(Windows | ForEach-Object { [int64]$_.hwnd } | Where-Object { $_ -ne $root })
   $A = [System.Windows.Automation.AutomationElement]
   $property, $value = if ($step.id) { $A::AutomationIdProperty, $step.id } else { $A::NameProperty, $step.control }
-  $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+  $all = $A::FromHandle([IntPtr]$root).FindAll([System.Windows.Automation.TreeScope]::Descendants,
                        (New-Object System.Windows.Automation.PropertyCondition $property, $value))
-  if ($all.Count -ne 1) { return [ordered]@{ error = "$($all.Count) elements match $value" } }
-  if (-not [Desk]::InApp([uint32]$all[0].Current.ProcessId)) { return [ordered]@{ error = "the element is not the app's" } }
-  [ordered]@{ element = $all[0] }
+  $mine = @($all | Where-Object { -not (Nested $_ $root $others) })
+  if ($mine.Count -ne 1) { return [ordered]@{ error = "$($mine.Count) elements match $value" } }
+  if (-not [Desk]::InApp([uint32]$mine[0].Current.ProcessId)) { return [ordered]@{ error = "the element is not the app's" } }
+  [ordered]@{ element = $mine[0] }
 }
 
 function Act($element, $step) {
@@ -190,15 +266,17 @@ try {
   [Desk]::App = [Desk]::OpenJobObjectW(0x4, $false, [string]$ask.job)   # JOB_OBJECT_QUERY
   if ([Desk]::App -eq [IntPtr]::Zero) { Refuse "cannot open the app's job: Windows error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
 
-  # The main window, chosen once: the one visible top-level window of the app that is not an input indicator.
+  # The main window, chosen once: the one visible top-level window of the app that no other window owns and that
+  # is not an input indicator or a menu. A dialog, an overlay or a flyout the app opens over it at startup is a
+  # window it owns: shot and read with each state, never a candidate.
   Enter "wait for a window"
   $deadline = (Get-Date).AddSeconds([double]$ask.wait_seconds)
-  do { $candidates = @(Windows | Where-Object { -not $_.utility }); if ($candidates.Count) { break }
+  do { $candidates = @(Candidates); if ($candidates.Count) { break }   # @(): a single window stays a list
        Start-Sleep -Milliseconds 200 } while ((Get-Date) -lt $deadline)
   if ($candidates.Count -eq 0) { Refuse "the app showed no window on the owned desktop" }
   Settle
   Enter "choose"
-  $candidates = @(Windows | Where-Object { -not $_.utility })
+  $candidates = @(Candidates)
   if ($candidates.Count -ne 1) { $report.candidates = $candidates; Refuse "$($candidates.Count) candidate main windows at startup" }
   $report.main = $candidates[0]; Save
 

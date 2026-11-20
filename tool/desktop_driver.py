@@ -11,7 +11,8 @@ from common import write_record
 
 POWERSHELL = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 SCRIPT = Path(__file__).with_name("desktop_driver.ps1")
-PHASE_SECONDS = 10   # each operation: a resize, one window's shot, one window's tree read, an action, a check
+PHASE_SECONDS = 10   # each operation: a resize, one window's shot, tree read, identities or one list's items, an
+                     # action, a check
 LAUNCH_SECONDS = 30   # Windows PowerShell's start and its compile of the driver's types, before the first operation
 ENDED_SECONDS = 5   # the driver's job proving its end, once a deadline passed
 RESULT = "result.json"   # the server's final report: the driver's report, its last operation, deadline and end
@@ -47,13 +48,14 @@ def _allowed(op: str | None, wait: float, settle_ms: int) -> float:
 
 
 def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: float = 30, settle_ms: int = 1000,
-          key: str = "driver") -> dict:
+          key: str = "driver", halt=None) -> dict:
     """Drive the app `look` started under `app`: choose its main window, size it to `window`, then shoot and read
     each state, before and after every step. The driver names each operation before it starts, and each is held
     to its own deadline. The driver's report, with `last` naming the last operation it entered and `ended`
     naming one whose deadline passed; the driver's job is then ended, and `end` holds the proof of that end.
     That report is also saved as `result.json` beside the driver's own files, so the evidence a reader opens
-    later carries the deadline and the end proof, which the driver's `driver.json` cannot."""
+    later carries the deadline and the end proof, which the driver's `driver.json` cannot. A `halt` set while it
+    runs ends the driver at once, `ended` then `halted`."""
 
     look.check_key(key)   # before any path is made from it
     folder = look.folder / "evidence" / key
@@ -61,22 +63,27 @@ def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: f
     request = {"out": str(folder), "job": look.jobs[app].name, "window": list(window), "steps": steps,
                "wait_seconds": wait, "settle_ms": settle_ms}
     (folder / "request.json").write_text(json.dumps(request, indent=1), encoding="utf-8")
-    look.start(key, [str(POWERSHELL), *arguments(SCRIPT, folder / "request.json")], folder)
-    ended, end = _watch(look.jobs[key], folder / "progress.json", wait, settle_ms)
+    look.start(key, [str(POWERSHELL), *arguments(SCRIPT, folder / "request.json")], folder, halt=halt)
+    ended, end = _watch(look.jobs[key], folder / "progress.json", wait, settle_ms, halt)
     report = _read(folder / "driver.json") or {"phase": None}
     marker = _read(folder / "progress.json")
     report.update(last=marker["op"] if _valid(marker) else None, ended=ended, end=end)
-    write_record(folder / RESULT, report)   # a name the driver never writes: the evidence holds the server's verdict
+    try:   # a name the driver never writes: the evidence holds the server's verdict
+        write_record(folder / RESULT, report)
+    except OSError as exc:   # the verdict, its end proof first, is returned whatever the evidence write does
+        report["unsaved"] = str(exc)
     return report
 
 
-def _watch(job, progress: Path, wait: float, settle_ms: int) -> tuple[str | None, dict | None]:
+def _watch(job, progress: Path, wait: float, settle_ms: int, halt=None) -> tuple[str | None, dict | None]:
     """Hold the driver's operations to their deadlines until its job finished. The clock restarts only for a
     valid, strictly newer sequence: a missed or torn read keeps the operation and the clock it had. The operation
-    whose deadline passed and the proof of the job's end, or two Nones."""
+    whose deadline passed (`halted` when `halt` was set) and the proof of the job's end, or two Nones."""
 
     seq, op, since = 0, None, time.monotonic()
     while not job.finished():
+        if halt is not None and halt.is_set():
+            return "halted", job.end(ENDED_SECONDS)
         marker = _read(progress)
         if _valid(marker) and marker["seq"] > seq:
             seq, op, since = marker["seq"], marker["op"], time.monotonic()
@@ -125,6 +132,8 @@ def findings(report: dict) -> list[str]:
         found.append(f"the driver passed its deadline at {report['ended']}")
     if report.get("end") and not report["end"]["clean"]:
         found.append(f"the driver's end was not proven: {'; '.join(report['end']['reasons'])}")
+    if report.get("unsaved"):
+        found.append(f"the driver's result could not be saved: {report['unsaved']}")
     if report.get("phase") is None:
         return [*found, "the driver left no report"]
     if report.get("refusal"):
@@ -165,8 +174,9 @@ def findings(report: dict) -> list[str]:
                 found.append(f"{where} has no name")
             if node["offscreen"] or node["depth"] == 0:   # the window itself: its frame is the bound
                 continue
-            if frame and (rect[0] < frame[0] or rect[1] < frame[1] or rect[0] + rect[2] > frame[0] + frame[2]
-                          or rect[1] + rect[3] > frame[1] + frame[3]):
+            if frame and not node.get("scrolled") and (   # inside a scrolling container: reached by scrolling
+                    rect[0] < frame[0] or rect[1] < frame[1] or rect[0] + rect[2] > frame[0] + frame[2]
+                    or rect[1] + rect[3] > frame[1] + frame[3]):
                 found.append(f"{where} lies outside its window")
             if acting and (rect[2] < SMALLEST or rect[3] < SMALLEST):
                 found.append(f"{where} is {rect[2]}x{rect[3]}, under {SMALLEST}x{SMALLEST}")

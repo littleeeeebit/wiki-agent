@@ -172,10 +172,16 @@ closes, and a failed enumeration or close holds the look.
    finds an owner's instance through a session-wide mutex. So an app that
    exits without a window on the owned desktop is a finding.
 3. The app's main window is chosen once, at startup: the visible top-level
-   window of an app-job process that is not an input indicator. More than one
-   candidate then is a refusal. Top-level windows the app opens later, such
-   as a dialog or an overlay, belong to the state that opened them: they are
-   shot and read with it, and they are not candidates. The driver resizes the
+   window of an app-job process that no other window owns and that is not an
+   input indicator or a menu (`#32768`). More than one candidate then is a
+   refusal. A window the main window owns, such as a dialog, an overlay or a
+   flyout opened over it, is not a candidate, at startup or later. It belongs
+   to the state that shows it, which shoots it and reads it as a top-level
+   window of its own, so the walk of its owner's tree does not descend into it.
+   Each window in the report carries its owner's handle (0 for none): a
+   `dialog`, `floating` or `tray` screen is the one window the main window
+   owns, and two such windows are a finding. A window the app opens later
+   belongs to the state that opened it in the same way. The driver resizes the
    main window to S1's `window` with `SetWindowPos` and no activation, under
    the driver's deadline, and reads the size back. A wrong size is a finding.
 4. A look that needs another app, such as the screen translator's fixture

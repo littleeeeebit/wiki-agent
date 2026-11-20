@@ -93,6 +93,33 @@ def test_two_candidate_windows_at_startup_are_a_refusal(tmp_path):
     assert desktop_driver.findings(report) == ["refused: 2 candidate main windows at startup"]
 
 
+OWNED = ("import tkinter; root = tkinter.Tk(); root.title('main'); dialog = tkinter.Toplevel(root); "
+         "dialog.title('dialog'); dialog.transient(root); root.after(60000, root.destroy); root.mainloop()")
+
+
+def test_a_window_the_main_window_owns_at_startup_is_no_candidate_and_is_shot_with_the_state(tmp_path):
+    with desktop_session.look(tmp_path, "owned") as look:
+        look.start("app", python(OWNED), tmp_path)
+        report = desktop_driver.drive(look, "app", (640, 480), [], settle_ms=500)
+
+    assert report["phase"] == "done" and report["main"]["title"] == "main", report
+    start = report["states"][0]
+    assert sorted(w["title"] for w in start["windows"]) == ["dialog", "main"] and all(s["drawn"] for s in start["shots"])
+    owners = {w["title"]: w["owner"] for w in start["windows"]}
+    assert owners == {"main": 0, "dialog": report["main"]["hwnd"]}   # the look tells a dialog screen's window by it
+    assert desktop_driver.findings(report) == []
+
+
+def test_a_halt_while_the_driver_runs_ends_it_at_once(tmp_path):
+    reads = []   # the driver's start reads it once; its watch then finds it set
+    halt = types.SimpleNamespace(is_set=lambda: reads.append(1) or len(reads) > 1)
+    with desktop_session.look(tmp_path, "halt") as look:
+        look.start("app", python(NONE), tmp_path)   # no window: the driver would wait out its first-window wait
+        started = time.monotonic()
+        report = desktop_driver.drive(look, "app", (640, 480), [], wait=30, settle_ms=200, halt=halt)
+    assert report["ended"] == "halted" and report["end"]["clean"] and time.monotonic() - started < 15, report
+
+
 def test_an_app_that_shows_no_window_is_a_refusal(tmp_path):
     with desktop_session.look(tmp_path, "none") as look:
         look.start("app", python(NONE), tmp_path)
@@ -157,6 +184,98 @@ def test_operations_each_within_their_own_deadline_are_never_summed(tmp_path, mo
 
     assert report["ended"] is None and report["last"] == "done", report
     assert desktop_driver.findings(report) == []
+
+
+WPF_LISTS = """param([string]$kind, [string]$virtual)
+Add-Type -AssemblyName PresentationFramework
+$V = [System.Windows.Controls.VirtualizingPanel]; $on = $virtual -eq "on"
+$w = New-Object System.Windows.Window
+$w.Title = "list"; $w.Width = 400; $w.Height = 300
+$items = 1..40 | ForEach-Object { [pscustomobject]@{ Name = "item $_"; Group = "group $($_ % 2)" } }
+switch ($kind) {
+  "listbox" { $c = New-Object System.Windows.Controls.ListBox; $c.DisplayMemberPath = "Name"; $c.ItemsSource = $items }
+  "grouped" {
+    $c = New-Object System.Windows.Controls.ListView; $c.DisplayMemberPath = "Name"
+    $view = New-Object System.Windows.Data.ListCollectionView (, [System.Collections.ArrayList]@($items))
+    $view.GroupDescriptions.Add((New-Object System.Windows.Data.PropertyGroupDescription "Group"))
+    $c.ItemsSource = $view
+    $c.GroupStyle.Add((New-Object System.Windows.Controls.GroupStyle))
+    $V::SetIsVirtualizingWhenGrouping($c, $on)
+  }
+  "grid" { $c = New-Object System.Windows.Controls.DataGrid; $c.ItemsSource = $items; $c.EnableRowVirtualization = $on }
+  "tree" {
+    $c = New-Object System.Windows.Controls.TreeView
+    $top = New-Object System.Windows.Controls.TreeViewItem; $top.Header = "all"; $top.IsExpanded = $true
+    $items | ForEach-Object { [void]$top.Items.Add($_.Name) }
+    [void]$c.Items.Add($top)
+  }
+}
+$V::SetIsVirtualizing($c, $on)
+$w.Content = $c
+[void]$w.ShowDialog()
+"""
+
+
+@pytest.mark.parametrize("kind", ["listbox", "grouped", "grid", "tree"])
+@pytest.mark.parametrize("virtual", ["on", "off"])
+def test_a_wpf_list_counts_the_items_its_read_did_not_reach(tmp_path, kind, virtual):
+    # 40 items, more than the window shows, few enough that a hosted runner walks them fully read within the read's
+    # deadline: in a list, a grouped list, a grid with its header, and a tree's one expanded branch
+    from main import oneshot_desktop_look
+
+    script = tmp_path / "lists.ps1"
+    script.write_text(WPF_LISTS, encoding="utf-8")
+    with desktop_session.look(tmp_path, f"{kind}-{virtual}") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script), kind, virtual], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [], wait=30, settle_ms=1000)
+    assert report["states"], {k: report.get(k) for k in ("phase", "ended", "refusal", "error")}
+    start = report["states"][0]
+    [box] = [n for n in start["nodes"] if n.get("items") == 40]
+    assert (box["unread"] > 0) == (virtual == "on"), report
+    assert oneshot_desktop_look.partial(start, {w["hwnd"] for w in start["windows"]}) == (virtual == "on")
+    assert not [f for f in desktop_driver.findings(report) if "outside its window" in f]   # scrolled rows reachable
+
+
+WPF_OWNED = """Add-Type -AssemblyName PresentationFramework
+$A = [System.Windows.Automation.AutomationProperties]
+$w = New-Object System.Windows.Window
+$w.Title = "main"; $w.Width = 400; $w.Height = 300
+$b = New-Object System.Windows.Controls.Button
+$b.Content = "Search"; $b.Width = 120; $b.Height = 40; $A::SetAutomationId($b, "open-search")
+$w.Content = $b
+$d = New-Object System.Windows.Window
+$d.Title = "dialog"; $d.Width = 240; $d.Height = 160; $A::SetAutomationId($d, "open-search")
+$w.Add_ContentRendered({ $d.Owner = $w; $d.Show() })   # owned once the main window has its handle
+[void]$w.ShowDialog()
+"""
+
+
+def test_an_owned_window_that_carries_the_id_is_no_second_target_in_the_main_window(tmp_path):
+    script = tmp_path / "owned.ps1"
+    script.write_text(WPF_OWNED, encoding="utf-8")
+    step = {"name": "try", "action": "invoke", "id": "open-search", "expect": {"id": "open-search"}}
+    with desktop_session.look(tmp_path, "owned-id") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [step], wait=20, settle_ms=800)
+    assert report["steps"][0].get("acted") and not report["steps"][0].get("error"), report
+
+
+def test_a_result_that_cannot_be_saved_still_returns_the_unproven_end(tmp_path, monkeypatch):
+    look = types.SimpleNamespace(folder=tmp_path, jobs={"app": types.SimpleNamespace(name="job"), "driver": None},
+                                 check_key=lambda key: None, start=lambda *a, **k: None)
+    (tmp_path / "evidence").mkdir()
+    monkeypatch.setattr(desktop_driver, "_watch", lambda *a: (None, {"clean": False, "reasons": ["pid 3 runs"]}))
+
+    def full(path, record):
+        raise OSError(28, "the disk is full")
+
+    monkeypatch.setattr(desktop_driver, "write_record", full)
+    report = desktop_driver.drive(look, "app", (640, 480), [])
+    assert report["end"] == {"clean": False, "reasons": ["pid 3 runs"]} and "disk is full" in report["unsaved"]
+    assert desktop_driver.findings(report)[:2] == ["the driver's end was not proven: pid 3 runs",
+                                                   "the driver's result could not be saved: [Errno 28] the disk is full"]
 
 
 def test_a_driver_that_exits_before_any_report_leaves_a_finding(tmp_path, monkeypatch):
@@ -326,7 +445,7 @@ def test_what_a_report_could_not_observe_is_a_finding():
 def test_the_request_names_the_apps_job_not_its_pids(tmp_path, monkeypatch):
     seen = {}
 
-    def starting(look, key, argv, cwd, extra=None):
+    def starting(look, key, argv, cwd, extra=None, halt=None):
         seen.update(json.loads((look.folder / "evidence" / key / "request.json").read_text(encoding="utf-8")))
         raise desktop_session.Refused("stop here")
 
