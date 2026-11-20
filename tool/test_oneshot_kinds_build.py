@@ -58,7 +58,7 @@ def looks(found: dict[str, list[dict]]):
 
     seen = []
 
-    def look(path, kind, one, live, d, shots, stopped, apks):
+    def look(path, kind, one, live, d, shots, stopped, apks, build=None):
         o = one["oneshot"]
         seen.append({"kind": kind, "screens": [s["id"] for s in o["front"]["screens"]], "features": sorted(o["frequency"]),
                      "requirements": [r["id"] for r in one["requirements"]], "inventory": o.get("inventory"),
@@ -94,17 +94,21 @@ def test_the_build_text_names_every_kind_and_only_the_android_apps_scenarios(kin
 
 
 @pytest.mark.parametrize("kinds", [["webapp", "desktop"], ["android", "desktop"], ["webapp", "android", "desktop"]])
-def test_with_a_pc_app_the_build_text_has_its_section_and_stops_before_every_look(kinds):
+def test_with_a_pc_app_the_build_text_has_its_section_and_its_look(kinds):
     text = front_build.for_kinds(oneshot.prompt(front_build.STAGE, "kinds"), kinds)
     assert "## The PC app" in text and "oneshot-desktop" in text and "every command of\n`gate_cmd`" in text
-    assert "The run then waits here" in text and "the server boots its own emulator" not in text
-    assert "shoots every web screen" not in text and "<!--" not in text
+    assert "   - The PC app: the server starts the frozen copy" in text and "\n     once for each screen" in text
+    assert ("the server boots its own emulator" in text) == ("android" in kinds) and "<!--" not in text
 
 
 def test_a_posix_gate_is_counted_where_its_check_cuts_it(monkeypatch):
     gate = "pytest && echo it\\'s && echo two"   # an escaped apostrophe, which PowerShell would read as a quote
     monkeypatch.setattr(oneshot_build.os, "name", "posix")
     assert len(oneshot_build.commands(gate)) == 3 and oneshot_build.chained(gate)
+    quoted = f'{GATE} && {BUILD} "a && b"'   # the POSIX shell's quote holds the `&&`: one command
+    assert len(oneshot_build.commands(quoted)) == 2 and oneshot_build.chained(quoted)
+    assert not oneshot_build.chained('pytest && echo "open')   # a quote left open is no chain the shell reads
+    assert oneshot_build.published('pytest "a && b" && x', 'pytest "a')   # a backend cut inside a quote
 
 
 def test_each_kind_is_looked_at_in_the_owners_order_with_only_its_own_and_the_critique_follows(kinds_build):

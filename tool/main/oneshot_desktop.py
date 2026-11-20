@@ -48,6 +48,8 @@ ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 #   anywhere and no Windows device name.
 # A URL holds no `,`, `;` or `\`: a browser reads `\` as `/`, so the host it sees may not be the one checked.
 REMOTE = re.compile(r"(?i)(?:[a-z0-9_.-]+=)?((?:https?|wss?)://[!-+\--:<-\[\]-~]+)")
+# The WHATWG URL standard's forbidden domain code points: a host holding one is no host a browser opens.
+FORBIDDEN_HOST = re.compile(r"[\x00-\x20#%/:<>?@\[\\\]^|\x7f]")
 PLAIN = set(" _-.,;=:+/")
 # A `:` before anything but a space opens a namespace (`file:`, `shell:`, a drive), and a drive alone is one too.
 OUTSIDE = re.compile(r"(?i):(?=\S)|(?<![a-z0-9])[a-z]:|(?:^|[\s;,=:])/|//|\.\.")
@@ -70,6 +72,8 @@ def _remote(setting: str) -> bool:
         bare = host[:-1] if host.endswith(".") else host   # the parser drops one empty last label
         if ":" in host:
             ipaddress.IPv6Address(host)
+        elif FORBIDDEN_HOST.search(host):   # a code point the parser refuses in a domain
+            return False
         elif re.fullmatch(r"(?i)\d+|0x[0-9a-f]*", bare.rsplit(".", 1)[-1]):
             ipaddress.IPv4Address(bare)   # dotted decimal only: the hex, octal and short forms are refused
         return bool(host)

@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled
+from .oneshot_profile import STAGE_ORDER, current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -427,10 +427,13 @@ WORKERS = {"talk": talk, "design": design, "redesign": redesign}   # a later sta
 
 def start(repo: str, work: str, *args, **fields) -> None:
     """Starts a stage's worker. A run held at its kind's stop (`held`), or moving into it with `fields`, starts
-    nothing past S2 whatever its saved stop says: the stop is put back and the start refused."""
+    nothing past S2 whatever its saved stop says: the stop is put back and the start refused. A held run moved
+    back to the frontend build or later is refused too: its frozen build and looks are what it waits with."""
 
     o = specs.load(repo, oneshot.BRANCH)["oneshot"]
-    if work != "talk" and held({**o, "stage": fields.get("stage") or o.get("stage")}):
+    stage = fields.get("stage") or o.get("stage")
+    back = held(o) and stage in STAGE_ORDER and STAGE_ORDER.index(stage) >= STAGE_ORDER.index("build-front")
+    if work != "talk" and (back or held({**o, "stage": stage})):
         stop = waiting(repo, o).get("stopped") or {}
         raise HTTPException(409, stop.get("detail") or "이 실행의 다음 단계는 다음 버전에서 이어진다")
     oneshot.start_worker(store(repo), work, WORKERS[work], (repo, *args), fields)

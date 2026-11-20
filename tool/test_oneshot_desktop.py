@@ -557,11 +557,11 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    # A PC app runs its frontend build, alone or among other kinds (9e3b2), and is held at its look.
-    assert oneshot_profile.waits_at(o()) == "look" and not oneshot_profile.held({**o(), "stage": "build-front"})
+    # A PC app runs its frontend build and its look, alone or among other kinds (9e4a), and is held at the critique.
+    assert oneshot_profile.waits_at(o()) == "critique" and not oneshot_profile.held({**o(), "stage": "build-front"})
     oneshot_spec.saved("budget", oneshot={"stage": "build-front",
                                           "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
-    assert oneshot_profile.waits_at(o()) == "look" and not oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "critique" and not oneshot_profile.held(o())
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         START("budget", "design", stage="critique")
@@ -578,38 +578,38 @@ def frozen_in(tree, tmp_path) -> dict:
             "launch": {"program": "app.exe"}}
 
 
-def test_a_resume_or_a_shutdown_between_the_freeze_and_the_stop_never_starts_the_look(desktop, tmp_path):
-    # The build passed its gate and was frozen, then the stop was lost (a restart that replaced it): the run is
-    # held at its look, never resumable into a second build or past it.
+def test_a_resume_or_a_shutdown_after_the_looks_passed_never_starts_the_critique(desktop, tmp_path):
+    # Every look passed on the frozen build, then the stop was lost (a restart that replaced it): the run is held
+    # at the critique with its build, never resumable into it.
     frozen = frozen_in(desktop, tmp_path)
-    oneshot_spec.saved("budget", oneshot={"stage": "build-front", "working": None, "features": [],
+    oneshot_spec.saved("budget", oneshot={"stage": "critique", "working": None, "features": [],
                                           "desktop_build": frozen,
                                           "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다",
-                                                      "state": "build-front"}})
+                                                      "state": "critique"}})
     assert oneshot_profile.held(o())
     with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
     assert o()["stopped"]["reason"] == "kind"
-    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "build-front", "detail": "x"}})
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "critique", "detail": "x"}})
     oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "build-front"
+    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "critique" and o()["desktop_build"] == frozen
 
 
 def test_several_kinds_an_earlier_version_held_past_the_build_stay_held(desktop):
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "critique", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "critique"}})
-    assert oneshot_profile.waits_at(o()) == "look" and oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "critique" and oneshot_profile.held(o())
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "kind"
     with pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
 
 
-@pytest.mark.parametrize("stage", ["build-front", "critique"])
-def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage(desktop, stage, tmp_path):
-    # At the build, a mixed run is held once its PC app is frozen (9e3b2); past it, always.
+def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage_nor_its_build_again(desktop, tmp_path):
+    # Every look passed and the run waits at the critique (9e4a): neither the hand-off nor a start moves it back.
+    stage = "critique"
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": stage, "working": None, "stopped": None, "features": [],
                                           "desktop_build": frozen_in(desktop, tmp_path)})

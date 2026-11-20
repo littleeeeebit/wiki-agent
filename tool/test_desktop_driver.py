@@ -93,6 +93,21 @@ def test_two_candidate_windows_at_startup_are_a_refusal(tmp_path):
     assert desktop_driver.findings(report) == ["refused: 2 candidate main windows at startup"]
 
 
+OWNED = ("import tkinter; root = tkinter.Tk(); root.title('main'); dialog = tkinter.Toplevel(root); "
+         "dialog.title('dialog'); dialog.transient(root); root.after(60000, root.destroy); root.mainloop()")
+
+
+def test_a_window_the_main_window_owns_at_startup_is_no_candidate_and_is_shot_with_the_state(tmp_path):
+    with desktop_session.look(tmp_path, "owned") as look:
+        look.start("app", python(OWNED), tmp_path)
+        report = desktop_driver.drive(look, "app", (640, 480), [], settle_ms=500)
+
+    assert report["phase"] == "done" and report["main"]["title"] == "main", report
+    start = report["states"][0]
+    assert sorted(w["title"] for w in start["windows"]) == ["dialog", "main"] and all(s["drawn"] for s in start["shots"])
+    assert desktop_driver.findings(report) == []
+
+
 def test_an_app_that_shows_no_window_is_a_refusal(tmp_path):
     with desktop_session.look(tmp_path, "none") as look:
         look.start("app", python(NONE), tmp_path)

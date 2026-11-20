@@ -1,6 +1,7 @@
-"""oneshot 9e3b1: a PC app's frontend build — its `oneshot-desktop` block names the program its look starts apart
-from the installer S8 attaches, its gate builds that program with only the declared tools, the server checks it and
-freezes its folder into staging the run owns, and the run waits there, before the look.
+"""oneshot 9e3b and 9e4a: a PC app's frontend build — its `oneshot-desktop` block names the program its look starts
+apart from the installer S8 attaches, its gate builds that program with only the declared tools, the server checks
+it and freezes its folder into staging the run owns, its look launches that frozen copy, and a run that passes waits
+at the critique.
 
 See `docs/plans/oneshot/9-kinds.md` ("The runnable program"). The work turn is a stand-in: each test writes what a
 session would have committed, then hands the turn to the check. Git and the gate run for real.
@@ -62,12 +63,19 @@ def pc_build(staged):  # noqa: F811 — the imported fixture, requested by name
     return staged
 
 
-def checked(tree, block=BLOCK):
-    """The build turn handed to the check, with the look a failure: this version never starts it."""
+def checked(tree, block=BLOCK, found=(), looked=None):
+    """The build turn handed to the check, each kind's look a stand-in: the PC app's records the build it was
+    given and finds `found`, a web app's records that it ran and finds nothing."""
 
-    sent = []
+    sent, looked = [], [] if looked is None else looked
+
+    def look(spec, build, shots, stopped):
+        looked.append(build)
+        return list(found)
+
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)), \
-            patch.object(front_build, "looked", lambda *a: pytest.fail("the look is the next version's")):
+            patch.object(front_build.oneshot_desktop_look, "look", look), \
+            patch.object(front_build.oneshot_look, "look", lambda *a: looked.append("webapp") or []):
         then = oneshot_build.checked(tree, Run(), spec(), report() + fenced(pc.BLOCK, block))
         if then:
             then()
@@ -79,10 +87,12 @@ def staging() -> list:
     return sorted(folder.iterdir()) if folder.is_dir() else []
 
 
-def test_a_pc_apps_build_is_frozen_with_its_identity_and_the_run_waits_before_its_look(pc_build):
-    assert not checked(pc_build)
+def test_a_pc_apps_build_is_frozen_looked_at_and_the_run_waits_at_the_critique(pc_build):
+    looked = []
+    assert not checked(pc_build, looked=looked)
     build = o()["desktop_build"]
-    assert o()["stage"] == "build-front" and o()["working"] is None and o()["stopped"]["reason"] == "kind"
+    assert looked == [build] and o()["looks"][-1]["build"] == build["identity"]   # the look launched the frozen copy
+    assert o()["stage"] == "critique" and o()["working"] is None and o()["stopped"]["reason"] == "kind"
     assert oneshot_profile.held(o()) and build["head"] == git(pc_build, "rev-parse", "HEAD")
     [into] = staging()
     manifest = json.loads((into / "manifest.json").read_text("utf-8"))
@@ -97,14 +107,25 @@ def test_a_pc_apps_build_is_frozen_with_its_identity_and_the_run_waits_before_it
     assert o()["stopped"]["reason"] == "kind" and o()["desktop_build"] == build
 
 
-def test_among_several_kinds_the_pc_app_is_frozen_and_every_kinds_look_waits_for_it(pc_build):
+@pytest.mark.parametrize("kinds", [["webapp", "desktop"], ["desktop", "webapp"]])
+def test_among_several_kinds_the_pc_app_is_frozen_and_looked_at_in_the_owners_order(pc_build, kinds):
     stack = [{**o()["stack"][0], "part": "desktop.build"}]   # several kinds declare the PC app's tools on its part
-    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "webapp", "kinds": ["webapp", "desktop"]}, "stack": stack})
+    oneshot_spec.saved("budget", oneshot={"intent": {"kind": kinds[0], "kinds": kinds}, "stack": stack, "features": [],
+                                          "first_screen": dict.fromkeys(kinds, "첫 화면")})
     write(pc_build, ".wiki/adapter.toml", adapter(gate=f"{GATE} && python make_pc.py && python --version"))
     git(pc_build, "commit", "-am", "the web app's build")
-    assert not (sent := checked(pc_build)), sent   # `checked` fails on any look
-    assert o()["desktop_build"]["files"] == 2 and o()["stopped"]["reason"] == "kind" and oneshot_profile.held(o())
-    assert "device" not in o() and o()["stage"] == "build-front"
+    looked = []
+    assert not (sent := checked(pc_build, looked=looked)), sent
+    assert [k if k == "webapp" else "desktop" for k in looked] == kinds and looked[kinds.index("desktop")] == \
+        o()["desktop_build"]
+    assert o()["stopped"]["reason"] == "kind" and oneshot_profile.held(o()) and o()["stage"] == "critique"
+
+
+def test_a_pc_look_finding_sends_the_build_back_and_keeps_the_frozen_build(pc_build):
+    high = {"severity": "high", "screen": "S1", "viewport": "window", "state": "full", "what": "단추가 이름이 없다"}
+    sent = checked(pc_build, found=[high])
+    assert sent and "S1 window full: 단추가 이름이 없다" in sent[0][2] and o()["stage"] == "build-front"
+    assert o()["looks"][-1]["findings"] == [high] and o()["desktop_build"] and not oneshot_profile.held(o())
 
 
 def test_a_companion_file_or_a_launch_flag_changed_under_the_same_head_is_a_new_build(pc_build, tmp_path):
@@ -124,7 +145,7 @@ def test_a_companion_file_or_a_launch_flag_changed_under_the_same_head_is_a_new_
 def test_a_second_build_replaces_the_frozen_one(pc_build):
     checked(pc_build)
     first = o()["desktop_build"]
-    oneshot_spec.saved("budget", oneshot={"desktop_build": None, "stopped": None, "working": "build-front"})
+    oneshot_spec.saved("budget", oneshot={"stage": "build-front", "stopped": None, "working": "build-front"})
     write(pc_build, "strings.txt", "번역 끄기")
     git(pc_build, "commit", "-am", "a new label")
     assert not (sent := checked(pc_build)), sent
@@ -151,7 +172,7 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
         "--start=shell:Downloads", "https://cdn.example:99999/a.js", "https://999.999.999.999/v1",
         "https://0x7f.1/", "https://example.123/", "https://[zz]/", "https://cdn.example:0/",
         "https://1.2.3%2e4/", "https://[fe80::1%25eth0]/", "https://999.999.999.999\\@cdn.example/",
-        "--log=myapp::ipc=trace"]],
+        "https://cdn^example/", "https://cdn|example/", "https://a<b>/", "--log=myapp::ipc=trace"]],
     ({"env": {"APP_DATA": "{data}", "SHELL_PATH": "shell::Profile"}}, "사본 밖을 가리킬 수 있다"),
     ({"env": {"APPDATA": "{data}/named"}}, "look 이"),
     ({"args": ["--remote=https://cdn.example/{data}"], "env": {}}, "{data}"),
@@ -287,7 +308,7 @@ def test_an_unreadable_snapshot_is_kept_and_one_shown_gone_or_malformed_is_built
         monkeypatch.setattr(Path, "stat", denied)
     oneshot_spec.recover()
     monkeypatch.undo()
-    assert bool(o()["desktop_build"]) is kept and oneshot_profile.held(o()) is kept
+    assert bool(o()["desktop_build"]) is kept and oneshot_profile.held(o())   # held at the critique either way
 
 
 def test_a_worktree_named_by_its_extended_length_path_is_copied(pc_build, tmp_path):
@@ -317,7 +338,7 @@ def test_a_frozen_build_that_cannot_be_saved_leaves_no_copy(pc_build):
     subprocess.run([sys.executable, "make_pc.py"], cwd=pc_build, check=True)   # what the gate builds
     with patch.object(oneshot_spec, "saved", failing), pytest.raises(OSError, match="disk is full"):
         front_build.froze(pc_build, spec(), pc.declared(pc_build, fenced(pc.BLOCK, BLOCK)), git(pc_build, "rev-parse",
-                                                                                                 "HEAD"), Run(), {})
+                                                                                                 "HEAD"), Run())
     assert not staging() or not any(staging()[0].iterdir())
 
 
@@ -334,9 +355,9 @@ def test_a_frozen_build_whose_copy_is_gone_or_whose_head_moved_is_built_again(pc
     else:
         write(pc_build, "strings.txt", "번역 끄기")
         git(pc_build, "commit", "-am", "moved on")
-    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "build-front", "detail": "x"}})
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "critique", "detail": "x"}})
     oneshot_spec.recover()
-    assert not o()["desktop_build"] and o()["stopped"]["reason"] == "restart" and not oneshot_profile.held(o())
+    assert not o()["desktop_build"] and o()["stopped"]["reason"] == "kind" and oneshot_profile.held(o())
 
 
 @pytest.mark.parametrize("git_fails", [subprocess.TimeoutExpired("git", 60), "nonzero"])

@@ -22,6 +22,7 @@ public static class Desk {
   [DllImport("user32")] public static extern bool EnumWindows(Visit v, IntPtr l);
   [DllImport("user32")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
   [DllImport("user32")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
   [DllImport("user32")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
@@ -94,7 +95,12 @@ function Main {   # the main window, proven still the one chosen before every us
 function Windows {   # every visible top-level window of the app's job on this desktop, input indicators set apart
   @([Desk]::Visible() | Where-Object { [Desk]::InApp([Desk]::Owner($_)) } | ForEach-Object {
     [ordered]@{ hwnd = [int64]$_; pid = [Desk]::Owner($_); class = [Desk]::Cls($_); title = [Desk]::Title($_);
-                frame = [Desk]::Frame($_); utility = $UTILITY -contains [Desk]::Cls($_) } })
+                frame = [Desk]::Frame($_); utility = $UTILITY -contains [Desk]::Cls($_);
+                owned = [Desk]::GetWindow($_, 4) -ne [IntPtr]::Zero } })   # GW_OWNER
+}
+
+function Candidates {   # a main window: not an input indicator, a menu (#32768) or a window another one owns
+  @(Windows | Where-Object { -not $_.utility -and -not $_.owned -and $_.class -ne "#32768" })
 }
 
 function Shoot($window, [string]$state) {   # the whole window, then cut to its visible frame
@@ -125,6 +131,8 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $true; pid = $owner }
     return
   }
+  # A window the app owns shows under its owner too: it is read as a top-level window of its own, against its frame.
+  if ($depth -gt 0 -and $script:tops -contains [int64]$c.NativeWindowHandle) { return }
   $b = $c.BoundingRectangle
   $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $false; type = $c.ControlType.ProgrammaticName -replace "ControlType\.", "";
     name = $c.Name; id = $c.AutomationId; enabled = $c.IsEnabled; offscreen = $c.IsOffscreen;
@@ -139,6 +147,7 @@ function State([string]$name) {   # every window of the app in this state, shot 
   $id = "s{0:D2}" -f $report.states.Count   # unique and plain: it names the shots; the label stays in the report
   Enter "list $id"
   $windows = @(Windows | Where-Object { -not $_.utility })
+  $script:tops = @($windows | ForEach-Object { [int64]$_.hwnd })
   $state = [ordered]@{ id = $id; name = $name; windows = $windows; shots = @(); reads = @(); nodes = @() }
   foreach ($w in $windows) {
     Enter "shoot $id $($w.hwnd)"
@@ -190,15 +199,17 @@ try {
   [Desk]::App = [Desk]::OpenJobObjectW(0x4, $false, [string]$ask.job)   # JOB_OBJECT_QUERY
   if ([Desk]::App -eq [IntPtr]::Zero) { Refuse "cannot open the app's job: Windows error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
 
-  # The main window, chosen once: the one visible top-level window of the app that is not an input indicator.
+  # The main window, chosen once: the one visible top-level window of the app that no other window owns and that
+  # is not an input indicator or a menu. A dialog, an overlay or a flyout the app opens over it at startup is a
+  # window it owns: shot and read with each state, never a candidate.
   Enter "wait for a window"
   $deadline = (Get-Date).AddSeconds([double]$ask.wait_seconds)
-  do { $candidates = @(Windows | Where-Object { -not $_.utility }); if ($candidates.Count) { break }
+  do { $candidates = @(Candidates); if ($candidates.Count) { break }   # @(): a single window stays a list
        Start-Sleep -Milliseconds 200 } while ((Get-Date) -lt $deadline)
   if ($candidates.Count -eq 0) { Refuse "the app showed no window on the owned desktop" }
   Settle
   Enter "choose"
-  $candidates = @(Windows | Where-Object { -not $_.utility })
+  $candidates = @(Candidates)
   if ($candidates.Count -ne 1) { $report.candidates = $candidates; Refuse "$($candidates.Count) candidate main windows at startup" }
   $report.main = $candidates[0]; Save
 

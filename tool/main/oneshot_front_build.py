@@ -17,16 +17,15 @@ from pathlib import Path
 
 from wiki import slots_for
 
-from . import oneshot, oneshot_build, oneshot_desktop, oneshot_device, oneshot_look, oneshot_screens as screens, \
-    oneshot_spec, runtime, specs
+from . import oneshot, oneshot_build, oneshot_desktop, oneshot_desktop_look, oneshot_device, oneshot_look, \
+    oneshot_screens as screens, oneshot_spec, runtime, specs
 from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape
 from .oneshot_sheet import KIND_NAMES
 
 STAGE = "build-front"
 # The several-kinds prompt keeps a kind's parts only when the owner picked it, and takes the PC app's conventions,
 # block and freeze from the PC app's own prompt, so the two never drift apart.
-# `webapp,!desktop`: a section kept only when every condition holds, the web app picked and the PC app not.
-SECTION = re.compile(r"<!-- kind:([!\w,]+) -->\n(.*?)<!-- /kind -->\n", re.S)
+SECTION = re.compile(r"<!-- kind:(\w+) -->\n(.*?)<!-- /kind -->\n", re.S)
 SHARED = re.compile(r"<!-- shared:(\w+) -->\n?(.*?)\n?<!-- /shared -->", re.S)
 WHO = {"webapp": "a web app", "android": "an Android app", "desktop": "a PC app (a Windows program)"}
 BLOCKS = {"webapp": ("`live_cmd` is filled", None),
@@ -41,15 +40,15 @@ def listed(items: list[str]) -> str:
 def for_kinds(text: str, kinds: list[str]) -> str:
     """The several-kinds prompt for the owner's kinds: each kind's parts, the PC app's from its own prompt."""
 
-    text = SECTION.sub(lambda m: m.group(2) if all((c.lstrip("!") in kinds) != c.startswith("!")
-                                                   for c in m.group(1).split(",")) else "", text)
+    text = SECTION.sub(lambda m: m.group(2) if m.group(1) in kinds else "", text)
     pc = {name: part for name, part in SHARED.findall(oneshot.prompt(STAGE, "desktop"))}
     ends = [end for k in kinds if (end := BLOCKS[k][1])]
     return text.replace("{kinds}", listed([WHO[k] for k in kinds])) \
         .replace("{checked_blocks}", listed([BLOCKS[k][0] for k in kinds])) \
         .replace("{end_blocks}", f" and {listed(ends)}" if ends else "") \
         .replace("{desktop_conventions}", pc["conventions"]).replace("{desktop_block}", pc["block"]) \
-        .replace("{desktop_freeze}", pc["freeze"])
+        .replace("{desktop_freeze}", pc["freeze"]) \
+        .replace("{desktop_look}", (pc["look"][0].lower() + pc["look"][1:]).replace("\n   ", "\n     "))   # a bullet
 
 
 views = screens.views
@@ -162,8 +161,11 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     if android and (why := oneshot_device.built(path, device)):
         return why
     store = oneshot_spec.store(spec["repo"])
-    if desktop is not None:   # every kind's look waits for the PC app's (9e4), in the owner's order
-        return froze(path, spec, desktop, verdict["head"], run, {"device": device} if android else {})
+    build = None
+    if desktop is not None:   # frozen before any look: every look of the PC app launches that copy
+        build, why = froze(path, spec, desktop, verdict["head"], run)
+        if why:
+            return why
     n = len(o.get("looks") or []) + 1
     stopped = lambda: run.halt.is_set() or runtime.stopping.is_set()   # noqa: E731
     shots = store.folder / "build" / f"r{n}"
@@ -175,7 +177,7 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
                    + (f" · {KIND_NAMES[k]}" if several else ""))
         try:
             found = looked(path, k, one, live, device if k == "android" else None, shots / k if several else shots,
-                           stopped, apks)
+                           stopped, apks, build)
         except OSError as exc:
             if k != "android":
                 raise
@@ -194,29 +196,33 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     if (now := oneshot_build.head(path)) != verdict["head"] or specs.dirty(path):
         return (f"앱을 띄워 찍는 동안 작업트리가 바뀌었다 — HEAD `{now[:12]}`, 게이트는 `{verdict['head'][:12]}`. "
                 "`live_cmd` 와 앱은 추적하는 파일을 바꾸지 않는다")
-    looks = [*(o.get("looks") or []), {"round": n, "head": verdict["head"], "findings": findings}]
+    looks = [*(o.get("looks") or []), {"round": n, "head": verdict["head"], "findings": findings,
+                                       **({"build": build["identity"]} if build else {})}]
     if high := [f for f in findings if f["severity"] == "high"]:
         oneshot_spec.saved(spec["repo"], oneshot={"looks": looks})
         return "화면 검사에서 고칠 것이 나왔다 — " + " / ".join(
             (f"{KIND_NAMES[f['kind']]} " if "kind" in f else "") + f"{f['screen']} {f['viewport']} {f['state']}: {f['what']}"
             for f in high[:12])
     # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
-    # The fixes this turn was sent with are built now: a resumed build no longer carries them.
-    oneshot_spec.saved(spec["repo"], oneshot={"stage": "critique", "front_built_head": verdict["head"], "looks": looks,
-                                              "attempts": 0, "working": "critique", "fix": None,
-                                              **({"device": device, "apks": apks} if android else {})})
+    # The fixes this turn was sent with are built now: a resumed build no longer carries them. A run this version
+    # holds at the critique (a PC app's critic is 9e4b's) is saved stopped in the same write, so no poll sees it
+    # resumable.
+    passed = {"stage": "critique", "front_built_head": verdict["head"], "looks": looks, "attempts": 0,
+              "working": "critique", "fix": None, **({"device": device, "apks": apks} if android else {})}
+    if oneshot_spec.held({**o, "stage": "critique"}):
+        passed.update(working=None, stopped=oneshot_spec.kind_stop("critique"))
+    oneshot_spec.saved(spec["repo"], oneshot=passed)
     specs.note(run, f"화면 빌드 통과 · {verdict['head'][:12]}")
     return ""
 
 
-def froze(path: Path, spec: dict, desktop: dict, head: str, run, kept: dict) -> str:
+def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> tuple[dict | None, str]:
     """The PC app's program, checked as the gate left it and frozen into staging the run owns: its identity is
-    what every look launches. The looks are 9e4's, so this version holds the run here (`LOOK`), its build saved
-    with the stop and `kept` (another kind's block, the Android app's `device`) in one write. An earlier frozen
-    build is removed once this one is saved."""
+    what every look launches. The build saved, or why there is none. An earlier frozen build is removed once
+    this one is saved."""
 
     if why := oneshot_desktop.built(path, desktop):
-        return why
+        return None, why
     staging = oneshot_spec.store(spec["repo"]).folder / "desktop"
     into = staging / f"build-{time.time_ns()}"
     try:
@@ -226,10 +232,9 @@ def froze(path: Path, spec: dict, desktop: dict, head: str, run, kept: dict) -> 
         raise
     if oneshot_build.head(path) != head or specs.dirty(path):
         shutil.rmtree(into, ignore_errors=True)
-        return f"PC 앱 빌드를 얼리는 동안 작업트리가 바뀌었다 — 게이트는 `{head[:12]}` 를 통과했다"
+        return None, f"PC 앱 빌드를 얼리는 동안 작업트리가 바뀌었다 — 게이트는 `{head[:12]}` 를 통과했다"
     try:
-        oneshot_spec.saved(spec["repo"], oneshot={"desktop_build": build, "attempts": 0, "working": None,
-                                                  "stopped": oneshot_spec.kind_stop(STAGE), **kept})
+        oneshot_spec.saved(spec["repo"], oneshot={"desktop_build": build})
     except BaseException:   # a save may fail after it wrote: the record, read back, says whether the copy is kept
         try:
             kept = (oneshot_spec.spec_of(spec["repo"])["oneshot"].get("desktop_build") or {}).get("folder")
@@ -242,15 +247,18 @@ def froze(path: Path, spec: dict, desktop: dict, head: str, run, kept: dict) -> 
         if old != into:
             shutil.rmtree(old, ignore_errors=True)
     specs.note(run, f"PC 앱 빌드 통과 · {head[:12]} · 빌드 {build['identity'][:12]} · 파일 {build['files']}개")
-    return ""
+    return build, ""
 
 
 def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, shots: Path, stopped,
-           apks: dict) -> list[dict]:
+           apks: dict, build: dict | None = None) -> list[dict]:
     """One kind's look at the HEAD the gate passed, shot into `shots`: the web app served and shot in a browser,
-    or the Android app's APKs copied and installed on the run's emulator. `apks` gets the copies' digests."""
+    the Android app's APKs copied and installed on the run's emulator (`apks` gets the copies' digests), or the
+    PC app's frozen `build` started on a desktop the run owns."""
 
     o, store = spec["oneshot"], oneshot_spec.store(spec["repo"])
+    if kind == "desktop":
+        return oneshot_desktop_look.look(spec, build, shots, stopped)
     if kind != "android":
         return oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]), shots,
                                  stopped)
