@@ -1,23 +1,30 @@
 import { useContext, useState, type ReactNode } from 'react'
+import { Zoom } from '@/components/Modal'
 import { PictureRoot } from '@/lib/picture'
 
 /** A Markdown image in an agent's answer or question, such as the before and
  *  after of a design it asks to approve. A local path is drawn through
  *  `/api/image`; a web address, or a path with no checkout to read it from,
- *  stays its alt text, so an answer never fetches from outside. */
+ *  stays its alt text, so an answer never fetches from outside. A click
+ *  enlarges it in place rather than opening a browser window. */
 export function Picture({ src, alt, fallback }: { src?: string; alt?: string; fallback?: ReactNode }) {
   const repo = useContext(PictureRoot)
   const [broken, setBroken] = useState(false)
+  const [zoomed, setZoomed] = useState(false)
   const local = !!src && !/^(https?|data|blob):/i.test(src) && !src.startsWith('//')
   if (!repo || !local || broken) return fallback ?? <span>{alt}</span>
   const url = `/api/image?${new URLSearchParams({ repo, path: src })}`
   return (
     // Half the width less the space Markdown leaves between two images, so a before and an after compare side by
     // side; a narrow pane wraps them.
-    <a href={url} target="_blank" rel="noreferrer" className="my-2 inline-block w-[calc(50%-0.5rem)] min-w-[200px] max-w-full align-top">
-      <img src={url} alt={alt ?? ''} loading="lazy" onError={() => setBroken(true)}
-        className="max-h-[480px] w-full rounded-md border border-border bg-background object-contain" />
+    <span className="my-2 inline-block w-[calc(50%-0.5rem)] min-w-[200px] max-w-full align-top">
+      <button type="button" onClick={() => setZoomed(true)} title="크게 본다"
+        aria-label={alt ? `${alt} 크게 보기` : '크게 보기'} className="block w-full cursor-zoom-in rounded-md">
+        <img src={url} alt={alt ?? ''} loading="lazy" onError={() => setBroken(true)}
+          className="max-h-[480px] w-full rounded-md border border-border bg-background object-contain" />
+      </button>
       {alt && <span className="mt-1 block text-[12px] text-muted-foreground">{alt}</span>}
-    </a>
+      {zoomed && <Zoom src={url} alt={alt} close={() => setZoomed(false)} />}
+    </span>
   )
 }

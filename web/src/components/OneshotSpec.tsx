@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useId, useMemo, useRef, useState,
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
-import { Btn } from '@/components/Modal'
+import { Btn, Zoom } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
 import { Track } from '@/components/OneshotTrack'
 import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
@@ -605,30 +605,6 @@ export function Sheet({ gate, text, items, state, busy, submit, palettes, reopen
       </div>
       {zoom && <Zoom src={zoom} close={() => setZoom('')} />}
     </Split>
-  )
-}
-
-/** A picture enlarged in its own modal dialog above the oneshot window: Escape, the backdrop or
- *  [닫기] close only it, and the focus goes back to the thumbnail that opened it. React passes a
- *  dialog's `close` and `cancel` up its tree, so they stop here before the window's own close. */
-function Zoom({ src, close }: { src: string; close: () => void }) {
-  const box = useRef<HTMLDialogElement>(null)
-  const opener = useRef<Element | null>(null)
-  useEffect(() => {
-    if (!box.current || box.current.open) return
-    opener.current = document.activeElement
-    box.current.showModal()
-  }, [])
-  return (
-    <dialog ref={box} aria-label="화면 사진" onCancel={(e) => e.stopPropagation()}
-      onClose={(e) => { e.stopPropagation(); close(); (opener.current as HTMLElement | null)?.focus() }}
-      onClick={(e) => { e.stopPropagation(); if (e.target === box.current) box.current.close() }}
-      className="m-auto max-h-[95dvh] max-w-[95vw] bg-transparent p-0 backdrop:bg-black/70">
-      <div className="flex flex-col items-end gap-2">
-        <Btn autoFocus onClick={() => box.current?.close()}>닫기</Btn>
-        <img src={src} alt="" className="max-h-[85dvh] max-w-full" />
-      </div>
-    </dialog>
   )
 }
 

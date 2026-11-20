@@ -711,6 +711,12 @@ def main():
             assert all(q["repo"][0] for q in pictures), pictures
             boxes = [page.get_by_role("img", name=n, exact=True).bounding_box() for n in ("Synthetic before", "Synthetic after")]
             assert boxes[0]["y"] == boxes[1]["y"] and boxes[0]["x"] < boxes[1]["x"], boxes   # side by side at 1440px
+            page.get_by_role("button", name="Synthetic before 크게 보기", exact=True).click()   # enlarged here, no window
+            zoom = page.get_by_role("dialog", name="Synthetic before", exact=True)
+            expect(zoom.get_by_role("img", name="Synthetic before", exact=True)).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(zoom).to_have_count(0)
+            assert len(page.context.pages) == 1, page.context.pages
             assert page.get_by_role("img", name="Synthetic outside").count() == 0   # a web address stays its alt text
             page.route("https://example.com/**", lambda route: route.fulfill(body="Synthetic PR"))
             with page.expect_popup() as popup:
