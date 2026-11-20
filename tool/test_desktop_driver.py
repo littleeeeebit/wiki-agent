@@ -191,7 +191,7 @@ Add-Type -AssemblyName PresentationFramework
 $V = [System.Windows.Controls.VirtualizingPanel]; $on = $virtual -eq "on"
 $w = New-Object System.Windows.Window
 $w.Title = "list"; $w.Width = 400; $w.Height = 300
-$items = 1..80 | ForEach-Object { [pscustomobject]@{ Name = "item $_"; Group = "group $($_ % 2)" } }
+$items = 1..40 | ForEach-Object { [pscustomobject]@{ Name = "item $_"; Group = "group $($_ % 2)" } }
 switch ($kind) {
   "listbox" { $c = New-Object System.Windows.Controls.ListBox; $c.DisplayMemberPath = "Name"; $c.ItemsSource = $items }
   "grouped" {
@@ -219,7 +219,8 @@ $w.Content = $c
 @pytest.mark.parametrize("kind", ["listbox", "grouped", "grid", "tree"])
 @pytest.mark.parametrize("virtual", ["on", "off"])
 def test_a_wpf_list_counts_the_items_its_read_did_not_reach(tmp_path, kind, virtual):
-    # 80 items: in a list, a grouped list, a grid with its header, and a tree's one expanded branch
+    # 40 items, more than the window shows, few enough that a hosted runner walks them fully read within the read's
+    # deadline: in a list, a grouped list, a grid with its header, and a tree's one expanded branch
     from main import oneshot_desktop_look
 
     script = tmp_path / "lists.ps1"
@@ -228,8 +229,9 @@ def test_a_wpf_list_counts_the_items_its_read_did_not_reach(tmp_path, kind, virt
         look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                            str(script), kind, virtual], tmp_path)
         report = desktop_driver.drive(look, "app", (400, 300), [], wait=30, settle_ms=1000)
+    assert report["states"], {k: report.get(k) for k in ("phase", "ended", "refusal", "error")}
     start = report["states"][0]
-    [box] = [n for n in start["nodes"] if n.get("items") == 80]
+    [box] = [n for n in start["nodes"] if n.get("items") == 40]
     assert (box["unread"] > 0) == (virtual == "on"), report
     assert oneshot_desktop_look.partial(start, {w["hwnd"] for w in start["windows"]}) == (virtual == "on")
     assert not [f for f in desktop_driver.findings(report) if "outside its window" in f]   # scrolled rows reachable
