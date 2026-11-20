@@ -12,7 +12,6 @@ import json
 import os
 import posixpath
 import re
-import shlex
 import shutil
 import subprocess
 import threading
@@ -453,17 +452,27 @@ def leaves(word: str) -> bool:
 
 def commands(command: str) -> list[str]:
     """`command`'s chain parts as the shell that runs the gate cuts them, at an unquoted `&&`: on Windows `links`
-    (the masker reads PowerShell); elsewhere the POSIX shell's words (`shlex`), each part its words. A quote left
-    open raises ValueError."""
+    (the masker reads PowerShell); elsewhere as the POSIX shell quotes, a backslash escaping the next character
+    outside single quotes. A quote left open raises ValueError."""
 
     if os.name == "nt":
         return links(command)
-    words = shlex.shlex(command, posix=True, punctuation_chars="&")
-    words.whitespace_split = True
-    parts = [[]]
-    for word in words:
-        parts.append([]) if word == "&&" else parts[-1].append(word)
-    return [" ".join(shlex.quote(w) for w in part) for part in parts]
+    parts, start, quote, i = [], 0, "", 0
+    while i < len(command):
+        c = command[i]
+        if c == "\\" and quote != "'":
+            i += 1
+        elif quote:
+            quote = "" if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif command.startswith("&&", i):
+            parts.append(command[start:i])
+            start, i = i + 2, i + 1
+        i += 1
+    if quote:
+        raise ValueError("a quote left open")
+    return [*parts, command[start:]]
 
 
 def chained(command: str) -> bool:
@@ -472,7 +481,7 @@ def chained(command: str) -> bool:
     On Windows, where the gate runs in PowerShell, the parts are those `links` cuts, at an unquoted `&&`, so a
     quoted argument holding `&&` stays one command, and a typographic quote that PowerShell could read as a
     delimiter and `links` does not (`quote_safe`) is refused, so the two readings cannot differ. Elsewhere the POSIX
-    shell runs it, and the parts are cut at the `&&` its words hold; a quote left open is refused.
+    shell runs it, and the parts are cut at the `&&` it reads unquoted; a quote left open is refused.
     ponytail: by character and first word, not shell syntax: it stops a command that ends the chain by
     mistake, not one written to get past it; a quoted `;` or `(` is refused too, and a project script takes it."""
 

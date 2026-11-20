@@ -33,12 +33,16 @@ def window(hwnd: int) -> dict:
             "offscreen": False, "rect": [0, 0, 1280, 800], "patterns": []}
 
 
-def report(nodes: list[dict], windows=(MAIN,), sid="S1", steps=()) -> dict:
-    """A finished driver report whose start state shows `windows`, each drawn and read, holding `nodes`."""
+def report(nodes: list[dict], windows=(MAIN,), sid="S1", steps=(), owners=None) -> dict:
+    """A finished driver report whose start state shows `windows`, each drawn and read, holding `nodes`; each
+    window but the main one owned by the main window unless `owners` says otherwise."""
+
+    owners = owners or {}
 
     def state(i: int, name: str, held: list[dict]) -> dict:
         return {"id": f"s{i:02d}", "name": name,
-                "windows": [{"hwnd": h, "frame": [0, 0, 1280, 800]} for h in windows],
+                "windows": [{"hwnd": h, "frame": [0, 0, 1280, 800], "owner": owners.get(h, 0 if h == MAIN else MAIN)}
+                            for h in windows],
                 "shots": [{"hwnd": h, "drawn": True, "file": f"s{i:02d}-{h}.png"} for h in windows],
                 "reads": [{"hwnd": h, "read": True} for h in windows],
                 "nodes": [window(h) for h in windows] + held}
@@ -65,7 +69,7 @@ class Runs:
         for s in got.get("states", []):
             for shot in s["shots"]:
                 (folder / shot["file"]).write_bytes(f"{sid}-{state}-{shot['hwnd']}".encode())
-        return got, []
+        return got
 
 
 def shown(sid, state, steps):
@@ -177,10 +181,12 @@ def test_the_frozen_program_is_started_for_each_state_with_its_settings_and_the_
     screens = [{**SCREENS[0], "features": []}]
     spec = {"repo": "budget", "oneshot": {"profile": {"window": "1024x768"},
                                           "front": {"screens": screens}, "frequency": {}}}
-    looks = tmp_path / "store"
-    with patch.object(pc_look.oneshot_spec, "store", lambda repo: type("S", (), {"folder": looks})()):
+    looks, checked = tmp_path / "store", []
+    with patch.object(pc_look.oneshot_spec, "store", lambda repo: type("S", (), {"folder": looks})()), \
+            patch.object(pc_look.oneshot_desktop, "altered", lambda b: checked.append(b) or ""):   # Python's folder
         found = pc_look.look(spec, build, tmp_path / "shots")
     assert found == [], found
+    assert checked == [build] * 4   # the copy checked after every start
     assert sorted(p.name for p in (tmp_path / "shots").iterdir()) == sorted(
         f"S1-window-{state}.png" for state in ("empty", "full", "loading", "error"))
     assert (tmp_path / "seen.txt").read_text().split("\n")[:-1] == [
@@ -207,3 +213,141 @@ def test_a_look_whose_cleanup_is_not_proven_stops_the_stage(tmp_path):
             patch.object(pc_look.oneshot_spec, "store", lambda repo: type("S", (), {"folder": tmp_path})()), \
             pytest.raises(RuntimeError, match="정리하지 못했다 — the desktop look is held"):
         pc_look.look(spec, build, tmp_path / "shots")
+
+
+class Desk:
+    """A look's desktop as `Launches` uses it: each start recorded, each end as clean as `clean`."""
+
+    def __init__(self, folder: Path, clean=True, refuse=None):
+        self.folder, self.clean, self.refuse, self.jobs, self.started = folder, clean, refuse, {}, []
+
+    def reserve(self, name):
+        (self.folder / name).mkdir(exist_ok=True)
+        return self.folder / name
+
+    def start(self, key, argv, cwd, extra=None, halt=None):
+        if self.refuse:
+            raise self.refuse
+        self.started.append(extra)
+        self.jobs[key] = type("Job", (), {"end": lambda job, s: {"clean": self.clean, "reasons": ["pid 9 runs"]}})()
+
+    def observe(self):
+        pass
+
+
+def launches(tmp_path, desk, env=None, altered=""):
+    import desktop_driver
+
+    build = {"folder": str(tmp_path), "launch": {"program": "app.exe", "args": ["{data}"], "cwd": ".",
+                                                 "env": env or {}}}
+    runs = pc_look.Launches(desk, build, (1280, 800), pc_look.never)
+    return runs, patch.object(desktop_driver, "drive", lambda *a, **k: shown("S1", "full", [])), \
+        patch.object(pc_look.oneshot_desktop, "altered", lambda b: altered)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_a_start_whose_end_is_not_proven_stops_the_look_before_another_start(tmp_path):
+    desk = Desk(tmp_path, clean=False)
+    runs, driving, kept = launches(tmp_path, desk)
+    spec = {"oneshot": {"front": {"screens": SCREENS}, "frequency": FREQUENCY}}
+    with driving, kept, pytest.raises(RuntimeError, match="앱을 끝내지 못했다 — pid 9 runs"):
+        pc_look.inspect(runs, spec, tmp_path / "shots", tmp_path)
+    assert len(desk.started) == 1
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_the_look_alone_names_the_screen_and_state_and_a_changed_copy_or_a_refused_start_goes_back(tmp_path):
+    import desktop_session
+
+    desk = Desk(tmp_path)
+    runs, driving, kept = launches(tmp_path, desk, env={"oneshot_screen": "S9", "Oneshot_State": "full"})
+    with driving, kept:
+        runs.drive("S2", "error", [])
+    assert {k: v for k, v in desk.started[0].items() if k.upper().startswith("ONESHOT")} == {
+        "ONESHOT_SCREEN": "S2", "ONESHOT_STATE": "error"}
+    runs, driving, kept = launches(tmp_path, Desk(tmp_path), altered="PC 앱이 얼린 사본의 `a.txt` 를 바꿨다")
+    with driving, kept, pytest.raises(ValueError, match="`a.txt` 를 바꿨다"):
+        runs.drive("S1", "full", [])
+    runs, driving, kept = launches(tmp_path, Desk(tmp_path, refuse=desktop_session.Refused("CreateProcessW: 193")))
+    with driving, kept, pytest.raises(ValueError, match="띄우지 못했다 — CreateProcessW: 193"):
+        runs.drive("S1", "full", [])
+
+
+def test_a_copy_is_altered_when_a_file_changes_goes_or_is_added(tmp_path):
+    import hashlib
+    import json
+
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "app.exe").write_bytes(b"exe")
+    digest = hashlib.sha256(b"exe").hexdigest()
+    (tmp_path / "manifest.json").write_text(json.dumps({"files": {"app.exe": digest}}), encoding="utf-8")
+    build = {"folder": str(app)}
+    assert pc_look.oneshot_desktop.altered(build) == ""
+    (app / "settings.ini").write_text("x")
+    assert "`settings.ini`" in pc_look.oneshot_desktop.altered(build)
+    (app / "settings.ini").unlink()
+    (app / "app.exe").write_bytes(b"changed")
+    assert "`app.exe`" in pc_look.oneshot_desktop.altered(build)
+
+
+@pytest.mark.parametrize("probe", ["timed-out", "already-shown"])
+def test_a_sometimes_feature_counts_only_when_this_invocation_showed_it_on_a_complete_read(tmp_path, probe):
+    (tmp_path / "shots").mkdir()
+
+    def answer(sid, state, steps):
+        got = shown(sid, state, steps)
+        if steps and probe == "timed-out":   # the feature in the partial tree of a probe cut at its deadline
+            got.update(phase="act s01", ended="act s01")
+        elif steps:   # visible already at this start: the invocation showed nothing
+            got["states"][0]["nodes"].append(node("search"))
+        return got
+
+    found, _ = inspect(tmp_path, answer)
+    what = [f["what"] for f in found]
+    assert "가끔 쓰는 기능 `search` 가 한 번 눌러서 보이지 않는다" in what
+    assert ("the driver passed its deadline at act s01" in what) == (probe == "timed-out")
+
+
+@pytest.mark.parametrize("windows, owners, said", [
+    ((MAIN, DIALOG, 4), {4: 0}, None),   # an unrelated window opened too: the owned one is the dialog
+    ((MAIN, DIALOG, 4), {}, "`dialog` 화면으로 볼 창이 2개다 — 메인 창은 그 화면의 창 하나만 소유한다"),
+    ((MAIN, 4), {4: 0}, "`dialog` 화면의 창이 찍히지 않았다"),
+])
+def test_a_dialog_screen_is_the_one_window_the_main_window_owns(tmp_path, windows, owners, said):
+    (tmp_path / "shots").mkdir()
+
+    def answer(sid, state, steps):
+        if sid == "S2" and not steps:
+            return report([node("export", window=windows[1])], windows=windows, owners=owners)
+        return shown(sid, state, steps)
+
+    found, _ = inspect(tmp_path, answer)
+    assert [f["what"] for f in found if f["screen"] == "S2"] == ([said] * 4 if said else [])
+    if not said:
+        assert (tmp_path / "shots" / "S2-window-full.png").read_bytes() == b"S2-full-2"
+
+
+def test_a_feature_in_any_state_is_covered_and_absence_needs_reads_that_completed(tmp_path):
+    (tmp_path / "shots").mkdir()
+
+    def error_only(sid, state, steps):
+        got = shown(sid, state, steps)
+        if sid == "S2" and state != "error":   # `export` only in the dialog's error state
+            got["states"][0]["nodes"] = [n for n in got["states"][0]["nodes"] if n["id"] != "feature:export"]
+        return got
+
+    assert inspect(tmp_path, error_only)[0] == []
+    (tmp_path / "second" / "shots").mkdir(parents=True)
+
+    def unread(sid, state, steps):
+        got = shown(sid, state, steps)
+        if (sid, state) == ("S1", "full") and not steps:
+            got["states"][0]["reads"] = [{"hwnd": MAIN, "read": False, "error": "the tree could not be read"}]
+            got["states"][0]["nodes"] = []
+        return got
+
+    what = [f["what"] for f in inspect(tmp_path / "second", unread)[0]]
+    assert "start: window 1's tree was not read: the tree could not be read" in what
+    assert "첫 화면의 `full` 상태를 읽지 못해 배치를 확인하지 못했다" in what
+    assert not [w for w in what if "트리에도 없다" in w or "보이지 않는다" in w]

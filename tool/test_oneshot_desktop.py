@@ -607,6 +607,23 @@ def test_several_kinds_an_earlier_version_held_past_the_build_stay_held(desktop)
         oneshot_spec.resume("budget")
 
 
+@pytest.mark.parametrize("stop", [None, {"reason": "kind", "detail": "다음 버전", "state": "build-front"}])
+def test_an_earlier_versions_frozen_run_at_the_build_is_resumable(desktop, tmp_path, stop):
+    # 9e3b2 held a frozen run at `build-front`; this version looks at that build in the same check.
+    oneshot_spec.saved("budget", oneshot={"stage": "build-front", "working": None, "stopped": stop, "features": [],
+                                          "desktop_build": frozen_in(desktop, tmp_path)})
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart" and not oneshot_profile.held(o())
+    from main import oneshot_build
+
+    check, stop, _, after = oneshot_build.STAGES["build-front"]
+    sent = []
+    with patch.dict(oneshot_build.STAGES, {"build-front": (check, stop, lambda spec: "the build", after)}), \
+            patch.object(oneshot_build, "send", lambda repo, stage, text: sent.append(stage)):   # no S6 here
+        oneshot_spec.resume("budget")
+    assert sent == ["build-front"]
+
+
 def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage_nor_its_build_again(desktop, tmp_path):
     # Every look passed and the run waits at the critique (9e4a): neither the hand-off nor a start moves it back.
     stage = "critique"

@@ -178,8 +178,10 @@ closes, and a failed enumeration or close holds the look.
    flyout opened over it, is not a candidate, at startup or later. It belongs
    to the state that shows it, which shoots it and reads it as a top-level
    window of its own, so the walk of its owner's tree does not descend into it.
-   A window the app opens later belongs to the state that opened it in the
-   same way. The driver resizes the
+   Each window in the report carries its owner's handle (0 for none): a
+   `dialog`, `floating` or `tray` screen is the one window the main window
+   owns, and two such windows are a finding. A window the app opens later
+   belongs to the state that opened it in the same way. The driver resizes the
    main window to S1's `window` with `SetWindowPos` and no activation, under
    the driver's deadline, and reads the size back. A wrong size is a finding.
 4. A look that needs another app, such as the screen translator's fixture

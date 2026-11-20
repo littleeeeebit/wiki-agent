@@ -105,7 +105,19 @@ def test_a_window_the_main_window_owns_at_startup_is_no_candidate_and_is_shot_wi
     assert report["phase"] == "done" and report["main"]["title"] == "main", report
     start = report["states"][0]
     assert sorted(w["title"] for w in start["windows"]) == ["dialog", "main"] and all(s["drawn"] for s in start["shots"])
+    owners = {w["title"]: w["owner"] for w in start["windows"]}
+    assert owners == {"main": 0, "dialog": report["main"]["hwnd"]}   # the look tells a dialog screen's window by it
     assert desktop_driver.findings(report) == []
+
+
+def test_a_halt_while_the_driver_runs_ends_it_at_once(tmp_path):
+    reads = []   # the driver's start reads it once; its watch then finds it set
+    halt = types.SimpleNamespace(is_set=lambda: reads.append(1) or len(reads) > 1)
+    with desktop_session.look(tmp_path, "halt") as look:
+        look.start("app", python(NONE), tmp_path)   # no window: the driver would wait out its first-window wait
+        started = time.monotonic()
+        report = desktop_driver.drive(look, "app", (640, 480), [], wait=30, settle_ms=200, halt=halt)
+    assert report["ended"] == "halted" and report["end"]["clean"] and time.monotonic() - started < 15, report
 
 
 def test_an_app_that_shows_no_window_is_a_refusal(tmp_path):
@@ -341,7 +353,7 @@ def test_what_a_report_could_not_observe_is_a_finding():
 def test_the_request_names_the_apps_job_not_its_pids(tmp_path, monkeypatch):
     seen = {}
 
-    def starting(look, key, argv, cwd, extra=None):
+    def starting(look, key, argv, cwd, extra=None, halt=None):
         seen.update(json.loads((look.folder / "evidence" / key / "request.json").read_text(encoding="utf-8")))
         raise desktop_session.Refused("stop here")
 

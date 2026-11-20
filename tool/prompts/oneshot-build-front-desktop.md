@@ -43,14 +43,17 @@ acts only through automation patterns, never synthetic input.
   own, and that window is owned by the main window (its Win32 owner, such as
   WPF's `Owner` or a Tauri window's `parent`), so the look sizes the main
   window and shoots both. At startup the program shows one main window and no
-  other window it does not own. A release build ignores both variables.
+  other window it does not own, and the main window owns one window at most.
+  While either variable is set, lists are not virtualized (WPF's
+  `VirtualizingPanel.IsVirtualizing="False"`), so the look reads every item.
+  A release build ignores both variables.
 - Every control for a feature has the `AutomationId` `feature:<feature id>`:
   in a web view, the element's `id`; in XAML,
   `AutomationProperties.AutomationId`. A `never` feature has no control
   anywhere, in any state.
 - The main window takes the size the look sets, and the content follows it.
-- The program keeps all its data under the folder the look names, and never
-  hands off to another instance: a second start opens its own window, and no
+- The program keeps all its data under the folder the look names, writes
+  nothing into its own folder, and never hands off to another instance: a second start opens its own window, and no
   session-wide lock or the owner's running copy keeps it from starting. The
   look also points `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP` there; a web
   view stack reads its own setting as well, such as
@@ -139,14 +142,16 @@ The server checks, in order:
    them. A change to any file or setting is a new build.<!-- /shared -->
 6. <!-- shared:look -->The server starts the frozen copy on its own desktop
    once for each screen and state, as the conventions above describe, and
-   shoots and reads its windows. It refuses: a program that shows no main
-   window or more than one at startup, a main window that does not take the
-   size the look sets, a window not drawn or its controls not read, a control
-   with no name, one outside its window or under 24×24 physical pixels, a
-   placement the owner's map forbids, a feature whose `feature:<id>` never
-   appears, a `never` feature with a control, and a `sometimes` feature not
-   one invocation from the first screen. A look whose desktop the server
-   cannot prove it cleaned up stops the stage.<!-- /shared -->
+   shoots and reads its windows. It refuses: a program that does not start,
+   that shows no main window or more than one at startup, or that changes a
+   file of its own copy, a screen's window missing or not one, a main window
+   that does not take the size the look sets, a window not drawn or its
+   controls not read, a control with no name, one outside its window or under
+   24×24 physical pixels, a placement the owner's map forbids, a feature
+   whose `feature:<id>` never appears, a `never` feature with a control, a
+   virtualized list where absence must be read, and a `sometimes` feature not
+   one invocation from the first screen. A look whose program or desktop the
+   server cannot prove it ended and cleaned up stops the stage.<!-- /shared -->
 
 A refusal comes back with the reason, at most three times in all.
 

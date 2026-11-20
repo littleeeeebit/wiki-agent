@@ -96,11 +96,11 @@ function Windows {   # every visible top-level window of the app's job on this d
   @([Desk]::Visible() | Where-Object { [Desk]::InApp([Desk]::Owner($_)) } | ForEach-Object {
     [ordered]@{ hwnd = [int64]$_; pid = [Desk]::Owner($_); class = [Desk]::Cls($_); title = [Desk]::Title($_);
                 frame = [Desk]::Frame($_); utility = $UTILITY -contains [Desk]::Cls($_);
-                owned = [Desk]::GetWindow($_, 4) -ne [IntPtr]::Zero } })   # GW_OWNER
+                owner = [int64][Desk]::GetWindow($_, 4) } })   # GW_OWNER: the window that owns it, or 0
 }
 
 function Candidates {   # a main window: not an input indicator, a menu (#32768) or a window another one owns
-  @(Windows | Where-Object { -not $_.utility -and -not $_.owned -and $_.class -ne "#32768" })
+  @(Windows | Where-Object { -not $_.utility -and -not $_.owner -and $_.class -ne "#32768" })
 }
 
 function Shoot($window, [string]$state) {   # the whole window, then cut to its visible frame

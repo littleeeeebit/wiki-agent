@@ -54,6 +54,7 @@ PLAIN = set(" _-.,;=:+/")
 # A `:` before anything but a space opens a namespace (`file:`, `shell:`, a drive), and a drive alone is one too.
 OUTSIDE = re.compile(r"(?i):(?=\S)|(?<![a-z0-9])[a-z]:|(?:^|[\s;,=:])/|//|\.\.")
 OWNED_ENV = {"APPDATA", "LOCALAPPDATA", "TEMP", "TMP"}   # the look sets these to its own folders, whatever run says
+LOOK_ENV = {"ONESHOT_SCREEN", "ONESHOT_STATE"}   # the look names the screen and state to open, in any case
 
 
 def _remote(setting: str) -> bool:
@@ -72,13 +73,27 @@ def _remote(setting: str) -> bool:
         bare = host[:-1] if host.endswith(".") else host   # the parser drops one empty last label
         if ":" in host:
             ipaddress.IPv6Address(host)
-        elif FORBIDDEN_HOST.search(host):   # a code point the parser refuses in a domain
+        elif FORBIDDEN_HOST.search(host) or not all(map(_punycode, bare.split("."))):   # no domain a parser takes
             return False
         elif re.fullmatch(r"(?i)\d+|0x[0-9a-f]*", bare.rsplit(".", 1)[-1]):
             ipaddress.IPv4Address(bare)   # dotted decimal only: the hex, octal and short forms are refused
         return bool(host)
     except ValueError:   # a port out of range, a bracket left open, a number that is no address
         return False
+
+
+def _punycode(label: str) -> bool:
+    """A label that is not `xn--`, or one whose Punycode decodes to letters, marks or digits beyond ASCII and
+    encodes back to it. ponytail: no full UTS 46 validity table; the browser's parser refuses more."""
+
+    if not label.startswith("xn--"):
+        return True
+    try:
+        text = label[4:].encode("ascii").decode("punycode")
+    except UnicodeError:
+        return False
+    return (not text.isascii() and not any(unicodedata.category(c)[0] in "CZ" for c in text)
+            and "xn--" + text.encode("punycode").decode("ascii") == label)
 
 
 PARTS = re.compile(r"[/\s;,=:]+")
@@ -135,6 +150,9 @@ def declared(tree: Path, final: str) -> dict:
     if len({k.upper() for k in out["env"]}) != len(out["env"]):   # one variable to Windows
         raise ValueError(f"`{BLOCK}` 의 run.env 에 대소문자만 다른 이름이 있다 — Windows 에는 한 변수다")
     settings = [*out["args"], *out["env"].values()]
+    if named := sorted(k for k in out["env"] if k.upper() in LOOK_ENV):
+        raise ValueError(f"`{BLOCK}` 의 run.env 는 `{named[0]}` 를 정하지 않는다 — 화면 검사가 "
+                         f"{', '.join(sorted(LOOK_ENV))} 로 열 화면과 상태를 넘긴다")
     if owned := sorted(k for k in out["env"] if k.upper() in OWNED_ENV):
         raise ValueError(f"`{BLOCK}` 의 run.env 는 `{owned[0]}` 를 정하지 않는다 — look 이 {', '.join(sorted(OWNED_ENV))} 를 "
                          f"자기 폴더로 둔다. 앱 데이터는 `{DATA}` 를 받는 다른 인자나 변수로 넘긴다")
@@ -356,3 +374,17 @@ def frozen(tree: Path, desktop: dict, into: Path) -> dict:
                                                    indent=1, sort_keys=True), encoding="utf-8")
     return {"identity": identity, "folder": str(app), "files": len(files), "launch": launch,
             "installer": desktop["installer"]}
+
+
+def altered(build: dict) -> str:
+    """Why the frozen copy is no longer the build its identity names, or empty: a file the manifest records was
+    changed or removed, or one was added. The program runs inside its copy, so each start is checked after it."""
+
+    app = Path(build["folder"])
+    files = json.loads((app.parent / "manifest.json").read_text(encoding="utf-8"))["files"]
+    there = sorted(p.relative_to(app).as_posix() for p in app.rglob("*") if p.is_file())
+    changed = sorted(set(there) ^ set(files)) or [
+        n for n in there if hashlib.sha256((app / n).read_bytes()).hexdigest() != files[n]]
+    if changed:
+        return f"PC 앱이 얼린 사본의 `{changed[0]}` 를 바꿨다 — 실행은 사본을 읽기만 하고, 앱의 데이터는 `{DATA}` 에 쓴다"
+    return ""

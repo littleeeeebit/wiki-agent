@@ -172,7 +172,9 @@ def test_a_second_build_replaces_the_frozen_one(pc_build):
         "--start=shell:Downloads", "https://cdn.example:99999/a.js", "https://999.999.999.999/v1",
         "https://0x7f.1/", "https://example.123/", "https://[zz]/", "https://cdn.example:0/",
         "https://1.2.3%2e4/", "https://[fe80::1%25eth0]/", "https://999.999.999.999\\@cdn.example/",
-        "https://cdn^example/", "https://cdn|example/", "https://a<b>/", "--log=myapp::ipc=trace"]],
+        "https://cdn^example/", "https://cdn|example/", "https://a<b>/", "https://xn--/", "https://xn--a/",
+        "--log=myapp::ipc=trace"]],
+    ({"env": {"oneshot_screen": "S9"}, "args": ["{data}"]}, "열 화면과 상태"),
     ({"env": {"APP_DATA": "{data}", "SHELL_PATH": "shell::Profile"}}, "사본 밖을 가리킬 수 있다"),
     ({"env": {"APPDATA": "{data}/named"}}, "look 이"),
     ({"args": ["--remote=https://cdn.example/{data}"], "env": {}}, "{data}"),
@@ -261,7 +263,7 @@ def test_a_folder_turned_into_a_junction_after_its_check_is_never_read(pc_build,
     "--cache={data}/cache", "--size=1280x800", "--langs=ko,en;fallback=en", "--name=file-viewer",
     "--title=Translator: on", "--title=번역 켜기", "https://x.example/?return=/home",
     "https://x.example/search?q=%ED%95%9C", "--api=https://[::1]:8443/v1", "--api=https://127.0.0.1:8080/v1",
-    "--api=https://127.0.0.1./v1"])
+    "--api=https://127.0.0.1./v1", "--cdn=https://xn--bcher-kva.example/a.js"])
 def test_a_setting_naming_the_copy_data_or_a_remote_url_is_kept(pc_build, setting):
     run = {**BLOCK["run"], "args": ["--data", "{data}", setting]}
     assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "run": run}))["run"]["args"][-1] == setting
@@ -308,7 +310,7 @@ def test_an_unreadable_snapshot_is_kept_and_one_shown_gone_or_malformed_is_built
         monkeypatch.setattr(Path, "stat", denied)
     oneshot_spec.recover()
     monkeypatch.undo()
-    assert bool(o()["desktop_build"]) is kept and oneshot_profile.held(o())   # held at the critique either way
+    assert bool(o()["desktop_build"]) is kept and oneshot_profile.held(o()) is kept   # a dropped build: rebuilt
 
 
 def test_a_worktree_named_by_its_extended_length_path_is_copied(pc_build, tmp_path):
@@ -356,8 +358,9 @@ def test_a_frozen_build_whose_copy_is_gone_or_whose_head_moved_is_built_again(pc
         write(pc_build, "strings.txt", "번역 끄기")
         git(pc_build, "commit", "-am", "moved on")
     oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "critique", "detail": "x"}})
-    oneshot_spec.recover()
-    assert not o()["desktop_build"] and o()["stopped"]["reason"] == "kind" and oneshot_profile.held(o())
+    oneshot_spec.recover()   # held at the critique with nothing to hold: back to the build, resumable
+    assert not o()["desktop_build"] and o()["stage"] == "build-front" and not oneshot_profile.held(o())
+    assert o()["stopped"]["reason"] == "restart" and "다시 빌드한다" in o()["stopped"]["detail"]
 
 
 @pytest.mark.parametrize("git_fails", [subprocess.TimeoutExpired("git", 60), "nonzero"])
