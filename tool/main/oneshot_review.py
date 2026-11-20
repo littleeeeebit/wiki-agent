@@ -108,7 +108,10 @@ def anchors(spec: dict) -> set[str]:
         if (r := todo.pop()) not in reached:
             reached.add(r)
             todo += under.get(r, [])
-    return {str(it["id"]) for it in items if it.get("id")} | reached
+    # `CAP` is the approved capability list itself: a permission no capability names breaks it, though no
+    # item of the design does. Only a kind with platform permissions has one.
+    platform = {"CAP"} if set(kinds_of(spec["oneshot"])) & set(DEVICE_KINDS) else set()
+    return {str(it["id"]) for it in items if it.get("id")} | reached | platform
 
 
 def blocking(found: dict) -> list[dict]:
@@ -126,8 +129,11 @@ def narrowing(reviews: list[dict]) -> bool:
 def changed_lines(tree: Path, since: str, head: str) -> dict[str, list[tuple[int, int]]] | None:
     """Each file's lines `since..head` changed, as inclusive ranges on HEAD's side; `None` when Git cannot say."""
 
-    done = specs.sh(["git", "-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff", "-U0",
-                     "--src-prefix=a/", "--dst-prefix=b/", since, head], tree, 120)
+    try:
+        done = specs.sh(["git", "-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff", "-U0",
+                         "--src-prefix=a/", "--dst-prefix=b/", since, head], tree, 120)
+    except subprocess.TimeoutExpired:   # the narrowing is optional: the frozen patch is read whole instead
+        return None
     if done.returncode:
         return None
     ranges, path, header = {}, None, False

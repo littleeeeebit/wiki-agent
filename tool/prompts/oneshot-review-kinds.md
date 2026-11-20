@@ -27,7 +27,8 @@ diff from the base commit to the HEAD under review.
 - Data loss or corruption, a crash on ordinary input, work that can freeze an
   app, secrets in the repository, or a call that leaves the app with what the
   design does not send.
-- A platform permission no capability requirement names, or a capability the
+- A platform permission no capability requirement names (its `breaks` names
+  `CAP`, the approved capability list), or a capability the
   code uses without asking for it.
 - A contract test made weaker by something outside its file (a fake, a
   configuration, a mock that hides the behaviour).

@@ -21,7 +21,8 @@ to the HEAD under review.
   that can freeze the app, secrets in the repository, or a call that leaves
   the phone with what the design does not send.
 - A permission in the manifest that no capability requirement names, or a
-  capability the code uses without asking for it.
+  capability the code uses without asking for it. Its `breaks` names `CAP`,
+  the approved capability list.
 - A contract test made weaker by something outside its file (a fake, a
   configuration, a mock that hides the behaviour).
 
