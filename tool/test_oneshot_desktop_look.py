@@ -468,7 +468,9 @@ def test_a_probe_is_proven_by_the_control_it_acted_on_never_one_in_another_windo
             fresh = got["states"][0]
             next(n for n in fresh["nodes"] if n["id"] == "open-search")["enabled"] = False
             fresh["windows"].append({"hwnd": DIALOG, "frame": [0, 0, 300, 200], "owner": MAIN})
-            fresh["nodes"].append(node("open-search", window=DIALOG, id="open-search", name="찾기"))
+            fresh["shots"].append({"hwnd": DIALOG, "drawn": True, "file": f"{fresh['id']}-{DIALOG}.png"})
+            fresh["reads"].append({"hwnd": DIALOG, "read": True})   # complete: only the window scope refuses it
+            fresh["nodes"] += [window(DIALOG), node("open-search", window=DIALOG, id="open-search", name="찾기")]
         return got
 
     what = [f["what"] for f in inspect(tmp_path, elsewhere)[0]]

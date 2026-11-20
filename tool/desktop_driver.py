@@ -11,7 +11,8 @@ from common import write_record
 
 POWERSHELL = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
 SCRIPT = Path(__file__).with_name("desktop_driver.ps1")
-PHASE_SECONDS = 10   # each operation: a resize, one window's shot, one window's tree read, an action, a check
+PHASE_SECONDS = 10   # each operation: a resize, one window's shot, tree read, identities or one list's items, an
+                     # action, a check
 LAUNCH_SECONDS = 30   # Windows PowerShell's start and its compile of the driver's types, before the first operation
 ENDED_SECONDS = 5   # the driver's job proving its end, once a deadline passed
 RESULT = "result.json"   # the server's final report: the driver's report, its last operation, deadline and end
