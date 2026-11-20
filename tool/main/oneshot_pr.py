@@ -3,7 +3,9 @@
 `docs/plans/oneshot/5-screen-pr.md` ("S8 — the first pull request") is the design. After R3's approval
 one work turn writes the README (and, for a public repository, the CI workflow); the server checks it
 and runs the adapter's whole gate; then the ordinary pull request path takes over: the worker's
-`pr-summary` (`pr_text`), push and `gh pr create` as the person (`specs.written`, `specs.opened`).
+`pr-summary` (`pr_text`), push and `gh pr create` as the person (`specs.written`, `specs.opened`). An
+Android app's turn also writes the `[release]` table, and one unsigned release build checks it
+(`release_checked`, `docs/plans/release/0-overview.md` step 7).
 From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summary.
 """
 
@@ -26,6 +28,7 @@ from .oneshot_profile import kinds_of
 from .query import ROOT
 
 README_PROMPT = (ROOT / "tool/prompts/oneshot-readme.md").read_text(encoding="utf-8")
+RELEASE_PROMPT = (ROOT / "tool/prompts/oneshot-readme-release.md").read_text(encoding="utf-8")
 STAGE = "pr"
 TRIES = 3   # the debug APK's create and upload, each, as `gh release` retried them
 OS_NAMES = {"windows": "Windows", "macos": "macOS"}
@@ -61,7 +64,7 @@ it and where it is then served.
 needs. Run is instead the command that builds the debug APK,
 `{spec['oneshot']['device']['apk']}`, and the one that installs it on a phone
 connected with USB debugging on: adb's install command with that APK's path.
-""" if android else ""))
+""" + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else ""))
             .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}."
                      if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
 
@@ -152,7 +155,7 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return why
     frozen = None
     if "android" in kinds_of(o):   # the APK S8 attaches, frozen while the check still holds the tree
-        if why := oneshot_device.built(path, o["device"]):
+        if why := oneshot_device.built(path, o["device"]) or release_checked(path, spec, verdict["head"], run.halt):
             return why
         try:
             frozen = froze(spec, verdict["head"])
@@ -167,6 +170,35 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
                                               **({"apk_frozen": frozen} if frozen else {})})
     specs.note(run, f"최종 게이트 통과 · {verdict['head'][:12]}")
     return ""
+
+
+def release_checked(path: Path, spec: dict, head: str, halt: threading.Event) -> str:
+    """The `[release]` table the README turn committed, read as a press reads it at `head`, and its Android
+    build made once from a clean checkout of `head` with the seed version, then checked as a release checks
+    what a build made (`release.built_wrong`). Unsigned: no key exists before the first press, and none is made."""
+
+    try:
+        cfg = release.settings(path, head)
+        if "android" not in cfg:
+            return "`.wiki/adapter.toml` 에 `[release.android]` 가 없다 — 정식 빌드 명령, APK 경로, 앱 ID, ABI 를 적는다"
+        android, first = cfg["android"], release.seed(path, head, cfg["version_source"])
+        if android["application_id"] != (want := spec["oneshot"]["device"]["package"]):
+            return f"`[release.android]` 의 `application_id` {android['application_id']!r} 가 앱의 {want!r} 와 다르다"
+        release.version([], [], None, first, cfg)   # a seed a declared kind cannot carry, refused as the card would
+        kit = release.tools(cfg)
+    except ValueError as exc:
+        return f"`[release]` 표 — {exc}"
+    attempt = f"oneshot-{time.time_ns()}"
+    try:
+        apk = release.build(release.checkout(path, head, attempt), android, first, kit, halt)
+        seen = release.badging(release.run([kit["aapt2"], "dump", "badging", apk], release.environment(kit)))
+    except ValueError as exc:   # `BuildFailed` among them
+        return f"`[release.android]` 의 정식 빌드 — {exc}"
+    finally:
+        if release.place(path, attempt).exists():
+            release.discard(path, attempt)
+    wrong = release.built_wrong(seen, first, android)
+    return f"`[release.android]` 의 정식 빌드가 배포 검사에 걸린다 — {'; '.join(wrong)}" if wrong else ""
 
 
 def decisions(o: dict) -> list[str]:

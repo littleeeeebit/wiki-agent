@@ -285,8 +285,8 @@ def _writable(func, path, exc) -> None:
 # -- Build, sign, inspect -------------------------------------------------------------------------
 
 def tools(cfg: dict | None = None) -> dict:
-    """The JDK, the SDK with the build tools, and the newest NDK, as the build and the checks use them. None for
-    settings that declare no Android kind: a Windows installer needs none of them."""
+    """The JDK, the SDK with the build tools, and the newest NDK, which an app with no native code (`abi = "none"`)
+    does without, as the build and the checks use them. Nothing for settings that declare no Android kind."""
 
     if cfg is not None and "android" not in cfg:
         return {}
@@ -298,11 +298,11 @@ def tools(cfg: dict | None = None) -> dict:
                 if all((r / "build-tools" / oneshot_android.BUILD_TOOLS / n).is_file() for n in names)), None)
     ndks = sorted((sdk / "ndk").iterdir()) if sdk and (sdk / "ndk").is_dir() else []
     gone = [what for what, have in (("JDK 17 (JAVA_HOME)", java), (f"build-tools {oneshot_android.BUILD_TOOLS}", sdk),
-                                    ("NDK", ndks)) if not have]
+                                    ("NDK", ndks or cfg is not None and cfg["android"]["abi"] == "none")) if not have]
     if gone:
         raise ValueError(f"Android 배포 도구가 없다: {', '.join(gone)}")
     bin_ = sdk / "build-tools" / oneshot_android.BUILD_TOOLS
-    return {"java": java, "sdk": sdk, "ndk": ndks[-1], "aapt2": bin_ / names[0], "zipalign": bin_ / names[1],
+    return {"java": java, "sdk": sdk, "ndk": ndks[-1] if ndks else None, "aapt2": bin_ / names[0], "zipalign": bin_ / names[1],
             "apksigner": bin_ / names[2], "keytool": java / "bin" / f"keytool{oneshot_android.EXE}"}
 
 
@@ -378,7 +378,7 @@ def environment(kit: dict) -> dict:
 
     shared = {k: v for k, v in os.environ.items() if k.upper() not in UNSHARED}
     return shared if not kit else {**shared, "JAVA_HOME": str(kit["java"]), "ANDROID_HOME": str(kit["sdk"]),
-                                   "NDK_HOME": str(kit["ndk"]),
+                                   **({"NDK_HOME": str(kit["ndk"])} if kit.get("ndk") else {}),
                                    "PATH": os.pathsep.join([str(kit["java"] / "bin"), os.environ.get("PATH", "")])}
 
 
@@ -544,7 +544,8 @@ def built_wrong(seen: dict, release: str, android: dict, previous: dict | None =
     for name, want in (("설정", android["application_id"]), *((("이전 정식 APK", previous["package"]),) if previous else ())):
         if seen["package"] != want:
             out.append(f"앱 ID {seen['package']!r} 가 {name}의 {want!r} 와 다르다 — Android 는 다른 앱으로 설치한다")
-    for name, want in (("설정", [android["abi"]]), *((("이전 정식 APK", previous["abis"]),) if previous else ())):
+    native = [] if android["abi"] == "none" else [android["abi"]]   # `none`: an app with no native code at all
+    for name, want in (("설정", native), *((("이전 정식 APK", previous["abis"]),) if previous else ())):
         if seen["abis"] != want:
             out.append(f"ABI {seen['abis']} 가 {name}의 {want} 와 다르다 — 기존 기기가 업데이트를 받지 못한다")
     if seen["debuggable"]:
@@ -738,8 +739,7 @@ def release_key(repo: Path, kit: dict, create: bool = False, name: str | None = 
 def replaced(target: Path, text: str) -> None:
     """`target` replaced whole by `text`, through a fresh staging file beside it. The exclusive open never writes
     through an existing name or its links. A failure removes only the staging file this call made, and only
-    while that name still holds the same file. The original error is the one raised. A cleanup that fails is
-    recorded."""
+    while that name still holds the same file. The original error is raised; a failed cleanup is recorded."""
 
     staged = target.with_name(f"{target.name}.{secrets.token_hex(4)}.new")
     made = None

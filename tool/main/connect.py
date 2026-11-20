@@ -47,6 +47,7 @@ from common.host import conda_exe, environment, skill_config
 from workspace import base_branch
 
 from . import channels, powershell, runtime, specs, work
+from .adapter_file import adapter_text  # noqa: F401 — its callers name it `connect.adapter_text`
 
 RECORDS = RAW / "connect"
 PROBES = RECORDS / "probe"
@@ -558,12 +559,6 @@ def guess(path: Path) -> dict[str, str]:
             gate = "go test ./..."
     return {"gate_cmd": gate, "review_dir": "artifacts/review", "scratch_dirs": "artifacts/",
             "live_cmd": "", "server_stop": ""}
-
-
-def adapter_text(slots: dict[str, str]) -> str:
-    # A JSON string is a TOML basic string, escapes and all.
-    rows = [f"{k} = {json.dumps(v, ensure_ascii=False)}" for k, v in slots.items()]
-    return "\n".join(['agents = ["claude", "codex"]', "", "[slots]", *rows]) + "\n"
 
 
 def write_adapter(path: Path) -> bool:

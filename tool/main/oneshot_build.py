@@ -648,12 +648,13 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
     gate = " && ".join([runner["command"].replace("{report}", REPORT), *runner["after"]])
     adapter = path / ".wiki" / "adapter.toml"
-    try:
-        slots = tomllib.loads(adapter.read_text(encoding="utf-8")).get("slots", {})
+    try:   # every table but `[slots]` is kept as written
+        old = adapter.read_text(encoding="utf-8")
+        slots = tomllib.loads(old).get("slots", {})
     except (OSError, ValueError):
-        slots = {}
+        old, slots = "", {}
     adapter.parent.mkdir(parents=True, exist_ok=True)
-    adapter.write_text(connect.adapter_text({**slots, "gate_cmd": gate}), encoding="utf-8", newline="\n")
+    adapter.write_text(connect.adapter_text({**slots, "gate_cmd": gate}, old), encoding="utf-8", newline="\n")
     names = sorted({*names, ".wiki/adapter.toml"})
     for args in (["add", "-A", "--", *names], ["commit", "-m", "Write the contract tests before the backend", "--", *names]):
         done = specs.sh(["git", *args], path)

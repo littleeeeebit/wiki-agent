@@ -34,6 +34,7 @@ Then the server asks you for the pull request's text, and opens it itself.
 
 ## In this turn
 
-- Change no application code and no test. Commit everything and leave
+- Change no application code and no test, apart from the release version
+  wiring an Android app's section asks for. Commit everything and leave
   nothing uncommitted, then end with the `done-report`.
 - Do not push, open a pull request, or ask the person anything.

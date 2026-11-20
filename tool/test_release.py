@@ -172,6 +172,24 @@ def test_an_abi_that_moves_with_the_adapter_is_still_refused_against_the_previou
     assert len(why) == 1 and "이전 정식 APK의 ['arm64-v8a']" in why[0]
 
 
+def test_an_app_with_no_native_code_declares_abi_none_and_needs_no_ndk(tmp_path, monkeypatch):
+    none = {**ANDROID, "abi": "none"}
+    assert release.refused(seen(abis=[]), "0.1.1", none, "c1") == []
+    assert "ABI ['arm64-v8a']" in release.refused(seen(), "0.1.1", none, "c1")[0]
+    tools = tmp_path / "build-tools" / release.oneshot_android.BUILD_TOOLS
+    tools.mkdir(parents=True)
+    for name in ("aapt2", "zipalign", "apksigner"):
+        ext = release.oneshot_android.BAT if name == "apksigner" else release.oneshot_android.EXE
+        (tools / f"{name}{ext}").write_text("")
+    monkeypatch.setattr(release.oneshot_android, "roots", lambda: [tmp_path])
+    monkeypatch.setattr(release.oneshot_android, "java", lambda home: True)
+    monkeypatch.setenv("JAVA_HOME", str(tmp_path))
+    kit = release.tools({"android": none})
+    assert kit["ndk"] is None and "NDK_HOME" not in release.environment(kit)
+    with pytest.raises(ValueError, match="NDK"):
+        release.tools({"android": ANDROID})
+
+
 def test_an_attempt_checkout_is_a_fresh_clean_detached_copy_and_never_a_second_one(tmp_path, monkeypatch):
     monkeypatch.setattr(release, "WORK", tmp_path / "work")
     repo, sha = committed(tmp_path, {"a.txt": "a"})
