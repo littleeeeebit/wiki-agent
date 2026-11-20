@@ -104,6 +104,14 @@ def test_s8_refuses_an_adapter_changed_outside_release_before_its_gate_runs(fini
     assert not (tree / "ran.txt").exists()   # the changed gate never ran
 
 
+def test_a_stopped_s8_reads_no_adapter_and_runs_no_gate(finished):
+    tree, _ = finished
+    readme(tree)
+    run = Run()
+    run.halt.set()
+    assert oneshot_pr.readied(tree, run, spec(), answer(report())) == "멈춤 — git 을 시작하지 않았다"
+
+
 @pytest.mark.parametrize("change, said", [
     (lambda tree: None, "README.md"),
     (lambda tree: readme(tree, (".github/workflows/ci.yml", "on: push\n")), "CI 워크플로를 두지 않는다"),

@@ -132,11 +132,15 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     names = oneshot_build.changed(path, o.get("front_built_head") or o["tests_head"])
     if "README.md" not in names or not (path / "README.md").is_file():
         return "`README.md` 를 쓰지 않았다 — 설치, 실행, 테스트 명령을 적는다"
-    # Before its gate is read, let alone run: the turn may have added `[release]` and nothing else.
-    checked = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
-    if why := kept_adapter(path, o, checked, tree=True):
-        return why
-    gate, backend = slots_for(None, path).get("gate_cmd", "").strip(), o["gate"]
+    # Before its gate is read, let alone run: the turn may have added `[release]` and nothing else. The gate is
+    # read from that very commit's adapter, and the gate runs only on that commit (`judge`'s `expect`).
+    try:
+        with release.stoppable(run.halt):
+            checked = release.git(path, "rev-parse", "HEAD").strip()
+            adapter = kept_adapter(path, o, checked, tree=True)
+    except (ValueError, release.Stopped) as exc:
+        return str(exc)
+    gate, backend = str((adapter.get("slots") or {}).get("gate_cmd", "")).strip(), o["gate"]
     if not gate:
         return "어댑터의 `gate_cmd` 가 비었다"
     if why := oneshot_build.published(gate, backend):
@@ -154,11 +158,10 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
     ran = [backend, gate] if gate != backend else [gate]
-    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text), env=oneshot_build.built_env(spec))
+    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text), env=oneshot_build.built_env(spec),
+                          expect=checked)
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    if verdict["head"] != checked:   # the gate's verdict is on the commit whose adapter was checked, or nothing
-        return f"최종 게이트가 확인한 커밋 {verdict['head'][:12]} 이 어댑터를 확인한 {checked[:12]} 가 아니다"
     if why := oneshot_build.held(path, run, spec, verdict):
         return why
     frozen = None
@@ -206,22 +209,23 @@ def release_checked(path: Path, spec: dict, head: str, halt: threading.Event) ->
     return f"`[release.android]` 의 정식 빌드가 배포 검사에 걸린다 — {'; '.join(wrong)}" if wrong else ""
 
 
-def kept_adapter(path: Path, o: dict, head: str, tree: bool = False) -> str:
-    """Why the adapter at `head`, and in the worktree with `tree`, is not the approved frontend's with at most
-    `[release]` added: the README turn may write that table alone, and the gate is read from the rest."""
+def kept_adapter(path: Path, o: dict, head: str, tree: bool = False) -> dict:
+    """The adapter at `head`, parsed, refused (`ValueError`) unless it, and the worktree's with `tree`, is the
+    approved frontend's with at most `[release]` added: the README turn may write that table alone."""
 
     def rest(text: str) -> dict:
         return {k: v for k, v in tomllib.loads(text).items() if k != "release"}
 
     try:
         was = rest(release.git(path, "show", f"{o.get('front_built_head') or o['tests_head']}:{ADAPTER}"))
-        now = [rest(release.git(path, "show", f"{head}:{ADAPTER}")),
+        at = tomllib.loads(release.git(path, "show", f"{head}:{ADAPTER}"))
+        now = [{k: v for k, v in at.items() if k != "release"},
                *([rest((path / ADAPTER).read_bytes().decode("utf-8"))] if tree else [])]
     except (ValueError, OSError) as exc:   # a TOML error is a `ValueError`
-        return f"`{ADAPTER}` 를 읽지 못했다 — {exc}"
+        raise ValueError(f"`{ADAPTER}` 를 읽지 못했다 — {exc}") from exc
     if any(n != was for n in now):
-        return f"`{ADAPTER}` 의 `[release]` 밖이 바뀌었다 — 그 표만 더하고 나머지는 그대로 둔다"
-    return ""
+        raise ValueError(f"`{ADAPTER}` 의 `[release]` 밖이 바뀌었다 — 그 표만 더하고 나머지는 그대로 둔다")
+    return at
 
 
 def _declared(path: Path, spec: dict, head: str) -> tuple[dict, str, dict]:
@@ -229,8 +233,7 @@ def _declared(path: Path, spec: dict, head: str) -> tuple[dict, str, dict]:
     not. The adapter around it is the approved frontend's (`kept_adapter`)."""
 
     o = spec["oneshot"]
-    if why := kept_adapter(path, o, head):
-        raise ValueError(why)
+    kept_adapter(path, o, head)
     cfg = release.settings(path, head)
     if "android" not in cfg:
         raise ValueError(f"`{ADAPTER}` 에 `[release.android]` 가 없다 — 정식 빌드 명령, APK 경로, 앱 ID, ABI 를 적는다")
