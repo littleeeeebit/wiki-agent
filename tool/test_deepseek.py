@@ -194,6 +194,12 @@ def upstream():
                 except OSError:
                     got[-1]["flood"] = "cut"   # the relay let go of it part way
                 return
+            if self.path.startswith(("/v1/deep", "/v1/deeperror")):   # small, but nested past what Python decodes
+                self.send_response(401 if self.path.startswith("/v1/deeperror") else 200)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"[" * 200_000 + b"]" * 200_000)
+                return
             if self.path.startswith("/v1/huge"):   # one JSON answer past the relay's limit
                 self.send_response(200)
                 self.send_header("content-type", "application/json")
@@ -285,6 +291,8 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         status, _, body = sent(relay.url, {"x-api-key": token}, "/v1/crframed")
         assert status == 200 and body == b'event: error\ndata: {"error": {"message": "bad key [key]"}}\n\n'
         assert sent(relay.url, {"x-api-key": token}, "/v1/huge")[0] == 502   # past the limit, never half passed on
+        assert sent(relay.url, {"x-api-key": token}, "/v1/deep")[0] == 502   # an answer, not a dropped connection
+        assert sent(relay.url, {"x-api-key": token}, "/v1/deeperror")[0] == 401
         status, _, body = sent(relay.url, {"x-api-key": token}, "/v1/mixedcase")
         assert status == 200 and body == b'data: {"error": {"message": "bad key [key]"}}\n\n'
         # Copies of Content-Type that disagree, or a coding over the body: refused before a success header goes out.
@@ -308,12 +316,12 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         assert status == 502 and "location" not in headers
         (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=\n", encoding="utf-8")
         assert sent(relay.url, {"x-api-key": token})[0] == 503
-        assert len(got) == 12
+        assert len(got) == 14
         # Framing: a POST without a length, with two that disagree, or chunked never goes on.
         assert raw(relay.url, [("x-api-key", token)], declared=None, length=False)[0] == 411
         assert raw(relay.url, [("x-api-key", token), ("content-length", "3")])[0] == 400
         assert raw(relay.url, [("x-api-key", token), ("transfer-encoding", "chunked")])[0] == 400
-        assert len(got) == 12
+        assert len(got) == 14
         # Every connection served, closed-delimited or not, leaves nothing behind.
         assert drained(relay)
     finally:
@@ -527,6 +535,19 @@ def test_a_bom_at_any_line_start_is_read_the_way_the_sdk_reads_it():
     assert events.feed(b"data: 1\n" + bom + b"\ndata: 2\n\n") == [b"data: 1\n\n", b"data: 2\n\n"]
     events = deepseek_relay.Events("sk-fixture")   # a BOM that never finishes is ordinary bytes
     assert events.feed(b"data: 1\n\n\xef\xbb") == [b"data: 1\n\n"] and events.rest() == b"\xef\xbb"
+    # Several BOMs in a row all go, split anywhere, so a parser that strips one more finds nothing left to strip.
+    stacked = b'event: error\n' + bom * 3 + b'data: {"error": {"message": "bad key \\u0073k-fixture"}}\n\n'
+    for cut in range(13, 23):
+        events = deepseek_relay.Events("sk-fixture")
+        out = b"".join(events.feed(stacked[:cut]) + events.feed(stacked[cut:])) + events.rest()
+        assert out == b'event: error\ndata: {"error": {"message": "bad key [key]"}}\n\n', cut
+        assert bom not in out
+
+
+def test_json_nested_past_what_python_decodes_ends_the_stream_rather_than_passing():
+    events = deepseek_relay.Events("sk-fixture")
+    with pytest.raises(ValueError):
+        events.feed(b"data: " + b"[" * 200_000 + b"]" * 200_000 + b"\n\n")
 
 
 def test_an_event_exactly_at_the_limit_passes_however_its_blank_line_is_split():

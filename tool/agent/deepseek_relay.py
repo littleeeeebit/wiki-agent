@@ -102,17 +102,27 @@ def redacted_json(raw: bytes, key: str) -> bytes | None:
 
     try:
         value = json.loads(raw)
+    except RecursionError as exc:   # nested deeper than Python decodes, while another parser might: never passed on
+        raise TooDeep from exc
     except ValueError:
         return None
-    clean = _redact(value, key)
-    return None if clean == value else json.dumps(clean, ensure_ascii=False).encode("utf-8")
+    try:
+        clean = _redact(value, key)
+        return None if clean == value else json.dumps(clean, ensure_ascii=False).encode("utf-8")
+    except RecursionError as exc:
+        raise TooDeep from exc
+
+
+class TooDeep(ValueError):
+    """JSON nested past what the scrubber can read: the answer is refused, or the stream ends, rather than passed on
+    scrubbed only literally."""
 
 
 class Events:
     """A server-sent event stream cut into whole events, each with the key gone: literal anywhere, JSON-escaped in its
-    data. Line endings (CRLF, CR or LF) become LF, and one BOM at the start of any line goes (the WHATWG parser drops
-    it at the stream's start, Anthropic's SDK at every line's), so the fields read here are the fields any of those
-    parsers reads, blank lines included. A CR is a line end at once; an LF right after it, even in the next chunk,
+    data. Line endings (CRLF, CR or LF) become LF, and every BOM at the start of any line goes (the WHATWG parser
+    drops one at the stream's start, Anthropic's SDK one at every line's), so no parser finds one left to strip and
+    the fields read here are the fields any of them reads, blank lines included. A CR is a line end at once; an LF right after it, even in the next chunk,
     is dropped. A BOM split across chunks waits for its last byte."""
 
     def __init__(self, key: str):
@@ -124,9 +134,10 @@ class Events:
         out, i = bytearray(), 0
         while i < len(data):
             if self.line_start:
-                if data.startswith(BOM, i):
-                    i += len(BOM)
-                elif len(data) - i < len(BOM) and BOM.startswith(data[i:]):
+                if data.startswith(BOM, i):   # every leading BOM, not one: what goes out has none for a parser
+                    i += len(BOM)             # to strip again, so it reads each line the way it was checked here
+                    continue
+                if len(data) - i < len(BOM) and BOM.startswith(data[i:]):
                     self.held = data[i:]
                     break
                 self.line_start = False
@@ -188,11 +199,12 @@ def error_kind(body: bytes, key: str) -> str:
 
     try:
         error = json.loads(body.decode("utf-8")).get("error") or {}
-    except (ValueError, AttributeError):
+        kind, said = error.get("type"), error.get("message")
+    except (ValueError, AttributeError, RecursionError):
         return "?"
-    if not isinstance(error, dict):
+    if not isinstance(kind, (str, type(None))) or not isinstance(said, (str, type(None))):   # text only, never nested
         return "?"
-    return f"{error.get('type') or '?'} — {error.get('message') or ''}".replace(key, "[key]")[:300]
+    return f"{kind or '?'} — {said or ''}".replace(key, "[key]")[:300]
 
 
 class Relay:
@@ -418,13 +430,15 @@ class Relay:
                 body += chunk
                 if len(body) > LONGEST_BODY:
                     return await answer(conn, writer, 502, "DeepSeek 의 답이 너무 크다 — 넘기지 않는다")
-            try:   # what is not JSON the scrubber cannot read the way a client might, so it does not go on
+            # What is not JSON, or nests past what Python decodes, the scrubber cannot read the way a client might:
+            # it does not go on. Cleaned before any of the answer is sent.
+            try:
                 if body.strip():
                     json.loads(body)
-            except ValueError:
-                return await answer(conn, writer, 502, "DeepSeek 의 답이 JSON 이 아니다 — 넘기지 않는다")
-            writer.write(conn.send(start) + conn.send(h11.Data(data=clean_body(bytes(body), key)))
-                         + conn.send(h11.EndOfMessage()))
+                cleaned = clean_body(bytes(body), key)
+            except (ValueError, RecursionError):
+                return await answer(conn, writer, 502, "DeepSeek 의 답이 읽을 수 있는 JSON 이 아니다 — 넘기지 않는다")
+            writer.write(conn.send(start) + conn.send(h11.Data(data=cleaned)) + conn.send(h11.EndOfMessage()))
             return await drained(writer)
         writer.write(conn.send(start))
         await drained(writer)
@@ -432,12 +446,16 @@ class Relay:
         async for chunk in chunks():
             try:
                 ready = events.feed(chunk)   # a whole event goes on the moment it is complete
-            except ValueError:
-                return None   # past `LONGEST_EVENT`: the stream ends there, unfinished, which the caller can tell
+            except ValueError:   # past `LONGEST_EVENT`, or JSON too deep to scrub (`TooDeep`)
+                return None   # the stream ends there, unfinished, which the caller can tell
             if ready:
                 writer.write(conn.send(h11.Data(data=b"".join(ready))))
                 await drained(writer)
-        if rest := events.rest():
+        try:
+            rest = events.rest()
+        except ValueError:
+            return None
+        if rest:
             writer.write(conn.send(h11.Data(data=rest)))
         writer.write(conn.send(h11.EndOfMessage()))
         await drained(writer)
