@@ -96,20 +96,23 @@ def _redact(value, key: str):
     return value
 
 
-def redacted_json(raw: bytes, key: str) -> bytes | None:
-    """`raw` as JSON with the key gone from every decoded string, so no escaped form survives; None when `raw` is not
-    JSON or carries no key once decoded."""
+def _single_members(pairs):
+    names = [name for name, _ in pairs]
+    if len(set(names)) != len(names):   # a member a dict would shadow is one the redactor never sees
+        raise ValueError("a JSON object names a member twice")
+    return dict(pairs)
+
+
+def rewritten_json(raw: bytes, key: str) -> bytes:
+    """`raw` decoded, the key gone from every string, and written again by the relay: what goes on is only this
+    serialization, never the bytes that came, so nothing the redactor did not read can reach a caller. Raises
+    ValueError for anything that is not plainly JSON (a member named twice, a number Python will not convert,
+    NaN, bytes that are not UTF-8) and `TooDeep` past Python's nesting. ASCII out, so no code unit fails to encode."""
 
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=_single_members)
+        return json.dumps(_redact(value, key), allow_nan=False).encode("ascii")
     except RecursionError as exc:   # nested deeper than Python decodes, while another parser might: never passed on
-        raise TooDeep from exc
-    except ValueError:
-        return None
-    try:
-        clean = _redact(value, key)
-        return None if clean == value else json.dumps(clean, ensure_ascii=False).encode("utf-8")
-    except RecursionError as exc:
         raise TooDeep from exc
 
 
@@ -176,21 +179,24 @@ class Events:
 
 
 def clean_event(event: bytes, key: str) -> bytes:
-    """One LF-framed event (without its blank line) with the key gone, literal or JSON-escaped in its data."""
+    """One LF-framed event (without its blank line) with the key gone: literal in every field, and its data, which
+    DeepSeek's Anthropic stream always sends as JSON, written again by `rewritten_json`. Data that is not plainly
+    JSON raises ValueError, and the stream ends there."""
 
     event = event.replace(key.encode(), b"[key]")
     lines = event.split(b"\n")
     field = [line == b"data" or line.startswith(b"data:") for line in lines]
     data = [line[5:].removeprefix(b" ") for line, is_data in zip(lines, field) if is_data]
-    fixed = redacted_json(b"\n".join(data), key) if data else None
-    if fixed is None:
+    if not data:
         return event
+    fixed = rewritten_json(b"\n".join(data), key)
     return b"\n".join([line for line, is_data in zip(lines, field) if not is_data] + [b"data: " + fixed])
 
 
 def clean_body(body: bytes, key: str) -> bytes:
-    body = body.replace(key.encode(), b"[key]")
-    return redacted_json(body, key) or body
+    """A JSON answer written again by `rewritten_json` (ValueError when it is not plainly JSON); an empty one stays."""
+
+    return rewritten_json(body, key) if body.strip() else body
 
 
 def error_kind(body: bytes, key: str) -> str:
@@ -430,13 +436,11 @@ class Relay:
                 body += chunk
                 if len(body) > LONGEST_BODY:
                     return await answer(conn, writer, 502, "DeepSeek 의 답이 너무 크다 — 넘기지 않는다")
-            # What is not JSON, or nests past what Python decodes, the scrubber cannot read the way a client might:
-            # it does not go on. Cleaned before any of the answer is sent.
+            # What is not plainly JSON the scrubber cannot read the way a client might: it does not go on. Written
+            # again before any of the answer is sent.
             try:
-                if body.strip():
-                    json.loads(body)
                 cleaned = clean_body(bytes(body), key)
-            except (ValueError, RecursionError):
+            except ValueError:
                 return await answer(conn, writer, 502, "DeepSeek 의 답이 읽을 수 있는 JSON 이 아니다 — 넘기지 않는다")
             writer.write(conn.send(start) + conn.send(h11.Data(data=cleaned)) + conn.send(h11.EndOfMessage()))
             return await drained(writer)
@@ -502,8 +506,8 @@ async def answer(conn: h11.Connection | None, writer: asyncio.StreamWriter, stat
     """The relay's own JSON error, then the connection closes. `conn` is None once h11 has refused the request; a
     HEAD gets the status and headers alone."""
 
-    payload = json.dumps({"type": "error", "error": {"type": "api_error", "message": message}},
-                         ensure_ascii=False).encode("utf-8")
+    # ASCII escapes: a lone surrogate an upstream message carried cannot stop the status from going out.
+    payload = json.dumps({"type": "error", "error": {"type": "api_error", "message": message}}).encode("ascii")
     headers = [(k, v) for k, v in kept if k != "content-type"]
     headers += [("content-type", "application/json"), ("content-length", str(len(payload))), ("connection", "close")]
     try:

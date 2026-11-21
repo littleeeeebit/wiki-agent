@@ -130,8 +130,10 @@ def upstream():
                 self.send_header("connection", "close, request-id")
                 self.send_header("request-id", "only-this-connection")
                 self.end_headers()
-                for part in (b"event: error\ndata: bad key sk-fix", b"ture\n\n",   # then escaped, as JSON may
-                             b'data: {"error": {"message": "bad key \\u0073k-fixture"}}\n\n'):
+                for part in (b'event: error\ndata: {"m": "bad key sk-fix', b'ture"}\n\n',   # then escaped, as JSON may
+                             b'data: {"error": {"message": "bad key \\u0073k-fixture"}}\n\n',
+                             # a member named twice: a dict keeps the second, a raw reader may take the first
+                             b'data: {"m": "\\u0073k-fixture", "m": "ok"}\n\n'):
                     self.wfile.write(part)
                     self.wfile.flush()
                     time.sleep(0.2)
@@ -189,10 +191,17 @@ def upstream():
                 got[-1]["flood"] = "sending"
                 try:
                     for _ in range(1000):
-                        self.wfile.write(b"data: " + b"x" * 65536 + b"\n\n")
+                        self.wfile.write(b'data: "' + b"x" * 65536 + b'"\n\n')
                     got[-1]["flood"] = "all sent"
                 except OSError:
                     got[-1]["flood"] = "cut"   # the relay let go of it part way
+                return
+            if self.path.startswith(("/v1/twice", "/v1/surrogate")):
+                self.send_response(200 if self.path.startswith("/v1/twice") else 401)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"m": "\\u0073k-fixture", "m": "ok"}' if self.path.startswith("/v1/twice")
+                                 else b'{"error": {"type": "x", "message": "\\ud800 lone"}}')
                 return
             if self.path.startswith(("/v1/deep", "/v1/deeperror")):   # small, but nested past what Python decodes
                 self.send_response(401 if self.path.startswith("/v1/deeperror") else 200)
@@ -285,14 +294,24 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         assert "authentication_error" in said and "[key]" in said and "sk-fixture" not in said and b"sk-fixture" not in body
         # An error inside a 200 stream, the key split across writes: scrubbed all the same; a header the upstream
         # marks as its connection's own stays.
-        status, headers, body = sent(relay.url, {"x-api-key": token}, "/v1/inband")
-        assert status == 200 and "request-id" not in headers
-        assert body == b'event: error\ndata: bad key [key]\n\ndata: {"error": {"message": "bad key [key]"}}\n\n'
+        conn = http.client.HTTPConnection(*relay.url.removeprefix("http://").split(":"), timeout=10)
+        conn.request("POST", "/v1/inband", body=b"{}", headers={"x-api-key": token})
+        answer = conn.getresponse()
+        assert answer.status == 200 and answer.getheader("request-id") is None
+        # The relay's own serialization goes on; the event with a member named twice ends the stream unfinished.
+        with pytest.raises(http.client.IncompleteRead) as cut_short:
+            answer.read()
+        assert cut_short.value.partial == (b'event: error\ndata: {"m": "bad key [key]"}\n\n'
+                                           b'data: {"error": {"message": "bad key [key]"}}\n\n')
+        conn.close()
         status, _, body = sent(relay.url, {"x-api-key": token}, "/v1/crframed")
         assert status == 200 and body == b'event: error\ndata: {"error": {"message": "bad key [key]"}}\n\n'
         assert sent(relay.url, {"x-api-key": token}, "/v1/huge")[0] == 502   # past the limit, never half passed on
         assert sent(relay.url, {"x-api-key": token}, "/v1/deep")[0] == 502   # an answer, not a dropped connection
         assert sent(relay.url, {"x-api-key": token}, "/v1/deeperror")[0] == 401
+        assert sent(relay.url, {"x-api-key": token}, "/v1/twice")[0] == 502   # a member named twice
+        status, _, body = sent(relay.url, {"x-api-key": token}, "/v1/surrogate")   # a lone surrogate keeps the status
+        assert status == 401 and "lone" in json.loads(body)["error"]["message"]
         status, _, body = sent(relay.url, {"x-api-key": token}, "/v1/mixedcase")
         assert status == 200 and body == b'data: {"error": {"message": "bad key [key]"}}\n\n'
         # Copies of Content-Type that disagree, or a coding over the body: refused before a success header goes out.
@@ -316,12 +335,12 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         assert status == 502 and "location" not in headers
         (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=\n", encoding="utf-8")
         assert sent(relay.url, {"x-api-key": token})[0] == 503
-        assert len(got) == 14
+        assert len(got) == 16
         # Framing: a POST without a length, with two that disagree, or chunked never goes on.
         assert raw(relay.url, [("x-api-key", token)], declared=None, length=False)[0] == 411
         assert raw(relay.url, [("x-api-key", token), ("content-length", "3")])[0] == 400
         assert raw(relay.url, [("x-api-key", token), ("transfer-encoding", "chunked")])[0] == 400
-        assert len(got) == 14
+        assert len(got) == 16
         # Every connection served, closed-delimited or not, leaves nothing behind.
         assert drained(relay)
     finally:
@@ -550,12 +569,26 @@ def test_json_nested_past_what_python_decodes_ends_the_stream_rather_than_passin
         events.feed(b"data: " + b"[" * 200_000 + b"]" * 200_000 + b"\n\n")
 
 
+def test_event_data_python_will_not_read_plainly_never_goes_on():
+    """Data another parser might read but Python refuses, or reads differently, ends the stream: a number past
+    Python's conversion limit, a member named twice, NaN, data that is not JSON. What does go on is the relay's own
+    serialization, so the bytes that came never do."""
+
+    escaped = b'"\\u0073k-fixture"'
+    for data in (b'{"n": ' + b"9" * 5000 + b', "m": ' + escaped + b"}", b'{"m": ' + escaped + b', "m": "ok"}',
+                 b'{"n": NaN, "m": ' + escaped + b"}", b"bad key " + escaped):
+        with pytest.raises(ValueError):
+            deepseek_relay.Events("sk-fixture").feed(b"data: " + data + b"\n\n")
+    out = deepseek_relay.Events("sk-fixture").feed(b'data: {"m":' + escaped + b',"t":"\\u00e9"}\n\n')
+    assert out == [b'data: {"m": "[key]", "t": "\\u00e9"}\n\n']
+
+
 def test_an_event_exactly_at_the_limit_passes_however_its_blank_line_is_split():
-    at = b"data: " + b"x" * (deepseek_relay.LONGEST_EVENT - 6)
+    at = b'data: "' + b"x" * (deepseek_relay.LONGEST_EVENT - 8) + b'"'
     for layout in ([at + b"\n\n"], [at + b"\n", b"\n"], [at, b"\n", b"\n"]):
         events = deepseek_relay.Events("sk-fixture")
         assert b"".join(out for part in layout for out in events.feed(part)) == at + b"\n\n", len(layout)
-    for layout in ([at + b"x\n\n"], [at + b"x\n", b"\n"]):
+    for layout in ([at + b" \n\n"], [at + b" \n", b"\n"]):
         events = deepseek_relay.Events("sk-fixture")
         with pytest.raises(ValueError):
             for part in layout:
