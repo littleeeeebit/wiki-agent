@@ -67,6 +67,17 @@ def owed(design: dict) -> dict[str, tuple[dict, list[dict]]]:
     return out
 
 
+def leaving(design: dict, place: str, mark) -> list[str]:
+    """The sheet's calls that leave `place`, then what the owner gives them."""
+
+    if not (outside := design.get("outside")):
+        return []
+    cell = sheet._cell
+    return ["", f"## {place} 밖으로 나가는 호출", "", "| id | 대상 | 하는 일 | 실패할 때 |", "| --- | --- | --- | --- |",
+            *[f"| {x['id']}{mark(x['id'])} | {cell(x['target'])} | {cell(x['does'])} | {cell(x['failure'])} |"
+              for x in outside], *section(design)]
+
+
 def section(design: dict) -> list[str]:
     """The sheet's `주인이 줄 것` section. The sheet is also the committed design document, so it never says what is given."""
 

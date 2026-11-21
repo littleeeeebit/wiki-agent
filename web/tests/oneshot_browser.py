@@ -1,6 +1,7 @@
 """The oneshot window: the switch from maintenance with its count, the run list grouped by what needs
-the owner, the stage spine, a gate sheet's per-item decisions with its folded section, the re-shown sheet, the
-feature board by drag and by keys, a stopped run's `[재개]`, the start form, and an Android run's phone round.
+the owner, the stage spine, a gate sheet's per-item decisions with its folded section, the re-shown sheet, what the
+owner gives the outside calls at R1, the feature board by drag and by keys, a stopped run's `[재개]`, the start
+form, and an Android run's phone round.
 
 Run after building: python web/tests/oneshot_browser.py
 Serves web/dist with synthetic runs; the sheets are short Markdown like the server's, never a real run.
@@ -72,7 +73,7 @@ def run(repo: str, stage: str, **more) -> dict:
 
 def posting(page):
     """Waits for the click's request to answer, so `posted` holds it."""
-    return page.expect_response(lambda r: r.request.method == "POST" and "/api/oneshot/spec/" in r.url)
+    return page.expect_response(lambda r: r.request.method != "GET" and "/api/oneshot/spec/" in r.url)
 
 
 def main():
@@ -102,7 +103,7 @@ def main():
     def shot():
         return Response(PNG, media_type="image/png")
 
-    @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
+    @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def api(path: str, request: Request):
         if path == "oneshot-specs":   # one broken item drops alone; the rest still shows
             if slow["bad"]:   # successful answers that carry no list
@@ -135,6 +136,8 @@ def main():
             repo, _, act = path.removeprefix("oneshot/spec/").partition("/")
             if repo not in views:   # deleted, as the server answers it
                 return JSONResponse({"detail": "원샷 명세가 없다"}, status_code=404)
+            if request.method == "DELETE":   # a need taken back or a kept secret removed: what it names is the query
+                posted.append((repo, act, dict(request.query_params)))
             if request.method == "POST":
                 posted.append((repo, act, await request.json()))
                 if act == "say" and posted[-1][2]["text"] == REFUSED:
@@ -264,6 +267,42 @@ def main():
         assert body["lines"] == {"R2": {"edit": "지난 달도 바로 보여라"}}, body
         assert body["decisions"] == {"E1": {"edit": "월 합계를 함께 돌려라"}, "R2": {"approve": True}}, body
         assert body["reading"]["opened"] == ["전체 시트의 항목", "전체 설계 시트"], body
+        # What the owner gives the outside calls: a secret typed hidden and sent with the sheet it was given on, a
+        # given need taken back with that sheet, and a kept secret no need names removed at its own route.
+        views["demo"] |= {"needs": [
+            {"id": "N1", "what": "번역 API 키", "kind": "secret", "env": "TRANSLATE_KEY", "calls": ["X1"], "given": False},
+            {"id": "N2", "what": "번역 서비스 계정", "kind": "account", "calls": ["X1"], "given": True}],
+            "secrets_kept": ["OLD_KEY"]}
+        rail.get_by_role("button").filter(has_text="board-demo").click()
+        need.get_by_role("button").filter(has_text=re.compile(r"^demo")).click()
+        owed = page.get_by_role("region", name="주인이 줄 것")
+        expect(owed.get_by_text("1개가 아직 없다.")).to_be_visible()
+        key = owed.get_by_label("N1 번역 API 키 값")
+        expect(key).to_have_attribute("type", "password")
+        key.fill("synthetic-secret")
+        with posting(page):
+            owed.get_by_role("button", name="N1 번역 API 키 넣기").click()
+        assert posted[-1] == ("demo", "needs/N1", {"value": "synthetic-secret", "source": "s" * 64}), posted[-1]
+        expect(key).to_have_value("")
+        with posting(page):
+            owed.get_by_role("button", name="N2 번역 서비스 계정 지우기").click()
+        assert posted[-1] == ("demo", "needs/N2", {"source": "s" * 64}), posted[-1]
+        with posting(page):
+            owed.get_by_role("button", name="OLD_KEY 지우기").click()
+        assert posted[-1] == ("demo", "secrets/OLD_KEY", {}), posted[-1]
+        # A draft never outlives its sheet: a redesign that makes N1 a program, answered to another removal,
+        # shows an empty plain field, never the hidden value typed for the old N1.
+        key.fill("unsent-secret")
+        redesigned = copy.deepcopy(views["demo"])
+        redesigned["brief"]["source"] = "r" * 64
+        redesigned["needs"][0] = {"id": "N1", "what": "번역 프로그램", "kind": "tool", "calls": ["X1"], "given": False}
+        views["demo"] = redesigned
+        with posting(page):
+            owed.get_by_role("button", name="OLD_KEY 지우기").click()
+        program = owed.get_by_label("N1 번역 프로그램 프로그램 이름 또는 경로")
+        expect(program).to_have_attribute("type", "text")
+        expect(program).to_have_value("")
+        del views["demo"]["needs"], views["demo"]["secrets_kept"]
         del views["demo"]["brief"]
 
         # R2 on its brief: one line per screen with that screen's pictures, the palette still picked beside it.
@@ -578,7 +617,7 @@ def main():
     print("PASS: maintenance counts the runs that need the owner on the switch; the oneshot window groups them apart "
           "from the running; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
           "picture closes alone; the re-shown sheet opens what needs a decision again; R1 on the brief decides each "
-          "confirmation line and sends only the sheet items touched beside them; R2 on its brief shows each screen's "
+          "confirmation line and sends only the sheet items touched beside them; at R1 a secret is typed hidden and each need given or taken back names that sheet, a draft never outlives its sheet, and a kept secret no need names is removed; R2 on its brief shows each screen's "
           "pictures with its line and still needs a palette; R3 on its brief shows the first screen before and "
           "after and each finding's shot by its line; a kind held at the board shows it without submission; the board moves by drag and by "
           "keys; a stopped run resumes, and a stopped or running stage shows its record and its worktree's turns as they "

@@ -42,6 +42,7 @@ DESIGN = {
                        "when": "지출 3000원을 적으면", "then": "합계가 3000원이다", "depends_on": ["R1", "P1"]},
                       {"id": "T2", "test_name": "test_a_month_lists_its_spendings", "given": "두 달의 지출",
                        "when": "지난 달을 고르면", "then": "그 달 지출만 보인다", "depends_on": ["R2", "P2"]}],
+    "oneshot-outside": [],
 }
 
 

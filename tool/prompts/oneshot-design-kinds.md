@@ -32,7 +32,7 @@ The kinds mean:
 A short answer, then exactly these fenced blocks, each JSON:
 
 - `oneshot-modules`: `[{"id": "M1", "name": "…", "contract": "…", "inputs": {"name": "type"}, "outputs": {"name": "type"}, "errors": ["…"], "state": "…", "stores": "…", "calls": ["M2", "X1"], "depends_on": ["R1"]}]`
-- `oneshot-outside`: `[{"id": "X1", "target": "…", "does": "…", "failure": "…", "depends_on": ["R3"]}]`
+- `oneshot-outside`: `[{"id": "X1", "target": "…", "does": "…", "failure": "…", "depends_on": ["R3"], "needs": [{"id": "N1", "what": "…", "kind": "secret", "env": "SERVICE_API_KEY"}]}]`
 - `oneshot-assumptions`: `[{"id": "A1", "what": "…", "why": "…", "rejected": "…", "depends_on": ["R2"]}]`
 - `oneshot-tests`: `[{"id": "T1", "test_name": "test_…", "given": "…", "when": "…", "then": "…", "depends_on": ["R1", "M1"]}]`
 - Only when `webapp` is among the kinds, `oneshot-api`, the web app's server:
@@ -46,6 +46,16 @@ outside call (`X`) is anything that leaves the app: an API, a download, a
 cloud model. Its `failure` says what the app does when the call fails or is
 slow. A product that never leaves the device returns `oneshot-outside` as
 `[]`.
+
+`needs` lists what only the owner can give that call for it to run for real
+against the service: `secret` for a value such as an
+API key (`env` names the environment variable the tests and the product read
+it from, in capitals), `account` for an account or project that must exist,
+`tool` for a program that must be installed, `file` for a file the product
+reads. Write `what` in Korean, as the owner would name it. Two calls that use
+the same thing list it under the same id with the same fields. A call that
+needs nothing, such as a public page, has `needs: []`. The owner gives every
+need on the sheet before approving it, and the run waits until they do.
 
 Design one core every kind uses as it is. A kind's own work goes in a thin
 platform module of its own: one that wraps the Android framework, or the
@@ -68,6 +78,8 @@ A requirement's `kinds` is the person's: keep it as you received it.
   called by a module that does. A module reached by neither is out of scope.
 - Every `calls` entry names an existing module, outside call or endpoint,
   never the module itself, and every outside call is called by some module.
+- A need's id is `N1`, `N2` …; one id names one need, and one `env` belongs
+  to one id. A `secret` names its `env`; no other kind has one.
 - Every endpoint serves at least one requirement, and no two share a method
   and path. Sign-in endpoints follow the profile's `auth`: none when it is
   `none`, at least one when it is `password` or `oauth`.

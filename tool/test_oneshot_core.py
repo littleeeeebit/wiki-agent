@@ -185,7 +185,7 @@ def test_the_core_brief_names_every_permission_and_outside_call_and_approves_the
     oneshot_spec.saved("budget", requirements=REQS, oneshot={"glossary": GLOSSARY, "stack": STACK, "stage": "design"})
     silent = {**CORE_BRIEF, "sections": [{**s, "text": "화면 녹화 허락을 받습니다. (R2)"} if s["name"] == "알아 두실 것" else s
                                          for s in CORE_BRIEF["sections"]]}
-    with pytest.raises(ValueError, match="폰 밖으로 나가는 호출이 있다: X1"):
+    with pytest.raises(ValueError, match="밖으로 나가는 호출이 있다: X1"):
         brief.checked(silent, brief.snapshot({**specs.load("budget", oneshot.BRANCH), "oneshot": {
             **o(), "design": sheet.parsed(DESIGN, "android")}}), {"R2": ["R2"], "A1": ["A1"]}, 1)
     with patch.object(oneshot, "ask", lambda store, role, *r: (
