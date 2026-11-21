@@ -437,12 +437,11 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
 
 # The text a frame carries, drawn or not, as separate streams: the text and CDATA nodes outside code of its document
 # and of each open shadow root, joined so a value split across elements reads as one; beside each, its rendered
-# text twice over, where hidden text between two visible parts no longer splits them: the root's contents as the
-# browser serialises a selection of them (its own casing and word breaks, but no `user-select: none` text), and the
-# nodes `innerText`'s rule keeps (laid out, their element's `visibility` visible, each cased by `text-transform`;
-# never the getter, which on a hidden root reads stylesheets); as `values`, the value, placeholder and alt of its
-# fields and images. Matching is a union, so a value is missed only where every stream misses it. A secret in hidden text has reached the browser all the same. Never
-# markup or a stylesheet, which a short secret would match on a clean page.
+# text, where hidden text between two visible parts no longer splits them: the nodes `innerText`'s rule keeps (laid
+# out, their element's `visibility` visible; never the getter, which on a hidden root reads stylesheets); as
+# `values`, the value, placeholder and alt of its fields and images. Matching is a union and ignores case, so no
+# `text-transform` hides a value. A secret in hidden text has reached the browser all the same. Never markup or a
+# stylesheet, which a short secret would match on a clean page.
 SHOWN = """() => {
   const code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']), texts = [], values = [];
   const outside = (n, root) => {
@@ -450,16 +449,11 @@ SHOWN = """() => {
       if (code.has(String(p.nodeName).toUpperCase())) return false;
     return true;
   };
-  // A node as drawn, cased by its `text-transform`, or null when it is not drawn. ponytail: no locale-aware casing
-  // and no `full-width`
-  const drawn = n => {
+  const drawn = n => {   // a node's text where it is drawn, else null
     const range = document.createRange(), el = n.parentElement || n.parentNode.host;
     range.selectNodeContents(n);
-    const style = el && getComputedStyle(el);
-    if (!range.getClientRects().length || (style && style.visibility !== 'visible')) return null;
-    const cased = style ? style.textTransform : 'none';
-    return cased === 'uppercase' ? n.data.toUpperCase() : cased === 'lowercase' ? n.data.toLowerCase()
-      : cased === 'capitalize' ? n.data.replace(/(^|\\s)(\\S)/g, (m, a, b) => a + b.toUpperCase()) : n.data;
+    const shown = range.getClientRects().length && (!el || getComputedStyle(el).visibility === 'visible');
+    return shown ? n.data : null;
   };
   const plain = (root, read = n => n.data) => { const out = [], walk = document.createTreeWalker(root,
     NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION);
@@ -468,21 +462,8 @@ SHOWN = """() => {
       if (text !== null) out.push(text);
     }
     return out.join(''); };
-  // The page's own selection, and the focused field's, are put back; scripts are off, so no handler sees a change
-  const selected = root => {
-    const s = getSelection(), kept = Array.from({length: s.rangeCount}, (_, i) => s.getRangeAt(i));
-    const field = document.activeElement, range = field && typeof field.selectionStart === 'number'
-      ? [field.selectionStart, field.selectionEnd, field.selectionDirection] : null;
-    s.removeAllRanges();
-    s.setBaseAndExtent(root, 0, root, root.childNodes.length);
-    const text = s.toString();
-    s.removeAllRanges();
-    kept.forEach(r => s.addRange(r));
-    if (range) { field.focus(); field.setSelectionRange(...range); }
-    return text;
-  };
-  const read = root => [plain(root), plain(root, drawn), selected(root.documentElement || root)];
-  texts.push(...(document.documentElement ? read(document) : []));
+  const read = root => [plain(root), plain(root, drawn)];
+  texts.push(...read(document));
   const visit = root => {
     for (const el of root.querySelectorAll('*')) {
       for (const a of ['value', 'placeholder', 'alt']) if (el.hasAttribute(a)) values.push(el.getAttribute(a));
@@ -547,9 +528,13 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
             raise TypeError
     except (Error, TypeError, KeyError):
         return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
-    flats = ["".join(t.split()) for t in texts]   # within one stream, a value broken across lines reads as one
+    # Case is ignored, as `text-transform` can draw any casing; within one stream, a value broken across lines
+    # reads as one
+    texts, values = [t.casefold() for t in texts], [v.casefold() for v in values]
+    flats = ["".join(t.split()) for t in texts]
 
     def seen(value: str) -> bool:
+        value = value.casefold()
         flat = "".join(value.split())
         return (any(value in t for t in texts + values) or bool(flat) and any(flat in f for f in flats))
 

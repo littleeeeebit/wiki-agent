@@ -236,14 +236,12 @@ def test_shadow_text_drawn_or_not_is_seen_and_no_stylesheet_svg_frame_or_pair_of
         page.locator("main").evaluate(SHADOW, f"<p style='text-transform: {cased}'>{carried}</p>")
         assert look.secrets_shown(page, {shown: "[N1]"})
     word = "<p style='text-transform: capitalize'><span>read</span><b>er</b></p>"   # one word across elements
-    page.set_content(f"<main>{word}</main><input value='kept'>")
-    page.evaluate("document.querySelector('input').select()")
+    page.set_content(f"<main>{word}</main>")
     assert look.secrets_shown(page, {"Reader": "[N1]"})
-    assert page.evaluate("[document.activeElement.selectionStart, document.activeElement.selectionEnd]") == [0, 4]
     page.locator("main").evaluate(SHADOW, word)
     assert look.secrets_shown(page, {"Reader": "[N1]"})
-    page.set_content("<main>key-<span style='user-select: none'>sel</span>end</main>")   # beyond a selection
-    assert look.secrets_shown(page, {"key-selend": "[N1]"})
+    page.set_content("<main>KEY-<b>Mixed</b></main>")   # any casing of a value is that value
+    assert look.secrets_shown(page, {"key-mixed": "[N1]"})
     for root in ("", " hidden"):   # a hidden root's rendered text is empty, never its stylesheets
         page.set_content(f"<html{root}><body><main>Ready</main><style>.a > .b {{ color: red }}</style></body></html>")
         assert look.secrets_shown(page, {">": "[N1]"}) == ""
