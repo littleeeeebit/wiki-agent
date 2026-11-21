@@ -116,7 +116,9 @@ def test_a_web_server_s_outside_call_names_its_requirement_and_endpoint_and_its_
     # The server's call is named on the brief, and an edit of the call reaches the endpoint that makes it.
     with pytest.raises(ValueError, match="밖으로 나가는 호출이 있다: X1"):
         brief.design_checked({"requirements": WEB_REQS, "design": design}, [{"name": "알아 두실 것", "text": "없음"}], [])
-    brief.design_checked({"requirements": WEB_REQS, "design": design}, [{"name": "알아 두실 것", "text": "X1 은 환율을 받는다"}], [])
+    heard = [{**WEB_REQS[0], "capability": {"permission": "microphone", "prompt": "마이크", "risk": "없음"}}, *WEB_REQS[1:]]
+    for reqs in (WEB_REQS, heard):   # a web requirement's permission is not one the brief must cite
+        brief.design_checked({"requirements": reqs, "design": design}, [{"name": "알아 두실 것", "text": "X1 은 환율을 받는다"}], [])
     assert {"P1", "T1", "F1"} <= sheet.dependents(design, WEB_REQS, {"X1"}) and "X1" in sheet.dependents(design, WEB_REQS, {"P1"})
     del design["outside"]   # a web design stored before it had outside calls
     oneshot_spec.saved("budget", oneshot={"design": design})

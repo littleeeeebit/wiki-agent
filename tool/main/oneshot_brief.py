@@ -267,14 +267,14 @@ def screens_checked(snap: dict, sections: list[dict], texts: list[tuple[str, str
 
 
 def design_checked(snap: dict, sections: list[dict], texts: list[tuple[str, str]]) -> None:
-    """R1: every left-out requirement named, every call that leaves the product, and every permission."""
+    """R1: every left-out requirement named, every call that leaves the product, and on a core every permission."""
 
     left_out = [r["id"] for r in snap["requirements"] if r.get("status") == "not_applicable"]
     out_text = next((s["text"] for s in sections if s["name"] == "빼기로 한 것"), "")
     if unnamed := [i for i in left_out if not re.search(rf"\b{i}\b", out_text)]:
         raise ValueError(f"`빼기로 한 것` 에 빠진 요구가 있다: {', '.join(unnamed)}")
-    # A web app's requirements carry no capability, but its server's outside calls are named as a core's are.
-    risky = [r["id"] for r in snap["requirements"] if r.get("capability")]
+    # Every call leaving the product is named; a permission only on a core, as the brief prompt asks for it.
+    risky = [r["id"] for r in snap["requirements"] if r.get("capability")] if "modules" in snap["design"] else []
     risky += [x["id"] for x in snap["design"].get("outside") or []]
     note = next((s["text"] for s in sections if s["name"] == "알아 두실 것"), "")
     if unnamed := [i for i in risky if not re.search(rf"\b{i}\b", note)]:
