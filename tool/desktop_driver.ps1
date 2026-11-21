@@ -64,7 +64,8 @@ $out = $ask.out
 $report = [ordered]@{ phase = "starting"; main = $null; size = $null; states = @(); steps = @(); refusal = $null; error = $null }
 $UTILITY = @("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator", "IME", "MSCTFIME UI")
 $MAX_ITEMS = 2000   # a list's items counted at most: more is an unknown count, so its tree is not taken as whole
-$clock = [System.Diagnostics.Stopwatch]::StartNew()   # each state's `at`: when its read began, in ms
+$clock = [System.Diagnostics.Stopwatch]::StartNew()   # each state's `at` and `done`, each step's `acted_at`, in ms
+$MAX_WAIT_MS = 120000   # a control's wait at most: the driver's `MAX_WAIT_MS`
 $MAX_VALUE = 1000   # a control's value recorded at most, in characters: a check's expected value is no longer
 $script:seq = 0
 
@@ -228,6 +229,7 @@ function State([string]$name) {   # every window of the app in this state, shot 
     $state.reads += $read
     $state.nodes += $script:nodes
   }
+  $state.done = $clock.ElapsedMilliseconds   # every property of the state read by now
   $report.states += $state; Save
   $state
 }
@@ -316,10 +318,19 @@ try {
   foreach ($step in $ask.steps) {
     $done = [ordered]@{ name = $step.name; action = $step.action; acted = $false; error = $null; state = $null; expect = $step.expect }
     $report.steps += $done
-    if ($step.action -eq "wait") {   # the server's control: nothing acted on, then the state once `ms` have
-      $done.acted = $true; Save       # passed since the last state's read began, and the settle at least
-      Settle
-      $until = [int64]$report.states[-1].at + [int64]$step.ms
+    if ($step.action -eq "wait") {
+      # The server's control: nothing acted on, then the state read once `after[k]` ms have passed since each
+      # anchor k (the start state's read, then each step's action), and the settle at least; `MAX_WAIT_MS` at most.
+      $done.acted = $true; Save
+      $anchors = @([int64]$report.states[0].at) + @($report.steps | Where-Object { $null -ne $_.acted_at } |
+                                                     ForEach-Object { [int64]$_.acted_at })
+      $now = $clock.ElapsedMilliseconds
+      $until = $now + [int64]$ask.settle_ms
+      for ($k = 0; $k -lt [Math]::Min($anchors.Count, @($step.after).Count); $k++) {
+        $until = [Math]::Max($until, $anchors[$k] + [int64]@($step.after)[$k])
+      }
+      $until = [Math]::Min($until, $now + $MAX_WAIT_MS)
+      Enter "wait $($until - $now)"
       while ($clock.ElapsedMilliseconds -lt $until) { Start-Sleep -Milliseconds 50 }
       $done.state = (State "after-$($step.name)").id
       Save; continue
@@ -328,7 +339,8 @@ try {
     $found = Target $step
     if ($found.error) { $done.error = $found.error; Save; continue }
     Enter "act $($step.name)"
-    try { Act $found.element $step; $done.acted = $true } catch { $done.error = "$($_.Exception.Message)"; Save; continue }
+    try { Act $found.element $step; $done.acted = $true; $done.acted_at = $clock.ElapsedMilliseconds }
+    catch { $done.error = "$($_.Exception.Message)"; Save; continue }
     Save
     Settle
     $done.state = (State "after-$($step.name)").id   # the server reads the postcondition off this state

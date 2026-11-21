@@ -137,7 +137,8 @@ def stale(o: dict) -> str:
     it is evidence."""
 
     look = (o.get("looks") or [{}])[-1]
-    if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in (look.get("proven") or [])]:
+    proven = look.get("proven") or [] if look.get("proof") == front_build.oneshot_desktop_look.PROOF else []
+    if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in proven]:
         return f"PC 앱에서 확인할 {', '.join(unproven)} 을 마지막 화면 검사가 돌리지 않았다"
     if look.get("build") and (not look.get("freeze") or look["freeze"] != (o.get("desktop_build") or {}).get("freeze")):
         return "마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다"

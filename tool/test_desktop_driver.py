@@ -294,7 +294,7 @@ def test_a_check_reads_a_controls_value_and_toggle_state_after_its_steps(tmp_pat
 def test_the_servers_wait_step_acts_on_nothing_and_reads_the_state_after_the_same_settle(tmp_path):
     script = tmp_path / "form.ps1"
     script.write_text(WPF_FORM, encoding="utf-8")
-    steps = [{"name": "control", "action": desktop_driver.WAIT, "ms": 2500,
+    steps = [{"name": "control", "action": desktop_driver.WAIT, "after": [2500],
               "expect": {"id": "translate-on", "toggle": "On"}}]
     with desktop_session.look(tmp_path, "form-wait") as look:
         look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
@@ -304,7 +304,8 @@ def test_the_servers_wait_step_acts_on_nothing_and_reads_the_state_after_the_sam
     assert report["phase"] == "done" and step["acted"] and step["state"] == "s01" and not step["error"], report
     states = {s["id"]: s for s in report["states"]}
     assert [n.get("toggle") for n in states["s01"]["nodes"] if n.get("id") == "translate-on"] == ["Off"]
-    assert states["s01"]["at"] - states["s00"]["at"] >= 2500   # watched as long as asked, past the 800 ms settle
+    assert states["s01"]["at"] - states["s00"]["at"] >= 2500   # read as late as asked, past the 800 ms settle
+    assert states["s00"]["at"] <= states["s00"]["done"] <= states["s01"]["at"] and report["last"] == "done"
 
 
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
@@ -314,6 +315,13 @@ def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
     assert not desktop_driver.holds(state, {"id": "a", "value": "x"})   # `x` is another element's
     assert not desktop_driver.holds(state, {"id": "c", "toggle": "On"})   # another process's element
     assert desktop_driver.holds(state, {"name": "번역"}) and not desktop_driver.holds(state, {"value": "x"})   # no id, no name
+
+
+def test_a_controls_measured_wait_has_its_own_bounded_deadline():
+    allowed = desktop_driver._allowed
+    assert allowed("wait 13000", 30, 1000) == 13 + desktop_driver.PHASE_SECONDS > allowed("settle", 30, 1000)
+    assert allowed("wait 999999", 30, 1000) == desktop_driver.MAX_WAIT_MS / 1000 + desktop_driver.PHASE_SECONDS
+    assert allowed("wait for a window", 30, 1000) == 30 + desktop_driver.PHASE_SECONDS
 
 
 def test_a_postcondition_in_a_window_reads_the_one_element_there_its_id_names():

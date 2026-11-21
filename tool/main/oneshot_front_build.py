@@ -208,8 +208,8 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
                 "`live_cmd` 와 앱은 추적하는 파일을 바꾸지 않는다")
     # The critic reads which owed checks the PC app's passed look ran; a look that failed or never got there, none.
     looks = [*(o.get("looks") or []), {"round": n, "head": verdict["head"], "findings": findings,
-                                       **({"build": build["identity"], "freeze": build["freeze"], "proven": proven}
-                                          if build else {})}]
+                                       **({"build": build["identity"], "freeze": build["freeze"], "proven": proven,
+                                           "proof": oneshot_desktop_look.PROOF} if build else {})}]
     if high := [f for f in findings if f["severity"] == "high"]:
         oneshot_spec.saved(spec["repo"], oneshot={"looks": looks})
         return "화면 검사에서 고칠 것이 나왔다 — " + " / ".join(

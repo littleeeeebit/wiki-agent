@@ -137,6 +137,15 @@ def test_a_pc_apps_two_clean_rounds_on_one_freeze_wait_before_r3_with_its_owner_
     assert "r3_sheet" not in critique.extra(oneshot_spec.spec_of("budget"))   # a held run opens no review state
 
 
+def test_a_look_whose_proof_came_from_another_version_of_the_check_proves_nothing():
+    owed = {"id": "O1", "kind": "desktop", "source": "look", "act": {"action": "toggle", "id": "t"},
+            "expect": {"id": "t", "toggle": "On"}}
+    look = {"build": "a" * 64, "freeze": "f1", "proven": ["O1"]}
+    run = {"owed": [owed], "desktop_build": {"freeze": "f1"}}
+    assert "O1" in critique.stale({**run, "looks": [look]})   # an earlier revision's look: no `proof`
+    assert critique.stale({**run, "looks": [{**look, "proof": critique.front_build.oneshot_desktop_look.PROOF}]}) == ""
+
+
 def test_a_look_of_another_freeze_than_the_runs_goes_back_to_the_build(judged):
     pc_run([])
     oneshot_spec.saved("budget", oneshot={"desktop_build": {"identity": "a" * 64}})   # an earlier version's record

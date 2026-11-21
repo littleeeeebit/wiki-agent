@@ -40,7 +40,7 @@ def report(nodes: list[dict], windows=(MAIN,), sid="S1", steps=(), owners=None) 
     owners = owners or {}
 
     def state(i: int, name: str, held: list[dict]) -> dict:
-        return {"id": f"s{i:02d}", "name": name, "at": i * 1000,
+        return {"id": f"s{i:02d}", "name": name, "at": i * 1000, "done": i * 1000 + 100,
                 "windows": [{"hwnd": h, "frame": [0, 0, 1280, 800], "owner": owners.get(h, 0 if h == MAIN else MAIN)}
                             for h in windows],
                 "shots": [{"hwnd": h, "drawn": True, "file": f"s{i:02d}-{h}.png"} for h in windows],
@@ -50,7 +50,8 @@ def report(nodes: list[dict], windows=(MAIN,), sid="S1", steps=(), owners=None) 
     states = [state(0, "start", nodes)] + [state(i, f"after-{s['name']}", s.pop("shows")) for i, s in enumerate(steps, 1)]
     return {"phase": "done", "main": {"hwnd": MAIN}, "size": {"asked": [1280, 800], "moved": True,
                                                               "frame": [0, 0, 1280, 800]},
-            "states": states, "steps": [{**s, "acted": True, "state": f"s{i:02d}"} for i, s in enumerate(steps, 1)],
+            "states": states, "steps": [{**s, "acted": True, "acted_at": i * 1000 - 500, "state": f"s{i:02d}"}
+                                        for i, s in enumerate(steps, 1)],
             "ended": None, "end": None, "last": "done", "sid": sid}
 
 
@@ -561,24 +562,36 @@ def test_a_postcondition_is_refuted_only_off_a_read_that_proves_it_false():
     assert pc_look.refuted(alone, alone["states"][0], on)   # no owned window yet: it appears with the step
 
 
-def test_a_control_counts_only_watched_as_long_with_its_lead_in_done_as_the_scenarios():
+def late(got: dict, at: int) -> dict:
+    """`got` with its last state's read begun at `at`."""
+
+    return {**got, "states": [*got["states"][:-1], {**got["states"][-1], "at": at, "done": at + 100}]}
+
+
+def test_a_control_counts_only_read_late_enough_with_its_lead_in_alike():
     on = {"id": "translate-on", "toggle": "On"}
-    typed = {"id": "source", "value": "hi"}
+    steps = [{"name": "type", "action": "set_value", "id": "source", "value": "hi", "expect": {"id": "source"}},
+             {"name": "on", "action": "toggle", "id": "translate-on", "expect": on}]
     box, switch = node("source", id="source", value="hi"), node("translate-on", id="translate-on", toggle="Off")
-    control = report([{**box, "value": ""}, switch], steps=[{"name": "type", "shows": [box, switch]},
-                                                            {"name": "control", "shows": [box, switch]}])
-    assert pc_look.unmoved(control, [typed, on], 1000)
-    assert not pc_look.unmoved(control, [typed, on], 1500)   # watched 1000 ms: less than the step was
-    wrong = report([switch], steps=[{"name": "type", "shows": [{**box, "value": "x"}, switch]},
-                                    {"name": "control", "shows": [{**box, "value": "x"}, switch]}])
-    assert not pc_look.unmoved(wrong, [typed, on], 1000)   # its lead-in typed something else: no control at all
+    run = report([{**box, "value": ""}, switch], steps=[{"name": "type", "shows": [box, switch]},
+                                                        {"name": "on", "shows": [box, {**switch, "toggle": "On"}]}])
+    after = [run["states"][-1]["done"] - m for m in pc_look.anchors(run, 2)]
+    assert after == [2100, 1600]   # since the start state's read, and since `type` acted
+
+    def control(value):
+        return report([{**box, "value": ""}, switch], steps=[{"name": "type", "shows": [{**box, "value": value}, switch]},
+                                                             {"name": "control", "shows": [box, switch]}])
+
+    assert not pc_look.unmoved(control("hi"), run, steps, after)   # its last read began at 2000: too soon
+    assert pc_look.unmoved(late(control("hi"), 2100), run, steps, after)
+    assert not pc_look.unmoved(late(control("x"), 2100), run, steps, after)   # it typed something else: no control
     gone = report([], windows=(3,), owners={3: 0})   # the main window lost: no owned window proves nothing
     assert not pc_look.refuted({**gone, "main": {"hwnd": MAIN}}, gone["states"][0], {**on, "in": "owned"})
 
 
 UNSCOPED = ("a step's postcondition was not read on one element of its window after the step before, "
             "or was not read false before the last step")
-CONTROL = "리뷰의 동작 없이 같은 시간을 기다린 대조 실행에서 결과가 거짓으로 읽히지 않았다"
+CONTROL = "리뷰의 동작 없이 같은 시간을 기다린 대조 실행에서 준비가 같지 않았거나 결과가 거짓으로 읽히지 않았다"
 
 
 @pytest.mark.parametrize("case, why", [
@@ -601,8 +614,9 @@ def test_a_look_check_passes_only_when_the_reviews_step_brings_its_postcondition
     def answer(sid, state, steps):   # the toggle leaves the main window's switch on, or not; waiting, as it was
         started.append([(s["name"], s["action"], s.get("id")) for s in steps])
         switch = node("translate-on", id="translate-on", name="번역", patterns=["Toggle"], toggle="Off")
-        if steps[-1]["action"] == "wait":
-            return report([switch], steps=[{**steps[0], "shows": [{**switch, "toggle": "On" if case == "delayed" else "Off"}]}])
+        if steps[-1]["action"] == "wait":   # it waits as told: its last read begins `after` past the start's
+            return late(report([switch], steps=[{**steps[0], "shows": [
+                {**switch, "toggle": "On" if case == "delayed" else "Off"}]}]), steps[-1]["after"][0])
         after = [{**switch, "toggle": "On" if case in ("on", "already on", "unread before", "its own act", "delayed")
                   else "Off"}]
         if case == "in the dialog":
