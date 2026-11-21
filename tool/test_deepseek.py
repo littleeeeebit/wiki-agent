@@ -3,6 +3,7 @@
 The provider is a stand-in that records the command and the environment it was started with; nothing calls a model.
 """
 
+import gzip
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -147,6 +148,19 @@ def upstream():
                 self.end_headers()
                 self.wfile.write(b'data: {"error": {"message": "bad key \\u0073k-fixture"}}\n\n')
                 return
+            if self.path.startswith(("/v1/twotypes", "/v1/gzip")):   # a body no one can be sure how to read
+                self.send_response(200)
+                said = b'data: {"error": {"message": "bad key \\u0073k-fixture"}}\n\n'
+                if self.path.startswith("/v1/twotypes"):
+                    self.send_header("content-type", "application/json")
+                    self.send_header("content-type", "text/event-stream")
+                else:
+                    self.send_header("content-type", "text/event-stream")
+                    self.send_header("content-encoding", "gzip")
+                    said = gzip.compress(said)
+                self.end_headers()
+                self.wfile.write(said)
+                return
             if self.path.startswith("/v1/slowcr"):   # a CR-framed event, then a pause until the relay hangs up
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
@@ -168,11 +182,13 @@ def upstream():
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
                 self.end_headers()
+                got[-1]["flood"] = "sending"
                 try:
                     for _ in range(1000):
                         self.wfile.write(b"data: " + b"x" * 65536 + b"\n\n")
+                    got[-1]["flood"] = "all sent"
                 except OSError:
-                    pass
+                    got[-1]["flood"] = "cut"   # the relay let go of it part way
                 return
             if self.path.startswith("/v1/huge"):   # one JSON answer past the relay's limit
                 self.send_response(200)
@@ -267,6 +283,10 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         assert sent(relay.url, {"x-api-key": token}, "/v1/huge")[0] == 502   # past the limit, never half passed on
         status, _, body = sent(relay.url, {"x-api-key": token}, "/v1/mixedcase")
         assert status == 200 and body == b'data: {"error": {"message": "bad key [key]"}}\n\n'
+        # Copies of Content-Type that disagree, or a coding over the body: refused before a success header goes out.
+        for path in ("/v1/twotypes", "/v1/gzip"):
+            status, _, body = sent(relay.url, {"x-api-key": token}, path)
+            assert status == 502 and b"sk-fixture" not in body and b"0073" not in body, path
         # Field values keep every octet: an allowed header with one past ASCII goes on, and comes back.
         conn = http.client.HTTPConnection(*relay.url.removeprefix("http://").split(":"), timeout=10)
         conn.request("POST", "/v1/octets", body=b"{}", headers={"x-api-key": token, "user-agent": "cli (\xe9)"})
@@ -284,12 +304,12 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         assert status == 502 and "location" not in headers
         (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=\n", encoding="utf-8")
         assert sent(relay.url, {"x-api-key": token})[0] == 503
-        assert len(got) == 8
+        assert len(got) == 10
         # Framing: a POST without a length, with two that disagree, or chunked never goes on.
         assert raw(relay.url, [("x-api-key", token)], declared=None, length=False)[0] == 411
         assert raw(relay.url, [("x-api-key", token), ("content-length", "3")])[0] == 400
         assert raw(relay.url, [("x-api-key", token), ("transfer-encoding", "chunked")])[0] == 400
-        assert len(got) == 8
+        assert len(got) == 10
         # Every connection served, closed-delimited or not, leaves nothing behind.
         assert drained(relay)
     finally:
@@ -442,9 +462,13 @@ def test_close_does_not_wait_on_a_caller_that_stopped_reading(tmp_path, upstream
 def test_a_caller_that_stopped_reading_lets_its_slot_go_without_a_close(tmp_path, upstream, monkeypatch):
     monkeypatch.setattr(deepseek_relay, "IDLE", 1.0)
     relay, stuck = flooded(tmp_path, upstream)
+    got = upstream[1]
     try:
-        time.sleep(0.5)   # served and stuck, not yet timed out
+        # Admitted and served: the request reached the stand-in and the relay holds the caller's writer.
+        assert wait_until(lambda: got and got[-1].get("flood") and relay.writers, 5)
         assert wait_until(lambda: not relay.writers, 6), "a write stuck on a caller that reads nothing must give up"
+        # It gave up stuck, not done: the flood never finished, and no close() was called.
+        assert wait_until(lambda: got[-1]["flood"] == "cut", 5) and relay.thread.is_alive()
     finally:
         stuck.close()
         relay.close()
@@ -483,6 +507,18 @@ def test_an_event_that_crosses_the_limit_in_the_chunk_that_ends_it_is_still_refu
     assert events.feed(b"data: " + b"x" * 1000) == []
     with pytest.raises(ValueError):
         events.feed(b"x" * deepseek_relay.LONGEST_EVENT + b"\n\n")
+
+
+def test_an_event_exactly_at_the_limit_passes_however_its_blank_line_is_split():
+    at = b"data: " + b"x" * (deepseek_relay.LONGEST_EVENT - 6)
+    for layout in ([at + b"\n\n"], [at + b"\n", b"\n"], [at, b"\n", b"\n"]):
+        events = deepseek_relay.Events("sk-fixture")
+        assert b"".join(out for part in layout for out in events.feed(part)) == at + b"\n\n", len(layout)
+    for layout in ([at + b"x\n\n"], [at + b"x\n", b"\n"]):
+        events = deepseek_relay.Events("sk-fixture")
+        with pytest.raises(ValueError):
+            for part in layout:
+                events.feed(part)
 
 
 def wait_until(check, within: float) -> bool:

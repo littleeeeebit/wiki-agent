@@ -20,14 +20,13 @@ from pathlib import Path
 import secrets
 import shutil
 import ssl
-import sys
 import tempfile
 import threading
 import urllib.parse
 
 import h11
 
-from common import settings
+from common import errorlog, settings
 
 # Request headers the relay passes on. Everything else (any credential, cookie or custom header a policy adds) stays.
 FORWARD = {"content-type", "accept", "anthropic-version", "anthropic-beta", "user-agent"}
@@ -59,10 +58,18 @@ def octets(headers) -> list[tuple[bytes, bytes]]:
     return [(k.encode("latin-1"), v.encode("latin-1")) for k, v in headers]
 
 
-def media_type(headers: list[tuple[str, str]]) -> str:
-    """The media type alone, lower case: `Text/Event-Stream; charset=utf-8` is `text/event-stream` (RFC 9110 8.3.1)."""
+def media_type(headers: list[tuple[str, str]]) -> str | None:
+    """The media type alone, lower case: `Text/Event-Stream; charset=utf-8` is `text/event-stream` (RFC 9110 8.3.1).
+    None when copies disagree, since then no one can say how a reader will take the body."""
 
-    return next((v.split(";")[0].strip().lower() for k, v in headers if k == "content-type"), "")
+    types = {v.split(";")[0].strip().lower() for k, v in headers if k == "content-type"}
+    return None if len(types) > 1 else next(iter(types), "")
+
+
+def plain(headers: list[tuple[str, str]]) -> bool:
+    """The body comes as sent, no content coding over it: the scrubber reads what the caller will read."""
+
+    return all(c.strip().lower() in ("", "identity") for k, v in headers if k == "content-encoding" for c in v.split(","))
 
 
 async def drained(writer: asyncio.StreamWriter) -> None:
@@ -122,7 +129,8 @@ class Events:
                 raise ValueError("an event past LONGEST_EVENT")
             out.append(clean_event(self.pending[:end], self.key) + b"\n\n")
             self.pending = self.pending[end + 2:]
-        if len(self.pending) > LONGEST_EVENT:
+        # The first newline of a delimiter still waiting for its second is not part of the event.
+        if len(self.pending) - self.pending.endswith(b"\n") > LONGEST_EVENT:
             raise ValueError("an event past LONGEST_EVENT")
         return out
 
@@ -377,8 +385,11 @@ class Relay:
                     break
             return await answer(conn, writer, reply.status_code,
                                 f"DeepSeek 오류 {reply.status_code}: {error_kind(bytes(said), key)}", kept)
+        kind = media_type(back)
+        if kind is None or not plain(back):   # a body the scrubber cannot read the way the caller will never goes on
+            return await answer(conn, writer, 502, "DeepSeek 의 답 형식이 모호하거나 압축돼 있다 — 넘기지 않는다")
         start = h11.Response(status_code=reply.status_code, headers=octets(kept + [("connection", "close")]))
-        if media_type(back) != "text/event-stream":
+        if kind != "text/event-stream":
             body = bytearray()   # one JSON answer, cleaned whole before a byte of it goes out
             async for chunk in chunks():
                 body += chunk
@@ -421,12 +432,12 @@ class Relay:
         if self.thread.is_alive():
             try:
                 asyncio.run_coroutine_threadsafe(self._stop(), self.loop).result(JOIN)
-            except Exception as exc:   # noqa: BLE001 - the loop stops and the folder goes regardless, said aloud
-                print(f"DeepSeek 중계 정리가 끝나지 않았다 — {type(exc).__name__}: {exc}", file=sys.stderr)
+            except Exception as exc:   # noqa: BLE001 - the loop stops and the folder goes regardless, on record
+                errorlog.record("deepseek-relay", exc, stage="stop")
             self.loop.call_soon_threadsafe(self.loop.stop)
             self.thread.join(JOIN)
             if self.thread.is_alive():
-                print("DeepSeek 중계 스레드가 멈추지 않았다", file=sys.stderr)
+                errorlog.record("deepseek-relay", "the relay's loop thread did not stop", stage="join")
         if not self.thread.is_alive() and not self.loop.is_closed():
             self.loop.close()
         if self.folder is not None:
