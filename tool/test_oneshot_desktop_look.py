@@ -549,8 +549,21 @@ OWED = [{"id": "O1", "kind": "desktop", "source": "look", "requirement": "R2", "
         {"id": "O3", "kind": "desktop", "source": "look", "requirement": "R3", "check": "이전 버전의 미룬 검사"}]
 SCENARIO = {"O1": {"screen": "S1", "state": "full", "steps": [
     {"name": "on", "action": "toggle", "id": "translate-on", "expect": ON}]}}
+def test_a_postcondition_is_refuted_only_off_a_read_that_proves_it_false():
+    on = {"id": "translate-on", "toggle": "On", "in": "owned"}
+    switch = node("translate-on", window=DIALOG, id="translate-on", toggle="On")
+    two = report([switch], windows=(MAIN, DIALOG, 3))   # Settings and Help both owned: which one is unproven
+    assert not pc_look.refuted(two, two["states"][0], on)
+    one = report([{**switch, "toggle": "Off"}], windows=(MAIN, DIALOG))
+    assert pc_look.refuted(one, one["states"][0], on) and not pc_look.refuted(
+        one, {**one["states"][0], "nodes": [*one["states"][0]["nodes"], {**switch, "toggle": None}]}, on)
+    alone = report([])
+    assert pc_look.refuted(alone, alone["states"][0], on)   # no owned window yet: it appears with the step
+
+
 UNSCOPED = ("a step's postcondition was not read on one element of its window after the step before, "
-            "or held before the last step")
+            "or was not read false before the last step")
+CONTROL = "리뷰의 동작 없이 같은 시간을 기다린 대조 실행에서 결과가 거짓으로 읽히지 않았다"
 
 
 @pytest.mark.parametrize("case, why", [
@@ -558,30 +571,36 @@ UNSCOPED = ("a step's postcondition was not read on one element of its window af
     ("in the dialog", UNSCOPED),   # the main window's switch stayed off, a dialog's same-named one is on
     ("stale", UNSCOPED),           # the step points back at the start state, which already showed it on
     ("already on", UNSCOPED),      # on before the review's step too: the step brought nothing about
+    ("unread before", UNSCOPED),   # its toggle state unread before the step: never proven off
+    ("delayed", CONTROL),          # it turns on by itself a while after the start, with or without the step
     ("its own expect", "step on: its postcondition was not read"),   # the review's toggle is read, not the name
     ("its own act", None),         # the review's toggle is what runs, not the builder's `refresh`
     ("unscripted", "빌드에 그 시나리오가 없다")])
-def test_a_look_check_passes_only_on_the_reviews_step_and_postcondition_where_it_names(tmp_path, case, why):
+def test_a_look_check_passes_only_when_the_reviews_step_brings_its_postcondition_about(tmp_path, case, why):
     started, scenarios = [], {} if case == "unscripted" else SCENARIO
     if case in ("its own expect", "its own act"):
         mine = {"expect": {"id": "translate-on", "name": "번역"}} if case == "its own expect" else \
             {"action": "invoke", "id": "refresh"}
         scenarios = {"O1": {**SCENARIO["O1"], "steps": [{**SCENARIO["O1"]["steps"][0], **mine}]}}
 
-    def answer(sid, state, steps):   # the toggle leaves the main window's switch on, or not
-        started.append((sid, state, [(s["name"], s["action"], s["id"]) for s in steps]))
+    def answer(sid, state, steps):   # the toggle leaves the main window's switch on, or not; waiting, as it was
+        started.append([(s["name"], s["action"], s.get("id")) for s in steps])
         switch = node("translate-on", id="translate-on", name="번역", patterns=["Toggle"], toggle="Off")
-        after = [{**switch, "toggle": "On" if case in ("on", "already on", "its own act") else "Off"}]
+        if steps[-1]["action"] == "wait":
+            return report([switch], steps=[{**steps[0], "shows": [{**switch, "toggle": "On" if case == "delayed" else "Off"}]}])
+        after = [{**switch, "toggle": "On" if case in ("on", "already on", "unread before", "its own act", "delayed")
+                  else "Off"}]
         if case == "in the dialog":
             return report([switch], windows=(MAIN, DIALOG), steps=[
                 {**steps[0], "shows": [*after, {**switch, "window": DIALOG, "toggle": "On"}]}])
-        got = report([{**switch, "toggle": "On"} if case in ("stale", "already on") else switch],
-                     steps=[{**steps[0], "shows": after}])
+        start = {**switch, "toggle": {"stale": "On", "already on": "On", "unread before": None}.get(case, "Off")}
+        got = report([start], steps=[{**steps[0], "shows": after}])
         return {**got, "steps": [{**got["steps"][0], "state": "s00"}]} if case == "stale" else got
 
     spec = {"oneshot": {"front": {"screens": SCREENS}, "owed": OWED}}
     found = pc_look.checks(Runs(tmp_path / "evidence", answer), spec, {"checks": scenarios})
-    assert started == ([("S1", "full", [("on", "toggle", "translate-on")])] if scenarios else [])   # O2, O3: the owner's
+    ran = [[("on", "toggle", "translate-on")]] if scenarios else []   # O2 and O3 are the owner's
+    assert started == ran + ([[("control", "wait", None)]] if why in (None, CONTROL) and scenarios else [])
     assert [f["what"] for f in found] == ([] if why is None else [
         f"PC 앱에서 확인할 O1(R2) 이 통과하지 못했다 — {why} · 확인: 번역을 켜면 켜짐으로 보인다"])
     assert [x["id"] for x in pc_look.oneshot_desktop.owner_owed(spec["oneshot"])] == ["O2", "O3"]

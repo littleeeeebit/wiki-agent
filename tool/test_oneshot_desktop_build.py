@@ -134,11 +134,13 @@ def test_a_look_check_owed_to_the_pc_app_needs_its_scenario_and_the_frozen_build
         {"name": "on", "action": "toggle", "id": "translate-on", "expect": {"id": "translate-on", "toggle": "On"}}]}
     assert not checked(pc_build, {**BLOCK, "checks": {"O1": scenario}})
     assert o()["desktop_build"]["checks"] == {"O1": scenario} and o()["stage"] == "critique"
-    assert o()["looks"][-1]["proven"] == ["O1"]   # the look that passed ran it: the critic reads that
+    first = o()["desktop_build"]["freeze"]
+    assert o()["looks"][-1]["proven"] == ["O1"] and o()["looks"][-1]["freeze"] == first   # the critic reads both
     high = {"severity": "high", "screen": "S1", "viewport": "window", "state": "full", "what": "O1 이 통과하지 못했다"}
     oneshot_spec.saved("budget", oneshot={"stage": "build-front"})
     assert checked(pc_build, {**BLOCK, "checks": {"O1": scenario}}, found=[high])
-    assert o()["looks"][-1]["proven"] == [] and o()["desktop_build"]["frozen"] > 0   # a failed look proves nothing
+    assert o()["looks"][-1]["proven"] == []   # a failed look proves nothing
+    assert o()["desktop_build"]["freeze"] != first and o()["desktop_build"]["identity"] == o()["looks"][-2]["build"]
 
 
 def test_a_pc_look_finding_sends_the_build_back_and_keeps_the_frozen_build(pc_build):

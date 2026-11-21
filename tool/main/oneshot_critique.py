@@ -108,10 +108,14 @@ def critique(repo: str) -> None:
     def body(store, spec, tree):
         o = spec["oneshot"]
         look = o["looks"][-1]
-        # A look an earlier version passed ran none of the PC app's owed `look` checks: it is never evidence.
+        # A look an earlier version passed ran none of the PC app's owed `look` checks, and names no freeze its
+        # rounds could count on: it is never evidence.
         if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in (look.get("proven") or [])]:
             review.rebuild(repo, store, f"PC 앱에서 확인할 {', '.join(unproven)} 을 마지막 화면 검사가 돌리지 않았다",
                            front_build.STAGE)
+            return None
+        if look.get("build") and (not look.get("freeze") or look["freeze"] != (o.get("desktop_build") or {}).get("freeze")):
+            review.rebuild(repo, store, "마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다", front_build.STAGE)
             return None
         # Several kinds: one kind a round, the critic seeing only that kind's shots and the harness's findings on them.
         kind = (critic_kind(o) or kinds_of(o)[-1]) if shape(o) == "kinds" else None
@@ -133,14 +137,13 @@ def critique(repo: str) -> None:
     review.holding(repo, "화면 비평", body, "front_built_head", front_build.STAGE)
 
 
-def passed(rounds: list[dict], head: str | None = None, build: str | None = None, since: float = 0) -> bool:
+def passed(rounds: list[dict], head: str | None = None, freeze: str | None = None) -> bool:
     """Two clean critiques in a row, the last two of these; with `head`, of those on the HEAD the look passed
-    (several kinds: a kind that passed before a fix is judged again on the fix). Only rounds of the look's frozen
-    PC app `build` count, judged after it was frozen (`since`): any freeze, even under the same HEAD and whichever
-    kind's round came between, clears every kind's clean rounds, and a build seen before never brings them back."""
+    (several kinds: a kind that passed before a fix is judged again on the fix). Only rounds of the look's
+    `freeze` of the PC app count: any freeze, even of the same files under the same HEAD and whichever kind's
+    round came between, clears every kind's clean rounds, and a build seen before never brings them back."""
 
-    on = [r for r in rounds if (head is None or r["head"] == head) and r.get("build") == build
-          and r.get("ts", 0) >= since]
+    on = [r for r in rounds if (head is None or r["head"] == head) and r.get("freeze") == freeze]
     return len(on) >= 2 and on[-1]["clean"] and on[-2]["clean"]
 
 
@@ -157,14 +160,7 @@ def critic_kind(o: dict) -> str | None:
     passed. A new HEAD has none, so every kind that passed before is judged again."""
 
     rounds, look = o.get("critiques") or [], o["looks"][-1]
-    return next((k for k in kinds_of(o) if not passed(counted(o, rounds, k), look["head"], look.get("build"),
-                                                       frozen_at(o))), None)
-
-
-def frozen_at(o: dict) -> float:
-    """When the PC app's current build was frozen; 0 for a run without one."""
-
-    return (o.get("desktop_build") or {}).get("frozen") or 0
+    return next((k for k in kinds_of(o) if not passed(counted(o, rounds, k), look["head"], look.get("freeze"))), None)
 
 
 def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: str | None = None):
@@ -175,9 +171,9 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
     rounds = [*(o.get("critiques") or []), {"look": look["round"], "head": look["head"], "findings": found,
                                             "clean": not any(f["severity"] == "high" for f in found + look["findings"]),
                                             "ts": time.time(), **({"kind": kind} if kind else {}),
-                                            **({"build": look["build"]} if look.get("build") else {})}]
+                                            **({k: look[k] for k in ("build", "freeze") if look.get(k)})}]
     mine = counted(o, rounds, kind)   # the cap counts each kind's own
-    done = passed(mine, look["head"] if kind else None, look.get("build"), frozen_at(o))
+    done = passed(mine, look["head"] if kind else None, look.get("freeze"))
     if done and kind and critic_kind({**o, "critiques": rounds}):   # the next kind's turn, on the same shots
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
         return lambda: oneshot_spec.handoff(repo, "critique") or True
@@ -186,9 +182,11 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
         return oneshot_phone.waits(repo, rounds)   # the owner's phone comes before R3
     if done:
         return oneshot_spec.briefing(repo, "r3", {"critiques": rounds, "stage": "r3", "r3": opening(o)})
-    if len(mine) >= MAX_ROUNDS:
-        detail = f"{KIND_NAMES[kind] + ' ' if kind else ''}{MAX_ROUNDS}회차에도 높은 발견이 남았다 — " + " / ".join(
-            f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high")
+    # A clean round at the cap earns the one confirming it (a new freeze may have cleared the earlier ones).
+    if len(mine) >= MAX_ROUNDS and not (rounds[-1]["clean"] and len(mine) == MAX_ROUNDS):
+        high = [f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high"]
+        detail = f"{KIND_NAMES[kind] + ' ' if kind else ''}{MAX_ROUNDS}회차에도 " + (
+            "높은 발견이 남았다 — " + " / ".join(high) if high else "깨끗한 회차가 두 번 이어지지 않았다")
         with oneshot._lock:   # one write; `[재개]` starts a fresh count, and the stop keeps the count it reached
             # (`counted`), so the screen tells a cap stop from a failed critique, which leaves no critique behind
             restart = {"critique_bases": {**(o.get("critique_bases") or {}), kind: len(rounds)}} if kind \

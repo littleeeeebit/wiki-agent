@@ -235,40 +235,85 @@ def checks(runs: Launches, spec: dict, build: dict) -> list[dict]:
         # The review's step and postcondition close the scenario, whatever the build wrote there.
         steps = [*scenario["steps"][:-1], {"name": scenario["steps"][-1]["name"], **x["act"], "expect": x["expect"]}]
         report = runs.drive(scenario["screen"], scenario["state"], steps)
-        if proved(report, [s["expect"] for s in steps]):
+        if not proved(report, [s["expect"] for s in steps]):
+            why = [f for f in desktop_driver.findings(report) if f.startswith("step ")][:2] or \
+                ["the driver's read was not complete" if not complete(report) else
+                 "a step's postcondition was not read on one element of its window after the step before, "
+                 "or was not read false before the last step"]
+            out.append(finding(scenario["screen"], scenario["state"], f"{failed} — {'; '.join(why)} · 확인: {x['check']}"))
             continue
-        why = [f for f in desktop_driver.findings(report) if f.startswith("step ")][:2] or \
-            ["the driver's read was not complete" if not complete(report) else
-             "a step's postcondition was not read on one element of its window after the step before, "
-             "or held before the last step"]
-        out.append(finding(scenario["screen"], scenario["state"], f"{failed} — {'; '.join(why)} · 확인: {x['check']}"))
+        # The control: the same lead-in, then the same settle with nothing acted on. A postcondition the lead-in
+        # brings about late, or the app by itself, is never the review's step's.
+        control = runs.drive(scenario["screen"], scenario["state"], [
+            *steps[:-1], {"name": "control", "action": desktop_driver.WAIT, "expect": x["expect"]}])
+        if not unmoved(control, x["expect"], len(steps)):
+            out.append(finding(scenario["screen"], scenario["state"], f"{failed} — 리뷰의 동작 없이 같은 시간을 기다린 "
+                               "대조 실행에서 결과가 거짓으로 읽히지 않았다 · 확인: " + x["check"]))
+    return out
+
+
+def chain(report: dict, n: int) -> list[dict] | None:
+    """The start state and the state each of the `n` steps of a complete read left, each acted and read after
+    the one before; None when the read is not that."""
+
+    states = report.get("states") or []
+    order, steps, at = [s["id"] for s in states], report.get("steps") or [], 0
+    if not complete(report) or len(steps) != n or not states:
+        return None
+    out = [states[0]]
+    for step in steps:
+        if not step.get("acted") or step.get("state") not in order or order.index(step["state"]) <= at:
+            return None
+        at = order.index(step["state"])
+        out.append(states[at])
     return out
 
 
 def proved(report: dict, wants: list[dict]) -> bool:
-    """A complete read in which step k acted and its state, read after step k-1's (the start's for the first),
-    shows `wants[k]` on the one element its id names in the window it names; the last one's did not show before
-    that step, so the step brought it about."""
+    """Step k's state shows `wants[k]` on the one element its id names in the window it names, and the state
+    before the last step read the last one false, so that step brought it about."""
 
     import desktop_driver
 
-    def shows(sid: str, want: dict) -> bool:
-        window = desktop_driver.scope(report, states[sid], want.get("in", "main"))
-        return window is not None and desktop_driver.holds(states[sid], want, window)
+    def shows(state: dict, want: dict) -> bool:
+        window = desktop_driver.scope(report, state, want.get("in", "main"))
+        return window is not None and desktop_driver.holds(state, want, window)
 
-    order = [s["id"] for s in report.get("states") or []]
-    states, steps, at = dict(zip(order, report.get("states") or [])), report.get("steps") or [], 0
-    if not complete(report) or len(steps) != len(wants):
+    states = chain(report, len(wants))
+    return states is not None and all(shows(s, w) for s, w in zip(states[1:], wants)) \
+        and refuted(report, states[-2], wants[-1])
+
+
+def unmoved(report: dict, want: dict, n: int) -> bool:
+    """The control run: its `n` steps done, `want` read false before its last and after it."""
+
+    states = chain(report, n)
+    return states is not None and refuted(report, states[-2], want) and refuted(report, states[-1], want)
+
+
+def refuted(report: dict, state: dict, want: dict) -> bool:
+    """Whether `state` proves `want` false, never merely unproven: its window is the one window it names, read,
+    and the one element there its id names reads another value for a property it names, or a complete read of
+    that window holds none; with `in: owned`, no window the main window owns is proof too."""
+
+    import desktop_driver
+
+    main = report["main"]["hwnd"]
+    if want.get("in") == "owned":
+        owned = [w["hwnd"] for w in state["windows"] if w.get("owner") == main]
+        if len(owned) != 1:
+            return not owned
+        window = owned[0]
+    else:
+        window = main
+    key = desktop_driver.expectation(want)
+    if key is None or not drawn(state, window):
         return False
-    for n, (step, want) in enumerate(zip(steps, wants), 1):
-        if not step.get("acted") or step.get("state") not in states or order.index(step["state"]) <= at:
-            return False
-        if n == len(steps) and shows(order[at], want):   # already so before the step: it proves nothing
-            return False
-        at = order.index(step["state"])
-        if not shows(step["state"], want):
-            return False
-    return True
+    nodes = [n for n in state["nodes"] if not n.get("foreign") and n.get("window") == window and n.get(key[0]) == key[1]]
+    if not nodes:
+        return not partial(state, {window})
+    return len(nodes) == 1 and any(nodes[0].get(k) is not None and nodes[0][k] != v
+                                   for k, v in desktop_driver.wanted(want).items())
 
 
 def inspect(runs: Launches, spec: dict, folder: Path, evidence: Path) -> list[dict]:

@@ -20,6 +20,7 @@ INTERACTIVE = {"Button", "CheckBox", "ComboBox", "Edit", "Hyperlink", "ListItem"
                "Slider", "Spinner", "SplitButton", "TabItem", "TreeItem"}
 ACTING = {"Invoke", "Toggle", "SelectionItem", "ExpandCollapse", "Value"}
 ACTIONS = ("invoke", "set_value", "toggle", "select", "expand", "collapse", "scroll_into_view")   # the driver's `Act`
+WAIT = "wait"   # the server's own step, never a build's: no control acted on, the same settle, then a state
 PROPERTIES = ("id", "name", "value", "toggle")   # what a postcondition reads on an element
 TOGGLES = ("On", "Off", "Indeterminate")
 MAX_VALUE = 1000   # the driver's `$MAX_VALUE`: a longer value is recorded as null

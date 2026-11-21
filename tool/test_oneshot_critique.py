@@ -101,54 +101,75 @@ def test_the_critic_sees_each_screenshot_and_two_clean_rounds_open_r3(judged):
     assert len(images) == 12 and "S3-desktop-loading.png" in text
 
 
-def pc_look(n: int, build: str) -> dict:
-    """A PC app's passed look on frozen `build`: each screen's window shot in each state."""
+def pc_look(n: int, build: str, freeze: str) -> dict:
+    """A PC app's passed look on `build` as frozen by `freeze`, now the run's: each screen's window shot in each
+    state."""
 
     shots = critique.folder("budget", n)
     shots.mkdir(parents=True, exist_ok=True)
     for s in FRONT["screens"]:
         for state in critique.STATES:
             (shots / f"{s['id']}-window-{state}.png").write_bytes(PNG)
-    return {"round": n, "head": "a" * 40, "findings": [], "build": build}
+    oneshot_spec.saved("budget", oneshot={"desktop_build": {"identity": build, "freeze": freeze}})
+    return {"round": n, "head": "a" * 40, "findings": [], "build": build, "freeze": freeze}
 
 
-def test_a_pc_apps_two_clean_rounds_on_one_build_wait_before_r3_with_its_owner_checks_pending(judged):
-    owner = {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처에 글이 있다"}
+def pc_run(owed: list[dict], freeze: str = "f1") -> None:
     screens = [{**{k: v for k, v in s.items() if k != "route"}, "surface": "window"} for s in FRONT["screens"]]
-    oneshot_spec.saved("budget", oneshot={"intent": {"restated": "가계부", "kind": "desktop"}, "owed": [owner],
-                                          "front": {**FRONT, "screens": screens}, "looks": [pc_look(1, "a" * 64)],
+    oneshot_spec.saved("budget", oneshot={"intent": {"restated": "가계부", "kind": "desktop"}, "owed": owed,
+                                          "front": {**FRONT, "screens": screens}, "looks": [pc_look(1, "a" * 64, freeze)],
                                           "profile": {**o()["profile"], "window": "1280x800"}})
+
+
+def test_a_pc_apps_two_clean_rounds_on_one_freeze_wait_before_r3_with_its_owner_checks_pending(judged):
+    pc_run([{"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처에 글이 있다"}])
     heard, asking = critic(said(), said(), said())
     with asking:
         critique.critique("budget")
-        oneshot_spec.saved("budget", oneshot={"looks": [*o()["looks"], pc_look(2, "b" * 64)]})   # rebuilt, same HEAD
+        # The same files frozen again under the same HEAD: the first freeze's clean round is cleared.
+        oneshot_spec.saved("budget", oneshot={"looks": [*o()["looks"], pc_look(2, "a" * 64, "f2")]})
         critique.critique("budget")
-        assert o()["stage"] == "critique" and not o().get("stopped")   # the first build's clean round is cleared
+        assert o()["stage"] == "critique" and not o().get("stopped")
         critique.critique("budget")
     assert [p.name for p in heard[0][2]][:1] == ["S1-window-full.png"] and o()["stage"] == "r3"
     assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"] and not o().get("working")
-    assert not o().get("r3") and [c.get("build") for c in o()["critiques"]] == ["a" * 64, "b" * 64, "b" * 64]
+    assert not o().get("r3") and [c.get("freeze") for c in o()["critiques"]] == ["f1", "f2", "f2"]
     assert "r3_sheet" not in critique.extra(oneshot_spec.spec_of("budget"))   # a held run opens no review state
 
 
+def test_a_look_of_another_freeze_than_the_runs_goes_back_to_the_build(judged):
+    pc_run([])
+    oneshot_spec.saved("budget", oneshot={"desktop_build": {"identity": "a" * 64}})   # an earlier version's record
+    heard, asking = critic(said())
+    with asking, patch.object(critique.review, "rebuild", lambda repo, store, why, stage: heard.append((why, stage))):
+        critique.critique("budget")
+    assert heard == [("마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다", "build-front")]
+
+
+def test_a_clean_round_at_the_cap_earns_its_confirming_round(judged):
+    pc_run([])
+    high = {"severity": "high", "route": "/", "viewport": "window", "state": "full", "what": "x"}
+    oneshot_spec.saved("budget", oneshot={"critiques": [{"look": 1, "head": "a" * 40, "findings": [high], "clean": False,
+                                                         "freeze": "f0", "ts": 1}] * (critique.MAX_ROUNDS - 1)})
+    _, asking = critic(said())
+    with asking:
+        critique.critique("budget")   # the cap's round, clean on the new freeze
+    assert not o().get("stopped") and o()["working"] == "critique" and len(o()["critiques"]) == critique.MAX_ROUNDS
+
+
 def test_a_look_that_ran_none_of_the_pc_apps_owed_look_checks_goes_back_to_the_build(judged):
-    owed = {"id": "O1", "kind": "desktop", "source": "look", "requirement": "R1", "check": "켜짐",
-            "act": {"action": "toggle", "id": "translate-on"}, "expect": {"id": "translate-on", "toggle": "On"}}
-    screens = [{**{k: v for k, v in s.items() if k != "route"}, "surface": "window"} for s in FRONT["screens"]]
-    oneshot_spec.saved("budget", oneshot={"intent": {"restated": "가계부", "kind": "desktop"}, "owed": [owed],
-                                          "front": {**FRONT, "screens": screens}, "looks": [pc_look(1, "a" * 64)],
-                                          "profile": {**o()["profile"], "window": "1280x800"}})   # 9e4a's look
+    pc_run([{"id": "O1", "kind": "desktop", "source": "look", "requirement": "R1", "check": "켜짐",
+             "act": {"action": "toggle", "id": "translate-on"}, "expect": {"id": "translate-on", "toggle": "On"}}])
     heard, asking = critic(said())
     with asking, patch.object(critique.review, "rebuild", lambda repo, store, why, stage: heard.append((why, stage))):
         critique.critique("budget")
     assert heard == [("PC 앱에서 확인할 O1 을 마지막 화면 검사가 돌리지 않았다", "build-front")]
 
 
-def test_a_build_frozen_again_never_brings_back_its_clean_rounds_whichever_kind_judged_between():
-    rounds = [{"head": "h", "clean": True, "build": "A", "ts": 1}, {"head": "h", "clean": True, "build": "A", "ts": 3}]
-    assert critique.passed(rounds, "h", "A") and not critique.passed(rounds, "h", "A", since=2)   # A frozen again at 2
-    assert critique.passed([*rounds, {**rounds[-1], "ts": 4}], "h", "A", since=2)
-    assert critique.frozen_at({"desktop_build": {"frozen": 2.5}}) == 2.5 and critique.frozen_at({}) == 0
+def test_a_build_frozen_again_never_brings_back_its_clean_rounds_whatever_the_clock_says():
+    rounds = [{"head": "h", "clean": True, "freeze": "f1", "ts": 110}, {"head": "h", "clean": True, "freeze": "f3", "ts": 95}]
+    assert not critique.passed(rounds, "h", "f3")   # the same files frozen again as f3, the clock moved back
+    assert critique.passed([*rounds, {**rounds[-1], "ts": 96}], "h", "f3")
 
 
 def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts(judged):

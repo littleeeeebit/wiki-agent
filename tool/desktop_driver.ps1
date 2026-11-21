@@ -314,6 +314,11 @@ try {
   foreach ($step in $ask.steps) {
     $done = [ordered]@{ name = $step.name; action = $step.action; acted = $false; error = $null; state = $null; expect = $step.expect }
     $report.steps += $done
+    if ($step.action -eq "wait") {   # the server's control: nothing acted on, the same settle, then the state
+      $done.acted = $true; Save; Settle
+      $done.state = (State "after-$($step.name)").id
+      Save; continue
+    }
     Enter "find $($step.name)"
     $found = Target $step
     if ($found.error) { $done.error = $found.error; Save; continue }

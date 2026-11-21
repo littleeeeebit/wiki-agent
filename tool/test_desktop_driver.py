@@ -291,6 +291,20 @@ def test_a_check_reads_a_controls_value_and_toggle_state_after_its_steps(tmp_pat
     assert ("step on: its postcondition was not read" in desktop_driver.findings(report)) is not holds
 
 
+def test_the_servers_wait_step_acts_on_nothing_and_reads_the_state_after_the_same_settle(tmp_path):
+    script = tmp_path / "form.ps1"
+    script.write_text(WPF_FORM, encoding="utf-8")
+    steps = [{"name": "control", "action": desktop_driver.WAIT, "expect": {"id": "translate-on", "toggle": "On"}}]
+    with desktop_session.look(tmp_path, "form-wait") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), steps, wait=30, settle_ms=800)
+    [step] = report["steps"]
+    assert report["phase"] == "done" and step["acted"] and step["state"] == "s01" and not step["error"], report
+    states = {s["id"]: s for s in report["states"]}
+    assert [n.get("toggle") for n in states["s01"]["nodes"] if n.get("id") == "translate-on"] == ["Off"]
+
+
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
     state = {"nodes": [{"id": "a", "name": "번역", "value": "", "toggle": "On"}, {"id": "b", "value": "x"},
                        {"id": "c", "toggle": "On", "foreign": True}]}
