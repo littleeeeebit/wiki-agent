@@ -533,11 +533,42 @@ def test_connections_lingering_after_an_early_refusal_still_count_toward_the_cap
         relay.close()
 
 
-def test_an_event_that_crosses_the_limit_in_the_chunk_that_ends_it_is_still_refused():
+def broken(*parts: bytes) -> list[bytes]:
+    """What one `Events` lets out for `parts`, which must end it broken."""
+
     events = deepseek_relay.Events("sk-fixture")
-    assert events.feed(b"data: " + b"x" * 1000) == []
+    out = [event for part in parts for event in events.feed(part)]
+    assert events.broken, parts[-1][:60]
+    assert events.feed(b"data: {}\n\n") == []   # nothing after the break goes on
+    return out
+
+
+def test_an_event_that_crosses_the_limit_in_the_chunk_that_ends_it_is_still_refused():
+    assert broken(b'data: "' + b"x" * 1000, b"x" * deepseek_relay.LONGEST_EVENT + b'"\n\n') == []
+
+
+def test_the_events_before_one_that_cannot_go_on_go_on_however_the_reads_split():
+    good = b'data: {"n": 1}\n\ndata: {"n": 2}\n\n'
+    for bad in (b"data: not json\n\n", b'data: {"m": 1, "m": 2}\n\n'):
+        stream = good + bad + b'data: {"n": 3}\n\n'
+        for cut in (len(good) // 2, len(good), len(good) + 3, len(stream)):
+            assert broken(stream[:cut], stream[cut:]) == [b'data: {"n": 1}\n\n', b'data: {"n": 2}\n\n'], cut
+
+
+def test_an_event_past_the_limit_once_written_again_is_refused():
+    """ASCII escapes grow a non-ASCII string sixfold: an event under the limit as it came can pass it as it goes."""
+
+    wide = "é".encode() * (deepseek_relay.LONGEST_EVENT // 4)   # half the limit in, three times it out
+    assert broken(b'data: {"n": 1}\n\ndata: "' + wide + b'"\n\n') == [b'data: {"n": 1}\n\n']
+    # The JSON fits once written again, but its other fields and `data: ` take the whole event past the limit.
+    fits = deepseek_relay.LONGEST_EVENT - len(b"data: ")   # `data: ` and this JSON fill the limit exactly
+    near = b'"' + "é".encode() * ((fits - 2) // 6) + b"x" * ((fits - 2) % 6) + b'"'
+    assert len(deepseek_relay.rewritten_json(near, "sk-fixture")) == fits
+    alone = deepseek_relay.Events("sk-fixture").feed(b"data: " + near + b"\n\n")
+    assert [len(event) for event in alone] == [deepseek_relay.LONGEST_EVENT + 2]   # at the limit, then its blank line
+    assert broken(b"event: delta\ndata: " + near + b"\n\n") == []   # the retained field alone takes it past
     with pytest.raises(ValueError):
-        events.feed(b"x" * deepseek_relay.LONGEST_EVENT + b"\n\n")
+        deepseek_relay.clean_body(b'"' + "é".encode() * (deepseek_relay.LONGEST_BODY // 4) + b'"', "sk-fixture")
 
 
 def test_a_bom_at_any_line_start_is_read_the_way_the_sdk_reads_it():
@@ -564,9 +595,7 @@ def test_a_bom_at_any_line_start_is_read_the_way_the_sdk_reads_it():
 
 
 def test_json_nested_past_what_python_decodes_ends_the_stream_rather_than_passing():
-    events = deepseek_relay.Events("sk-fixture")
-    with pytest.raises(ValueError):
-        events.feed(b"data: " + b"[" * 200_000 + b"]" * 200_000 + b"\n\n")
+    assert broken(b"data: " + b"[" * 200_000 + b"]" * 200_000 + b"\n\n") == []
 
 
 def test_event_data_python_will_not_read_plainly_never_goes_on():
@@ -577,8 +606,7 @@ def test_event_data_python_will_not_read_plainly_never_goes_on():
     escaped = b'"\\u0073k-fixture"'
     for data in (b'{"n": ' + b"9" * 5000 + b', "m": ' + escaped + b"}", b'{"m": ' + escaped + b', "m": "ok"}',
                  b'{"n": NaN, "m": ' + escaped + b"}", b"bad key " + escaped):
-        with pytest.raises(ValueError):
-            deepseek_relay.Events("sk-fixture").feed(b"data: " + data + b"\n\n")
+        assert broken(b"data: " + data + b"\n\n") == []
     out = deepseek_relay.Events("sk-fixture").feed(b'data: {"m":' + escaped + b',"t":"\\u00e9"}\n\n')
     assert out == [b'data: {"m": "[key]", "t": "\\u00e9"}\n\n']
 
@@ -589,10 +617,7 @@ def test_an_event_exactly_at_the_limit_passes_however_its_blank_line_is_split():
         events = deepseek_relay.Events("sk-fixture")
         assert b"".join(out for part in layout for out in events.feed(part)) == at + b"\n\n", len(layout)
     for layout in ([at + b" \n\n"], [at + b" \n", b"\n"]):
-        events = deepseek_relay.Events("sk-fixture")
-        with pytest.raises(ValueError):
-            for part in layout:
-                events.feed(part)
+        assert broken(*layout) == []
 
 
 def wait_until(check, within: float) -> bool:
