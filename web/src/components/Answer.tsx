@@ -63,7 +63,9 @@ export const Answer = memo(function Answer({ text, korean, remote, onPeek, onDec
         urlTransform={(href, key) => fileLink(href) ? href : keepSources(href, key)}
         components={{
           img: ({ src, alt }) => <Picture src={typeof src === 'string' ? src : undefined} alt={alt} />,
-          a: ({ href, children }) => {
+          a: function Anchor({ href, children }) {
+            // A link inside a link's text (a footnote reference in it) stays words: anchors do not nest.
+            if (useContext(InLink)) return <span>{children}</span>
             const file = fileLink(href ?? '')
             // A picture inside the link, however deep in its formatting, is its content and opens the link.
             const text = <InLink.Provider value>{children}</InLink.Provider>

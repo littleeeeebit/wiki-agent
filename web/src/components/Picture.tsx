@@ -16,7 +16,7 @@ export function Picture({ src, alt, fallback }: { src?: string; alt?: string; fa
   const [zoomed, setZoomed] = useState(false)
   const local = !!src && !/^(https?|data|blob):/i.test(src) && !src.startsWith('//')
   // With no alt, the file's name: a picture that cannot be drawn never leaves its link with nothing to show.
-  if (!repo || !local || broken) return fallback ?? <span>{alt || src?.split(/[\\/]/).pop() || '그림'}</span>
+  if (!repo || !local || broken) return fallback ?? <span>{alt?.trim() || src?.split(/[\\/]/).pop() || '그림'}</span>
   const url = `/api/image?${new URLSearchParams({ repo, path: src })}`
   const image = <img src={url} alt={alt ?? ''} loading="lazy" onError={() => setBroken(true)}
     className="max-h-[480px] w-full rounded-md border border-border bg-background object-contain" />

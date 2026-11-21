@@ -220,6 +220,7 @@ def main():
             reply += "\n\n[Synthetic linked result](C:/fixture/shots/result.webp)"
             # A citation inside a link is the link's words; a broken picture with no alt still shows something.
             reply += "\n\n[see `src/app.ts:3` here](https://example.com/cited) [![](C:/fixture/shots/missing.png)](https://example.com/broken)"
+            reply += " [![ ](C:/fixture/shots/missing.png)](https://example.com/spaced) [source[^a]](https://example.com/noted)\n\n[^a]: Note."
             return {"rows": [{"role": "assistant", "text": reply,
                     "steps": [{"kind": "progress", "text": f"Synthetic translation progress {translation_mode}"},
                               {"kind": "tool", "text": f"Synthetic translation tool {translation_mode}"},
@@ -731,7 +732,9 @@ def main():
             cited = page.locator('a[href="https://example.com/cited"]')
             expect(cited.locator("code")).to_have_text("src/app.ts:3")
             assert cited.get_by_role("button").count() == 0   # one click, one control
-            expect(page.locator('a[href="https://example.com/broken"]')).to_have_text("missing.png")
+            for href in ("broken", "spaced"):   # no alt, or only spaces: the file's name
+                expect(page.locator(f'a[href="https://example.com/{href}"]')).to_have_text("missing.png")
+            assert page.locator('a[href="https://example.com/noted"] a').count() == 0   # anchors do not nest
             assert page.get_by_role("img", name="Synthetic outside").count() == 0   # a web address stays its alt text
             page.route("https://example.com/**", lambda route: route.fulfill(body="Synthetic PR"))
             with page.expect_popup() as popup:
