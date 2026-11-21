@@ -391,6 +391,19 @@ def test_a_stop_before_the_worker_starts_holds(handset, monkeypatch):
     assert o()["stage"] == "phone" and o()["phone"]["detail"] == "휴대폰 회차를 멈췄다" and handset.present == {}
 
 
+def test_a_round_after_a_pc_look_of_no_current_freeze_goes_back_to_the_build(handset, monkeypatch):
+    """A mixed run an earlier version saved at the phone prompt: its PC look names no freeze, so no phone round
+    starts on it."""
+
+    monkeypatch.setattr(oneshot_spec, "view", lambda s: s)
+    picked(keep=True)
+    oneshot_spec.saved("budget", oneshot={"looks": [{"round": 1, "head": "a" * 40, "findings": [], "build": "a" * 64}]})
+    sent = []
+    monkeypatch.setattr(review, "rebuild", lambda repo, store, why, stage: sent.append((why, stage)))
+    phone_round.phone_round("budget")
+    assert sent == [("마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다", "build-front")] and handset.present == {}
+
+
 def test_a_round_that_settled_what_stays_on_the_phone_refuses_a_stop(handset, monkeypatch):
     """Past the round's own end, the worktree's last check still runs: a stop then is refused, never accepted
     and then ignored."""

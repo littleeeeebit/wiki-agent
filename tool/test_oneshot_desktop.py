@@ -180,9 +180,10 @@ def test_a_built_pc_app_core_is_reviewed(desktop, kinds):
 
 LOOK = {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "번역 켜기가 꺼진 채 남는다", "evidence": "x",
         "area": "toggle", "device": {"kind": "desktop", "requirement": "R1", "check": "`translate` 토글이 켜진다",
-                                     "source": "look"}}
-OWNER = {**LOOK, "device": {**LOOK["device"], "check": "고정 창을 캡처한 결과가 `{data}/seen.txt` 에 그 글을 담는다",
-                            "source": "owner"}}
+                                     "source": "look", "act": {"action": "toggle", "id": "translate"},
+                                     "expect": {"id": "translate", "toggle": "On"}}}
+OWNER = {**LOOK, "device": {**{k: v for k, v in LOOK["device"].items() if k not in ("act", "expect")},
+                            "check": "고정 창을 캡처한 결과가 `{data}/seen.txt` 에 그 글을 담는다", "source": "owner"}}
 
 
 def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
@@ -192,10 +193,19 @@ def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
     found = oneshot_review.verdict_of(approve(LOOK, OWNER), "h", devices)
     assert [f["device"]["source"] for f in found["findings"]] == ["look", "owner"]
     assert [x["source"] for x in oneshot_review.owing(found)] == ["look", "owner"]
+    assert [x.get("expect") for x in oneshot_review.owing(found)] == [{"id": "translate", "toggle": "On"}, None]
     for bad in ({"source": None}, {"source": "screen"}, {"source": "Look"}):   # neither source: no deferral
         with pytest.raises(ValueError, match="`source`"):
             oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], **bad}}), "h", devices)
-    gone = {**LOOK, "device": {k: v for k, v in LOOK["device"].items() if k != "source"}}
+    for bad in ({"expect": None}, {"expect": {"id": "translate"}}, {"expect": {"name": "번역"}}, {"act": None},
+                {"act": {"action": "click", "id": "translate"}}, {"act": {"action": "set_value", "id": "translate"}}):
+        with pytest.raises(ValueError, match="`expect`"):   # a `look` check names its step and what it brings about
+            oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], **bad}}), "h", devices)
+    for extra in ({"expect": LOOK["device"]["expect"]}, {"act": LOOK["device"]["act"]}):   # an owner's names neither
+        with pytest.raises(ValueError, match="`expect`"):
+            oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], **extra}}), "h", devices)
+    assert oneshot_review.owing(found)[0]["act"] == {"action": "toggle", "id": "translate"}
+    gone = {**LOOK, "device": {k: v for k, v in LOOK["device"].items() if k not in ("source", "act", "expect")}}
     with pytest.raises(ValueError, match="`source`"):
         oneshot_review.verdict_of(approve(gone), "h", devices)
     phone = {"android": {"R1"}}   # an Android deferral names none
@@ -557,15 +567,15 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    # A PC app runs its frontend build and its look, alone or among other kinds (9e4a), and is held at the critique.
-    assert oneshot_profile.waits_at(o()) == "critique" and not oneshot_profile.held({**o(), "stage": "build-front"})
-    oneshot_spec.saved("budget", oneshot={"stage": "build-front",
+    # A PC app runs through its critique, alone or among other kinds (9e4b), and is held before R3.
+    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held({**o(), "stage": "critique"})
+    oneshot_spec.saved("budget", oneshot={"stage": "critique",
                                           "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
-    assert oneshot_profile.waits_at(o()) == "critique" and not oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held(o())
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
-        START("budget", "design", stage="critique")
-    assert o()["stage"] == "build-front"
+        START("budget", "design", stage="r3")
+    assert o()["stage"] == "critique"
 
 
 def frozen_in(tree, tmp_path) -> dict:
@@ -583,33 +593,45 @@ def frozen_in(tree, tmp_path) -> dict:
     return {"identity": identity, "folder": str(tmp_path / "app"), "head": git_head(tree), "launch": launch}
 
 
-def test_a_resume_or_a_shutdown_after_the_looks_passed_never_starts_the_critique(desktop, tmp_path):
-    # Every look passed on the frozen build, then the stop was lost (a restart that replaced it): the run is held
-    # at the critique with its build, never resumable into it.
+def test_a_resume_or_a_shutdown_after_two_clean_rounds_never_opens_r3(desktop, tmp_path):
+    # Two clean critiques passed on the frozen build, then the stop was lost (a restart that replaced it): the run
+    # is held before R3 with its build, never resumable into it, and its stop names the owner's pending checks.
     frozen = frozen_in(desktop, tmp_path)
-    oneshot_spec.saved("budget", oneshot={"stage": "critique", "working": None, "features": [],
+    owner = {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처에 글이 있다"}
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "features": [], "owed": [owner],
                                           "desktop_build": frozen,
-                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다",
-                                                      "state": "critique"}})
+                                          "stopped": {"reason": "restart", "detail": "서버가 다시 켜졌다", "state": "r3"}})
     assert oneshot_profile.held(o())
     with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
-    assert o()["stopped"]["reason"] == "kind"
-    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "critique", "detail": "x"}})
+    assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"]
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "r3", "detail": "x"}})
     oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "critique" and o()["desktop_build"] == frozen
+    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "r3" and o()["desktop_build"] == frozen
 
 
-def test_several_kinds_an_earlier_version_held_past_the_build_stay_held(desktop):
+def test_a_mixed_run_whose_phone_round_passed_waits_before_r3_instead_of_opening_it(desktop):
+    from main import oneshot_phone
+
+    oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
+                                          "stage": "phone", "working": "phone", "phone": {"status": "running"}})
+    assert oneshot_phone.settled("budget", {"status": "passed", "detail": ""}) is None   # no brief is written
+    assert o()["stage"] == "r3" and o()["phone"]["status"] == "passed" and o()["stopped"]["reason"] == "kind"
+    assert not o().get("working") and "R3 는 다음 버전에서" in o()["stopped"]["detail"]
+    held = {k: v for k, v in o().items() if k != "ts"}
+    oneshot_phone.earlier("budget", o())   # the phone's recovery hook leaves a run this version holds as it is
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "kind" and not o().get("r3") and o()["stage"] == held["stage"] == "r3"
+
+
+def test_several_kinds_an_earlier_versions_run_held_at_the_critique_is_resumable(desktop):
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "critique", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "critique"}})
-    assert oneshot_profile.waits_at(o()) == "critique" and oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held(o())
     oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind"
-    with pytest.raises(HTTPException, match="다음 버전"):
-        oneshot_spec.resume("budget")
+    assert o()["stopped"]["reason"] == "restart" and o()["stage"] == "critique"   # `[재개]` starts the critique
 
 
 @pytest.mark.parametrize("stop", [None, {"reason": "kind", "detail": "다음 버전", "state": "build-front"}])
@@ -630,8 +652,8 @@ def test_an_earlier_versions_frozen_run_at_the_build_is_resumable(desktop, tmp_p
 
 
 def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage_nor_its_build_again(desktop, tmp_path):
-    # Every look passed and the run waits at the critique (9e4a): neither the hand-off nor a start moves it back.
-    stage = "critique"
+    # Two clean critiques passed and the run waits before R3 (9e4b): neither the hand-off nor a start moves it back.
+    stage = "r3"
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": stage, "working": None, "stopped": None, "features": [],
                                           "desktop_build": frozen_in(desktop, tmp_path)})

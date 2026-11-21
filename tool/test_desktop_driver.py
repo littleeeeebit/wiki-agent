@@ -262,6 +262,56 @@ def test_an_owned_window_that_carries_the_id_is_no_second_target_in_the_main_win
     assert report["steps"][0].get("acted") and not report["steps"][0].get("error"), report
 
 
+WPF_FORM = """Add-Type -AssemblyName PresentationFramework
+$A = [System.Windows.Automation.AutomationProperties]
+$w = New-Object System.Windows.Window
+$w.Title = "form"; $w.Width = 400; $w.Height = 300
+$panel = New-Object System.Windows.Controls.StackPanel
+$box = New-Object System.Windows.Controls.TextBox; $box.Height = 32; $A::SetAutomationId($box, "source"); $A::SetName($box, "원문")
+$check = New-Object System.Windows.Controls.CheckBox; $check.Content = "번역"; $check.Height = 32; $A::SetAutomationId($check, "translate-on")
+[void]$panel.Children.Add($box); [void]$panel.Children.Add($check)
+$w.Content = $panel
+[void]$w.ShowDialog()
+"""
+
+
+@pytest.mark.parametrize("want, holds", [("On", True), ("Off", False)])
+def test_a_check_reads_a_controls_value_and_toggle_state_after_its_steps(tmp_path, want, holds):
+    script = tmp_path / "form.ps1"
+    script.write_text(WPF_FORM, encoding="utf-8")
+    steps = [{"name": "type", "action": "set_value", "id": "source", "value": "안녕", "expect": {"id": "source", "value": "안녕"}},
+             {"name": "on", "action": "toggle", "id": "translate-on", "expect": {"id": "translate-on", "toggle": want}}]
+    with desktop_session.look(tmp_path, f"form-{want}") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), steps, wait=30, settle_ms=800)
+    states = {s["id"]: s for s in report["states"]}
+    assert [desktop_driver.holds(states[s["state"]], s["expect"]) for s in report["steps"]] == [True, holds], report
+    assert [n.get("toggle") for n in states["s00"]["nodes"] if n.get("id") == "translate-on"] == ["Off"]
+    assert ("step on: its postcondition was not read" in desktop_driver.findings(report)) is not holds
+
+
+def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
+    state = {"nodes": [{"id": "a", "name": "번역", "value": "", "toggle": "On"}, {"id": "b", "value": "x"},
+                       {"id": "c", "toggle": "On", "foreign": True}]}
+    assert desktop_driver.holds(state, {"id": "a", "toggle": "On"}) and desktop_driver.holds(state, {"id": "a", "value": ""})
+    assert not desktop_driver.holds(state, {"id": "a", "value": "x"})   # `x` is another element's
+    assert not desktop_driver.holds(state, {"id": "c", "toggle": "On"})   # another process's element
+    assert desktop_driver.holds(state, {"name": "번역"}) and not desktop_driver.holds(state, {"value": "x"})   # no id, no name
+
+
+def test_a_postcondition_in_a_window_reads_the_one_element_there_its_id_names():
+    on = {"id": "t", "toggle": "On"}
+    state = {"windows": [{"hwnd": 1, "owner": 0}, {"hwnd": 2, "owner": 1}],
+             "nodes": [{"window": 1, "id": "t", "toggle": "Off"}, {"window": 2, "id": "t", "toggle": "On"}]}
+    report = {"main": {"hwnd": 1}}
+    assert desktop_driver.holds(state, on) and not desktop_driver.holds(state, on, desktop_driver.scope(report, state, "main"))
+    assert desktop_driver.holds(state, on, desktop_driver.scope(report, state, "owned"))
+    twice = {**state, "nodes": [*state["nodes"], {"window": 2, "id": "t", "toggle": "On"}]}
+    assert not desktop_driver.holds(twice, on, 2)   # two elements carry the id: which one is unproven
+    assert desktop_driver.scope(report, {**state, "windows": state["windows"][:1]}, "owned") is None
+
+
 def test_a_result_that_cannot_be_saved_still_returns_the_unproven_end(tmp_path, monkeypatch):
     look = types.SimpleNamespace(folder=tmp_path, jobs={"app": types.SimpleNamespace(name="job"), "driver": None},
                                  check_key=lambda key: None, start=lambda *a, **k: None)
