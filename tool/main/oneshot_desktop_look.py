@@ -23,7 +23,7 @@ VIEW = "window"
 PREFIX = "feature:"
 END_SECONDS = 30
 SETTLE_MS = 1000
-PROOF = 3   # how a look proves a `look` check: a look saved with another proves none of them
+PROOF = 4   # how a look proves a `look` check: a look saved with another proves none of them
 LOOK_SECONDS = 30 * 60   # a whole look: every screen and state, the probes and the owed checks
 TRY = "try"   # the one step a `sometimes` probe takes; a probe that does not show the feature misses this one
 MISSED = f"step {TRY}: its postcondition was not read"
@@ -170,9 +170,10 @@ class Launches:
                     if k.upper() not in oneshot_desktop.LOOK_ENV}, "ONESHOT_SCREEN": sid, "ONESHOT_STATE": state}
         report, failed = {}, None
         try:
+            began = time.time_ns() // 1_000_000   # the app's start lies between these, on the wall clock
             self.look.start(key, argv, folder / launch["cwd"], extra, halt=self.halt)
             report = desktop_driver.drive(self.look, key, self.window, steps, settle_ms=SETTLE_MS,
-                                          key=f"driver{self.n}", halt=self.halt)
+                                          key=f"driver{self.n}", halt=self.halt, launch=(began, time.time_ns() // 1_000_000))
         except desktop_session.Refused as exc:
             failed = ValueError(f"PC 앱을 띄우지 못했다 — {exc}")
             failed.__cause__ = exc
@@ -243,23 +244,24 @@ def checks(runs: Launches, spec: dict, build: dict) -> list[dict]:
                  "or was not read false before the last step"]
             out.append(finding(scenario["screen"], scenario["state"], f"{failed} — {'; '.join(why)} · 확인: {x['check']}"))
             continue
-        # The control: the same lead-in, then nothing acted on, its last state read no sooner after the start and
-        # after each lead-in action than the scenario's last state finished its read. A postcondition the lead-in
-        # or the app brings about late is never the review's step's.
-        after = [chain(report, len(steps))[-1]["done"] - m for m in anchors(report, len(steps))]
+        # The control: the same lead-in, then nothing acted on, its last state read no sooner after the app's start
+        # and each lead-in action ended than the scenario's last state finished its read after they began. A
+        # postcondition the lead-in or the app brings about late is never the review's step's.
+        after = [chain(report, len(steps))[-1]["done"] - m for m in anchors(report, len(steps), late=False)]
         control = runs.drive(scenario["screen"], scenario["state"], [
             *steps[:-1], {"name": "control", "action": desktop_driver.WAIT, "after": after, "expect": x["expect"]}])
-        if not unmoved(control, report, steps, after):
+        if not unmoved(control, report, steps, after, set(scenario.get("volatile", []))):
             out.append(finding(scenario["screen"], scenario["state"], f"{failed} — 리뷰의 동작 없이 같은 시간을 기다린 "
                                "대조 실행에서 준비가 같지 않았거나 결과가 거짓으로 읽히지 않았다 · 확인: " + x["check"]))
     return out
 
 
-def anchors(report: dict, n: int) -> list[int]:
-    """A read of `n` steps' comparable points on its clock: the app's start, its start state's read, then each of
-    its lead-in steps' actions (all but the last)."""
+def anchors(report: dict, n: int, late: bool) -> list[int]:
+    """Where a read of `n` steps may have set something going, on its clock: the app's start, then each of its
+    lead-in steps' actions (all but the last); each as it began, or with `late` as it ended."""
 
-    return [report["launched"], report["states"][0]["at"], *(s["acted_at"] for s in report["steps"][:n - 1])]
+    i = int(late)
+    return [report["launched"][i], *(s[("acting_at", "acted_at")[i]] for s in report["steps"][:n - 1])]
 
 
 def chain(report: dict, n: int) -> list[dict] | None:
@@ -270,7 +272,9 @@ def chain(report: dict, n: int) -> list[dict] | None:
     order, steps, at = [s["id"] for s in states], report.get("steps") or [], 0
     if not complete(report) or len(steps) != n or not states or not all(
             type(s.get("at")) is int and type(s.get("done")) is int for s in states) or not all(
-            type(s.get("acted_at")) is int for s in steps[:n - 1]) or type(report.get("launched")) is not int:
+            type(s.get(k)) is int for s in steps[:n - 1] for k in ("acting_at", "acted_at")) or not (
+            isinstance(report.get("launched"), list) and len(report["launched"]) == 2
+            and all(type(t) is int for t in report["launched"])):
         return None
     out = [states[0]]
     for step in steps:
@@ -302,11 +306,11 @@ def proved(report: dict, wants: list[dict]) -> bool:
 GAP_MS = 400   # ponytail: a control samples its expect's element this often at least; a shorter blip can slip by
 
 
-def unmoved(control: dict, run: dict, steps: list[dict], after: list[int]) -> bool:
+def unmoved(control: dict, run: dict, steps: list[dict], after: list[int], volatile: set[str] = frozenset()) -> bool:
     """The control of `run`'s `steps`, for an honest build: every state of its lead-in shows the app as `run`'s
-    did, its last state's read began at least `after[k]` ms past each of its anchors, and the review's
-    postcondition reads false before its wait, in every sample of its element no more than `GAP_MS` apart along
-    the wait, and after it."""
+    did, `volatile` aside, its last state's read began at least `after[k]` ms past each of its anchors as they
+    ended, and the review's postcondition reads false before its wait, in every sample of its element, each read
+    within `GAP_MS` of the one before, and after it."""
 
     import desktop_driver
 
@@ -314,24 +318,32 @@ def unmoved(control: dict, run: dict, steps: list[dict], after: list[int]) -> bo
     if states is None or ran is None:
         return False
     want, samples = steps[-1]["expect"], control["steps"][-1].get("samples") or []
-    ats = [states[-2]["done"], *(x.get("at") for x in samples), states[-1]["at"]]
-    if not samples or not all(type(t) is int for t in ats) or any(b - a > GAP_MS for a, b in zip(ats, ats[1:])):
+    # A sample read its element, or proved there is none, somewhere between its `from` and its `at`: the gap
+    # between two is at most the later one's end less the earlier one's start. A failed lookup reads nothing.
+    read = [x for x in samples if (x.get("node") or x.get("absent")) and type(x.get("from")) is int
+            and type(x.get("at")) is int]
+    spans = [(states[-2]["done"], states[-2]["done"]), *((x["from"], x["at"]) for x in read),
+             (states[-1]["at"], states[-1]["at"])]
+    if not read or any(b[1] - a[0] > GAP_MS for a, b in zip(spans, spans[1:])):
         return False
-    return all(states[-1]["at"] - m >= a for m, a in zip(anchors(control, len(steps)), after)) \
-        and all(seen(control, states[k]) == seen(run, ran[k]) for k in range(len(steps))) \
+    return all(states[-1]["at"] - m >= a for m, a in zip(anchors(control, len(steps), late=True), after)) \
+        and all(seen(control, states[k], volatile) == seen(run, ran[k], volatile) for k in range(len(steps))) \
         and not any(x.get("node") and desktop_driver.holds({"nodes": [x["node"]]}, want) for x in samples) \
         and refuted(control, states[-2], want) and refuted(control, states[-1], want)
 
 
-def seen(report: dict, state: dict) -> list[tuple]:
-    """What `state` shows of the app: each element with an id, by the window it is in (the main one, one it owns,
-    another), with its name, value and toggle state."""
+SEEN = ("name", "value", "toggle", "selected", "enabled")
+
+
+def seen(report: dict, state: dict, volatile: set[str] = frozenset()) -> list[tuple]:
+    """What `state` shows of the app: each element with an id outside `volatile`, by the window it is in (the
+    main one, one it owns, another), with its name, value, toggle and selection state and whether it is enabled."""
 
     main = report["main"]["hwnd"]
     role = {w["hwnd"]: "main" if w["hwnd"] == main else "owned" if w.get("owner") == main else "other"
             for w in state.get("windows") or []}
-    return sorted((role.get(n.get("window"), "other"), n["id"], *(str(n.get(k)) for k in ("name", "value", "toggle")))
-                  for n in state["nodes"] if not n.get("foreign") and n.get("id"))
+    return sorted((role.get(n.get("window"), "other"), n["id"], *(str(n.get(k)) for k in SEEN))
+                  for n in state["nodes"] if not n.get("foreign") and n.get("id") and n["id"] not in volatile)
 
 
 def refuted(report: dict, state: dict, want: dict) -> bool:

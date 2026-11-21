@@ -48,10 +48,10 @@ def report(nodes: list[dict], windows=(MAIN,), sid="S1", steps=(), owners=None) 
                 "nodes": [window(h) for h in windows] + held}
 
     states = [state(0, "start", nodes)] + [state(i, f"after-{s['name']}", s.pop("shows")) for i, s in enumerate(steps, 1)]
-    return {"phase": "done", "main": {"hwnd": MAIN}, "launched": -500, "size": {"asked": [1280, 800], "moved": True,
+    return {"phase": "done", "main": {"hwnd": MAIN}, "launched": [-600, -400], "size": {"asked": [1280, 800], "moved": True,
                                                               "frame": [0, 0, 1280, 800]},
-            "states": states, "steps": [{**s, "acted": True, "acted_at": i * 1000 - 500, "state": f"s{i:02d}"}
-                                        for i, s in enumerate(steps, 1)],
+            "states": states, "steps": [{**s, "acted": True, "acting_at": i * 1000 - 600, "acted_at": i * 1000 - 500,
+                                         "state": f"s{i:02d}"} for i, s in enumerate(steps, 1)],
             "ended": None, "end": None, "last": "done", "sid": sid}
 
 
@@ -563,9 +563,10 @@ def test_a_postcondition_is_refuted_only_off_a_read_that_proves_it_false():
 
 
 def late(got: dict, at: int, sample: dict, blip: dict | None = None) -> dict:
-    """`got` with its last state's read begun at `at`, its wait reading `sample` every 200 ms, `blip` once."""
+    """`got` with its last state's read begun at `at`, its wait reading `sample` every 200 ms, each read in 50 ms,
+    `blip` once."""
 
-    samples = [{"at": t, "node": sample} for t in range(got["states"][-2]["done"] + 200, at, 200)]
+    samples = [{"from": t - 50, "at": t, "node": sample} for t in range(got["states"][-2]["done"] + 200, at, 200)]
     if blip:
         samples[len(samples) // 2] = {**samples[len(samples) // 2], "node": blip}
     return {**got, "states": [*got["states"][:-1], {**got["states"][-1], "at": at, "done": at + 100}],
@@ -579,24 +580,37 @@ def test_a_control_counts_only_read_late_enough_with_its_lead_in_alike():
     box, switch = node("source", id="source", value="hi"), node("translate-on", id="translate-on", toggle="Off")
     run = report([{**box, "value": ""}, switch], steps=[{"name": "type", "shows": [box, switch]},
                                                         {"name": "on", "shows": [box, {**switch, "toggle": "On"}]}])
-    after = [run["states"][-1]["done"] - m for m in pc_look.anchors(run, 2)]
-    assert after == [2600, 2100, 1600]   # since the app started, the start state's read, and `type` acted
-    mode = node("mode", id="mode", value="Live")
+    after = [run["states"][-1]["done"] - m for m in pc_look.anchors(run, 2, late=False)]
+    assert after == [2700, 1700]   # since the app's start began, and since `type` began to act
+    mode, auto = node("mode", id="mode", value="Live"), node("auto", id="auto", selected=True)
+    clock = node("clock", id="clock", name="10:01:01")
 
-    def control(value, shown=mode):
+    def control(value, shown=mode, picked=auto, at="10:01:01"):
         return report([{**box, "value": ""}, switch], steps=[
-            {"name": "type", "shows": [{**box, "value": value}, switch, shown]}, {"name": "control", "shows": [box, switch]}])
+            {"name": "type", "shows": [{**box, "value": value}, switch, shown, picked, {**clock, "name": at}]},
+            {"name": "control", "shows": [box, switch]}])
 
-    run["states"][1]["nodes"].append(mode)
+    run["states"][1]["nodes"] += [mode, auto, clock]
     off = {**switch, "toggle": "Off"}
-    assert not pc_look.unmoved(late(control("hi"), 2000, off), run, steps, after)   # read at 2000: too soon
-    assert pc_look.unmoved(late(control("hi"), 2100, off), run, steps, after)
-    assert not pc_look.unmoved(late(control("x"), 2100, off), run, steps, after)   # it typed something else
-    assert not pc_look.unmoved(late(control("hi", {**mode, "value": "Manual"}), 2100, off), run, steps, after)
-    assert not pc_look.unmoved(late(control("hi"), 2100, off, blip={**switch, "toggle": "On"}), run, steps, after)
-    unsampled = late(control("hi"), 2100, off)
+    # Timed from where the control's start and `type` ended: -400 + 2700 and 500 + 1700.
+    assert not pc_look.unmoved(late(control("hi"), 2200, off), run, steps, after)   # read at 2200: too soon
+    assert pc_look.unmoved(late(control("hi"), 2300, off), run, steps, after)
+    assert not pc_look.unmoved(late(control("x"), 2300, off), run, steps, after)   # it typed something else
+    assert not pc_look.unmoved(late(control("hi", {**mode, "value": "Manual"}), 2300, off), run, steps, after)
+    assert not pc_look.unmoved(late(control("hi", picked={**auto, "selected": False}), 2300, off), run, steps, after)
+    ticked = late(control("hi", at="10:01:06"), 2300, off)   # a clock: alike only when the build names it volatile
+    assert not pc_look.unmoved(ticked, run, steps, after) and pc_look.unmoved(ticked, run, steps, after, {"clock"})
+    assert not pc_look.unmoved(late(control("hi"), 2300, off, blip={**switch, "toggle": "On"}), run, steps, after)
+    unsampled = late(control("hi"), 2300, off)
     unsampled["steps"][-1]["samples"] = unsampled["steps"][-1]["samples"][::3]   # 600 ms apart: a blip could hide
     assert not pc_look.unmoved(unsampled, run, steps, after)
+    unread = late(control("hi"), 2300, off)   # a failed lookup read nothing: a gap, never a false
+    unread["steps"][-1]["samples"][2:5] = [{**x, "node": None, "error": "2 elements match"}
+                                           for x in unread["steps"][-1]["samples"][2:5]]
+    assert not pc_look.unmoved(unread, run, steps, after)
+    gone = late(control("hi"), 2300, off)   # proved absent: read, and false
+    gone["steps"][-1]["samples"] = [{"from": x["from"], "at": x["at"], "absent": True} for x in gone["steps"][-1]["samples"]]
+    assert pc_look.unmoved(gone, run, steps, after)
     gone = report([], windows=(3,), owners={3: 0})   # the main window lost: no owned window proves nothing
     assert not pc_look.refuted({**gone, "main": {"hwnd": MAIN}}, gone["states"][0], {**on, "in": "owned"})
 
@@ -628,7 +642,7 @@ def test_a_look_check_passes_only_when_the_reviews_step_brings_its_postcondition
         switch = node("translate-on", id="translate-on", name="번역", patterns=["Toggle"], toggle="Off")
         if steps[-1]["action"] == "wait":   # it waits as told: its last read begins `after` past the app's start
             shown = {**switch, "toggle": "On" if case == "delayed" else "Off"}
-            return late(report([switch], steps=[{**steps[0], "shows": [shown]}]), -500 + steps[-1]["after"][0], shown)
+            return late(report([switch], steps=[{**steps[0], "shows": [shown]}]), -400 + steps[-1]["after"][0], shown)
         after = [{**switch, "toggle": "On" if case in ("on", "already on", "unread before", "its own act", "delayed")
                   else "Off"}]
         if case == "in the dialog":

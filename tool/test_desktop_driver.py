@@ -294,23 +294,26 @@ def test_a_check_reads_a_controls_value_and_toggle_state_after_its_steps(tmp_pat
 def test_the_servers_wait_step_acts_on_nothing_and_reads_the_state_after_the_same_settle(tmp_path):
     script = tmp_path / "form.ps1"
     script.write_text(WPF_FORM, encoding="utf-8")
-    steps = [{"name": "control", "action": desktop_driver.WAIT, "after": [0, 2500],   # the app's start, then s00's
+    steps = [{"name": "control", "action": desktop_driver.WAIT, "after": [6000],   # past the app's start
               "expect": {"id": "translate-on", "toggle": "On"}}]
     with desktop_session.look(tmp_path, "form-wait") as look:
+        began = time.time_ns() // 1_000_000
         look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                            str(script)], tmp_path)
-        report = desktop_driver.drive(look, "app", (400, 300), steps, wait=30, settle_ms=800)
+        launch = (began, time.time_ns() // 1_000_000)
+        report = desktop_driver.drive(look, "app", (400, 300), steps, wait=30, settle_ms=800, launch=launch)
     [step] = report["steps"]
     assert report["phase"] == "done" and step["acted"] and step["state"] == "s01" and not step["error"], report
     states = {s["id"]: s for s in report["states"]}
     assert [n.get("toggle") for n in states["s01"]["nodes"] if n.get("id") == "translate-on"] == ["Off"]
-    assert states["s01"]["at"] - states["s00"]["at"] >= 2500   # read as late as asked, past the 800 ms settle
-    assert states["s00"]["at"] <= states["s00"]["done"] <= states["s01"]["at"] and report["last"] == "done"
-    assert type(report["launched"]) is int and report["launched"] < states["s00"]["at"]   # the app started first
-    ats = [states["s00"]["done"], *(x["at"] for x in step["samples"]), states["s01"]["at"]]
+    early, late = report["launched"]
+    assert early <= late < states["s00"]["at"] <= states["s00"]["done"] <= states["s01"]["at"]   # the app started first
+    assert states["s01"]["at"] - late >= 6000 and report["last"] == "done"   # read as late as asked
     [read] = [{k: n[k] for k in ("id", "name", "toggle")} for n in states["s01"]["nodes"] if n.get("id") == "translate-on"]
     assert read["toggle"] == "Off" and all(x["node"] == read for x in step["samples"])
-    assert max(b - a for a, b in zip(ats, ats[1:])) <= 400, [b - a for a, b in zip(ats, ats[1:])]   # sampled all along (the look's `GAP_MS`), never acted on
+    spans = [(states["s00"]["done"],) * 2, *((x["from"], x["at"]) for x in step["samples"]), (states["s01"]["at"],) * 2]
+    gaps = [b[1] - a[0] for a, b in zip(spans, spans[1:])]
+    assert max(gaps) <= 400, gaps   # sampled all along (the look's `GAP_MS`), never acted on   # sampled all along (the look's `GAP_MS`), never acted on
 
 
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():

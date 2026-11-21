@@ -205,7 +205,12 @@ def _checks(value) -> dict:
             raise ValueError(f"{where} 의 마지막 step 은 {why}")
         if not all(isinstance(c.get(k), str) for k in ("screen", "state")):
             raise ValueError(f"{where} 의 screen 과 state 는 문자열이다")
-        out[cid] = {"screen": c["screen"], "state": c["state"], "steps": steps}
+        volatile = c.get("volatile", [])
+        if not isinstance(volatile, list) or not all(isinstance(v, str) and v for v in volatile) or len(volatile) > 20 \
+                or {s["expect"]["id"] for s in steps} & set(volatile):
+            raise ValueError(f"{where} 의 volatile 은 저절로 바뀌는 요소(시계 등)의 AutomationId 20개 이하이고, "
+                             "step 의 expect 가 읽는 요소는 넣지 않는다")
+        out[cid] = {"screen": c["screen"], "state": c["state"], "steps": steps, **({"volatile": volatile} if volatile else {})}
     return out
 
 
