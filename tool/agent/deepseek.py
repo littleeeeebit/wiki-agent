@@ -3,24 +3,27 @@
 The CLI stays the same and only where it sends requests, and with which key, changes. So every harness the app
 gives Claude (tools, hooks, permission prompts, `--resume`) runs unchanged. DeepSeek honours `output_config.effort`
 at `low`, `high` and `max`. Without a level it thinks at `high`, so the app asks for `max` unless one is chosen.
-The key is the hub's `.env` `DEEPSEEK_API_KEY`. The CLI reads it through `apiKeyHelper` (`tool/deepseek_key.py`), so it
-is never in the environment the CLI's tools and hooks inherit. The endpoint, the key helper and the model names go in
-`--settings`, which outranks the user's, the project's and the local settings: none of them can send the turn, or the
-key, somewhere else.
+The key is the hub's `.env` `DEEPSEEK_API_KEY`, and only this process's loopback `Relay` holds it. The CLI's endpoint
+is the relay and its key a per-process token, read through `apiKeyHelper` (`tool/deepseek_key.py`), so neither is in
+the environment the CLI's tools and hooks inherit. The endpoint, the key helper and the model names go in
+`--settings`, which outranks the user's, the project's and the local settings. Managed policy outranks `--settings`
+and may still send a turn elsewhere, but what it carries there is the token, never the DeepSeek key.
 """
 
 from __future__ import annotations
 
+import atexit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import os
 from pathlib import Path
 import re
-import subprocess
+import secrets
+import shutil
 import sys
 import tempfile
 import threading
-import time
+import urllib.error
+import urllib.request
 
 from common import settings
 
@@ -63,10 +66,128 @@ ROUTE = ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS"
          "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD")
 # A shell runs the helper: these would expand or split inside its double quotes.
 SHELL = re.compile(r'[%!$`"^&|<>]')
-PROBE_KEY = "deepseek-route-probe"
-VERIFIED_FOR = 600.0   # seconds a passed route check stands: policy rarely changes under a running server
-_verified = {"until": 0.0}
-_verify_lock = threading.Lock()
+# Request headers the relay passes on. Everything else (any credential, cookie or custom header a policy adds) stays.
+FORWARD = {"content-type", "accept", "anthropic-version", "anthropic-beta", "user-agent"}
+HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "set-cookie", "server", "date"}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):   # a redirect would carry the key to where it points
+        return None
+
+
+class Relay:
+    """A loopback relay, the only holder of the DeepSeek key. The CLI's endpoint is this relay and its key a token
+    only this relay accepts. A request that carries the token in every credential header it has goes on to DeepSeek
+    with the real key and the allowed headers alone. Anything else ends here. A policy that sends the CLI somewhere
+    else sends the token, never the key, and a credential a policy adds never reaches DeepSeek.
+
+    Ownership: one per process (`relay()`), started on first use, closed at exit (`close()`). It holds a loopback
+    server on its own thread and a scratch folder with the token for the key helper."""
+
+    def __init__(self, upstream: str = URL, env: Path | None = None):
+        self.upstream, self.env = upstream.rstrip("/"), env or settings.HUB / ".env"
+        self.token = secrets.token_urlsafe(32)
+        self.folder = Path(tempfile.mkdtemp(prefix="deepseek-relay-"))
+        (self.folder / ".env").write_text(f"DEEPSEEK_API_KEY={self.token}\n", encoding="utf-8")
+        self.opener = urllib.request.build_opener(_NoRedirect)
+        relay = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                relay.serve(self)
+
+            do_GET = do_POST
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        threading.Thread(target=self.server.serve_forever, name="deepseek-relay", daemon=True).start()
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.server.server_port}"
+
+    def admitted(self, headers) -> bool:
+        """Every credential the request carries is the token, and it carries one."""
+
+        given = [v for v in (headers.get("x-api-key"), headers.get("authorization")) if v is not None]
+        return bool(given) and all(v in (self.token, f"Bearer {self.token}") for v in given) \
+            and headers.get("proxy-authorization") is None
+
+    def serve(self, request: BaseHTTPRequestHandler) -> None:
+        body = request.rfile.read(int(request.headers.get("Content-Length") or 0))
+        if not self.admitted(request.headers):
+            return self.answer(request, 401, "DeepSeek 중계: 이 앱이 준 토큰이 아니다")
+        if not request.path.startswith("/v1/"):
+            return self.answer(request, 404, f"DeepSeek 중계가 넘기지 않는 경로: {request.path}")
+        key = settings.entries(self.env).get("DEEPSEEK_API_KEY")
+        if not key:
+            return self.answer(request, 503, "DeepSeek 키가 없다: 허브의 .env 에 DEEPSEEK_API_KEY 를 넣어라")
+        headers = {k: v for k, v in request.headers.items() if k.lower() in FORWARD}
+        outgoing = urllib.request.Request(self.upstream + request.path, data=body if request.command == "POST" else None,
+                                          method=request.command,
+                                          headers={**headers, "x-api-key": key, "Authorization": f"Bearer {key}"})
+        try:
+            with self.opener.open(outgoing, timeout=600) as up:
+                self.stream(request, up.status, up.headers, up)
+        except urllib.error.HTTPError as exc:
+            with exc:
+                self.stream(request, exc.code, exc.headers, exc)
+        except (OSError, ValueError) as exc:   # unreachable, timed out, or the client went away
+            try:
+                self.answer(request, 502, f"DeepSeek 에 닿지 못했다 — {type(exc).__name__}")
+            except OSError:
+                pass
+
+    @staticmethod
+    def stream(request: BaseHTTPRequestHandler, status: int, headers, body) -> None:
+        request.send_response(status)
+        for k, v in headers.items():
+            if k.lower() not in HOP:
+                request.send_header(k, v)
+        request.end_headers()
+        read = getattr(body, "read1", body.read)
+        while chunk := read(65536):   # a server-sent event goes on as it arrives
+            request.wfile.write(chunk)
+            request.wfile.flush()
+
+    @staticmethod
+    def answer(request: BaseHTTPRequestHandler, status: int, message: str) -> None:
+        payload = json.dumps({"type": "error", "error": {"type": "api_error", "message": message}},
+                             ensure_ascii=False).encode("utf-8")
+        request.send_response(status)
+        request.send_header("content-type", "application/json")
+        request.end_headers()
+        request.wfile.write(payload)
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+
+_relay: Relay | None = None
+_relay_lock = threading.Lock()
+
+
+def relay() -> Relay:
+    global _relay
+    with _relay_lock:
+        if _relay is None:
+            _relay = Relay()
+            atexit.register(close)
+        return _relay
+
+
+def close() -> None:
+    global _relay
+    with _relay_lock:
+        gone, _relay = _relay, None
+    if gone is not None:
+        gone.close()
 
 
 def built(given: dict, url: str, env: Path) -> dict:
@@ -79,68 +200,23 @@ def built(given: dict, url: str, env: Path) -> dict:
                     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", **dict.fromkeys(ROUTE, "")}}
 
 
-def verify_route(given: dict) -> None:
-    """Start the CLI once with these very settings, pointed at a loopback stand-in and a dummy key, and refuse unless
-    the request reaches the stand-in carrying that key alone. Managed settings, an MDM profile, a policy helper or a
-    signed-in gateway all outrank `--settings`; whichever of them reroutes the CLI, its effect shows here, at no
-    cost to the real key."""
-
-    from .chat_local import cli_command
-
-    with _verify_lock:
-        if time.monotonic() < _verified["until"]:
-            return
-        seen: list[tuple] = []
-
-        class Stand(BaseHTTPRequestHandler):
-            def do_POST(self):
-                self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                if "messages" in self.path:
-                    seen.append((self.headers.get("Authorization"), self.headers.get("x-api-key")))
-                self.send_response(400)
-                self.send_header("content-type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"type":"error","error":{"type":"invalid_request_error","message":"route probe"}}')
-
-            def log_message(self, *args):
-                pass
-
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Stand)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        try:
-            with tempfile.TemporaryDirectory(prefix="deepseek-route-") as scratch:
-                (Path(scratch) / ".env").write_text(f"DEEPSEEK_API_KEY={PROBE_KEY}\n", encoding="utf-8")
-                probe = built({**given, "disableAllHooks": True}, f"http://127.0.0.1:{server.server_port}",
-                              Path(scratch) / ".env")
-                try:
-                    subprocess.run([*cli_command("claude"), "-p", "route probe", "--model", MODEL, "--settings",
-                                    json.dumps(probe), "--strict-mcp-config", "--no-session-persistence", "--tools", ""],
-                                   cwd=scratch, env=environment(MODEL, dict(os.environ)), stdin=subprocess.DEVNULL,
-                                   capture_output=True, timeout=90)
-                except subprocess.TimeoutExpired:
-                    pass
-        finally:
-            server.shutdown()
-            server.server_close()
-        honest = {f"Bearer {PROBE_KEY}", PROBE_KEY, None}
-        if not seen or any(auth not in honest or key not in honest for auth, key in seen):
-            raise RuntimeError("이 PC 의 Claude CLI 는 DeepSeek 경로를 따르지 않는다 — 관리 정책·MDM·로그인한 게이트웨이가 "
-                               "엔드포인트나 인증을 정한다. DeepSeek 은 쓰지 않는다")
-        _verified["until"] = time.monotonic() + VERIFIED_FOR
-
-
 def flags(model: str | None, given: dict) -> dict:
-    """The `--settings` JSON: `given` itself, or for DeepSeek with its endpoint, key helper and model names, once
-    the CLI is seen to follow them (`verify_route`)."""
+    """The `--settings` JSON: `given` itself, or for DeepSeek with this process's relay as the endpoint, its token
+    from the key helper, and the model names."""
 
     if model != MODEL:
         return given
-    env = settings.HUB / ".env"
-    if not settings.entries(env).get("DEEPSEEK_API_KEY"):
+    if not settings.entries(settings.HUB / ".env").get("DEEPSEEK_API_KEY"):
         raise RuntimeError("DeepSeek 키가 없다: 허브의 .env 에 DEEPSEEK_API_KEY 를 넣어라")
-    made = built(given, URL, env)
-    verify_route(given)
-    return made
+    held = relay()
+    return built(given, held.url, held.folder / ".env")
+
+
+def row_provider(row: dict) -> str | None:
+    """Whose turn a saved row records, or None when it does not say: `deepseek-flash` is DeepSeek's whatever the
+    row's own label, since rows from before DeepSeek had its own provider name call it `claude`."""
+
+    return "deepseek" if row.get("model") == MODEL else row.get("provider")
 
 
 def environment(model: str | None, base: dict) -> dict:

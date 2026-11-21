@@ -303,7 +303,8 @@ def handoff(rows: list[dict], provider: str) -> str:
 
     lines = []
     for row in rows:
-        if row.get("role") == "assistant" and row.get("provider", "claude") != provider:
+        said = deepseek.row_provider(row) or ("claude" if row.get("role") == "assistant" else None)
+        if said is not None and said != provider:
             lines = []   # another provider's turns, and what was asked of it: never carried across
             continue
         text = str(row.get("text") or "").strip()
@@ -809,7 +810,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 events = ()
             else:
                 text = sent
-                remember(path, "user", text)
+                remember(path, "user", text, provider=deepseek.of(chat))
         for ev in chat.say(text, run.halt) if events is None else events:
             if ev.kind == "compaction" and ev.meta.get("phase") == "completed":
                 restate(path, run)
@@ -986,7 +987,8 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
     except (OSError, RuntimeError, subprocess.TimeoutExpired):
         pass  # The diff endpoint reports its failure; the agent still runs.
     if not decide and replay is None:
-        remember(path, "user", text, turn=run.turn, **({"person": True} if run.person else {}))   # a window's send vs its record
+        remember(path, "user", text, turn=run.turn, provider=deepseek.of(chat),   # whose turn, before any answer
+                 **({"person": True} if run.person else {}))   # a window's send vs its record
 
     def execute():
         try:

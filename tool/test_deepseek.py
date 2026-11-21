@@ -3,10 +3,14 @@
 The provider is a stand-in that records the command and the environment it was started with; nothing calls a model.
 """
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import subprocess
 import sys
+import threading
 from unittest.mock import patch
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -29,8 +33,10 @@ def tree(tmp_path):
     """A repository beside a hub `.env` holding a fixture key."""
     (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(tmp_path / "repo")], check=True)
-    with patch.object(deepseek.settings, "HUB", tmp_path), patch.object(deepseek, "verify_route", lambda given: None):
+    held = deepseek.Relay(env=tmp_path / ".env")
+    with patch.object(deepseek.settings, "HUB", tmp_path), patch.object(deepseek, "_relay", held):
         yield tmp_path / "repo"
+    held.close()
 
 
 def started(session, tree):
@@ -62,19 +68,20 @@ def test_deepseek_goes_to_its_endpoint_by_flag_settings_with_no_credential_in_th
     assert flag(run["argv"], "--model") == "deepseek-flash" and flag(run["argv"], "--effort") == "max"
     flags = json.loads(flag(run["argv"], "--settings"))
     # Flag settings outrank the user's, the project's and the local ones: none of them can move the endpoint.
-    assert flags["env"]["ANTHROPIC_BASE_URL"] == deepseek.URL and flags["env"]["CLAUDE_CODE_USE_BEDROCK"] == ""
+    assert flags["env"]["ANTHROPIC_BASE_URL"] == deepseek._relay.url and flags["env"]["CLAUDE_CODE_USE_BEDROCK"] == ""
     # A gateway's token, key or headers in someone's settings would beat the helper's key: each is blanked.
     assert all(flags["env"][k] == "" for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS"))
     assert flags["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "deepseek-flash"
-    assert str(tree.parent / ".env") in flags["apiKeyHelper"] and "sk-fixture" not in flags["apiKeyHelper"]
+    # The helper reads the relay's token: the hub's `.env`, and the key in it, are nowhere in the CLI's settings.
+    assert str(deepseek._relay.folder / ".env") in flags["apiKeyHelper"] and str(tree.parent) not in flags["apiKeyHelper"]
     assert flags.get("disableAllHooks", False) is isolated
     assert not set(run["env"]) & set(credentials)   # every tool, hook and MCP server the CLI starts inherits this
 
 
-def test_the_key_helper_prints_the_key_of_the_file_it_is_given(tree):
+def test_the_key_helper_gives_the_cli_the_relay_token_and_never_the_key(tree):
     helper = deepseek.flags("deepseek-flash", {})["apiKeyHelper"]
     done = subprocess.run(helper, shell=True, capture_output=True, text=True, encoding="utf-8", check=True)
-    assert done.stdout.strip() == "sk-fixture"
+    assert done.stdout.strip() == deepseek._relay.token != "sk-fixture"
 
 
 def test_a_chosen_effort_wins_and_claude_stays_on_its_own_login(tree):
@@ -94,41 +101,75 @@ def test_no_key_refuses_instead_of_falling_back_to_claude(tree):
         deepseek.flags("deepseek-flash", {})
 
 
-ROUTED = '''import json, os, subprocess, sys, urllib.request
-flags = json.loads(sys.argv[sys.argv.index("--settings") + 1])
-how = os.environ["FAKE_ROUTE"]
-if how != "away":   # "away": the turn went where policy sent it, never to the stand-in
-    key = subprocess.run(flags["apiKeyHelper"], shell=True, capture_output=True, text=True).stdout.strip()
-    token = key if how == "follows" else "gateway-token"
-    request = urllib.request.Request(flags["env"]["ANTHROPIC_BASE_URL"] + "/v1/messages", data=b"{}", method="POST",
-                                     headers={"Authorization": "Bearer " + token, "x-api-key": token})
+@pytest.fixture
+def upstream():
+    """A stand-in for DeepSeek: it records what reached it and answers in two server-sent events."""
+
+    got = []
+
+    class Up(BaseHTTPRequestHandler):
+        def do_POST(self):
+            got.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()},
+                        "body": self.rfile.read(int(self.headers["Content-Length"]))})
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("set-cookie", "upstream=1")
+            self.end_headers()
+            for part in (b"event: a\ndata: 1\n\n", b"event: b\ndata: 2\n\n"):
+                self.wfile.write(part)
+                self.wfile.flush()
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Up)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}", got
+    server.shutdown()
+    server.server_close()
+
+
+def sent(url, headers, path="/v1/messages?beta=true"):
+    request = urllib.request.Request(url + path, data=b'{"m": 1}', method="POST",
+                                     headers={"content-type": "application/json", "anthropic-version": "1", **headers})
     try:
-        urllib.request.urlopen(request, timeout=10)
-    except Exception:
-        pass
-'''
+        with urllib.request.urlopen(request, timeout=10) as answer:
+            return answer.status, {k.lower() for k in answer.headers}, answer.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, set(), exc.read()
 
 
-@pytest.mark.parametrize("how", ["follows", "gateway", "away"])
-def test_the_launch_checks_the_cli_really_follows_the_route(tmp_path, how):
-    fake = tmp_path / "cli.py"
-    fake.write_text(ROUTED, encoding="utf-8")
-    with patch("agent.chat_local.cli_command", lambda name: [sys.executable, str(fake)]), \
-         patch.dict(deepseek._verified, {"until": 0.0}), patch.dict("os.environ", {"FAKE_ROUTE": how}):
-        if how == "follows":
-            deepseek.verify_route({})
-            assert deepseek._verified["until"] > 0
-        else:   # a policy above `--settings` moved the endpoint, or put its own credential first
-            with pytest.raises(RuntimeError, match="DeepSeek 경로를 따르지 않는다"):
-                deepseek.verify_route({})
+def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tmp_path, upstream):
+    (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
+    url, got = upstream
+    relay = deepseek.Relay(url, tmp_path / ".env")
+    token = relay.token
+    try:
+        status, headers, body = sent(relay.url, {"x-api-key": token, "Authorization": f"Bearer {token}",
+                                                 "x-gateway-auth": "g", "cookie": "c=1"})
+        assert status == 200 and body == b"event: a\ndata: 1\n\nevent: b\ndata: 2\n\n" and "set-cookie" not in headers
+        reached = got[-1]
+        assert reached["path"] == "/v1/messages?beta=true" and reached["body"] == b'{"m": 1}'
+        assert reached["headers"]["x-api-key"] == "sk-fixture" and reached["headers"]["authorization"] == "Bearer sk-fixture"
+        # A credential or custom header a policy adds stays here, and so does the token.
+        assert not {"x-gateway-auth", "cookie"} & set(reached["headers"]) and token not in json.dumps(reached["headers"])
+        # Only the token, in every credential header the request carries, gets past.
+        for wrong in ({}, {"Authorization": "Bearer gateway"}, {"x-api-key": token, "Authorization": "Bearer gateway"},
+                      {"x-api-key": "sk-fixture"}, {"x-api-key": token, "Proxy-Authorization": "Basic x"}):
+            assert sent(relay.url, wrong)[0] == 401, wrong
+        assert sent(relay.url, {"x-api-key": token}, "/api/oauth/profile")[0] == 404
+        (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=\n", encoding="utf-8")
+        assert sent(relay.url, {"x-api-key": token})[0] == 503
+        assert len(got) == 1
+    finally:
+        relay.close()
+    assert not relay.folder.exists()
 
 
-def test_a_helper_path_a_shell_would_rewrite_refuses_deepseek(tree, tmp_path):
-    odd = tmp_path / "100% hub"   # a space is quoted; a percent sign would expand in the helper's shell
-    odd.mkdir()
-    (odd / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
-    with patch.object(deepseek.settings, "HUB", odd), pytest.raises(RuntimeError, match="셸 문자"):
-        deepseek.flags("deepseek-flash", {})
+def test_a_helper_path_a_shell_would_rewrite_refuses_deepseek(tmp_path):
+    odd = tmp_path / "100% relay"   # a space is quoted; a percent sign would expand in the helper's shell
+    with pytest.raises(RuntimeError, match="셸 문자"):
+        deepseek.built({}, "http://127.0.0.1:1", odd / ".env")
 
 
 def test_saved_turns_and_handoffs_stay_with_their_provider():
@@ -143,6 +184,32 @@ def test_saved_turns_and_handoffs_stay_with_their_provider():
              {"role": "user", "text": "asked claude"}, {"role": "assistant", "text": "claude said", "provider": "claude"}]
     written = work.handoff(mixed, "claude")
     assert "asked claude" in written and "claude said" in written and "deepseek" not in written
+    # A DeepSeek answer saved before DeepSeek had its own label, and a DeepSeek question whose answer never got
+    # written (the process died first), are DeepSeek's all the same.
+    legacy = [{"role": "user", "text": "asked first"}, {"role": "assistant", "text": "flash said", "model": "deepseek-flash",
+                                                         "provider": "claude"},
+              {"role": "user", "text": "asked flash, unanswered", "provider": "deepseek"},
+              {"role": "user", "text": "asked claude", "provider": "claude"},
+              {"role": "assistant", "text": "claude said", "provider": "claude"}]
+    written = work.handoff(legacy, "claude")
+    assert "asked claude" in written and "claude said" in written
+    assert all(t not in written for t in ("asked first", "flash said", "unanswered"))
+
+
+def test_a_refused_reviews_handoff_carries_only_its_own_providers_words(tmp_path):
+    from main import loop
+
+    spec = {"repo": "proj", "pr": {"number": 7}}
+    rounds = [{"n": 1, "head": "a" * 40, "verdict": "머지 불가", "said": "codex words", "items": [{"head": "codex finding"}],
+               "reviewer": {"model": "codex:gpt"}},
+              {"n": 2, "head": "b" * 40, "verdict": "머지 불가", "said": "claude words", "items": [{"head": "claude finding"}],
+               "reviewer": {"model": "opus"}}]
+    with patch.object(loop, "folder", lambda *key: tmp_path), patch.object(loop, "counted", lambda s: rounds), \
+         patch.object(loop.specs, "brief", lambda s: "the spec\n"):
+        loop.refused_cell(spec, "claude")
+    told = (tmp_path / "handoff.md").read_text(encoding="utf-8")
+    assert told.startswith("<!-- provider: claude -->\n") and "claude words" in told and "claude finding" in told
+    assert "codex words" not in told and "codex finding" not in told and "Round 1 at aaaaaaa" in told
 
 
 def test_another_provider_is_a_new_conversation():

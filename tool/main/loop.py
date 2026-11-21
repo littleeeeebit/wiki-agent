@@ -604,6 +604,9 @@ def refused_cell(spec: dict, provider: str) -> None:
     close_cell(*key)
     lines = []
     for r in counted(spec):
+        if deepseek.provider((r.get("reviewer") or {}).get("model")) != provider:   # another provider's words stay
+            lines.append(f"- Round {r['n']} at {r['head'][:7]}: {r.get('verdict')} — reviewed on another provider")
+            continue
         lines.append(f"- Round {r['n']} at {r['head'][:7]}: {r.get('verdict')} — {str(r.get('said') or '')[:300]}")
         lines += [f"  - {f['head'][:200]} → {f.get('disposition') or 'no disposition yet'}" for f in r.get("items") or []]
     (folder(*key) / "session.json").unlink(missing_ok=True)

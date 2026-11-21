@@ -252,9 +252,7 @@ def resumable(rows: list[dict], provider: str) -> str | None:
         if row.get("role") == "context":
             return None
         if row.get("session_id"):
-            model = str(row.get("model", ""))   # the CLI's own name: `deepseek-flash` whatever the row says
-            left = "deepseek" if model == deepseek.MODEL else row.get("provider") or (
-                "claude" if model.startswith("claude-") else "codex")
+            left = deepseek.row_provider(row) or ("claude" if str(row.get("model", "")).startswith("claude-") else "codex")
             return row["session_id"] if left == provider else None
     return None
 
