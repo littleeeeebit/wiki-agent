@@ -5,10 +5,11 @@ other credential, goes on to DeepSeek with the real key and DeepSeek's own heade
 A policy that sends the CLI somewhere else sends the token, never the key, and a credential a policy adds never
 reaches DeepSeek.
 
-Ownership: one asyncio loop on one thread owns the listener, every connection, the upstream client (httpx) and every
-socket under them; no other thread touches a socket. Each connection is a task. A caller that hangs up cancels its
-task, which cancels the upstream exchange wherever it is: connecting, sending, waiting for headers or streaming.
-`close()` cancels every task, closes the client and the listener, stops the loop and removes the token folder.
+Ownership: one asyncio loop on one thread owns the listener, every caller's connection, each request's own connection
+to DeepSeek and every socket under them; no other thread touches a socket. Each connection is a task. A caller that
+hangs up cancels its task, which cancels the exchange with DeepSeek wherever it is: connecting, the TLS handshake,
+sending, waiting for headers or streaming. `close()` aborts every transport, cancels every task, closes the listener,
+stops the loop and removes the token folder.
 """
 
 from __future__ import annotations
@@ -16,14 +17,14 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-import re
 import secrets
 import shutil
+import ssl
 import tempfile
 import threading
+import urllib.parse
 
 import h11
-import httpx
 
 from common import settings
 
@@ -38,7 +39,10 @@ IDLE = 120.0         # seconds the relay waits on a silent caller before it lets
 UPSTREAM = 600.0     # seconds DeepSeek may stay silent mid-answer
 CONNECT = 30.0       # seconds to reach DeepSeek at all
 JOIN = 10.0          # seconds `close` waits for the loop to wind down
-EVENT_END = re.compile(rb"\r?\n\r?\n")
+LINGER = 5.0         # seconds a finished connection reads away what its caller still sends
+LONGEST_EVENT = 8 << 20   # bytes in one server-sent event; past it the stream ends there
+LONGEST_BODY = 32 << 20   # bytes in one JSON answer; past it the caller gets the relay's error instead
+BOM = b"\xef\xbb\xbf"
 
 
 def nominated(headers: list[tuple[str, str]]) -> set[str]:
@@ -69,16 +73,52 @@ def redacted_json(raw: bytes, key: str) -> bytes | None:
     return None if clean == value else json.dumps(clean, ensure_ascii=False).encode("utf-8")
 
 
+class Events:
+    """A server-sent event stream cut into whole events, each with the key gone: literal anywhere, JSON-escaped in its
+    data. Line endings (CRLF, CR or LF) become LF and a leading BOM goes first, so the fields read here are the
+    fields any parser reads; a CR that ends one chunk waits to see whether an LF follows."""
+
+    def __init__(self, key: str):
+        self.key, self.pending, self.tail, self.first = key, b"", b"", True
+
+    def feed(self, chunk: bytes) -> list[bytes]:
+        data = self.tail + chunk
+        self.tail = b"\r" if data.endswith(b"\r") else b""
+        self.pending += data[:len(data) - len(self.tail)].replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        return self._whole()
+
+    def _whole(self) -> list[bytes]:
+        if self.first and len(self.pending) >= len(BOM):
+            self.pending, self.first = self.pending.removeprefix(BOM), False
+        out = []
+        while (end := self.pending.find(b"\n\n")) >= 0:
+            out.append(clean_event(self.pending[:end], self.key) + b"\n\n")
+            self.pending = self.pending[end + 2:]
+        if len(self.pending) > LONGEST_EVENT:
+            raise ValueError("an event past LONGEST_EVENT")
+        return out
+
+    def rest(self) -> bytes:
+        """At the end of the stream: a CR still held is a line end, and an unfinished event goes out cleaned."""
+
+        self.pending += b"\n" if self.tail else b""
+        self.tail = b""
+        out = self._whole()
+        rest, self.pending = self.pending.removeprefix(BOM) if self.first else self.pending, b""
+        return b"".join(out) + (clean_event(rest, self.key) if rest else b"")
+
+
 def clean_event(event: bytes, key: str) -> bytes:
-    """One server-sent event (without its blank line) with the key gone, literal or JSON-escaped in its data."""
+    """One LF-framed event (without its blank line) with the key gone, literal or JSON-escaped in its data."""
 
     event = event.replace(key.encode(), b"[key]")
     lines = event.split(b"\n")
-    data = [line.rstrip(b"\r")[5:].removeprefix(b" ") for line in lines if line.startswith(b"data:")]
+    field = [line == b"data" or line.startswith(b"data:") for line in lines]
+    data = [line[5:].removeprefix(b" ") for line, is_data in zip(lines, field) if is_data]
     fixed = redacted_json(b"\n".join(data), key) if data else None
     if fixed is None:
         return event
-    return b"\n".join([line for line in lines if not line.startswith(b"data:")] + [b"data: " + fixed])
+    return b"\n".join([line for line, is_data in zip(lines, field) if not is_data] + [b"data: " + fixed])
 
 
 def clean_body(body: bytes, key: str) -> bytes:
@@ -101,9 +141,16 @@ def error_kind(body: bytes, key: str) -> str:
 
 class Relay:
     def __init__(self, upstream: str, env: Path):
-        self.upstream, self.env = upstream.rstrip("/"), env
+        # No pool, no cookie jar: each request opens its own connection, so nothing one turn leaves reaches the next.
+        parts = urllib.parse.urlsplit(upstream)
+        self.tls = ssl.create_default_context() if parts.scheme == "https" else None
+        self.host, self.netloc, self.prefix = parts.hostname, parts.netloc, parts.path.rstrip("/")
+        self.upstream_port = parts.port or (443 if self.tls else 80)
+        self.env = env
         self.token = secrets.token_urlsafe(32)
         self.tasks: set[asyncio.Task] = set()
+        self.writers: set[asyncio.StreamWriter] = set()   # until their transport is gone, not just their task
+        self.reapers: set[asyncio.Task] = set()
         self.folder: Path | None = None
         self.loop = asyncio.new_event_loop()
         ready, failed = threading.Event(), []
@@ -134,7 +181,6 @@ class Relay:
             raise
 
     async def _start(self) -> None:
-        self.client = httpx.AsyncClient(timeout=httpx.Timeout(UPSTREAM, connect=CONNECT), follow_redirects=False)
         self.server = await asyncio.start_server(self._accept, "127.0.0.1", 0)
         self.port = self.server.sockets[0].getsockname()[1]
 
@@ -157,13 +203,35 @@ class Relay:
             return
         task = asyncio.current_task()
         self.tasks.add(task)
+        self.writers.add(writer)
         try:
             await self._serve(reader, writer)
         except (OSError, asyncio.TimeoutError, h11.ProtocolError):
             pass   # the caller went silent past `IDLE`, broke off mid-message, or went away
         finally:
             self.tasks.discard(task)
-            writer.close()
+            reaper = asyncio.ensure_future(self._reap(reader, writer))
+            self.reapers.add(reaper)
+            reaper.add_done_callback(self.reapers.discard)
+
+    async def _reap(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """A lingering close: the answer is sent and the write side shut, then what the caller still sends (a body
+        refused unread) is read away for `LINGER`, since closing with it unread resets the connection on Windows and
+        the caller loses the answer. A caller that never reads is aborted after `IDLE`."""
+
+        try:
+            if writer.can_write_eof():
+                writer.write_eof()
+            await asyncio.wait_for(hangup(reader), LINGER)
+        except Exception:   # noqa: BLE001 - gone, aborted by `close`, or still sending: it closes all the same
+            pass
+        writer.close()
+        try:
+            await asyncio.wait_for(writer.wait_closed(), IDLE)
+        except Exception:   # noqa: BLE001 - the same: nothing is left open past this
+            writer.transport.abort()
+        finally:
+            self.writers.discard(writer)
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         conn = h11.Connection(h11.SERVER)
@@ -180,29 +248,34 @@ class Relay:
         if not isinstance(request, h11.Request):
             return None
         headers = [(k.decode("latin-1").lower(), v.decode("latin-1")) for k, v in request.headers]
-        path = request.target.decode("latin-1")
+        path, method = request.target.decode("latin-1"), request.method.decode("latin-1")
+
+        def fail(status: int, message: str):   # a HEAD's answer carries no body, or h11 refuses to send it
+            return answer(conn, writer, status, message, head=method == "HEAD")
+
         if not self.admitted(headers):   # before any body is read
-            return await answer(conn, writer, 401, "DeepSeek 중계: 이 앱이 준 토큰이 아니다")
+            return await fail(401, "DeepSeek 중계: 이 앱이 준 토큰이 아니다")
+        if method not in ("GET", "POST"):
+            return await fail(405, f"DeepSeek 중계가 넘기지 않는 방식: {method}")
         if not path.startswith("/v1/"):
-            return await answer(conn, writer, 404, f"DeepSeek 중계가 넘기지 않는 경로: {path}")
+            return await fail(404, f"DeepSeek 중계가 넘기지 않는 경로: {path}")
         declared = [v for k, v in headers if k == "content-length"]
         # h11 refuses lengths that disagree and merges equal ones (RFC 9110 section 8.6); chunked never comes in.
         if any(k == "transfer-encoding" for k, _ in headers):
-            return await answer(conn, writer, 400, "DeepSeek 중계: 본문을 나눠 보내지 마라")
-        if not declared and method_of(request) != "GET":
-            return await answer(conn, writer, 411, "DeepSeek 중계: 본문 길이가 없다")
+            return await fail(400, "DeepSeek 중계: 본문을 나눠 보내지 마라")
+        if method == "GET" and declared and int(declared[0]) != 0:
+            return await fail(400, "DeepSeek 중계: GET 에는 본문이 없다")
+        if method == "POST" and not declared:
+            return await fail(411, "DeepSeek 중계: 본문 길이가 없다")
         if declared and int(declared[0]) > LARGEST:   # h11 has already refused a length that is not a number
-            return await answer(conn, writer, 413, "DeepSeek 중계: 요청이 너무 크다")
+            return await fail(413, "DeepSeek 중계: 요청이 너무 크다")
         body = bytearray()
         # A caller that hangs up before its body is whole makes h11 raise: nothing half sent goes on.
         while not isinstance(event := await asyncio.wait_for(next_event(), IDLE), h11.EndOfMessage):
             body += event.data
-            if len(body) > LARGEST:   # chunked past the limit
-                return await answer(conn, writer, 413, "DeepSeek 중계: 요청이 너무 크다")
         key = settings.entries(self.env).get("DEEPSEEK_API_KEY")
         if not key:
-            return await answer(conn, writer, 503, "DeepSeek 키가 없다: 허브의 .env 에 DEEPSEEK_API_KEY 를 넣어라")
-        method = method_of(request)
+            return await fail(503, "DeepSeek 키가 없다: 허브의 .env 에 DEEPSEEK_API_KEY 를 넣어라")
         work = asyncio.ensure_future(self._forward(conn, writer, method, path, headers, bytes(body), key))
         gone = asyncio.ensure_future(hangup(reader))
         try:
@@ -213,58 +286,98 @@ class Relay:
             await asyncio.gather(work, gone, return_exceptions=True)
 
     async def _forward(self, conn, writer, method: str, path: str, headers, body: bytes, key: str) -> None:
+        """One fresh connection to DeepSeek for this request, owned by this task: cancelling the task anywhere
+        (connecting, the TLS handshake, sending, waiting, streaming) closes it, since asyncio closes a transport
+        whose setup is cancelled and the `finally` aborts it after."""
+
         dropped = nominated(headers)
         sent = [(k, v) for k, v in headers if k in FORWARD and k not in dropped]
-        outgoing = self.client.build_request(method, self.upstream + path, content=body or None,
-                                             headers=sent + [("x-api-key", key), ("authorization", f"Bearer {key}")])
+        sent += [("host", self.netloc), ("x-api-key", key), ("authorization", f"Bearer {key}"),
+                 ("accept-encoding", "identity"), ("connection", "close")]
+        if method == "POST":
+            sent.append(("content-length", str(len(body))))
         try:
-            reply = await self.client.send(outgoing, stream=True)
-        except httpx.HTTPError as exc:
+            up_reader, up_writer = await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.upstream_port, ssl=self.tls), CONNECT)
+        except (OSError, asyncio.TimeoutError) as exc:
             return await answer(conn, writer, 502, f"DeepSeek 에 닿지 못했다 — {type(exc).__name__}")
-        try:
-            await self._stream(conn, writer, reply, key)
-        except httpx.HTTPError:
-            pass   # once the headers have gone out, the caller sees a stream that ends early
-        finally:
-            await reply.aclose()
+        up = h11.Connection(h11.CLIENT)
 
-    async def _stream(self, conn, writer, reply: httpx.Response, key: str) -> None:
-        back = [(k.lower(), v.replace(key, "[key]")) for k, v in reply.headers.multi_items()]
+        async def next_up():
+            while (event := up.next_event()) is h11.NEED_DATA:
+                up.receive_data(await asyncio.wait_for(up_reader.read(65536), UPSTREAM))
+            return event
+
+        try:
+            up_writer.write(up.send(h11.Request(method=method, target=self.prefix + path, headers=sent))
+                            + (up.send(h11.Data(data=body)) if body else b"") + up.send(h11.EndOfMessage()))
+            await up_writer.drain()
+            while isinstance(reply := await next_up(), h11.InformationalResponse):
+                pass
+            if not isinstance(reply, h11.Response):
+                raise ConnectionError("DeepSeek closed before it answered")
+            await self._stream(conn, writer, reply, next_up, key)
+        except (OSError, asyncio.TimeoutError, h11.ProtocolError) as exc:
+            if conn.our_state is h11.SEND_RESPONSE:
+                await answer(conn, writer, 502, f"DeepSeek 에 닿지 못했다 — {type(exc).__name__}")
+            # once the headers have gone out, the caller sees a stream that ends early: nothing more is written
+        finally:
+            up_writer.transport.abort()
+
+    async def _stream(self, conn, writer, reply: h11.Response, next_up, key: str) -> None:
+        async def chunks():
+            while isinstance(event := await next_up(), h11.Data):
+                yield bytes(event.data)
+
+        back = [(k.decode("latin-1").lower(), v.decode("latin-1").replace(key, "[key]")) for k, v in reply.headers]
         dropped = nominated(back)
         kept = [(k, v) for k, v in back if k not in dropped and (k in BACK or k.startswith(BACK_PREFIX))]
         if 300 <= reply.status_code < 400:   # handed on, a client that follows it would leave the relay
             return await answer(conn, writer, 502, "DeepSeek 이 요청을 다른 곳으로 돌렸다 — 따라가지 않는다")
         if reply.status_code >= 400:   # the relay's own words: whatever upstream or a proxy wrote stays here
             said = bytearray()
-            async for chunk in reply.aiter_bytes():
+            async for chunk in chunks():
                 said += chunk
                 if len(said) >= 1 << 20:
                     break
             return await answer(conn, writer, reply.status_code,
                                 f"DeepSeek 오류 {reply.status_code}: {error_kind(bytes(said), key)}", kept)
-        writer.write(conn.send(h11.Response(status_code=reply.status_code, headers=kept + [("connection", "close")])))
+        start = h11.Response(status_code=reply.status_code, headers=kept + [("connection", "close")])
+        if not dict(back).get("content-type", "").startswith("text/event-stream"):
+            body = bytearray()   # one JSON answer, cleaned whole before a byte of it goes out
+            async for chunk in chunks():
+                body += chunk
+                if len(body) > LONGEST_BODY:
+                    return await answer(conn, writer, 502, "DeepSeek 의 답이 너무 크다 — 넘기지 않는다")
+            writer.write(conn.send(start) + conn.send(h11.Data(data=clean_body(bytes(body), key)))
+                         + conn.send(h11.EndOfMessage()))
+            return await writer.drain()
+        writer.write(conn.send(start))
         await writer.drain()
-        events = reply.headers.get("content-type", "").startswith("text/event-stream")
-        held = b""
-        async for chunk in reply.aiter_bytes():
-            held += chunk
-            if not events:
-                continue   # one JSON answer: cleaned whole at the end
-            while found := EVENT_END.search(held):   # a whole event goes on the moment it is complete
-                writer.write(conn.send(h11.Data(data=clean_event(held[:found.start()], key) + found.group())))
-                held = held[found.end():]
-            await writer.drain()
-        if held:
-            writer.write(conn.send(h11.Data(data=clean_event(held, key) if events else clean_body(held, key))))
+        events = Events(key)
+        async for chunk in chunks():
+            try:
+                ready = events.feed(chunk)   # a whole event goes on the moment it is complete
+            except ValueError:
+                return None   # past `LONGEST_EVENT`: the stream ends there, unfinished, which the caller can tell
+            if ready:
+                writer.write(conn.send(h11.Data(data=b"".join(ready))))
+                await writer.drain()
+        if rest := events.rest():
+            writer.write(conn.send(h11.Data(data=rest)))
         writer.write(conn.send(h11.EndOfMessage()))
         await writer.drain()
 
     async def _stop(self) -> None:
         self.server.close()
+        for writer in list(self.writers):   # a caller that stopped reading holds nothing open past this
+            writer.transport.abort()
         for task in list(self.tasks):
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
-        await self.client.aclose()
+        for writer in list(self.writers):   # those the cancelled tasks just handed to `_reap`
+            writer.transport.abort()
+        await asyncio.gather(*self.reapers, return_exceptions=True)
         await self.server.wait_closed()
 
     def close(self) -> None:
@@ -281,10 +394,6 @@ class Relay:
             shutil.rmtree(self.folder, ignore_errors=True)
 
 
-def method_of(request: h11.Request) -> str:
-    return request.method.decode("latin-1")
-
-
 async def hangup(reader: asyncio.StreamReader) -> None:
     """Returns when the caller hangs up (the person pressed Stop); whatever it sends after its request is ignored."""
 
@@ -293,8 +402,9 @@ async def hangup(reader: asyncio.StreamReader) -> None:
 
 
 async def answer(conn: h11.Connection | None, writer: asyncio.StreamWriter, status: int, message: str,
-                 kept=()) -> None:
-    """The relay's own JSON error, then the connection closes. `conn` is None once h11 has refused the request."""
+                 kept=(), head: bool = False) -> None:
+    """The relay's own JSON error, then the connection closes. `conn` is None once h11 has refused the request; a
+    HEAD gets the status and headers alone."""
 
     payload = json.dumps({"type": "error", "error": {"type": "api_error", "message": message}},
                          ensure_ascii=False).encode("utf-8")
@@ -305,8 +415,8 @@ async def answer(conn: h11.Connection | None, writer: asyncio.StreamWriter, stat
             head = f"HTTP/1.1 {status} Error\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers) + "\r\n"
             writer.write(head.encode("latin-1") + payload)
         else:
-            writer.write(conn.send(h11.Response(status_code=status, headers=headers)) + conn.send(h11.Data(data=payload))
-                         + conn.send(h11.EndOfMessage()))
+            sent = conn.send(h11.Response(status_code=status, headers=headers))
+            writer.write(sent + (b"" if head else conn.send(h11.Data(data=payload))) + conn.send(h11.EndOfMessage()))
         await writer.drain()
     except OSError:
         pass
