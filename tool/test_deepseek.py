@@ -17,7 +17,7 @@ import urllib.request
 
 import pytest
 
-from agent import chat_busy, chat_session, deepseek
+from agent import chat_busy, chat_session, deepseek, deepseek_relay
 from agent.chat_session import ChatSession
 from main import channels, query
 
@@ -141,6 +141,29 @@ def upstream():
                 self.end_headers()
                 self.wfile.write(b'\xef\xbb\xbfevent: error\rdata: {"error": {"message": "bad key \\u0073k-fixture"}}\r\r')
                 return
+            if self.path.startswith("/v1/mixedcase"):   # media types ignore case: still SSE, still an escaped key
+                self.send_response(200)
+                self.send_header("content-type", "Text/Event-Stream; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b'data: {"error": {"message": "bad key \\u0073k-fixture"}}\n\n')
+                return
+            if self.path.startswith("/v1/slowcr"):   # a CR-framed event, then a pause until the relay hangs up
+                self.send_response(200)
+                self.send_header("content-type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(b"data: 1\r\r")
+                self.wfile.flush()
+                self.connection.settimeout(10)
+                if self.connection.recv(1) == b"":
+                    cut.set()
+                return
+            if self.path.startswith("/v1/octets"):   # a field value with an octet past ASCII, both ways
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("x-request-id", "r\xe9")
+                self.end_headers()
+                self.wfile.write(b"{}")
+                return
             if self.path.startswith("/v1/flood"):   # far more than a caller that stopped reading will take
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
@@ -242,6 +265,15 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         status, _, body = sent(relay.url, {"x-api-key": token}, "/v1/crframed")
         assert status == 200 and body == b'event: error\ndata: {"error": {"message": "bad key [key]"}}\n\n'
         assert sent(relay.url, {"x-api-key": token}, "/v1/huge")[0] == 502   # past the limit, never half passed on
+        status, _, body = sent(relay.url, {"x-api-key": token}, "/v1/mixedcase")
+        assert status == 200 and body == b'data: {"error": {"message": "bad key [key]"}}\n\n'
+        # Field values keep every octet: an allowed header with one past ASCII goes on, and comes back.
+        conn = http.client.HTTPConnection(*relay.url.removeprefix("http://").split(":"), timeout=10)
+        conn.request("POST", "/v1/octets", body=b"{}", headers={"x-api-key": token, "user-agent": "cli (\xe9)"})
+        answer = conn.getresponse()
+        assert answer.status == 200 and answer.getheader("x-request-id") == "r\xe9"
+        conn.close()
+        assert got[-1]["headers"]["user-agent"] == "cli (\xe9)"
         # The cookie DeepSeek set on the first answer never rides along on a later request.
         assert not any("cookie" in g["headers"] for g in got)
         # Only GET and POST go on; a GET carries no body; a HEAD refused gets its status, bodiless.
@@ -252,12 +284,12 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         assert status == 502 and "location" not in headers
         (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=\n", encoding="utf-8")
         assert sent(relay.url, {"x-api-key": token})[0] == 503
-        assert len(got) == 6
+        assert len(got) == 8
         # Framing: a POST without a length, with two that disagree, or chunked never goes on.
         assert raw(relay.url, [("x-api-key", token)], declared=None, length=False)[0] == 411
         assert raw(relay.url, [("x-api-key", token), ("content-length", "3")])[0] == 400
         assert raw(relay.url, [("x-api-key", token), ("transfer-encoding", "chunked")])[0] == 400
-        assert len(got) == 6
+        assert len(got) == 8
         # Every connection served, closed-delimited or not, leaves nothing behind.
         assert drained(relay)
     finally:
@@ -303,6 +335,15 @@ def test_a_caller_that_hangs_up_cuts_the_request_to_deepseek_and_close_waits_for
     answer.close()   # the person pressed Stop: the CLI is gone
     conn.close()
     assert cut.wait(5), "the relay must hang up on DeepSeek too"
+    # A CR-framed event arrives whole while DeepSeek pauses too, with no wait for a following byte.
+    cut.clear()
+    conn = http.client.HTTPConnection(host, int(port), timeout=10)
+    conn.request("POST", "/v1/slowcr", body=b"{}", headers={"x-api-key": relay.token})
+    answer = conn.getresponse()
+    assert answer.status == 200 and answer.read1(64) == b"data: 1\n\n"
+    answer.close()
+    conn.close()
+    assert cut.wait(5)
     # The same while DeepSeek has accepted the request but sent no header yet.
     cut.clear()
     conn = http.client.HTTPConnection(host, int(port), timeout=10)
@@ -376,20 +417,79 @@ def test_a_stop_while_the_relay_still_connects_to_deepseek_cancels_the_connect(t
         listener.close()
 
 
-def test_close_does_not_wait_on_a_caller_that_stopped_reading(tmp_path, upstream):
+def flooded(tmp_path, upstream):
+    """A relay and a caller with a tiny receive buffer that asked for a flood and reads none of it."""
+
     (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
-    url, _, _ = upstream
-    relay = deepseek.Relay(url, tmp_path / ".env")
+    relay = deepseek.Relay(upstream[0], tmp_path / ".env")
     host, port = relay.url.removeprefix("http://").split(":")
     stuck = socket.create_connection((host, int(port)))
     stuck.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
     stuck.sendall(f"POST /v1/flood HTTP/1.1\r\nhost: x\r\nx-api-key: {relay.token}\r\ncontent-length: 2\r\n\r\n{{}}"
                   .encode())
+    return relay, stuck
+
+
+def test_close_does_not_wait_on_a_caller_that_stopped_reading(tmp_path, upstream):
+    relay, stuck = flooded(tmp_path, upstream)
     time.sleep(1.5)   # the relay's buffers fill: this caller reads nothing
     began = time.monotonic()
     relay.close()
     stuck.close()
     assert time.monotonic() - began < 5 and not relay.thread.is_alive() and not relay.writers
+
+
+def test_a_caller_that_stopped_reading_lets_its_slot_go_without_a_close(tmp_path, upstream, monkeypatch):
+    monkeypatch.setattr(deepseek_relay, "IDLE", 1.0)
+    relay, stuck = flooded(tmp_path, upstream)
+    try:
+        time.sleep(0.5)   # served and stuck, not yet timed out
+        assert wait_until(lambda: not relay.writers, 6), "a write stuck on a caller that reads nothing must give up"
+    finally:
+        stuck.close()
+        relay.close()
+
+
+def test_connections_lingering_after_an_early_refusal_still_count_toward_the_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(deepseek_relay, "LINGER", 2.0)
+    (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
+    relay = deepseek.Relay("http://127.0.0.1:9", tmp_path / ".env")
+    host, port = relay.url.removeprefix("http://").split(":")
+    refused = []
+    try:
+        for _ in range(deepseek_relay.WORKERS):   # each refused before its body, then lingering on what it still sends
+            peer = socket.create_connection((host, int(port)))
+            peer.sendall(b"POST /v1/messages HTTP/1.1\r\nhost: x\r\nx-api-key: wrong\r\ncontent-length: 10\r\n\r\n")
+            assert peer.recv(64).startswith(b"HTTP/1.1 401")
+            refused.append(peer)
+        late = socket.create_connection((host, int(port)))
+        late.settimeout(5)
+        late.sendall(b"GET /v1/models HTTP/1.1\r\nhost: x\r\n\r\n")
+        try:
+            assert late.recv(64) == b"", "a 17th connection must be turned away while 16 still linger"
+        except ConnectionError:
+            pass
+        late.close()
+        for peer in refused:
+            peer.close()
+        assert drained(relay) and wait_until(lambda: not relay.writers, 5)
+        assert raw(relay.url, [], method="GET", length=False)[0] == 401   # the slots came back
+    finally:
+        relay.close()
+
+
+def test_an_event_that_crosses_the_limit_in_the_chunk_that_ends_it_is_still_refused():
+    events = deepseek_relay.Events("sk-fixture")
+    assert events.feed(b"data: " + b"x" * 1000) == []
+    with pytest.raises(ValueError):
+        events.feed(b"x" * deepseek_relay.LONGEST_EVENT + b"\n\n")
+
+
+def wait_until(check, within: float) -> bool:
+    end = time.monotonic() + within
+    while not check() and time.monotonic() < end:
+        time.sleep(0.05)
+    return check()
 
 
 def test_a_helper_path_a_shell_would_rewrite_refuses_deepseek(tmp_path):

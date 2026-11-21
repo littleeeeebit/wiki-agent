@@ -20,6 +20,7 @@ from pathlib import Path
 import secrets
 import shutil
 import ssl
+import sys
 import tempfile
 import threading
 import urllib.parse
@@ -51,6 +52,31 @@ def nominated(headers: list[tuple[str, str]]) -> set[str]:
     return {n.strip().lower() for k, v in headers if k == "connection" for n in v.split(",") if n.strip()}
 
 
+def octets(headers) -> list[tuple[bytes, bytes]]:
+    """Header fields back to the bytes they came as: read as Latin-1, so any octet a field may carry round-trips, where
+    h11 would encode a string as ASCII and refuse it."""
+
+    return [(k.encode("latin-1"), v.encode("latin-1")) for k, v in headers]
+
+
+def media_type(headers: list[tuple[str, str]]) -> str:
+    """The media type alone, lower case: `Text/Event-Stream; charset=utf-8` is `text/event-stream` (RFC 9110 8.3.1)."""
+
+    return next((v.split(";")[0].strip().lower() for k, v in headers if k == "content-type"), "")
+
+
+async def drained(writer: asyncio.StreamWriter) -> None:
+    """A write that waits on a peer that stopped reading gives up after `IDLE` and aborts that connection, so it never
+    holds a turn's slot, whoever catches the timeout."""
+
+    try:
+        async with asyncio.timeout(IDLE):
+            await writer.drain()
+    except TimeoutError:
+        writer.transport.abort()
+        raise
+
+
 def _redact(value, key: str):
     if isinstance(value, str):
         return value.replace(key, "[key]")
@@ -76,22 +102,24 @@ def redacted_json(raw: bytes, key: str) -> bytes | None:
 class Events:
     """A server-sent event stream cut into whole events, each with the key gone: literal anywhere, JSON-escaped in its
     data. Line endings (CRLF, CR or LF) become LF and a leading BOM goes first, so the fields read here are the
-    fields any parser reads; a CR that ends one chunk waits to see whether an LF follows."""
+    fields any parser reads. A CR is a line end at once; an LF right after it, even in the next chunk, is dropped."""
 
     def __init__(self, key: str):
-        self.key, self.pending, self.tail, self.first = key, b"", b"", True
+        self.key, self.pending, self.after_cr, self.first = key, b"", False, True
 
     def feed(self, chunk: bytes) -> list[bytes]:
-        data = self.tail + chunk
-        self.tail = b"\r" if data.endswith(b"\r") else b""
-        self.pending += data[:len(data) - len(self.tail)].replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-        return self._whole()
-
-    def _whole(self) -> list[bytes]:
+        if not chunk:
+            return []
+        if self.after_cr and chunk.startswith(b"\n"):
+            chunk = chunk[1:]
+        self.after_cr = chunk.endswith(b"\r")
+        self.pending += chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         if self.first and len(self.pending) >= len(BOM):
             self.pending, self.first = self.pending.removeprefix(BOM), False
         out = []
         while (end := self.pending.find(b"\n\n")) >= 0:
+            if end > LONGEST_EVENT:   # measured before it is cleaned or sent, however it arrived
+                raise ValueError("an event past LONGEST_EVENT")
             out.append(clean_event(self.pending[:end], self.key) + b"\n\n")
             self.pending = self.pending[end + 2:]
         if len(self.pending) > LONGEST_EVENT:
@@ -99,13 +127,10 @@ class Events:
         return out
 
     def rest(self) -> bytes:
-        """At the end of the stream: a CR still held is a line end, and an unfinished event goes out cleaned."""
+        """At the end of the stream: an unfinished event goes out cleaned."""
 
-        self.pending += b"\n" if self.tail else b""
-        self.tail = b""
-        out = self._whole()
         rest, self.pending = self.pending.removeprefix(BOM) if self.first else self.pending, b""
-        return b"".join(out) + (clean_event(rest, self.key) if rest else b"")
+        return clean_event(rest, self.key) if rest else b""
 
 
 def clean_event(event: bytes, key: str) -> bytes:
@@ -151,6 +176,7 @@ class Relay:
         self.tasks: set[asyncio.Task] = set()
         self.writers: set[asyncio.StreamWriter] = set()   # until their transport is gone, not just their task
         self.reapers: set[asyncio.Task] = set()
+        self.stopping = False   # set first thing in `_stop`: a connection accepted after it is aborted at once
         self.folder: Path | None = None
         self.loop = asyncio.new_event_loop()
         ready, failed = threading.Event(), []
@@ -198,16 +224,19 @@ class Relay:
                 and all(v in (self.token, f"Bearer {self.token}") for v in sent))
 
     async def _accept(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if len(self.tasks) >= WORKERS:   # full: closed before a byte is read
-            writer.close()
+        # A connection counts until its transport is gone, lingering included; full, or closing: aborted unread.
+        if self.stopping or len(self.writers) >= WORKERS:
+            writer.transport.abort()
             return
         task = asyncio.current_task()
         self.tasks.add(task)
         self.writers.add(writer)
         try:
             await self._serve(reader, writer)
-        except (OSError, asyncio.TimeoutError, h11.ProtocolError):
-            pass   # the caller went silent past `IDLE`, broke off mid-message, or went away
+        except TimeoutError:   # silent, or no longer reading, past `IDLE`: nothing to linger for
+            writer.transport.abort()
+        except (OSError, h11.ProtocolError):
+            pass   # the caller broke off mid-message, or went away
         finally:
             self.tasks.discard(task)
             reaper = asyncio.ensure_future(self._reap(reader, writer))
@@ -222,12 +251,14 @@ class Relay:
         try:
             if writer.can_write_eof():
                 writer.write_eof()
-            await asyncio.wait_for(hangup(reader), LINGER)
+            async with asyncio.timeout(LINGER):
+                await hangup(reader)
         except Exception:   # noqa: BLE001 - gone, aborted by `close`, or still sending: it closes all the same
             pass
         writer.close()
         try:
-            await asyncio.wait_for(writer.wait_closed(), IDLE)
+            async with asyncio.timeout(IDLE):
+                await writer.wait_closed()
         except Exception:   # noqa: BLE001 - the same: nothing is left open past this
             writer.transport.abort()
         finally:
@@ -236,13 +267,16 @@ class Relay:
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         conn = h11.Connection(h11.SERVER)
 
+        # `asyncio.timeout`, never `wait_for`: on Python 3.11 `wait_for` can hand back a result that finished as the
+        # task was cancelled, and the cancellation is lost.
         async def next_event():
-            while (event := conn.next_event()) is h11.NEED_DATA:
-                conn.receive_data(await reader.read(65536))
-            return event
+            async with asyncio.timeout(IDLE):
+                while (event := conn.next_event()) is h11.NEED_DATA:
+                    conn.receive_data(await reader.read(65536))
+                return event
 
         try:
-            request = await asyncio.wait_for(next_event(), IDLE)
+            request = await next_event()
         except h11.RemoteProtocolError:   # two different lengths, a broken chunk header, and the like
             return await answer(None, writer, 400, "DeepSeek 중계: 요청 형식이 틀렸다")
         if not isinstance(request, h11.Request):
@@ -271,7 +305,7 @@ class Relay:
             return await fail(413, "DeepSeek 중계: 요청이 너무 크다")
         body = bytearray()
         # A caller that hangs up before its body is whole makes h11 raise: nothing half sent goes on.
-        while not isinstance(event := await asyncio.wait_for(next_event(), IDLE), h11.EndOfMessage):
+        while not isinstance(event := await next_event(), h11.EndOfMessage):
             body += event.data
         key = settings.entries(self.env).get("DEEPSEEK_API_KEY")
         if not key:
@@ -297,21 +331,22 @@ class Relay:
         if method == "POST":
             sent.append(("content-length", str(len(body))))
         try:
-            up_reader, up_writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.upstream_port, ssl=self.tls), CONNECT)
+            async with asyncio.timeout(CONNECT):
+                up_reader, up_writer = await asyncio.open_connection(self.host, self.upstream_port, ssl=self.tls)
         except (OSError, asyncio.TimeoutError) as exc:
             return await answer(conn, writer, 502, f"DeepSeek 에 닿지 못했다 — {type(exc).__name__}")
         up = h11.Connection(h11.CLIENT)
 
         async def next_up():
             while (event := up.next_event()) is h11.NEED_DATA:
-                up.receive_data(await asyncio.wait_for(up_reader.read(65536), UPSTREAM))
+                async with asyncio.timeout(UPSTREAM):
+                    up.receive_data(await up_reader.read(65536))
             return event
 
         try:
-            up_writer.write(up.send(h11.Request(method=method, target=self.prefix + path, headers=sent))
+            up_writer.write(up.send(h11.Request(method=method, target=self.prefix + path, headers=octets(sent)))
                             + (up.send(h11.Data(data=body)) if body else b"") + up.send(h11.EndOfMessage()))
-            await up_writer.drain()
+            await drained(up_writer)
             while isinstance(reply := await next_up(), h11.InformationalResponse):
                 pass
             if not isinstance(reply, h11.Response):
@@ -342,8 +377,8 @@ class Relay:
                     break
             return await answer(conn, writer, reply.status_code,
                                 f"DeepSeek 오류 {reply.status_code}: {error_kind(bytes(said), key)}", kept)
-        start = h11.Response(status_code=reply.status_code, headers=kept + [("connection", "close")])
-        if not dict(back).get("content-type", "").startswith("text/event-stream"):
+        start = h11.Response(status_code=reply.status_code, headers=octets(kept + [("connection", "close")]))
+        if media_type(back) != "text/event-stream":
             body = bytearray()   # one JSON answer, cleaned whole before a byte of it goes out
             async for chunk in chunks():
                 body += chunk
@@ -351,9 +386,9 @@ class Relay:
                     return await answer(conn, writer, 502, "DeepSeek 의 답이 너무 크다 — 넘기지 않는다")
             writer.write(conn.send(start) + conn.send(h11.Data(data=clean_body(bytes(body), key)))
                          + conn.send(h11.EndOfMessage()))
-            return await writer.drain()
+            return await drained(writer)
         writer.write(conn.send(start))
-        await writer.drain()
+        await drained(writer)
         events = Events(key)
         async for chunk in chunks():
             try:
@@ -362,14 +397,16 @@ class Relay:
                 return None   # past `LONGEST_EVENT`: the stream ends there, unfinished, which the caller can tell
             if ready:
                 writer.write(conn.send(h11.Data(data=b"".join(ready))))
-                await writer.drain()
+                await drained(writer)
         if rest := events.rest():
             writer.write(conn.send(h11.Data(data=rest)))
         writer.write(conn.send(h11.EndOfMessage()))
-        await writer.drain()
+        await drained(writer)
 
     async def _stop(self) -> None:
+        self.stopping = True   # before the listener closes: a handler already queued aborts its connection
         self.server.close()
+        await asyncio.sleep(0)   # let queued handlers run into `stopping`
         for writer in list(self.writers):   # a caller that stopped reading holds nothing open past this
             writer.transport.abort()
         for task in list(self.tasks):
@@ -384,10 +421,12 @@ class Relay:
         if self.thread.is_alive():
             try:
                 asyncio.run_coroutine_threadsafe(self._stop(), self.loop).result(JOIN)
-            except Exception:   # noqa: BLE001 - the loop stops and the folder goes regardless
-                pass
+            except Exception as exc:   # noqa: BLE001 - the loop stops and the folder goes regardless, said aloud
+                print(f"DeepSeek 중계 정리가 끝나지 않았다 — {type(exc).__name__}: {exc}", file=sys.stderr)
             self.loop.call_soon_threadsafe(self.loop.stop)
             self.thread.join(JOIN)
+            if self.thread.is_alive():
+                print("DeepSeek 중계 스레드가 멈추지 않았다", file=sys.stderr)
         if not self.thread.is_alive() and not self.loop.is_closed():
             self.loop.close()
         if self.folder is not None:
@@ -415,8 +454,8 @@ async def answer(conn: h11.Connection | None, writer: asyncio.StreamWriter, stat
             head = f"HTTP/1.1 {status} Error\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers) + "\r\n"
             writer.write(head.encode("latin-1") + payload)
         else:
-            sent = conn.send(h11.Response(status_code=status, headers=headers))
+            sent = conn.send(h11.Response(status_code=status, headers=octets(headers)))
             writer.write(sent + (b"" if head else conn.send(h11.Data(data=payload))) + conn.send(h11.EndOfMessage()))
-        await writer.drain()
-    except OSError:
+        await drained(writer)
+    except (OSError, TimeoutError):
         pass
