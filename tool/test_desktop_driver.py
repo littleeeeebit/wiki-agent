@@ -294,7 +294,8 @@ def test_a_check_reads_a_controls_value_and_toggle_state_after_its_steps(tmp_pat
 def test_the_servers_wait_step_acts_on_nothing_and_reads_the_state_after_the_same_settle(tmp_path):
     script = tmp_path / "form.ps1"
     script.write_text(WPF_FORM, encoding="utf-8")
-    steps = [{"name": "control", "action": desktop_driver.WAIT, "expect": {"id": "translate-on", "toggle": "On"}}]
+    steps = [{"name": "control", "action": desktop_driver.WAIT, "ms": 2500,
+              "expect": {"id": "translate-on", "toggle": "On"}}]
     with desktop_session.look(tmp_path, "form-wait") as look:
         look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                            str(script)], tmp_path)
@@ -303,6 +304,7 @@ def test_the_servers_wait_step_acts_on_nothing_and_reads_the_state_after_the_sam
     assert report["phase"] == "done" and step["acted"] and step["state"] == "s01" and not step["error"], report
     states = {s["id"]: s for s in report["states"]}
     assert [n.get("toggle") for n in states["s01"]["nodes"] if n.get("id") == "translate-on"] == ["Off"]
+    assert states["s01"]["at"] - states["s00"]["at"] >= 2500   # watched as long as asked, past the 800 ms settle
 
 
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():

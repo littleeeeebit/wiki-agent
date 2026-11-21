@@ -242,11 +242,13 @@ def checks(runs: Launches, spec: dict, build: dict) -> list[dict]:
                  "or was not read false before the last step"]
             out.append(finding(scenario["screen"], scenario["state"], f"{failed} — {'; '.join(why)} · 확인: {x['check']}"))
             continue
-        # The control: the same lead-in, then the same settle with nothing acted on. A postcondition the lead-in
-        # brings about late, or the app by itself, is never the review's step's.
+        # The control: the same lead-in, then at least as long as the review's step was watched, with nothing acted
+        # on. A postcondition the lead-in brings about late, or the app by itself, is never the review's step's.
+        ran = chain(report, len(steps))
+        window = ran[-1]["at"] - ran[-2]["at"]
         control = runs.drive(scenario["screen"], scenario["state"], [
-            *steps[:-1], {"name": "control", "action": desktop_driver.WAIT, "expect": x["expect"]}])
-        if not unmoved(control, x["expect"], len(steps)):
+            *steps[:-1], {"name": "control", "action": desktop_driver.WAIT, "ms": window, "expect": x["expect"]}])
+        if not unmoved(control, [s["expect"] for s in steps], window):
             out.append(finding(scenario["screen"], scenario["state"], f"{failed} — 리뷰의 동작 없이 같은 시간을 기다린 "
                                "대조 실행에서 결과가 거짓으로 읽히지 않았다 · 확인: " + x["check"]))
     return out
@@ -258,7 +260,7 @@ def chain(report: dict, n: int) -> list[dict] | None:
 
     states = report.get("states") or []
     order, steps, at = [s["id"] for s in states], report.get("steps") or [], 0
-    if not complete(report) or len(steps) != n or not states:
+    if not complete(report) or len(steps) != n or not states or not all(type(s.get("at")) is int for s in states):
         return None
     out = [states[0]]
     for step in steps:
@@ -269,26 +271,32 @@ def chain(report: dict, n: int) -> list[dict] | None:
     return out
 
 
-def proved(report: dict, wants: list[dict]) -> bool:
-    """Step k's state shows `wants[k]` on the one element its id names in the window it names, and the state
-    before the last step read the last one false, so that step brought it about."""
+def shows(report: dict, state: dict, want: dict) -> bool:
+    """`want` on the one element its id names in the window it names, in `state`."""
 
     import desktop_driver
 
-    def shows(state: dict, want: dict) -> bool:
-        window = desktop_driver.scope(report, state, want.get("in", "main"))
-        return window is not None and desktop_driver.holds(state, want, window)
+    window = desktop_driver.scope(report, state, want.get("in", "main"))
+    return window is not None and desktop_driver.holds(state, want, window)
+
+
+def proved(report: dict, wants: list[dict]) -> bool:
+    """Step k's state shows `wants[k]`, and the state before the last step read the last one false, so that step
+    brought it about."""
 
     states = chain(report, len(wants))
-    return states is not None and all(shows(s, w) for s, w in zip(states[1:], wants)) \
+    return states is not None and all(shows(report, s, w) for s, w in zip(states[1:], wants)) \
         and refuted(report, states[-2], wants[-1])
 
 
-def unmoved(report: dict, want: dict, n: int) -> bool:
-    """The control run: its `n` steps done, `want` read false before its last and after it."""
+def unmoved(report: dict, wants: list[dict], window: int) -> bool:
+    """The control run: its lead-in done as the scenario's was, each step showing its postcondition, and the
+    last of `wants` read false before its wait and after it, the wait watched at least `window` ms."""
 
-    states = chain(report, n)
-    return states is not None and refuted(report, states[-2], want) and refuted(report, states[-1], want)
+    states = chain(report, len(wants))
+    return states is not None and all(shows(report, s, w) for s, w in zip(states[1:-1], wants[:-1])) \
+        and states[-1]["at"] - states[-2]["at"] >= window \
+        and refuted(report, states[-2], wants[-1]) and refuted(report, states[-1], wants[-1])
 
 
 def refuted(report: dict, state: dict, want: dict) -> bool:
@@ -301,8 +309,8 @@ def refuted(report: dict, state: dict, want: dict) -> bool:
     main = report["main"]["hwnd"]
     if want.get("in") == "owned":
         owned = [w["hwnd"] for w in state["windows"] if w.get("owner") == main]
-        if len(owned) != 1:
-            return not owned
+        if len(owned) != 1:   # none owned is proof only while the main window itself is there and read
+            return not owned and drawn(state, main)
         window = owned[0]
     else:
         window = main

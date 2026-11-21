@@ -146,15 +146,19 @@ def test_a_look_of_another_freeze_than_the_runs_goes_back_to_the_build(judged):
     assert heard == [("마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다", "build-front")]
 
 
-def test_a_clean_round_at_the_cap_earns_its_confirming_round(judged):
+@pytest.mark.parametrize("lesser", [False, True])
+def test_a_clean_round_at_the_cap_earns_its_confirming_round_on_the_same_freeze(judged, lesser):
     pc_run([])
     high = {"severity": "high", "route": "/", "viewport": "window", "state": "full", "what": "x"}
     oneshot_spec.saved("budget", oneshot={"critiques": [{"look": 1, "head": "a" * 40, "findings": [high], "clean": False,
                                                          "freeze": "f0", "ts": 1}] * (critique.MAX_ROUNDS - 1)})
-    _, asking = critic(said())
+    medium = {**high, "severity": "medium", "route": FRONT["screens"][0]["id"], "fix": "여백을 넓힌다"}
+    _, asking = critic(said(*([medium] if lesser else [])), said())
     with asking:
-        critique.critique("budget")   # the cap's round, clean on the new freeze
-    assert not o().get("stopped") and o()["working"] == "critique" and len(o()["critiques"]) == critique.MAX_ROUNDS
+        critique.critique("budget")   # the cap's round, clean on the new freeze: never a rebuild, a medium aside
+        assert not o().get("stopped") and o()["working"] == "critique" and o()["stage"] == "critique"
+        critique.critique("budget")   # its confirmation on the same freeze
+    assert o()["stage"] == "r3" and o()["stopped"]["reason"] == "kind"
 
 
 def test_a_look_that_ran_none_of_the_pc_apps_owed_look_checks_goes_back_to_the_build(judged):

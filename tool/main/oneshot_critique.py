@@ -108,14 +108,8 @@ def critique(repo: str) -> None:
     def body(store, spec, tree):
         o = spec["oneshot"]
         look = o["looks"][-1]
-        # A look an earlier version passed ran none of the PC app's owed `look` checks, and names no freeze its
-        # rounds could count on: it is never evidence.
-        if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in (look.get("proven") or [])]:
-            review.rebuild(repo, store, f"PC 앱에서 확인할 {', '.join(unproven)} 을 마지막 화면 검사가 돌리지 않았다",
-                           front_build.STAGE)
-            return None
-        if look.get("build") and (not look.get("freeze") or look["freeze"] != (o.get("desktop_build") or {}).get("freeze")):
-            review.rebuild(repo, store, "마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다", front_build.STAGE)
+        if why := stale(o):
+            review.rebuild(repo, store, why, front_build.STAGE)
             return None
         # Several kinds: one kind a round, the critic seeing only that kind's shots and the harness's findings on them.
         kind = (critic_kind(o) or kinds_of(o)[-1]) if shape(o) == "kinds" else None
@@ -135,6 +129,19 @@ def critique(repo: str) -> None:
         return lambda: judged(repo, store, spec, seen, [{**f, "kind": kind} for f in found] if kind else found, kind)
 
     review.holding(repo, "화면 비평", body, "front_built_head", front_build.STAGE)
+
+
+def stale(o: dict) -> str:
+    """Why the last look is no evidence for a critique or the phone round after it: it ran none of the PC app's
+    owed `look` checks, or names no freeze, or another than the run's (an earlier version's look); empty when
+    it is evidence."""
+
+    look = (o.get("looks") or [{}])[-1]
+    if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in (look.get("proven") or [])]:
+        return f"PC 앱에서 확인할 {', '.join(unproven)} 을 마지막 화면 검사가 돌리지 않았다"
+    if look.get("build") and (not look.get("freeze") or look["freeze"] != (o.get("desktop_build") or {}).get("freeze")):
+        return "마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다"
+    return ""
 
 
 def passed(rounds: list[dict], head: str | None = None, freeze: str | None = None) -> bool:
@@ -194,7 +201,9 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
             store.put(critiques=rounds, **restart, working=None, stopped={
                 "reason": "critique", "detail": detail, "state": store.get()[store.state], "counted": len(mine)})
         return None
-    if rounds[-1]["clean"] and not found:   # nothing to fix: a second look at the same shots, `working` still set
+    # Nothing to fix, or a clean round at the cap, whose lesser findings a rebuild would only trade for a new freeze
+    # with no room left to pass: a second look at the same shots, `working` still set.
+    if rounds[-1]["clean"] and (not found or len(mine) == MAX_ROUNDS):
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
         return lambda: oneshot_spec.handoff(repo, "critique") or True   # the next look holds the tree itself
     todo = found + [f for f in look["findings"] if f["severity"] == "high"]   # a mechanical high outranks a clean critique

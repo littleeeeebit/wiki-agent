@@ -64,6 +64,7 @@ $out = $ask.out
 $report = [ordered]@{ phase = "starting"; main = $null; size = $null; states = @(); steps = @(); refusal = $null; error = $null }
 $UTILITY = @("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator", "IME", "MSCTFIME UI")
 $MAX_ITEMS = 2000   # a list's items counted at most: more is an unknown count, so its tree is not taken as whole
+$clock = [System.Diagnostics.Stopwatch]::StartNew()   # each state's `at`: when its read began, in ms
 $MAX_VALUE = 1000   # a control's value recorded at most, in characters: a check's expected value is no longer
 $script:seq = 0
 
@@ -202,10 +203,11 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
 
 function State([string]$name) {   # every window of the app in this state, shot and read
   $id = "s{0:D2}" -f $report.states.Count   # unique and plain: it names the shots; the label stays in the report
+  $at = $clock.ElapsedMilliseconds
   Enter "list $id"
   $windows = @(Windows | Where-Object { -not $_.utility })
   $script:tops = @($windows | ForEach-Object { [int64]$_.hwnd })
-  $state = [ordered]@{ id = $id; name = $name; windows = $windows; shots = @(); reads = @(); nodes = @() }
+  $state = [ordered]@{ id = $id; name = $name; at = $at; windows = $windows; shots = @(); reads = @(); nodes = @() }
   foreach ($w in $windows) {
     Enter "shoot $id $($w.hwnd)"
     $shot = Shoot $w $id
@@ -314,8 +316,11 @@ try {
   foreach ($step in $ask.steps) {
     $done = [ordered]@{ name = $step.name; action = $step.action; acted = $false; error = $null; state = $null; expect = $step.expect }
     $report.steps += $done
-    if ($step.action -eq "wait") {   # the server's control: nothing acted on, the same settle, then the state
-      $done.acted = $true; Save; Settle
+    if ($step.action -eq "wait") {   # the server's control: nothing acted on, then the state once `ms` have
+      $done.acted = $true; Save       # passed since the last state's read began, and the settle at least
+      Settle
+      $until = [int64]$report.states[-1].at + [int64]$step.ms
+      while ($clock.ElapsedMilliseconds -lt $until) { Start-Sleep -Milliseconds 50 }
       $done.state = (State "after-$($step.name)").id
       Save; continue
     }

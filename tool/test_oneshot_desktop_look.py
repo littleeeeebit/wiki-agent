@@ -40,7 +40,7 @@ def report(nodes: list[dict], windows=(MAIN,), sid="S1", steps=(), owners=None) 
     owners = owners or {}
 
     def state(i: int, name: str, held: list[dict]) -> dict:
-        return {"id": f"s{i:02d}", "name": name,
+        return {"id": f"s{i:02d}", "name": name, "at": i * 1000,
                 "windows": [{"hwnd": h, "frame": [0, 0, 1280, 800], "owner": owners.get(h, 0 if h == MAIN else MAIN)}
                             for h in windows],
                 "shots": [{"hwnd": h, "drawn": True, "file": f"s{i:02d}-{h}.png"} for h in windows],
@@ -559,6 +559,21 @@ def test_a_postcondition_is_refuted_only_off_a_read_that_proves_it_false():
         one, {**one["states"][0], "nodes": [*one["states"][0]["nodes"], {**switch, "toggle": None}]}, on)
     alone = report([])
     assert pc_look.refuted(alone, alone["states"][0], on)   # no owned window yet: it appears with the step
+
+
+def test_a_control_counts_only_watched_as_long_with_its_lead_in_done_as_the_scenarios():
+    on = {"id": "translate-on", "toggle": "On"}
+    typed = {"id": "source", "value": "hi"}
+    box, switch = node("source", id="source", value="hi"), node("translate-on", id="translate-on", toggle="Off")
+    control = report([{**box, "value": ""}, switch], steps=[{"name": "type", "shows": [box, switch]},
+                                                            {"name": "control", "shows": [box, switch]}])
+    assert pc_look.unmoved(control, [typed, on], 1000)
+    assert not pc_look.unmoved(control, [typed, on], 1500)   # watched 1000 ms: less than the step was
+    wrong = report([switch], steps=[{"name": "type", "shows": [{**box, "value": "x"}, switch]},
+                                    {"name": "control", "shows": [{**box, "value": "x"}, switch]}])
+    assert not pc_look.unmoved(wrong, [typed, on], 1000)   # its lead-in typed something else: no control at all
+    gone = report([], windows=(3,), owners={3: 0})   # the main window lost: no owned window proves nothing
+    assert not pc_look.refuted({**gone, "main": {"hwnd": MAIN}}, gone["states"][0], {**on, "in": "owned"})
 
 
 UNSCOPED = ("a step's postcondition was not read on one element of its window after the step before, "

@@ -318,7 +318,11 @@ def phone_round(repo: str) -> None:
     stopped = lambda: halt.is_set() or runtime.stopping.is_set()   # noqa: E731
 
     def body(store, spec, tree):
+        from . import oneshot_critique   # it imports this module
         o = spec["oneshot"]
+        if why := oneshot_critique.stale(o):   # a PC app's look the critique would not count, as an earlier version saved
+            review.rebuild(repo, store, why, front_build.STAGE)
+            return None
         if shape(o) == "kinds":   # the phone sees only the Android app's screens, features and scenarios
             spec = front_build.as_kind(spec, "android")
         # The round installs copies, checked here against the digests of the copies the emulator installed.
