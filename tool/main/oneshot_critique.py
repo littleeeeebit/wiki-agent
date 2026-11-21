@@ -203,6 +203,7 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
                                              "working": front_build.STAGE,
                                              "fix": {"who": "An independent read-only critic judged the screenshots",
                                                      "findings": todo}})
+    front_build.MASKS.pop(repo, None)   # this look is retired: the fixes' build takes another with its own
     return lambda: oneshot_build.send(repo, front_build.STAGE, front_turn(spec))
 
 

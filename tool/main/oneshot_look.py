@@ -443,7 +443,9 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
 SHOWN = """() => {
   const code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']), texts = [], values = [];
   const up = e => e.parentElement || (e.parentNode && e.parentNode.host) || null;
-  const shows = n => {   // laid out, not hidden, and under no transparent box; a boxless `display: contents` passes up
+  // Laid out, visible by its own element's computed `visibility` (a descendant can be visible under a hidden
+  // ancestor), and under no transparent box, read off the first ancestor a boxless `display: contents` passes to.
+  const shows = n => {
     const range = document.createRange();
     range.selectNodeContents(n);
     if (!range.getClientRects().length) return false;
@@ -451,7 +453,7 @@ SHOWN = """() => {
     if (!el) return true;
     if (getComputedStyle(el).visibility !== 'visible') return false;
     while (el && getComputedStyle(el).display === 'contents') el = up(el);
-    return !el || !el.checkVisibility || el.checkVisibility({opacityProperty: true, visibilityProperty: true});
+    return !el || !el.checkVisibility || el.checkVisibility({opacityProperty: true});
   };
   const outside = (n, root) => {
     if (!shows(n)) return false;

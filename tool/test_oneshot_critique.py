@@ -108,9 +108,11 @@ def test_the_critic_sees_each_screenshot_and_two_clean_rounds_open_r3(judged):
 def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts(judged):
     _, sent = judged
     _, asking = critic(said(HIGH, LOW), said(LOW), said())
-    with asking:
+    with asking, patch.dict(critique.front_build.MASKS, SHOT_WITH):
         critique.critique("budget")
         assert o()["stage"] == "build-front" and sent[-1][:2] == ("budget", "build-front")
+        assert "budget" not in critique.front_build.MASKS   # that look is retired with its secrets
+        critique.front_build.MASKS["budget"] = (2, {})   # what the fixes' look records
         assert sent[-1][2].index("합계가 안 보인다") < sent[-1][2].index("여백이 좁다")   # high first
         oneshot_spec.saved("budget", oneshot={"stage": "critique", "looks": [*o()["looks"], look(2)]})
         critique.critique("budget")   # clean, with a low finding: fixed once more

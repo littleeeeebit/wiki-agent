@@ -217,6 +217,9 @@ def test_shadow_text_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_make
             ("key-<b>shadow</b>", {"key-shadow": "[N1]"}, True),   # a shadow root's own text node
             ("<span style='display: contents'>key-boxless</span>", {"key-boxless": "[N1]"}, True),   # no box, still drawn
             ("<p style='opacity: 0'>key-clear</p>", {"key-clear": "[N1]"}, False),   # laid out, never drawn
+            ("<p style='visibility: hidden'><span style='display: contents; visibility: visible'>key-up</span></p>",
+             {"key-up": "[N1]"}, True),   # visible under a hidden ancestor
+            ("<p style='visibility: hidden'><span>key-down</span></p>", {"key-down": "[N1]"}, False),
             ("<section><style>.a > .b { color: red }</style></section>", {">": "[N1]"}, False)):
         for hidden in ("", " hidden"):
             page.set_content(f"<main>Ready</main><div{hidden}></div>")
