@@ -229,6 +229,12 @@ def test_shadow_text_drawn_or_not_is_seen_and_no_stylesheet_svg_frame_or_pair_of
         assert bool(look.secrets_shown(page, {"key-gap": "[N1]"})) == (not host)
     page.set_content(f"<main>{gap}</main>")
     assert look.secrets_shown(page, {"key-gap": "[N1]"})   # the document's own rendered text
+    for cased, carried, shown in (("uppercase", "key-up", "KEY-UP"), ("lowercase", "KEY-LOW", "key-low"),
+                                  ("capitalize", "key cap", "Key Cap")):
+        page.set_content(f"<main>Ready <span style='text-transform: {cased}'>{carried}</span></main>")
+        assert look.secrets_shown(page, {shown: "[N1]"})   # cased as drawn
+        page.locator("main").evaluate(SHADOW, f"<p style='text-transform: {cased}'>{carried}</p>")
+        assert look.secrets_shown(page, {shown: "[N1]"})
     for root in ("", " hidden"):   # a hidden root's rendered text is empty, never its stylesheets
         page.set_content(f"<html{root}><body><main>Ready</main><style>.a > .b {{ color: red }}</style></body></html>")
         assert look.secrets_shown(page, {">": "[N1]"}) == ""

@@ -438,7 +438,8 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
 # The text a frame carries, drawn or not, as separate streams: the text and CDATA nodes outside code of its document
 # and of each open shadow root, joined so a value split across elements reads as one; beside each, its rendered
 # text, where hidden text between two visible parts no longer splits them (the nodes `innerText`'s rule keeps: laid
-# out, their element's `visibility` visible, never the getter, which on a hidden root reads stylesheets); as `values`, the value,
+# out, their element's `visibility` visible, cased by `text-transform`; never the getter, which on a hidden root
+# reads stylesheets); as `values`, the value,
 # placeholder and alt of its fields and images. A secret in hidden text has reached the browser all the same. Never
 # markup or a stylesheet, which a short secret would match on a clean page.
 SHOWN = """() => {
@@ -448,14 +449,23 @@ SHOWN = """() => {
       if (code.has(String(p.nodeName).toUpperCase())) return false;
     return true;
   };
+  // A node as drawn, cased by its `text-transform`, or null when it is not drawn. ponytail: no locale-aware casing
+  // and no `full-width`
   const drawn = n => {
     const range = document.createRange(), el = n.parentElement || n.parentNode.host;
     range.selectNodeContents(n);
-    return range.getClientRects().length > 0 && (!el || getComputedStyle(el).visibility === 'visible');
+    const style = el && getComputedStyle(el);
+    if (!range.getClientRects().length || (style && style.visibility !== 'visible')) return null;
+    const cased = style ? style.textTransform : 'none';
+    return cased === 'uppercase' ? n.data.toUpperCase() : cased === 'lowercase' ? n.data.toLowerCase()
+      : cased === 'capitalize' ? n.data.replace(/(^|\\s)(\\S)/g, (m, a, b) => a + b.toUpperCase()) : n.data;
   };
-  const plain = (root, keep = () => true) => { const out = [], walk = document.createTreeWalker(root,
+  const plain = (root, read = n => n.data) => { const out = [], walk = document.createTreeWalker(root,
     NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION);
-    for (let n = walk.nextNode(); n; n = walk.nextNode()) if (outside(n, root) && keep(n)) out.push(n.data);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const text = outside(n, root) ? read(n) : null;
+      if (text !== null) out.push(text);
+    }
     return out.join(''); };
   texts.push(plain(document), plain(document, drawn));
   const visit = root => {

@@ -194,7 +194,8 @@ on its own: the text and CDATA nodes outside code of every frame's document
 and of each open shadow root, joined so a value split across elements reads
 as one; beside each, its rendered text, so hidden text between two visible
 parts never splits a value the screen joins: the nodes `innerText`'s rule
-keeps, laid out and their element's `visibility` visible, read node by node
+keeps, laid out and their element's `visibility` visible, cased by their
+`text-transform` as drawn, read node by node
 since the getter on a hidden root falls back to text that includes
 stylesheets; and the value, placeholder and alt
 of fields and images; never markup or a stylesheet. Within one stream a value broken across lines still
