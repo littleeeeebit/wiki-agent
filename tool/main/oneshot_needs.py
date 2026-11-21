@@ -150,11 +150,15 @@ def secrets(spec: dict) -> dict[str, str]:
     return {env: value for _, env, value in _given(spec)}
 
 
-def hidden(spec: dict) -> dict[str, str]:
-    """What a gate's output shows instead of each given secret: `[N1]` for its value and its URL-quoted form."""
+def hidden(spec: dict, env: dict | None) -> dict[str, str]:
+    """What a gate's output shows instead of each secret `env`, a `gate_env` result, carries: `[N1]` for its value
+    and its URL-quoted form. Read off the environment the child gets, never the store again, so a secret changed or
+    removed in between can never be the one launched and left unmasked."""
 
+    have = {k.upper(): v for k, v in (env or {}).items()}
     # ponytail: the raw and URL-quoted forms only; another encoding of a value (base64, JSON-escaped) still shows
-    return {form: f"[{nid}]" for nid, _, value in _given(spec) for form in {value, quote(value, safe="")}}
+    return {form: f"[{nid}]" for nid, n in _secret_needs(spec) if (value := have.get(n["env"].upper()))
+            for form in {value, quote(value, safe="")}}
 
 
 def gate_env(spec: dict, env: dict | None) -> dict | None:

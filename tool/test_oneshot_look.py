@@ -89,7 +89,7 @@ def app_tree(tmp_path):
     except Exception as exc:   # no package or no browser on this machine
         pytest.skip(f"Playwright 가 없다 — {exc}")
 
-    def made(first=FIRST, frequency=FREQUENCY):
+    def made(first=FIRST, frequency=FREQUENCY, hide=None):
         tree = tmp_path / "tree"
         (tree / "app").mkdir(parents=True, exist_ok=True)
         (tree / "e2e").mkdir(exist_ok=True)
@@ -98,7 +98,8 @@ def app_tree(tmp_path):
         (tree / "app" / "index.html").write_text(INDEX.replace("FIRST", first), encoding="utf-8")
         (tree / "e2e" / "seed.json").write_text(json.dumps([{"method": "POST", "path": "/items", "body": {"name": "커피"}}]),
                                                 encoding="utf-8")
-        found = look.look(tree, f'"{sys.executable}" -m app', FRONT, frequency, OPS, ["desktop"], tmp_path / "shots")
+        found = look.look(tree, f'"{sys.executable}" -m app', FRONT, frequency, OPS, ["desktop"], tmp_path / "shots",
+                          hide=hide)
         return found, tmp_path / "shots"
 
     return made
@@ -131,6 +132,20 @@ def test_the_dom_breaks_of_the_owners_map_and_console_errors_are_high(app_tree, 
 def test_a_never_feature_on_any_screen_is_high(app_tree):
     found, _ = app_tree(frequency={**FREQUENCY, "export": "never"})
     assert any("화면에 없기로" in what for what in high(found))
+
+
+def test_a_page_that_holds_a_secret_is_never_shot_and_its_findings_name_only_the_need(app_tree):
+    value = f"key-{os.getpid()}-{time.time_ns()}"
+    found, shots = app_tree(FIRST + f"<p>{value}</p>", hide={value: "[N1]"})
+    assert high(found) and all("[N1]" in w for w in high(found) if "비밀" in w)
+    assert {f["screen"] for f in found if "[N1]" in f["what"]} == {"S1", "S2", "S3"}   # the script carries it everywhere
+    assert value not in json.dumps(found, ensure_ascii=False) and not list(shots.glob("*.png"))
+
+
+def test_a_one_character_secret_masks_only_the_findings_text():
+    found = [look.finding("high", "S1", "desktop", "full", "콘솔 오류: [x] boom")]
+    with patch.object(look, "_looked", lambda *a: found):
+        assert look.look(*[None] * 7, hide={"]": "[N1]", "high": "[N2]"}) == [{**found[0], "what": "콘솔 오류: [x[N1] boom"}]
 
 
 def test_an_app_the_command_cannot_start_is_refused_with_its_output(tmp_path):

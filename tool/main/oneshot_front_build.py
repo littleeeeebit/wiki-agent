@@ -153,8 +153,7 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         commands = [oneshot_build.run_as(c, o, path) for c in ([backend, gate] if gate != backend else [gate])]
     except ValueError as exc:
         return str(exc)
-    verdict = specs.judge(path, commands, run.halt, lambda text: specs.note(run, text), env=oneshot_build.built_env(spec),
-                          hide=oneshot_needs.hidden(spec))
+    verdict = oneshot_build.judged(path, run, spec, commands, oneshot_build.built_env(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
@@ -262,8 +261,9 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
         return oneshot_desktop_look.look(spec, build, shots, stopped)
     if kind != "android":
         # The web app runs with the owner's secrets, and its text the look keeps shows `[N1]` for each.
+        env = oneshot_needs.gate_env(spec, None)
         return oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]), shots,
-                                 stopped, env=oneshot_needs.gate_env(spec, None), hide=oneshot_needs.hidden(spec))
+                                 stopped, env=env, hide=oneshot_needs.hidden(spec, env))
     # The emulator installs copies, and their digests are what the phone round must install again.
     copies = store.folder / "apks" / f"look-{time.time_ns()}"
     try:

@@ -172,10 +172,20 @@ has each given secret, read from Credential Manager for that gate
 the tests stage, the build's gate, the front build's gate and the pull
 request's gate, and the web app the front build starts for its screenshots.
 Each gate's output shows `[N1]` where a secret's value or its URL-quoted form
-would stand (`common.masked`, `oneshot_needs.hidden`). The JUnit report is
-read once and deleted, and a case whose name holds a secret is refused. A
-secret the design names but the store does not hold is removed from the
-environment, so a variable of that name the server has never stands in.
+would stand (`common.masked`, `oneshot_needs.hidden`). The mask is read off
+the environment the gate starts with, never from the store a second time, so
+the value launched is always the value masked. Every JUnit report, the
+pinned cases' and the one the adapter's gate writes, goes outside the tree,
+is read once and is deleted (`oneshot_build.judged`), and a case whose name
+holds a secret is refused. A secret the design names but the store does not
+hold is removed from the environment, so a variable of that name the server
+has never stands in.
+
+The web look masks only each finding's text, so a secret as short as a JSON
+delimiter never changes its shape. A screen whose markup, text or field
+values hold a secret is a high finding, and it is never shot: the critic
+sends its pictures to a model, and a high finding sends the build back
+before the critic runs. A secret drawn into a canvas or an image is not seen.
 
 11b1 stops there. The build agent's own shell does not have the secrets yet,
 so a test that needs one skips when the agent runs it and must pass in the

@@ -24,7 +24,7 @@ import yaml
 import android_owned
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
+from . import github_release, oneshot_build, oneshot_device, oneshot_spec, pr_text, release, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -158,8 +158,7 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
     ran = [backend, gate] if gate != backend else [gate]
-    verdict = specs.judge(path, ran, run.halt, lambda text: specs.note(run, text), env=oneshot_build.built_env(spec),
-                          expect=checked, hide=oneshot_needs.hidden(spec))
+    verdict = oneshot_build.judged(path, run, spec, ran, oneshot_build.built_env(spec), expect=checked)
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):

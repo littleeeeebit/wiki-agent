@@ -393,15 +393,14 @@ def look(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], vie
     and neither a finding nor a refusal carries a value of `hide` (`common.masked`)."""
 
     try:
-        found = _looked(tree, cmd, front, frequency, ops, views, folder, stopped, env)
+        found = _looked(tree, cmd, front, frequency, ops, views, folder, stopped, env, hide)
     except ValueError as exc:
         raise ValueError(masked(str(exc), hide)) from None
-    # ponytail: a value JSON escapes differently (a quote, a backslash) is not found in the findings
-    return json.loads(masked(json.dumps(found, ensure_ascii=False), hide)) if hide else found
+    return [{**f, "what": masked(f["what"], hide)} for f in found]   # the rest are the run's own names
 
 
 def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], views: list[str],
-            folder: Path, stopped, env: dict | None) -> list[dict]:
+            folder: Path, stopped, env: dict | None, hide: dict[str, str] | None = None) -> list[dict]:
     from playwright.sync_api import sync_playwright
 
     shutil.rmtree(folder, ignore_errors=True)
@@ -421,7 +420,7 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
                         for view in views:
                             for state in states:
                                 halted(stopped)   # a stop ends the look: the app and the browser go below
-                                findings += shot(browser, url, s, view, state, api, folder, shown)
+                                findings += shot(browser, url, s, view, state, api, folder, shown, hide)
                     if data_state == "full":
                         for view in views:
                             findings += placement(browser, url, front, frequency, view, api, stopped)
@@ -436,11 +435,24 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
     return findings
 
 
-def shot(browser, url: str, s: dict, view: str, state: str, api: re.Pattern, folder: Path, shown: dict) -> list[dict]:
+PAGE_TEXT = ("() => document.documentElement.outerHTML + '\\n' + document.documentElement.innerText + '\\n' + "
+             "[...document.querySelectorAll('input, textarea, select')].map(e => e.value).join('\\n')")
+
+
+def shot(browser, url: str, s: dict, view: str, state: str, api: re.Pattern, folder: Path, shown: dict,
+         hide: dict[str, str] | None = None) -> list[dict]:
+    """One screen shot; a screen whose markup, text or field holds a value of `hide` is a high finding and is never
+    shot, since the critic sends its picture to a model."""
+
     errors: list[str] = []
     page = opened(browser, url, s["route"], view, state, api, errors)
     try:
-        page.screenshot(path=str(folder / f"{s['id']}-{view}-{state}.png"), full_page=True)
+        # ponytail: the DOM only; a secret drawn into a canvas or an image is not seen
+        held = page.evaluate(PAGE_TEXT) if hide else ""
+        if leaked := sorted({label for value, label in (hide or {}).items() if value in held}):
+            errors.append(f"화면에 비밀 값 {', '.join(leaked)} 이 보인다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다")
+        else:
+            page.screenshot(path=str(folder / f"{s['id']}-{view}-{state}.png"), full_page=True)
         wide = page.evaluate("document.documentElement.scrollWidth") > VIEWPORTS[view][0]
         if state == "full":
             for f in shown:

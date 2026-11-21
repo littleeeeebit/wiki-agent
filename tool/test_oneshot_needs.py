@@ -310,7 +310,10 @@ def test_a_gate_never_shows_a_secret_and_its_report_is_read_once_and_removed(at_
     give("N1", value=value)
     script = tmp_path / "reporter.py"
     script.write_text(REPORTER.format(env=ENV), encoding="utf-8")
-    spec, run = specs.load("budget", oneshot.BRANCH), type("Run", (), {"halt": threading.Event()})()
+    notes = []
+    chat = type("Chat", (), {"id": "c", "parent_id": None})
+    spec = specs.load("budget", oneshot.BRANCH)
+    run = type("Run", (), {"halt": threading.Event(), "put": staticmethod(notes.append), "chat": chat})()
     reports = oneshot_spec.store("budget").folder / "junit"
     command = f'"{sys.executable}" "{script}" {{report}}'
     assert build.junit(at_r1, run, spec, command + " plain 0") == [("c", "test_translates", "", "failure")]
@@ -318,10 +321,13 @@ def test_a_gate_never_shows_a_secret_and_its_report_is_read_once_and_removed(at_
         with pytest.raises(ValueError, match=said) as e:
             build.junit(at_r1, run, spec, command + args)
         assert value not in str(e.value)
-    code, out, _ = specs.gate(f'"{sys.executable}" "{script}" {tmp_path / "r.xml"} plain 1', at_r1, threading.Event(),
-                              env=build.toolchain(spec), hide=needs.hidden(spec))
-    assert code == 1 and "calling the service with [N1]" in out and value not in out
-    assert not list(reports.glob("*.xml"))   # no report outlives its read
+    real, reads = release.secret_read, []
+    # The store answers once: the gate is launched and masked from that one read, whatever the store says after.
+    monkeypatch.setattr(release, "secret_read", lambda key: reads.append(key) or (None if len(reads) > 1 else real(key)))
+    verdict = build.judged(at_r1, run, spec, [f'"{sys.executable}" "{script}" {build.REPORT} plain 1'], build.toolchain(spec))
+    assert not verdict["ok"] and len(reads) == 1 and "calling the service with [N1]" in verdict["tail"]
+    assert value not in json.dumps([verdict, notes], ensure_ascii=False, default=str)
+    assert not (at_r1 / build.REPORT).exists() and not list(reports.glob("*.xml"))   # no report outlives its read
 
 
 def test_a_secret_not_given_never_falls_back_to_a_variable_the_server_has(at_r1, monkeypatch):

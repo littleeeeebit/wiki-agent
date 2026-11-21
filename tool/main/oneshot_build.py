@@ -388,10 +388,11 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
 
     folder = oneshot_spec.store(spec["repo"]).folder / "junit"
     folder.mkdir(parents=True, exist_ok=True)
-    report, hide = folder / f"run-{time.time_ns()}.xml", oneshot_needs.hidden(spec)
+    report, env = folder / f"run-{time.time_ns()}.xml", toolchain(spec)
+    hide = oneshot_needs.hidden(spec, env)
     try:   # the report may quote a secret in a failure: read once and never kept
         _, text, cut = specs.gate(run_as(command.replace("{report}", literal(report.as_posix())), spec["oneshot"], path),
-                                  path, run.halt, env=toolchain(spec), timeout=RUN_SECONDS, hide=hide)
+                                  path, run.halt, env=env, timeout=RUN_SECONDS, hide=hide)
         if cut:
             raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
         try:
@@ -728,8 +729,7 @@ def built(path: Path, run, spec: dict, final: str) -> str:
         gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
     except ValueError as e:
         return str(e)
-    verdict = specs.judge(path, [gate], run.halt, lambda text: specs.note(run, text), env=toolchain(spec),
-                          hide=oneshot_needs.hidden(spec))
+    verdict = judged(path, run, spec, [gate], toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := held(path, run, spec, verdict):
@@ -739,6 +739,19 @@ def built(path: Path, run, spec: dict, final: str) -> str:
                                               "working": "review"})
     specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}")
     return ""
+
+
+def judged(path: Path, run, spec: dict, commands: list[str], env: dict | None, **kw) -> dict:
+    """`specs.judge` of `commands` in `env` as the server runs a gate: the output shows no secret `env` carries, and
+    the adapter's JUnit report, which may quote one, is written outside the tree and deleted after."""
+
+    report = oneshot_spec.store(spec["repo"]).folder / "junit" / f"gate-{time.time_ns()}.xml"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        return specs.judge(path, [c.replace(REPORT, literal(report.as_posix())) for c in commands], run.halt,
+                           lambda text: specs.note(run, text), env=env, hide=oneshot_needs.hidden(spec, env), **kw)
+    finally:
+        report.unlink(missing_ok=True)
 
 
 def held(path: Path, run, spec: dict, verdict: dict) -> str:
