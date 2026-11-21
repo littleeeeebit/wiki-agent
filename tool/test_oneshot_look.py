@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import quote
 from unittest.mock import patch
 
 import pytest
@@ -218,12 +219,17 @@ def test_shadow_text_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_make
         for hidden in ("", " hidden"):
             page.set_content(f"<main>Ready</main><div{hidden}></div>")
             page.locator("div").evaluate(SHADOW, html)
-            assert bool(look.secrets_shown(page, hide)) == seen
+            assert bool(look.secrets_shown(page, hide)) == (seen and not hidden)   # a hidden host shows nothing
     svg = "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%2F%3E"
     page.set_content(f"<main>Ready</main><iframe src=\"{svg}\"></iframe>")
     page.frames[1].wait_for_load_state()
     assert page.frames[1].evaluate("() => document.documentElement.innerText") is None   # an SVG root has none
     assert look.secrets_shown(page, {"key-x": "[N1]"}) == ""   # a frame with no rendered text is read, not a crash
+    label = "data:image/svg+xml," + quote("<svg xmlns='http://www.w3.org/2000/svg'><text y='20'><![CDATA[key-x]]></text>"
+                                          "<style><![CDATA[.a > .b {}]]></style></svg>")
+    page.set_content(f"<main>Ready</main><iframe src=\"{label}\"></iframe>")
+    page.frames[1].wait_for_load_state()
+    assert "[N1]" in look.secrets_shown(page, {"key-x": "[N1]"}) and look.secrets_shown(page, {">": "[N2]"}) == ""
     page.set_content("<p>ab</p><iframe srcdoc='<p>cd</p>'></iframe><input value='ef'>")
     page.wait_for_function("() => document.querySelector('iframe').contentDocument?.body?.innerText")
     assert look.secrets_shown(page, {"abcd": "[N1]", "cdef": "[N2]"}) == ""   # each stream is matched alone

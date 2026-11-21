@@ -23,6 +23,9 @@ from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape
 from .oneshot_sheet import KIND_NAMES
 
 STAGE = "build-front"
+# By repository, the round of the last look and what its web app's secrets show as (`oneshot_needs.hidden`). Kept
+# in memory only, never with the values written down: a server started since has none, and that look is taken again.
+MASKS: dict[str, tuple[int, dict[str, str]]] = {}
 # The several-kinds prompt keeps a kind's parts only when the owner picked it, and takes the PC app's conventions,
 # block and freeze from the PC app's own prompt, so the two never drift apart.
 SECTION = re.compile(r"<!-- kind:(\w+) -->\n(.*?)<!-- /kind -->\n", re.S)
@@ -171,13 +174,16 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     shots = store.folder / "build" / f"r{n}"
     shutil.rmtree(shots, ignore_errors=True)
     findings, apks = [], {}
+    # The web app's environment, read once: the critic's words about these shots are masked with what it carried.
+    env = oneshot_needs.gate_env(spec, None)
+    MASKS[spec["repo"]] = (n, oneshot_needs.hidden(spec, env))
     for k in kinds:   # in the owner's order; a kind that fails sends the build back before the next is looked at
         one = as_kind(spec, k) if several else spec
         specs.note(run, f"{'에뮬레이터에 앱을 설치해' if k == 'android' else '앱을 띄워'} 화면을 찍는다 · {n}회차"
                    + (f" · {KIND_NAMES[k]}" if several else ""))
         try:
             found = looked(path, k, one, live, device if k == "android" else None, shots / k if several else shots,
-                           stopped, apks, build)
+                           stopped, apks, build, env=env)
         except OSError as exc:
             if k != "android":
                 raise
@@ -251,7 +257,7 @@ def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> tuple[dict |
 
 
 def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, shots: Path, stopped,
-           apks: dict, build: dict | None = None) -> list[dict]:
+           apks: dict, build: dict | None = None, *, env: dict | None = None) -> list[dict]:
     """One kind's look at the HEAD the gate passed, shot into `shots`: the web app served and shot in a browser,
     the Android app's APKs copied and installed on the run's emulator (`apks` gets the copies' digests), or the
     PC app's frozen `build` started on a desktop the run owns."""
@@ -260,8 +266,7 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
     if kind == "desktop":
         return oneshot_desktop_look.look(spec, build, shots, stopped)
     if kind != "android":
-        # The web app runs with the owner's secrets, and its text the look keeps shows `[N1]` for each.
-        env = oneshot_needs.gate_env(spec, None)
+        # The web app runs with the owner's secrets (`env`, a `gate_env`), and its text the look keeps shows `[N1]`.
         return oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]), shots,
                                  stopped, env=env, hide=oneshot_needs.hidden(spec, env))
     # The emulator installs copies, and their digests are what the phone round must install again.

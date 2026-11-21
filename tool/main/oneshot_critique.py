@@ -119,15 +119,19 @@ def critique(repo: str) -> None:
         if missing:
             review.rebuild(repo, store, f"비평할 화면 사진이 없다 — {', '.join(missing[:6])}", front_build.STAGE)
             return None
-        found = oneshot.turned(store, "critic", CRITIC_PROMPT, critique_text(one, seen, shown), "oneshot-critique",
-                               lambda value: critique_of(value, one), tree, tuple(shown))
         # The look shoots no screen whose text shows a secret, but a picture can still draw one (owner, 2026-11-21):
-        # what the critic writes is kept with `[N1]` in its place.
-        hide = oneshot_needs.hidden(spec, oneshot_needs.gate_env(spec, None))
+        # what the critic writes is kept with `[N1]` in its place, by the secrets the shots were taken with.
+        at, hide = front_build.MASKS.get(repo, (None, {}))
+        if at != look["round"] and oneshot_needs.secret_needs(spec):
+            review.rebuild(repo, store, "화면 사진을 찍은 뒤 서버가 다시 켜져, 사진에 든 비밀을 가릴 값이 없다 — 다시 찍는다",
+                           front_build.STAGE)
+            return None
+        found = oneshot.turned(store, "critic", CRITIC_PROMPT, critique_text(one, seen, shown), "oneshot-critique",
+                               lambda value: critique_of(value, one), tree, tuple(shown), hide)
         if found is None:   # a refused or failed image turn is never a critique that saw nothing wrong
             stopped = store.get().get("stopped") or {}
             if stopped.get("reason") == "block":
-                store.stop("critique", masked(stopped.get("detail") or "", hide))
+                store.stop("critique", stopped.get("detail") or "")
             return None
         found = [{**f, "what": masked(f["what"], hide), "fix": masked(f["fix"], hide)} for f in found]
         return lambda: judged(repo, store, spec, seen, [{**f, "kind": kind} for f in found] if kind else found, kind)

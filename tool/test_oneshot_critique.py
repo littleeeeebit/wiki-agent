@@ -117,13 +117,32 @@ def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts
     assert o()["stage"] == "r3" and [c["clean"] for c in o()["critiques"]] == [False, True, True]
 
 
+SHOT_WITH = {"budget": (1, {"key-9f2": "[N1]"})}   # what round 1's web app carried, as its look recorded it
+
+
 def test_a_secret_a_picture_drew_is_kept_out_of_what_the_critic_wrote(judged):
     _, sent = judged
     _, asking = critic(said({**HIGH, "what": "화면에 key-9f2 가 보인다", "fix": "key-9f2 를 지운다"}))
-    with asking, patch.object(critique.oneshot_needs, "hidden", lambda spec, env: {"key-9f2": "[N1]"}):
+    with asking, patch.dict(critique.front_build.MASKS, SHOT_WITH):
         critique.critique("budget")
     assert "key-9f2" not in json.dumps([o()["critiques"], sent], ensure_ascii=False, default=str)
     assert "화면에 [N1] 가 보인다" in sent[-1][2]
+
+
+@pytest.mark.parametrize("answers", [(RuntimeError("the model quoted key-9f2"),), ("key-9f2", "key-9f2")])
+def test_a_critic_turn_that_fails_quoting_a_secret_never_writes_it(judged, answers):
+    details, stop = [], oneshot.Store.stop
+    _, asking = critic(*answers)
+    with asking, patch.dict(critique.front_build.MASKS, SHOT_WITH),             patch.object(oneshot.Store, "stop", lambda self, reason, detail: details.append(detail) or stop(self, reason, detail)):
+        critique.critique("budget")
+    assert details and o()["stopped"]["reason"] == "critique" and "key-9f2" not in json.dumps(details + [o()["stopped"]])
+
+
+def test_shots_a_restarted_server_holds_no_mask_for_are_taken_again(judged):
+    heard, asking = critic(said())
+    with asking, patch.dict(critique.front_build.MASKS, clear=True),             patch.object(critique.oneshot_needs, "secret_needs", lambda spec: [("N1", {"env": "SERVICE_KEY"})]):
+        critique.critique("budget")
+    assert heard == [] and o()["stage"] == "build-front" and "다시 찍는다" in o()["stopped"]["detail"]
 
 
 def test_a_mechanical_high_finding_overrides_a_clean_critique(judged):

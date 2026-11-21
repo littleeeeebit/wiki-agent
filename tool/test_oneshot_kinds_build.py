@@ -58,7 +58,7 @@ def looks(found: dict[str, list[dict]]):
 
     seen = []
 
-    def look(path, kind, one, live, d, shots, stopped, apks, build=None):
+    def look(path, kind, one, live, d, shots, stopped, apks, build=None, **_):
         o = one["oneshot"]
         seen.append({"kind": kind, "screens": [s["id"] for s in o["front"]["screens"]], "features": sorted(o["frequency"]),
                      "requirements": [r["id"] for r in one["requirements"]], "inventory": o.get("inventory"),

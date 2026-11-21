@@ -436,15 +436,21 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
 
 
 # What a picture of a frame can show as text, as separate streams: an HTML document's rendered text, which joins a
-# value split across elements and leaves out code and hidden text; the text nodes outside code of each open shadow
-# root (which that text skips) and of a document with no rendered text, such as an SVG one; and, as `values`, the
+# value split across elements and leaves out code and hidden text; the visible text and CDATA nodes outside code of
+# each open shadow root (which that text skips) and of a document with no rendered text, such as an SVG one; as `values`, the
 # value, placeholder and alt of its fields and images. Never markup or a stylesheet, which a short secret would
 # match on a clean page.
 SHOWN = """() => {
   const code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']), texts = [], values = [];
-  const outside = (n, root) => { for (let p = n.parentNode; p && p !== root; p = p.parentNode)
-    if (code.has(String(p.nodeName).toUpperCase())) return false; return true; };
-  const plain = root => { const out = [], walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const outside = (n, root) => {
+    const owner = n.parentElement || (n.parentNode && n.parentNode.host);
+    if (owner && owner.checkVisibility && !owner.checkVisibility({visibilityProperty: true})) return false;
+    for (let p = n.parentNode; p && p !== root; p = p.parentNode)
+      if (code.has(String(p.nodeName).toUpperCase())) return false;
+    return true;
+  };
+  const plain = root => { const out = [], walk = document.createTreeWalker(root,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) if (outside(n, root)) out.push(n.data); return out.join(''); };
   const top = document.documentElement;
   texts.push(top && typeof top.innerText === 'string' ? top.innerText : plain(document));

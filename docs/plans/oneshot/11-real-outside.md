@@ -201,7 +201,11 @@ The guard stops at text, decided with the owner on 2026-11-21. A secret
 drawn as pixels, into a canvas, an image or a stylesheet's `content`, can
 reach the critic, the same trust the build agent gets in 11b2. What the
 critic writes, its findings and the reason it stopped, is kept with `[N1]`
-in each secret's place.
+in each secret's place, from the first write on (`oneshot.turned` takes
+`hide`). The mask is the one the look's web app was started with
+(`oneshot_front_build.MASKS`), held in memory only. A server started since
+has none, and a run with a secret takes those shots again before any
+critique.
 
 11b1 stops there. The build agent's own shell does not have the secrets yet,
 so a test that needs one skips when the agent runs it and must pass in the
