@@ -435,24 +435,82 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
     return findings
 
 
-PAGE_TEXT = ("() => document.documentElement.outerHTML + '\\n' + document.documentElement.innerText + '\\n' + "
-             "[...document.querySelectorAll('input, textarea, select')].map(e => e.value).join('\\n')")
+# What a picture of a frame can show as text: its text outside code, its open shadow roots', and the value,
+# placeholder and alt of its fields and images; never the markup around them, which a short secret would match.
+SHOWN = """() => {
+  const out = [], code = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
+  const visit = root => {
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (n.nodeType === Node.TEXT_NODE) { if (!code.has(n.parentNode.nodeName)) out.push(n.data); continue; }
+      for (const a of ['value', 'placeholder', 'alt']) if (n.hasAttribute(a)) out.push(n.getAttribute(a));
+      if (typeof n.value === 'string') out.push(n.value);
+      if (n.shadowRoot) visit(n.shadowRoot);
+    }
+  };
+  visit(document);
+  return out;
+}"""
+
+
+@contextmanager
+def still(page):
+    """No script of `page` or of any of its frames runs inside, so what is read there is what a screenshot taken
+    there shows. A frame in another process gets its own session; one in the page's stops with the page."""
+
+    from playwright.sync_api import Error
+
+    sessions = [page.context.new_cdp_session(page)]
+    for frame in page.frames[1:]:
+        try:
+            sessions.append(page.context.new_cdp_session(frame))
+        except Error:   # in the page's process
+            pass
+    for s in sessions:
+        s.send("Emulation.setScriptExecutionDisabled", {"value": True})
+    try:
+        yield
+    finally:
+        for s in sessions:
+            try:
+                s.send("Emulation.setScriptExecutionDisabled", {"value": False})
+                s.detach()
+            except Error:   # a frame gone with the page
+                pass
+
+
+def secrets_shown(page, hide: dict[str, str]) -> str:
+    """Why a picture of `page` now could show a value of `hide`, naming only its label, or empty."""
+
+    from playwright.sync_api import Error
+
+    try:
+        shown = [text for frame in page.frames for text in frame.evaluate(SHOWN)]
+    except Error:
+        return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
+    if leaked := sorted({label for value, label in hide.items() if any(value in text for text in shown)}):
+        return f"화면에 비밀 값 {', '.join(leaked)} 이 보인다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다"
+    return ""
 
 
 def shot(browser, url: str, s: dict, view: str, state: str, api: re.Pattern, folder: Path, shown: dict,
          hide: dict[str, str] | None = None) -> list[dict]:
-    """One screen shot; a screen whose markup, text or field holds a value of `hide` is a high finding and is never
-    shot, since the critic sends its picture to a model."""
+    """One screen shot. With `hide`, the page is still while it is read and shot, and a screen that could show
+    one of its values is a high finding and is never shot, since the critic sends its picture to a model."""
 
     errors: list[str] = []
     page = opened(browser, url, s["route"], view, state, api, errors)
     try:
-        # ponytail: the DOM only; a secret drawn into a canvas or an image is not seen
-        held = page.evaluate(PAGE_TEXT) if hide else ""
-        if leaked := sorted({label for value, label in (hide or {}).items() if value in held}):
-            errors.append(f"화면에 비밀 값 {', '.join(leaked)} 이 보인다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다")
+        picture = str(folder / f"{s['id']}-{view}-{state}.png")
+        if not hide:
+            page.screenshot(path=picture, full_page=True)
         else:
-            page.screenshot(path=str(folder / f"{s['id']}-{view}-{state}.png"), full_page=True)
+            # ponytail: text only; a secret drawn into a canvas, an image or a stylesheet's `content` is not seen
+            with still(page):
+                if why := secrets_shown(page, hide):
+                    errors.append(why)
+                else:
+                    page.screenshot(path=picture, full_page=True)
         wide = page.evaluate("document.documentElement.scrollWidth") > VIEWPORTS[view][0]
         if state == "full":
             for f in shown:

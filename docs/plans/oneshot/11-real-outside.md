@@ -182,10 +182,15 @@ hold is removed from the environment, so a variable of that name the server
 has never stands in.
 
 The web look masks only each finding's text, so a secret as short as a JSON
-delimiter never changes its shape. A screen whose markup, text or field
-values hold a secret is a high finding, and it is never shot: the critic
-sends its pictures to a model, and a high finding sends the build back
-before the critic runs. A secret drawn into a canvas or an image is not seen.
+delimiter never changes its shape. Each screen is read and shot while no
+script of it or of its frames runs (`oneshot_look.still`), so the picture
+shows what was read. What is read is what a picture can show as text: every
+frame's text outside code, open shadow roots, and the value, placeholder
+and alt of fields and images, never the markup around them. A screen that
+shows a secret, or has a frame that cannot be read, is a high finding and
+is never shot: the critic sends its pictures to a model, and a high finding
+sends the build back before the critic runs. A secret drawn into a canvas,
+an image or a stylesheet's `content` is not seen.
 
 11b1 stops there. The build agent's own shell does not have the secrets yet,
 so a test that needs one skips when the agent runs it and must pass in the

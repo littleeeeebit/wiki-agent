@@ -8,6 +8,7 @@ follows the conventions the build prompt fixes: one port from `PORT`, its data u
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -138,14 +139,66 @@ def test_a_page_that_holds_a_secret_is_never_shot_and_its_findings_name_only_the
     value = f"key-{os.getpid()}-{time.time_ns()}"
     found, shots = app_tree(FIRST + f"<p>{value}</p>", hide={value: "[N1]"})
     assert high(found) and all("[N1]" in w for w in high(found) if "비밀" in w)
-    assert {f["screen"] for f in found if "[N1]" in f["what"]} == {"S1", "S2", "S3"}   # the script carries it everywhere
-    assert value not in json.dumps(found, ensure_ascii=False) and not list(shots.glob("*.png"))
+    # S1 renders it once its items load; the other screens carry it only in their script, which no picture shows
+    assert {(f["screen"], f["state"]) for f in found if "[N1]" in f["what"]} == {("S1", "empty"), ("S1", "full")}
+    assert value not in json.dumps(found, ensure_ascii=False)
+    assert not list(shots.glob("S1-*-empty.png")) + list(shots.glob("S1-*-full.png"))
+    assert (shots / "S2-desktop-full.png").is_file() and (shots / "S1-desktop-loading.png").is_file()
 
 
 def test_a_one_character_secret_masks_only_the_findings_text():
     found = [look.finding("high", "S1", "desktop", "full", "콘솔 오류: [x] boom")]
     with patch.object(look, "_looked", lambda *a: found):
         assert look.look(*[None] * 7, hide={"]": "[N1]", "high": "[N2]"}) == [{**found[0], "what": "콘솔 오류: [x[N1] boom"}]
+
+
+@pytest.fixture
+def browser():
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            yield browser
+        finally:
+            browser.close()
+
+
+def shot_of(browser, html, folder, hide, ready=None):
+    page = browser.new_page(offline=True)
+    page.set_content(html)
+    if ready:
+        page.wait_for_function(ready)
+    with patch.object(look, "opened", lambda *a: page):
+        found = look.shot(None, "", {"id": "S1", "route": "/"}, "desktop", "full", re.compile("$^"), folder, {}, hide)
+    return found, (folder / "S1-desktop-full.png").is_file()
+
+
+def test_a_frame_that_shows_a_secret_is_never_shot_and_a_short_secret_only_in_markup_is_not_shown(browser, tmp_path):
+    value = f"key-{os.getpid()}"
+    found, picture = shot_of(browser, f"<main><iframe srcdoc='<p>error: {value}</p>'></iframe></main>", tmp_path,
+                             {value: "[N1]"}, "() => document.querySelector('iframe').contentDocument?.body?.innerText")
+    assert [f["severity"] for f in found] == ["high"] and "[N1]" in found[0]["what"] and not picture
+    html = "<main id='m'>Ready</main><script>window.ready = () => 1 > 0</script>"
+    assert shot_of(browser, html, tmp_path, {">": "[N1]"}) == ([], True)   # tag syntax and code show nothing
+
+
+def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser):
+    page = browser.new_page(offline=True)
+    page.set_content("<p id='t'>0</p><iframe srcdoc=\"<p id='f'>0</p><script>let i = 0; "
+                     "setInterval(() => document.getElementById('f').textContent = ++i, 2)</script>\"></iframe>"
+                     "<script>let n = 0; setInterval(() => document.getElementById('t').textContent = ++n, 2)</script>")
+    page.wait_for_function("() => +document.getElementById('t').textContent > 5")
+    def read():
+        return [f.evaluate("() => document.body.innerText") for f in page.frames]
+
+    with look.still(page):
+        before = read()
+        page.screenshot()
+        time.sleep(0.2)
+        assert read() == before
+    time.sleep(0.2)
+    assert read() != before
 
 
 def test_an_app_the_command_cannot_start_is_refused_with_its_output(tmp_path):
