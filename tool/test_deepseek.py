@@ -29,7 +29,7 @@ def tree(tmp_path):
     """A repository beside a hub `.env` holding a fixture key."""
     (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(tmp_path / "repo")], check=True)
-    with patch.object(deepseek.settings, "HUB", tmp_path):
+    with patch.object(deepseek.settings, "HUB", tmp_path), patch.object(deepseek, "managed", lambda: []):
         yield tmp_path / "repo"
 
 
@@ -63,6 +63,8 @@ def test_deepseek_goes_to_its_endpoint_by_flag_settings_with_no_credential_in_th
     flags = json.loads(flag(run["argv"], "--settings"))
     # Flag settings outrank the user's, the project's and the local ones: none of them can move the endpoint.
     assert flags["env"]["ANTHROPIC_BASE_URL"] == deepseek.URL and flags["env"]["CLAUDE_CODE_USE_BEDROCK"] == ""
+    # A gateway's token, key or headers in someone's settings would beat the helper's key: each is blanked.
+    assert all(flags["env"][k] == "" for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS"))
     assert flags["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "deepseek-flash"
     assert str(tree.parent / ".env") in flags["apiKeyHelper"] and "sk-fixture" not in flags["apiKeyHelper"]
     assert flags.get("disableAllHooks", False) is isolated
@@ -78,16 +80,38 @@ def test_the_key_helper_prints_the_key_of_the_file_it_is_given(tree):
 def test_a_chosen_effort_wins_and_claude_stays_on_its_own_login(tree):
     run = started(ChatSession(tree, model="deepseek-flash", effort="low"), tree)
     assert flag(run["argv"], "--effort") == "low"
-    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-fixture"}):
+    fixtures = {"ANTHROPIC_API_KEY": "sk-ant-fixture", "ANTHROPIC_AUTH_TOKEN": "t", "CLAUDE_CODE_OAUTH_TOKEN": "o",
+                "DEEPSEEK_API_KEY": "d"}   # every captured variable a fixture: nothing real is written to disk
+    with patch.dict("os.environ", fixtures):
         run = started(ChatSession(tree, model="opus"), tree)
     assert flag(run["argv"], "--effort") is None and "apiKeyHelper" not in json.loads(flag(run["argv"], "--settings"))
-    assert run["env"]["ANTHROPIC_API_KEY"] == "sk-ant-fixture"
+    assert run["env"] == fixtures
 
 
 def test_no_key_refuses_instead_of_falling_back_to_claude(tree):
     (tree.parent / ".env").write_text("DEEPSEEK_API_KEY=\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
         deepseek.flags("deepseek-flash", {})
+
+
+def test_a_route_it_cannot_hold_refuses_deepseek(tree, tmp_path):
+    with patch.object(deepseek, "managed", lambda: [{"env": {"ANTHROPIC_BASE_URL": "https://gateway.example"}}]), \
+         pytest.raises(RuntimeError, match="관리 설정"):
+        deepseek.flags("deepseek-flash", {})
+    odd = tmp_path / "100% hub"   # a space is quoted; a percent sign would expand in the helper's shell
+    odd.mkdir()
+    (odd / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
+    with patch.object(deepseek.settings, "HUB", odd), pytest.raises(RuntimeError, match="셸 문자"):
+        deepseek.flags("deepseek-flash", {})
+
+
+def test_saved_turns_and_handoffs_stay_with_their_provider():
+    from main import work
+
+    rows = [{"role": "assistant", "session_id": "ds", "model": "deepseek-flash", "provider": "claude"}]
+    assert query.resumable(rows, "claude") is None and query.resumable(rows, "deepseek") == "ds"
+    refused = [{"role": "context", "handoff": "- Asked: earlier", "provider": "claude"}]
+    assert "earlier" in work.started_from(refused, "claude") and work.started_from(refused, "deepseek") == ""
 
 
 def test_another_provider_is_a_new_conversation():

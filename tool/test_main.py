@@ -764,7 +764,7 @@ class Agent:
         assert write
         self.id, self.session_id, self.alive, self.parent_id = uuid.uuid4().hex, None, True, None
         self.bypass = bypass
-        self.is_codex = model.startswith("codex:")
+        self.model, self.is_codex = model, model.startswith("codex:")
         self.pending, self.rules = {"r1"}, []
         Agent.made.append(self)
 

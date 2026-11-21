@@ -252,9 +252,9 @@ def resumable(rows: list[dict], provider: str) -> str | None:
         if row.get("role") == "context":
             return None
         if row.get("session_id"):
-            model = str(row.get("model", ""))
-            left = row.get("provider") or ("claude" if model.startswith("claude-") else
-                                           "deepseek" if model == deepseek.MODEL else "codex")
+            model = str(row.get("model", ""))   # the CLI's own name: `deepseek-flash` whatever the row says
+            left = "deepseek" if model == deepseek.MODEL else row.get("provider") or (
+                "claude" if model.startswith("claude-") else "codex")
             return row["session_id"] if left == provider else None
     return None
 
@@ -975,7 +975,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             if reply or failed:
                 keep(cid, "assistant", "".join(reply), failed, repo=run.repo,
                          simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
-                         provider="codex" if cfg["model"].startswith("codex:") else "claude", run_id=run.id,
+                         provider=deepseek.provider(cfg["model"]), run_id=run.id,
                          **({"cancelled": True} if code == "cancelled" else {}),
                          **({"blocks": shown} if shown else {}),
                          **({"verification": verification} if verification else {}), **metadata)

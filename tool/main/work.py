@@ -105,7 +105,7 @@ def provider_usage(provider: Literal["claude", "codex"], path: str = "") -> dict
         known(path)
         chat = _sessions.get(path)
         if chat:
-            return {"provider": "codex" if chat.is_codex else "claude", **chat.status()}
+            return {"provider": deepseek.of(chat), **chat.status()}
     with _provider_usage_lock:
         cached = _provider_usage.get(provider)
         if not cached or time.monotonic() - cached["at"] >= (60 if provider == "codex" else 300):
@@ -128,7 +128,7 @@ def all_provider_usage() -> dict:
         chats += [run.chat for run in loop._review_runs.values()]
     providers = []
     for provider in ("claude", "codex"):
-        matching = [chat for chat in chats if ("codex" if chat.is_codex else deepseek.provider(chat.model)) == provider]
+        matching = [chat for chat in chats if deepseek.of(chat) == provider]
         if not matching:
             providers.append(provider_usage(provider))
             continue
@@ -325,11 +325,13 @@ def handoff(rows: list[dict]) -> str:
             "rewriting or force-pushing published history or deleting remote data. Say it is needed and stop.\n")
 
 
-def started_from(rows: list[dict]) -> str:
-    """The handoff the current conversation began with, if a refusal began it."""
+def started_from(rows: list[dict], provider: str) -> str:
+    """The handoff the current conversation began with, if a refusal on this provider began it: its excerpts of
+    the earlier turns never go to another provider."""
 
     last = next((r for r in reversed(rows) if r.get("role") == "context"), None)
-    return "\n\n" + last["handoff"] if last and last.get("handoff") else ""
+    mine = last and last.get("handoff") and last.get("provider", "claude") == provider
+    return "\n\n" + last["handoff"] if mine else ""
 
 
 # -- Worktrees --------------------------------------------------------------
@@ -516,7 +518,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
     key = str(path)
     bypass = settings()["bypass"]
     # Every row, not the screen's last 200: a long conversation keeps its handoff.
-    prompt = specs.system(path) + started_from(recall(path, 0))
+    prompt = specs.system(path) + started_from(recall(path, 0), deepseek.provider(model))
     with _lock:
         chat = _sessions.get(key)
         if chat is not None and chat.is_codex != model.startswith("codex:"):
@@ -843,10 +845,10 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
             remember(path, "assistant", final, error=failed, steps=made,
                      turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
-                     provider="codex" if chat.is_codex else "claude", diff_base=run.diff_base, **answered, **meta)
+                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **meta)
             if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
-                         handoff=handoff(recall(path)))
+                         handoff=handoff(recall(path)), provider=deepseek.of(chat))
         except Exception as exc:
             # Transcript publication is not the execution boundary. A lost
             # record must not skip an already accepted review/plan handoff.

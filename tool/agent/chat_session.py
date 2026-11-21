@@ -806,7 +806,8 @@ class ChatSession:
         if (model or None) == self.model and (effort or None) == self.effort and fast == self.fast:
             return
         if deepseek.provider(model) != deepseek.provider(self.model):
-            self.session_id, self.quota = None, []   # another provider's transcript and limits: neither carries
+            # Another provider's transcript and limits: neither carries, and the next status polls at once.
+            self.session_id, self.quota, self._quota_at, self._quota_poll_at, self._quota_error = None, [], 0.0, 0.0, ""
         self.model = model or None
         self.effort = effort or None
         self.fast = fast
@@ -1153,7 +1154,7 @@ class ChatSession:
                 self.model_name = str(ev.get("model") or "")
                 self.connection_ms = round((time.monotonic() - self._boot_at) * 1000)
 
-            elif kind == "rate_limit_event":
+            elif kind == "rate_limit_event" and self.model != deepseek.MODEL:   # no Claude account behind it
                 info = ev.get("rate_limit_info") or ev.get("rateLimitInfo") or {}
                 name = info.get("rateLimitType") or info.get("rate_limit_type") or "현재 한도"
                 utilization = info.get("utilization")

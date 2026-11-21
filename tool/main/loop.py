@@ -920,7 +920,7 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
                     kept.parent.mkdir(parents=True, exist_ok=True)
                     kept.write_text(json.dumps({"session_id": ev.meta["session_id"],
                                                 "tools_profile": CLOUD_PROFILE if verification.cloud(spec) else READ_PROFILE,
-                                                "provider": "codex" if chat.is_codex else deepseek.provider(chat.model)}) + "\n",
+                                                "provider": deepseek.of(chat)}) + "\n",
                                     encoding="utf-8")
             elif ev.kind == "error":
                 failed = ev.text
