@@ -162,6 +162,7 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
   # `scrolled`: inside a container that scrolls, so a person reaches what lies past its edge by scrolling.
   # The process first, and nothing else of an element outside the app's job: an embedded fragment of another
   # process is marked by its pid alone and never walked. `Current` reads each property when it is asked for.
+  $t0 = $clock.ElapsedMilliseconds   # its properties are read from here to `t`
   $c = $element.Current; $owner = $c.ProcessId
   if (-not [Desk]::InApp([uint32]$owner)) {
     $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $true; pid = $owner }
@@ -191,7 +192,7 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     try { $node.selected = [bool]$element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected }
     catch { $node.selected = $null }
   }
-  $node.t = $clock.ElapsedMilliseconds   # when its properties were read: a control's coverage starts there
+  $node.t0 = $t0; $node.t = $clock.ElapsedMilliseconds   # a control's coverage counts from this read
   $script:walked.Add($element)   # its identity is read by `Items`, under that operation's own deadline
   $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded
   if (-not $open) {
@@ -214,7 +215,8 @@ function State([string]$name) {   # every window of the app in this state, shot 
   Enter "list $id"
   $windows = @(Windows | Where-Object { -not $_.utility })
   $script:tops = @($windows | ForEach-Object { [int64]$_.hwnd })
-  $state = [ordered]@{ id = $id; name = $name; at = $at; windows = $windows; shots = @(); reads = @(); nodes = @() }
+  $state = [ordered]@{ id = $id; name = $name; at = $at; listed = $clock.ElapsedMilliseconds; windows = $windows;
+                       shots = @(); reads = @(); nodes = @() }   # `listed`: its windows, and none else, known by then
   foreach ($w in $windows) {
     Enter "shoot $id $($w.hwnd)"
     $shot = Shoot $w $id
@@ -368,11 +370,10 @@ try {
     $done = [ordered]@{ name = $step.name; action = $step.action; acted = $false; error = $null; state = $null; expect = $step.expect }
     $report.steps += $done
     if ($step.action -eq "wait") {
-      # The server's control: nothing acted on, its expect's element sampled all along, the first sample before
-      # any write, then the state read once `after[k]` ms have passed since each anchor k as it ended (the app's
+      # The server's control: nothing acted on, its expect's element sampled all along with no write between two
+      # samples, then the state read once `after[k]` ms have passed since each anchor k as it ended (the app's
       # start, then each step's action), and the settle at least; `MAX_WAIT_MS` at most.
       $done.acted = $true
-      $done.samples = @(Probe $step.expect)   # the report is written after the wait's own state, never inside it
       $anchors = @([int64]$report.launched[1]) + @($report.steps |
                    Where-Object { $null -ne $_.acted_at } | ForEach-Object { [int64]$_.acted_at })
       $now = $clock.ElapsedMilliseconds
@@ -381,7 +382,9 @@ try {
         $until = [Math]::Max($until, $anchors[$k] + [int64]@($step.after)[$k])
       }
       $until = [Math]::Min($until, $now + $MAX_WAIT_MS)
-      Enter "wait $($until - $now)"
+      Enter "wait $($until - $now)"   # the one write before the state: none falls between two samples
+      [void](Probe $step.expect)   # the first search of a tree is slow: a warm-up, never a sample
+      $done.samples = @(Probe $step.expect)
       while ($clock.ElapsedMilliseconds -lt $until) { Start-Sleep -Milliseconds 20; $done.samples += Probe $step.expect }
       $done.state = (State "after-$($step.name)").id
       Save; continue

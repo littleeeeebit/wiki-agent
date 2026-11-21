@@ -442,13 +442,6 @@ def test_a_look_checks_scenario_outside_the_drivers_steps_is_refused(pc_build, s
         pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "checks": {"O1": {**CHECK, "screen": []}}}))
 
 
-def test_a_look_checks_volatile_names_only_elements_no_step_reads(pc_build):
-    ticking = {**CHECK, "volatile": ["clock"]}
-    assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "checks": {"O1": ticking}}))["checks"] == {"O1": ticking}
-    for volatile in (["translate-on"], "clock", [""], [f"c{i}" for i in range(21)]):   # read, a string, empty, too many
-        with pytest.raises(ValueError, match="volatile"):
-            pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "checks": {"O1": {**CHECK, "volatile": volatile}}}))
-
 
 @pytest.mark.parametrize("checks, why", [
     ({"O1": CHECK}, ""), ({}, "O1 의 시나리오가 없다"), ({"O1": CHECK, "O9": CHECK}, "O9"),

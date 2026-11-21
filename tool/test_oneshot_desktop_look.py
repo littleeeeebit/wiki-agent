@@ -45,7 +45,8 @@ def report(nodes: list[dict], windows=(MAIN,), sid="S1", steps=(), owners=None) 
                             for h in windows],
                 "shots": [{"hwnd": h, "drawn": True, "file": f"s{i:02d}-{h}.png"} for h in windows],
                 "reads": [{"hwnd": h, "read": True, "from": i * 1000, "at": i * 1000 + 100} for h in windows],
-                "nodes": [window(h) for h in windows] + [{"t": i * 1000 + 50, **n} for n in held]}
+                "listed": i * 1000 + 10,
+                "nodes": [window(h) for h in windows] + [{"t0": i * 1000 + 40, "t": i * 1000 + 50, **n} for n in held]}
 
     states = [state(0, "start", nodes)] + [state(i, f"after-{s['name']}", s.pop("shows")) for i, s in enumerate(steps, 1)]
     return {"phase": "done", "main": {"hwnd": MAIN}, "launched": [-600, -400], "size": {"asked": [1280, 800], "moved": True,
@@ -570,7 +571,8 @@ def late(got: dict, at: int, sample: dict, blip: dict | None = None) -> dict:
     if blip:
         samples[len(samples) // 2] = {**samples[len(samples) // 2], "node": blip}
     final = got["states"][-1]
-    final = {**final, "at": at, "done": at + 100, "nodes": [{**n, "t": at + 50} if "t" in n else n for n in final["nodes"]],
+    final = {**final, "at": at, "done": at + 100, "listed": at + 10,
+             "nodes": [{**n, "t0": at + 40, "t": at + 50} if "t" in n else n for n in final["nodes"]],
              "reads": [{**r, "from": at, "at": at + 100} for r in final["reads"]]}
     return {**got, "states": [*got["states"][:-1], final],
             "steps": [*got["steps"][:-1], {**got["steps"][-1], "samples": samples}]}
@@ -601,8 +603,8 @@ def test_a_control_counts_only_read_late_enough_with_its_lead_in_alike():
     assert not pc_look.unmoved(late(control("x"), 2300, off), run, steps, after)   # it typed something else
     assert not pc_look.unmoved(late(control("hi", {**mode, "value": "Manual"}), 2300, off), run, steps, after)
     assert not pc_look.unmoved(late(control("hi", picked={**auto, "selected": False}), 2300, off), run, steps, after)
-    ticked = late(control("hi", at="10:01:06"), 2300, off)   # a clock: alike only when the build names it volatile
-    assert not pc_look.unmoved(ticked, run, steps, after) and pc_look.unmoved(ticked, run, steps, after, {"clock"})
+    ticked = late(control("hi", at="10:01:06"), 2300, off)   # a clock with an id differs: the build gives it none
+    assert not pc_look.unmoved(ticked, run, steps, after)
     assert not pc_look.unmoved(late(control("hi"), 2300, off, blip={**switch, "toggle": "On"}), run, steps, after)
     unsampled = late(control("hi"), 2300, off)
     unsampled["steps"][-1]["samples"] = unsampled["steps"][-1]["samples"][::3]   # 600 ms apart: a blip could hide
@@ -616,11 +618,21 @@ def test_a_control_counts_only_read_late_enough_with_its_lead_in_alike():
     assert pc_look.unmoved(gone, run, steps, after)
     blind = late(control("hi"), 2300, {k: v for k, v in off.items() if k != "toggle"})   # its toggle unread
     assert not pc_look.unmoved(blind, run, steps, after)
-    slow = late(control("hi"), 2300, off)   # the state before read the switch 600 ms before it finished
-    slow["states"][1]["nodes"] = [{**n, "t": 500} if n.get("id") == "translate-on" else n for n in slow["states"][1]["nodes"]]
+    # Watched from 1840: the run read its result at 2040, 2440 ms past its app's latest start, which is 1840 past the
+    # control's earliest. A slow read of the state before that delays the first sample past it leaves a gap there.
+    assert min(c - r + 2040 for c, r in zip(pc_look.anchors(late(control("hi"), 2300, off), 2, late=False),
+                                            pc_look.anchors(run, 2, late=True))) == 1840
+    slow = late(control("hi"), 2300, off)
+    slow["steps"][-1]["samples"] = [x for x in slow["steps"][-1]["samples"] if x["from"] >= 1900]
     assert not pc_look.unmoved(slow, run, steps, after)
-    manual = late(control("hi", picked={**auto, "selected": False}), 2300, off)   # volatile is its text alone
-    assert not pc_look.unmoved(manual, run, steps, after, {"auto"})
+    tail = late(control("hi"), 2300, off)   # what the state before left unwatched before 1840 hides nothing
+    tail["steps"][-1]["samples"] = [x for x in tail["steps"][-1]["samples"] if x["from"] >= 1600]
+    assert pc_look.unmoved(tail, run, steps, after)
+    named = [*steps[:-1], {**steps[-1], "expect": {**on, "name": "translate-on"}}]   # two properties named
+    partial = late(control("hi"), 2300, {"id": "translate-on", "name": "other"})   # one read, and it disagrees
+    assert pc_look.unmoved(partial, run, named, after)
+    agreeing = late(control("hi"), 2300, {"id": "translate-on", "name": "translate-on"})   # one read, it agrees
+    assert not pc_look.unmoved(agreeing, run, named, after)
     gone = report([], windows=(3,), owners={3: 0})   # the main window lost: no owned window proves nothing
     assert not pc_look.refuted({**gone, "main": {"hwnd": MAIN}}, gone["states"][0], {**on, "in": "owned"})
 

@@ -23,7 +23,7 @@ VIEW = "window"
 PREFIX = "feature:"
 END_SECONDS = 30
 SETTLE_MS = 1000
-PROOF = 5   # how a look proves a `look` check: a look saved with another proves none of them
+PROOF = 6   # how a look proves a `look` check: a look saved with another proves none of them
 LOOK_SECONDS = 30 * 60   # a whole look: every screen and state, the probes and the owed checks
 TRY = "try"   # the one step a `sometimes` probe takes; a probe that does not show the feature misses this one
 MISSED = f"step {TRY}: its postcondition was not read"
@@ -250,7 +250,7 @@ def checks(runs: Launches, spec: dict, build: dict) -> list[dict]:
         after = [chain(report, len(steps))[-1]["done"] - m for m in anchors(report, len(steps), late=False)]
         control = runs.drive(scenario["screen"], scenario["state"], [
             *steps[:-1], {"name": "control", "action": desktop_driver.WAIT, "after": after, "expect": x["expect"]}])
-        if not unmoved(control, report, steps, after, set(scenario.get("volatile", []))):
+        if not unmoved(control, report, steps, after):
             out.append(finding(scenario["screen"], scenario["state"], f"{failed} — 리뷰의 동작 없이 같은 시간을 기다린 "
                                "대조 실행에서 준비가 같지 않았거나 결과가 거짓으로 읽히지 않았다 · 확인: " + x["check"]))
     return out
@@ -306,11 +306,11 @@ def proved(report: dict, wants: list[dict]) -> bool:
 GAP_MS = 400   # ponytail: a control samples its expect's element this often at least; a shorter blip can slip by
 
 
-def unmoved(control: dict, run: dict, steps: list[dict], after: list[int], volatile: set[str] = frozenset()) -> bool:
+def unmoved(control: dict, run: dict, steps: list[dict], after: list[int]) -> bool:
     """The control of `run`'s `steps`, for an honest build: every state of its lead-in shows the app as `run`'s
-    did, `volatile` aside, its last state's read began at least `after[k]` ms past each of its anchors as they
-    ended, and the review's postcondition reads false before its wait, in every sample of its element, each read
-    within `GAP_MS` of the one before, and after it."""
+    did, its last state's read began at least `after[k]` ms past each of its anchors as they ended, and the
+    review's postcondition reads false before its wait, in every sample of its element, each read within
+    `GAP_MS` of the one before, and after it."""
 
     import desktop_driver
 
@@ -319,54 +319,65 @@ def unmoved(control: dict, run: dict, steps: list[dict], after: list[int], volat
         return False
     want, samples = steps[-1]["expect"], control["steps"][-1].get("samples") or []
     # A sample read its element, or proved there is none, somewhere between its `from` and its `at`: the gap
-    # between two is at most the later one's end less the earlier one's start. A failed lookup, or one that did
-    # not read a property the postcondition names, reads nothing. The states either side count from when they
-    # read that element.
+    # between two is at most the later one's end less the earlier one's start. A failed lookup reads nothing, and
+    # so does one that read neither every property the postcondition names nor one that disagrees with it. The
+    # states either side read it too.
     need = desktop_driver.wanted(want)
-    read = [x for x in samples if type(x.get("from")) is int and type(x.get("at")) is int and (
-        x.get("absent") or isinstance(x.get("node"), dict) and all(k in x["node"] for k in need))]
-    first, last = when(control, states[-2], want, end=False), when(control, states[-1], want, end=True)
-    if not read or first is None or last is None:
+
+    def decides(n) -> bool:
+        return isinstance(n, dict) and (all(k in n for k in need) or any(k in n and n[k] != v for k, v in need.items()))
+
+    read = [x for x in samples if type(x.get("from")) is int and type(x.get("at")) is int
+            and (x.get("absent") or decides(x.get("node")))]
+    spans = [(when(control, states[-2], want, end=False), when(control, states[-2], want, end=True)),
+             *((x["from"], x["at"]) for x in read),
+             (when(control, states[-1], want, end=False), when(control, states[-1], want, end=True))]
+    seen_at = when(run, ran[-1], want, end=False)
+    if not read or seen_at is None or any(t is None for s in spans for t in s):
         return False
-    spans = [(first, first), *((x["from"], x["at"]) for x in read), (last, last)]
-    if any(b[1] - a[0] > GAP_MS for a, b in zip(spans, spans[1:])):
+    # Watched with no gap from the earliest moment, on the control's clock, that matches when `run` read its
+    # result after any one anchor, each anchor's span taken at its widest: a result the lead-in or the app's start
+    # brings about shows there. What the control's own reads left unwatched before it cannot hide one.
+    since = min(c - r + seen_at for c, r in zip(anchors(control, len(steps), late=False), anchors(run, len(steps), late=True)))
+    if any(b[1] - a[0] > GAP_MS for a, b in zip(spans, spans[1:]) if b[1] > since):
         return False
     return all(states[-1]["at"] - m >= a for m, a in zip(anchors(control, len(steps), late=True), after)) \
-        and all(seen(control, states[k], volatile) == seen(run, ran[k], volatile) for k in range(len(steps))) \
+        and all(seen(control, states[k]) == seen(run, ran[k]) for k in range(len(steps))) \
         and not any(x.get("node") and desktop_driver.holds({"nodes": [x["node"]]}, want) for x in samples) \
         and refuted(control, states[-2], want) and refuted(control, states[-1], want)
 
 
 def when(report: dict, state: dict, want: dict, end: bool) -> int | None:
-    """When `state` read the element `want` names: its properties' own time, or, with none there, its window's
-    walk, from its start (or with `end` to its end); with no owned window to hold it, the state's own read."""
+    """When `state` read the element `want` names: its properties' read, from its start (`t0`), or with `end` to
+    its end (`t`); with none there, its window's walk; with no owned window to hold it, the state's listing of
+    its windows."""
 
     import desktop_driver
 
     window = desktop_driver.scope(report, state, want.get("in", "main"))
     if window is None:
-        return state["done"] if end else state["at"]
+        t = state.get("listed") if end else state["at"]
+        return t if type(t) is int else None
     nodes = [n for n in state["nodes"] if not n.get("foreign") and n.get("window") == window and n.get("id") == want["id"]]
-    if len(nodes) == 1 and type(nodes[0].get("t")) is int:
-        return nodes[0]["t"]
-    t = next((r for r in state.get("reads") or [] if r.get("hwnd") == window), {}).get("at" if end else "from")
+    if len(nodes) == 1:
+        t = nodes[0].get("t" if end else "t0")
+    else:
+        t = next((r for r in state.get("reads") or [] if r.get("hwnd") == window), {}).get("at" if end else "from")
     return t if type(t) is int else None
 
 
 SEEN = ("name", "value", "toggle", "selected", "enabled")
-DRIFTS = ("name", "value")   # what a `volatile` element may change by itself: its toggle, selection and state count
 
 
-def seen(report: dict, state: dict, volatile: set[str] = frozenset()) -> list[tuple]:
+def seen(report: dict, state: dict) -> list[tuple]:
     """What `state` shows of the app: each element with an id, by the window it is in (the main one, one it owns,
-    another), with its name, value, toggle and selection state and whether it is enabled; a `volatile` one's
-    name and value aside."""
+    another), with its name, value, toggle and selection state and whether it is enabled. Text that changes by
+    itself, a clock, carries no id."""
 
     main = report["main"]["hwnd"]
     role = {w["hwnd"]: "main" if w["hwnd"] == main else "owned" if w.get("owner") == main else "other"
             for w in state.get("windows") or []}
-    return sorted((role.get(n.get("window"), "other"), n["id"],
-                   *("~" if n["id"] in volatile and k in DRIFTS else str(n.get(k)) for k in SEEN))
+    return sorted((role.get(n.get("window"), "other"), n["id"], *(str(n.get(k)) for k in SEEN))
                   for n in state["nodes"] if not n.get("foreign") and n.get("id"))
 
 

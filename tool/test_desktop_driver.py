@@ -311,9 +311,9 @@ def test_the_servers_wait_step_acts_on_nothing_and_reads_the_state_after_the_sam
     assert states["s01"]["at"] - late >= 6000 and report["last"] == "done"   # read as late as asked
     [read] = [{k: n[k] for k in ("id", "name", "toggle")} for n in states["s01"]["nodes"] if n.get("id") == "translate-on"]
     assert read["toggle"] == "Off" and all(x["node"] == read for x in step["samples"])
-    spans = [(states["s00"]["done"],) * 2, *((x["from"], x["at"]) for x in step["samples"]), (states["s01"]["at"],) * 2]
+    spans = [(x["from"], x["at"]) for x in step["samples"]]
     gaps = [b[1] - a[0] for a, b in zip(spans, spans[1:])]
-    assert max(gaps) <= 400, gaps   # sampled all along (the look's `GAP_MS`), never acted on   # sampled all along (the look's `GAP_MS`), never acted on
+    assert max(gaps) <= 400, gaps   # sampled all along, no write between two (the look's `GAP_MS`), never acted on   # sampled all along (the look's `GAP_MS`), never acted on
 
 
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
@@ -341,7 +341,8 @@ def test_a_controls_samples_of_an_owned_window_not_yet_open_are_proven_absences(
     assert all(x.get("absent") and "error" not in x and x["from"] <= x["at"] for x in step["samples"])
     start = report["states"][0]
     assert all(r["from"] <= r["at"] <= start["done"] for r in start["reads"])
-    assert all(start["at"] <= n["t"] <= start["done"] for n in start["nodes"] if not n["foreign"])
+    assert all(start["at"] <= n["t0"] <= n["t"] <= start["done"] for n in start["nodes"] if not n["foreign"])
+    assert start["at"] <= start["listed"] <= min(r["from"] for r in start["reads"])
 
 
 def test_a_controls_measured_wait_has_its_own_bounded_deadline():
