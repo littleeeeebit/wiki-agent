@@ -106,8 +106,9 @@ def test_the_phone_round_runs_on_the_android_app_alone_and_its_pass_opens_r3(kin
         yield tmp_path
 
     def drive(repo, home, spec, frozen, stopped):
-        given.append(spec)
-        return {"status": "passed", "round": 1, "model": "SM-G991N", "findings": [], "detail": ""}
+        given.append(spec)   # a pass names the HEAD and APKs it ran, as the round's own does
+        return {"status": "passed", "round": 1, "model": "SM-G991N", "findings": [], "detail": "",
+                "head": spec["oneshot"].get("front_built_head"), "apks": spec["oneshot"].get("apks")}
 
     with patch.object(device, "built", lambda tree, d: ""), \
             patch.object(device, "frozen", lambda tree, d, into: {DEVICE["apk"]: "digest"}), \

@@ -185,11 +185,9 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
     if done and kind and critic_kind({**o, "critiques": rounds}):   # the next kind's turn, on the same shots
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
         return lambda: oneshot_spec.handoff(repo, "critique") or True
-    if done and "android" in kinds_of(o):
-        from . import oneshot_phone   # it imports this module
-        return oneshot_phone.waits(repo, rounds)   # the owner's phone comes before R3
-    if done:
-        return oneshot_spec.briefing(repo, "r3", {"critiques": rounds, "stage": "r3", "r3": opening(o)})
+    if done:   # the device rounds come before R3
+        from . import oneshot_pc   # it imports this module
+        return oneshot_pc.onward(repo, {"critiques": rounds})
     # A clean round at the cap earns the one confirming it (a new freeze may have cleared the earlier ones).
     if len(mine) >= MAX_ROUNDS and not (rounds[-1]["clean"] and len(mine) == MAX_ROUNDS):
         high = [f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high"]

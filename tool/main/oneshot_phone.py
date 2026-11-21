@@ -355,15 +355,15 @@ def phone_round(repo: str) -> None:
 
 
 def settled(repo: str, outcome: dict):
-    """The outcome applied: R3's sheet on a pass (its brief written once the tree is let go), the build with
-    the phone's findings on a fail, else the prompt."""
+    """The outcome applied: on a pass, the next device round or R3's sheet (its brief written once the tree is let
+    go), the build with the phone's findings on a fail, else the prompt."""
 
-    from . import oneshot_critique   # it imports this module
+    from . import oneshot_critique, oneshot_pc   # they import this module
     with oneshot._lock:
         o = oneshot_spec.spec_of(repo)["oneshot"]
         result = {**(o.get("phone") or {}), **outcome}
         if outcome["status"] == "passed":
-            return oneshot_spec.briefing(repo, "r3", {"phone": result, "stage": "r3", "r3": oneshot_critique.opening(o)})
+            return oneshot_pc.onward(repo, {"phone": result})
         if outcome["status"] != "failed":
             oneshot_spec.saved(repo, oneshot={"phone": {**result, "status": "waiting"}, "working": None})
             return None
@@ -378,12 +378,12 @@ def settled(repo: str, outcome: dict):
     return lambda: oneshot_build.send(repo, front_build.STAGE, oneshot_critique.front_turn(spec))
 
 
-def waits(repo: str, rounds: list[dict]) -> dict:
-    """The emulator loop's two clean critiques: the prompt to connect the phone, the round counted on."""
+def waits(repo: str, fields: dict) -> dict:
+    """The prompt to connect the phone, with `fields` saved: the critiques the round counted on."""
 
     o = oneshot_spec.spec_of(repo)["oneshot"]
     phone = {**(o.get("phone") or {}), "status": "waiting", "detail": ""}
-    return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": STAGE, "working": None, "phone": phone})
+    return oneshot_spec.saved(repo, oneshot={**fields, "stage": STAGE, "working": None, "phone": phone})
 
 
 def earlier(repo: str, o: dict) -> None:

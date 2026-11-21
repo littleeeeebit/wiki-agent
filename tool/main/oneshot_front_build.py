@@ -103,7 +103,11 @@ def build_front_text(spec: dict) -> str:
     # The review's checks go in last, as written: no later substitution may rewrite what the builder copies.
     pc_owed = "\n".join(f"- `{x['id']}` ({x['requirement']}, `{x['location']}`): {x['check']} — {x['reason']} · act "
                         f"`{json.dumps(x['act'], ensure_ascii=False)}` · expect `{json.dumps(x['expect'], ensure_ascii=False)}`"
-                        for x in oneshot_desktop.looked_for(o)) or "- (none)"
+                        for x in oneshot_desktop.looked_for(o))
+    pc_owed = "\n".join(filter(None, [pc_owed, *(
+        f"- `{x['id']}` ({x['requirement']}, `{x['location']}`, the owner's desktop round): {x['check']} — {x['reason']}"
+        f" · act `{json.dumps(x['act'], ensure_ascii=False)}` · observe `{json.dumps(x['observe'], ensure_ascii=False)}`"
+        for x in oneshot_desktop.owner_scripted(o))])) or "- (none)"
     if "android" not in kinds_of(o):
         return text.replace("{desktop_owed}", pc_owed)
     if shape(o) == "kinds":   # the Android parts read only what applies to the Android app

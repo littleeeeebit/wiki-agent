@@ -66,12 +66,22 @@ show it, and that check's `source`:
   it and holds after it.
 - `owner` when the postcondition needs what a session with no owner's screen
   cannot show: a capture of another program's window or of the screen, or how
-  a per-pixel-alpha overlay composes. The check runs against a fixture window
-  whose content is known, and passes only on what is observed. For a capture,
-  name in `check` where the program reports what it captured: an element's
-  value, or a file in its data folder. For a composition, the check reads the
-  fixture's region of the screen. A "capturing" label or the program's own
-  drawn window is never the evidence.
+  a per-pixel-alpha overlay composes. The check runs against the server's own
+  fixture: a window showing a page of English words drawn at random for the
+  round. It passes only on what is observed. Give the step that sets the
+  capture going in `act`, as for `look`, and what the check observes in
+  `observe`, exactly one of:
+  - `{"report": {"id": "…"}}` or `{"report": {"file": "…"}}`: where the
+    program reports what it captured, an element's value or a UTF-8 file
+    relative to its data folder, which must contain the fixture's words;
+  - `{"window": {"shows": "…"}}`: the round captures the program's main
+    window (`"in": "owned"` for the one it owns), and an independent critic
+    judges whether it shows what `shows` says;
+  - `{"composition": {"shows": "…"}}`: the round captures the fixture's
+    region of the screen, and the critic judges whether the overlay shows
+    what `shows` says over the fixture.
+  A "capturing" label or the program's own drawn window is never what a
+  `report` reads.
 
 A finding that fits neither is never deferred. Neither is anything the code or
 the host tests can show wrong: wrong logic, a missing or wrong contract test,
@@ -97,7 +107,7 @@ A short answer, then exactly one fenced block whose info string is
 `oneshot-review`, holding one JSON object:
 
 ```oneshot-review
-{"verdict": "approve", "head": "<the HEAD you were given, in full>", "findings": [{"location": "core/src/reader.rs:42", "severity": "P2", "reason": "…", "evidence": "…"}, {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R2", "check": "…", "source": "owner"}}, {"location": "core/src/settings.rs:9", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R3", "check": "…", "source": "look", "act": {"action": "toggle", "id": "translate-on"}, "expect": {"id": "translate-on", "toggle": "On"}}}]}
+{"verdict": "approve", "head": "<the HEAD you were given, in full>", "findings": [{"location": "core/src/reader.rs:42", "severity": "P2", "reason": "…", "evidence": "…"}, {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R2", "check": "…", "source": "owner", "act": {"action": "invoke", "id": "capture"}, "observe": {"report": {"id": "captured-text"}}}}, {"location": "core/src/settings.rs:9", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R3", "check": "…", "source": "look", "act": {"action": "toggle", "id": "translate-on"}, "expect": {"id": "translate-on", "toggle": "On"}}}]}
 ```
 
 `verdict` is `refuse` exactly when a P0 or P1 finding without `device`

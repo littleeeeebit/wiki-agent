@@ -21,7 +21,7 @@ const ALL = [
 const PHASES: { name: string; ids: string[] }[] = [
   { name: '시작', ids: ['intake', 'environment', 'bootstrap'] }, { name: '요구', ids: ['spec'] },
   { name: '백엔드', ids: ['design', 'r1', 'tests', 'build', 'review'] },
-  { name: '화면', ids: ['split', 'board', 'frontend', 'r2', 'build-front', 'critique', 'phone', 'r3'] },
+  { name: '화면', ids: ['split', 'board', 'frontend', 'r2', 'build-front', 'critique', 'phone', 'pc', 'r3'] },
   { name: '마무리', ids: ['pr', 'done'] },
 ]
 const HINT: Record<string, string> = {
@@ -41,6 +41,7 @@ const HINT: Record<string, string> = {
   'build-front': '화면을 만든다. 혼자 돈다.',
   critique: '만든 화면을 찍어 비평하고 고친다. 혼자 돈다.',
   phone: '휴대폰을 USB 로 연결해 고르면, 에뮬레이터를 통과한 앱을 그 휴대폰에서 한 번 더 검사하고 지운다.',
+  pc: '내 화면에서만 볼 수 있는 캡처 검사를, 띄울 것과 읽을 것을 보고 승인하면 한 번 돌린다.',
   r3: '완성 화면을 항목마다 승인하거나 고친다.',
   pr: '풀 리퀘스트를 연다. 혼자 돈다.',
   done: '끝났다. 리뷰 루프는 유지보수 창의 작업 목록에서 이어진다.',

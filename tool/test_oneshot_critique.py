@@ -121,7 +121,7 @@ def pc_run(owed: list[dict], freeze: str = "f1") -> None:
                                           "profile": {**o()["profile"], "window": "1280x800"}})
 
 
-def test_a_pc_apps_two_clean_rounds_on_one_freeze_wait_before_r3_with_its_owner_checks_pending(judged):
+def test_a_pc_apps_two_clean_rounds_on_one_freeze_wait_at_the_owners_round_with_its_owner_checks_pending(judged):
     pc_run([{"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처에 글이 있다"}])
     heard, asking = critic(said(), said(), said())
     with asking:
@@ -131,8 +131,9 @@ def test_a_pc_apps_two_clean_rounds_on_one_freeze_wait_before_r3_with_its_owner_
         critique.critique("budget")
         assert o()["stage"] == "critique" and not o().get("stopped")
         critique.critique("budget")
-    assert [p.name for p in heard[0][2]][:1] == ["S1-window-full.png"] and o()["stage"] == "r3"
+    assert [p.name for p in heard[0][2]][:1] == ["S1-window-full.png"] and o()["stage"] == "pc"
     assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"] and not o().get("working")
+    assert o()["pc"] == {"status": "waiting", "detail": ""}
     assert not o().get("r3") and [c.get("freeze") for c in o()["critiques"]] == ["f1", "f2", "f2"]
     assert "r3_sheet" not in critique.extra(oneshot_spec.spec_of("budget"))   # a held run opens no review state
 

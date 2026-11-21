@@ -61,8 +61,9 @@ the postcondition is a UI Automation state a driver reads (an element with a
 stable `AutomationId` and its name, value or toggle state), `owner` when it
 needs what a session with no owner's screen cannot show (a capture of
 another program's window or of the screen, or how an overlay composes over
-it), checked against a fixture window whose content is known and passed only
-on what is observed. A `look` check names the element and its state. Its
+it), checked against the server's own fixture, a window of English words
+drawn at random for the round, and passed only on what is observed. A `look`
+check names the element and its state. Its
 `act` is the step that must bring it about: an `action` (`invoke`,
 `set_value` with its `value`, `toggle`, `select`, `expand`, `collapse`,
 `scroll_into_view`) on the control whose `AutomationId` is `id`. Its
@@ -72,10 +73,17 @@ on what is observed. A `look` check names the element and its state. Its
 main window owns. The build may add steps that lead to yours; the look ends
 on your `act` and passes only when your `expect` did not hold before it and
 holds after it.
-A capture check names where the program reports what it captured: an element's
-value, or a file in its data folder. A composition check reads the fixture's
-region of the screen. A "capturing" label or the program's own drawn window is
-never the evidence. A `desktop` finding that fits neither is never deferred,
+An `owner` check gives the step that sets the capture going in `act`, as a
+`look` one does, and what it observes in `observe`, exactly one of:
+`{"report": {"id": "…"}}` or `{"report": {"file": "…"}}`, where the program
+reports what it captured, an element's value or a UTF-8 file relative to its
+data folder, which must contain the fixture's words;
+`{"window": {"shows": "…"}}`, the round's capture of the program's main window
+(`"in": "owned"` for the one it owns), which an independent critic judges
+against `shows`; or `{"composition": {"shows": "…"}}`, the round's capture of
+the fixture's region of the screen, judged the same way for the overlay over
+the fixture. A "capturing" label or the program's own drawn window is never
+what a `report` reads. A `desktop` finding that fits neither is never deferred,
 and an `android` deferral names no `source`. The run keeps each one and must
 pass its check on the device before the person's last review. A web app has
 no device: its findings are
