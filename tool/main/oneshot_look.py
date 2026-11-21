@@ -536,7 +536,7 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
     def seen(value: str) -> bool:
         value = folded(value)
         flat = "".join(value.split())
-        return (any(value in t for t in texts + values) or bool(flat) and any(flat in f for f in flats))
+        return bool(value) and (any(value in t for t in texts + values) or bool(flat) and any(flat in f for f in flats))
 
     if leaked := sorted({label for value, label in hide.items() if seen(value)}):
         return f"화면이 담은 글자에 비밀 값 {', '.join(leaked)} 이 들어 있다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다"

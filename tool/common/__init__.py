@@ -76,28 +76,37 @@ def swap(temporary: Path, file: Path) -> None:
             time.sleep(0.025)
 
 
+def _folds(text: str) -> list[str]:
+    """Each character of `text` folded: case folded away, and the Turkish dotted and dotless i, which
+    `text-transform` can draw under a page's `lang`, made a plain `i` (a dot above folds away after an `i` only)."""
+    out: list[str] = []
+    for c in text:
+        f = c.casefold().replace("ı", "i").replace("i̇", "i")
+        out.append("" if f == "̇" and out and out[-1].endswith("i") else f)
+    return out
+
+
 def folded(text: str) -> str:
-    """`text` with case folded away, the Turkish dotted and dotless i included, which `text-transform` can draw
-    under a page's `lang`: any casing of a secret is that secret."""
-    return text.casefold().replace("ı", "i").replace("̇", "")
-
-
-def _cased(c: str) -> str:
-    """A pattern for one character in any casing `folded` treats as the same."""
-    if folded(c) == "i":
-        return "[iIıİ]̇?"
-    forms = sorted({f for f in (c, c.lower(), c.upper(), c.casefold()) if len(f) == 1})
-    return "[" + "".join(re.escape(f) for f in forms) + "]" if len(forms) > 1 else re.escape(c)
+    """`text` with case folded away, as `_folds` does: any casing of a secret is that secret."""
+    return "".join(_folds(text))
 
 
 def masked(text: str, hide: dict[str, str] | None) -> str:
-    """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced in any casing by
-    its label, the longest first. ponytail: a casing that changes length, such as `ß` drawn as `SS`, stays."""
-    values = sorted((v for v in hide or {} if v), key=len, reverse=True)
-    if not values:
-        return text
-    pattern = re.compile("|".join("(" + "".join(_cased(c) for c in v) + ")" for v in values))
-    return pattern.sub(lambda m: hide[values[m.lastindex - 1]], text)
+    """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced by its label in
+    every casing `folded` treats as the same, the longest first; a match inside one character covers all of it."""
+    folds = _folds(text)
+    flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
+    spans: list[tuple[int, int, str]] = []
+    for value in sorted(hide or {}, key=lambda v: len(folded(v)), reverse=True):
+        needle, at = folded(value), 0
+        while needle and (at := flat.find(needle, at)) >= 0:
+            start, end = owner[at], owner[at + len(needle) - 1] + 1
+            if not any(s < end and start < e for s, e, _ in spans):
+                spans.append((start, end, hide[value]))
+            at += 1
+    for start, end, label in sorted(spans, reverse=True):
+        text = text[:start] + label + text[end:]
+    return text
 
 
 def python_environment(env: dict | None = None) -> dict:

@@ -345,3 +345,18 @@ def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
     hide = {"key-in": "[N1]", "key-in-long": "[N2]"}
     assert masked("KEY-IN, Key-In-Long, key-ın, KEY-İN, key-out", hide) == "[N1], [N2], [N1], [N1], key-out"
     assert masked("text", {}) == "text" and masked("a+b", {"A+B": "[N1]"}) == "[N1]"   # literal, never a pattern
+    assert masked("ΚΛΕΙΔΙ ς σ Σ", {"κλειδι": "[N1]", "σ": "[N2]"}) == "[N1] [N2] [N2] [N2]"   # every sigma
+    assert masked("STRASSE, straße", {"strasse": "[N1]"}) == "[N1], [N1]"   # a casing that changes length
+    assert masked("İd, mark ̇ here", {"i̇d": "[N1]", "̇": "[N2]"}) == "[N1], mark [N2] here"
+    assert masked("ab", {"İ": "[N1]", "": "[N2]"}) == "ab"   # nothing folds to nothing
+
+
+def test_a_secret_that_folds_to_nothing_shows_on_no_page():
+    from main.oneshot_look import secrets_shown
+
+    class Frame:
+        def evaluate(self, _):
+            return {"texts": ["an unrelated page ̇"], "values": []}
+
+    page = type("Page", (), {"frames": [Frame()]})()
+    assert secrets_shown(page, {"̇": "[N1]"}) and not secrets_shown(page, {"̇̇x": "[N1]"})
