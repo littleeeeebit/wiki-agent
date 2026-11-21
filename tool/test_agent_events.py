@@ -424,7 +424,7 @@ def test_a_turn_refused_at_capacity_is_sent_again_until_it_is_taken(monkeypatch)
     assert query.line("c", events[0]) is None   # nothing remembered as a conversation break
     rows = [{"role": "assistant", "session_id": "saved-thread", "provider": "claude"},
             {"role": "assistant", "text": "", "error": "멈췄다."}]
-    assert query.resumable(rows, codex=False) == "saved-thread"
+    assert query.resumable(rows, "claude") == "saved-thread"
 
 
 def test_a_safety_refusal_that_mentions_a_429_is_never_sent_again(monkeypatch):

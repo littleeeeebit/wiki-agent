@@ -10,7 +10,7 @@ from .chat_local import (ROOT, SETTINGS, CodexServer, claude_usage, cli_command,
                          server_epoch, servers_retired, settings)
 from .chat_events import OUTPUT_LIMIT, output_of
 from .chat_session import ChatSession, Event, end_all, explain, oneshot, reopen
-from . import read_tools
+from . import deepseek, read_tools
 
 __all__ = (
     # a session and its events
@@ -18,6 +18,8 @@ __all__ = (
     # a command's streamed output, as the record folds it
     "OUTPUT_LIMIT", "output_of",
     "read_tools",
+    # DeepSeek Flash on the Claude CLI: the model offered, its efforts, its endpoint
+    "deepseek",
     # every provider, at server shutdown and start
     "end_all", "reopen",
     # a background thread kept to the server lifespan that started it

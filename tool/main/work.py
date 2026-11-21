@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, output_of
+from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, deepseek, output_of
 from common.process import background_options
 from common.paths import RAW
 from common import errorlog
@@ -105,7 +105,7 @@ def provider_usage(provider: Literal["claude", "codex"], path: str = "") -> dict
         known(path)
         chat = _sessions.get(path)
         if chat:
-            return {"provider": "codex" if chat.is_codex else "claude", **chat.status()}
+            return {"provider": deepseek.of(chat), **chat.status()}
     with _provider_usage_lock:
         cached = _provider_usage.get(provider)
         if not cached or time.monotonic() - cached["at"] >= (60 if provider == "codex" else 300):
@@ -128,7 +128,7 @@ def all_provider_usage() -> dict:
         chats += [run.chat for run in loop._review_runs.values()]
     providers = []
     for provider in ("claude", "codex"):
-        matching = [chat for chat in chats if chat.is_codex == (provider == "codex")]
+        matching = [chat for chat in chats if deepseek.of(chat) == provider]
         if not matching:
             providers.append(provider_usage(provider))
             continue
@@ -296,13 +296,17 @@ def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:
     return memory.since_clear(rows)[-limit:]
 
 
-def handoff(rows: list[dict]) -> str:
+def handoff(rows: list[dict], provider: str) -> str:
     """What the conversation after a refusal starts from, beside the spec that
     is already its system prompt (`specs.system`): why it is new, the turns
-    before it, abridged, and what to do."""
+    before it on `provider` since it last took over, abridged, and what to do."""
 
     lines = []
     for row in rows:
+        said = deepseek.row_provider(row) or ("claude" if row.get("role") == "assistant" else None)
+        if said is not None and said != provider:
+            lines = []   # another provider's turns, and what was asked of it: never carried across
+            continue
         text = str(row.get("text") or "").strip()
         if row.get("role") == "user" and text:
             lines.append("- Asked: " + text.splitlines()[0][:300])
@@ -325,11 +329,13 @@ def handoff(rows: list[dict]) -> str:
             "rewriting or force-pushing published history or deleting remote data. Say it is needed and stop.\n")
 
 
-def started_from(rows: list[dict]) -> str:
-    """The handoff the current conversation began with, if a refusal began it."""
+def started_from(rows: list[dict], provider: str) -> str:
+    """The handoff the current conversation began with, if a refusal on this provider began it: its excerpts of
+    the earlier turns never go to another provider."""
 
     last = next((r for r in reversed(rows) if r.get("role") == "context"), None)
-    return "\n\n" + last["handoff"] if last and last.get("handoff") else ""
+    mine = last and last.get("handoff") and last.get("provider", "claude") == provider
+    return "\n\n" + last["handoff"] if mine else ""
 
 
 # -- Worktrees --------------------------------------------------------------
@@ -516,7 +522,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
     key = str(path)
     bypass = settings()["bypass"]
     # Every row, not the screen's last 200: a long conversation keeps its handoff.
-    prompt = specs.system(path) + started_from(recall(path, 0))
+    prompt = specs.system(path) + started_from(recall(path, 0), deepseek.provider(model))
     with _lock:
         chat = _sessions.get(key)
         if chat is not None and chat.is_codex != model.startswith("codex:"):
@@ -533,7 +539,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
                                bypass=bypass, **release_repair.unshared(spec))
             chat._spec_system = prompt
             chat.settled = SETTLING.search
-            chat.session_id = resumable(recall(path), chat.is_codex)
+            chat.session_id = resumable(recall(path), deepseek.provider(model))
             _sessions[key] = chat
         else:
             if chat.bypass != bypass:
@@ -804,7 +810,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 events = ()
             else:
                 text = sent
-                remember(path, "user", text)
+                remember(path, "user", text, provider=deepseek.of(chat))
         for ev in chat.say(text, run.halt) if events is None else events:
             if ev.kind == "compaction" and ev.meta.get("phase") == "completed":
                 restate(path, run)
@@ -843,10 +849,10 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
             remember(path, "assistant", final, error=failed, steps=made,
                      turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
-                     provider="codex" if chat.is_codex else "claude", diff_base=run.diff_base, **answered, **meta)
+                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **meta)
             if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
-                         handoff=handoff(recall(path)))
+                         handoff=handoff(recall(path), deepseek.of(chat)), provider=deepseek.of(chat))
         except Exception as exc:
             # Transcript publication is not the execution boundary. A lost
             # record must not skip an already accepted review/plan handoff.
@@ -908,7 +914,7 @@ def dispatch(path: Path, ended: Run) -> None:
         release()
         errorlog.record("work-queue", exc, path=key, turn=ended.turn)
         remember(path, "assistant", "", error=f"기다리던 지시를 보내지 못했다 — {type(exc).__name__}: {exc}"
-                                                f"\n지시: {order.text}")
+                                                f"\n지시: {order.text}", provider=deepseek.provider(order.model))
         feed.put({"kind": "turn", "path": key, "turn": "", "session_id": ""})
 
 
@@ -981,7 +987,8 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
     except (OSError, RuntimeError, subprocess.TimeoutExpired):
         pass  # The diff endpoint reports its failure; the agent still runs.
     if not decide and replay is None:
-        remember(path, "user", text, turn=run.turn, **({"person": True} if run.person else {}))   # a window's send vs its record
+        remember(path, "user", text, turn=run.turn, provider=deepseek.of(chat),   # whose turn, before any answer
+                 **({"person": True} if run.person else {}))   # a window's send vs its record
 
     def execute():
         try:

@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from agent import deepseek
 import improvement
 
 from . import channels, planning, refactor, refactor_run, refactor_survey, specs, work
@@ -103,7 +104,7 @@ def named(roles: Roles | None) -> Roles:
             raise HTTPException(400, f"{label} 모델을 골라라 — 기본 모델로는 시작하지 않는다")
         if not (CODEX_MODEL.fullmatch(model[6:]) if model.startswith("codex:") else channels.CLAUDE_MODEL.fullmatch(model)):
             raise HTTPException(400, f"{label} 모델 이름을 받지 않는다")
-        if effort and not planning.EFFORT.fullmatch(effort):
+        if effort and not planning.EFFORT.fullmatch(effort) or model == deepseek.MODEL and effort not in channels.efforts_of(model):
             raise HTTPException(400, f"{label} 추론 강도를 받지 않는다")
     return roles
 
@@ -119,7 +120,7 @@ def pinned(repo: Path, role: dict) -> None:
             raise HTTPException(409, "리팩터링 대화의 답변이 끝난 뒤 시작해라 — 대화가 조사 모델로 바뀐다")
         cfg = query.config("refactor", repo.name)
         query.refactor_mode(cfg["repo"], cfg["refactor_mode"], cfg["refactor_generation"], role)
-        moved = role["model"].startswith("codex:") != cfg["model"].startswith("codex:")
+        moved = deepseek.provider(role["model"]) != deepseek.provider(cfg["model"])
         cfg.update(model=role["model"], effort=role["effort"], refactor_pinned=True)
         if moved:
             query.remember("refactor", "context", "CLI 변경", repo=repo)

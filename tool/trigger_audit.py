@@ -841,6 +841,8 @@ def ab(argv: list[str]) -> int:
     parser.add_argument("--seed", type=int, default=20260925)
     parser.add_argument("--dry-run", action="store_true", help="과제와 배선만 보이고 모델은 부르지 않는다")
     args = parser.parse_args(argv)
+    if args.model == "deepseek-flash":   # this audit starts the CLI itself, on the Claude login only
+        parser.error("DeepSeek 은 이 감사에서 고르지 않는다 — 앱의 대화에서 써라")
     arms = {"A": args.a.expanduser().resolve(), "B": args.b.expanduser().resolve()}
     repos = [r.expanduser().resolve() for r in args.repo]
 

@@ -13,7 +13,7 @@ import re
 import threading
 import time
 
-from agent import CodexServer, server_epoch, servers_retired, settings
+from agent import CodexServer, deepseek, server_epoch, servers_retired, settings
 from .refresh import Refresh
 from common.paths import PACKAGED
 
@@ -29,6 +29,7 @@ MODELS = [
     {"id": "sonnet", "label": "Sonnet", "note": "보통 이거면 된다"},
     {"id": "haiku", "label": "Haiku", "note": "짧은 확인용"},
     {"id": "fable", "label": "Fable", "note": ""},
+    deepseek.CHOICE,
 ]
 
 # What a hand-typed Claude model name may look like: `opus`, `claude-opus-5-5`,
@@ -132,7 +133,7 @@ def efforts_of(model: str) -> set[str]:
     if model.startswith("codex:"):
         found = next((m for m in codex_models() if m["id"] == model), None)
         return {e["id"] for e in found["efforts"]} if found else set()
-    return {e["id"] for e in EFFORTS}
+    return {e["id"] for e in (deepseek.EFFORTS if model == deepseek.MODEL else EFFORTS)}
 
 
 def projects() -> list[dict]:

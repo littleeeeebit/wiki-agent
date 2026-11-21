@@ -134,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
+    if args.model == "deepseek-flash":   # its turns have no price, and this run reports one
+        parser.error("DeepSeek has no per-turn price, so this run's cost_usd cannot count it")
     result = run(args.manifest, tuple(args.ids), args.model)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = args.out or RAW / f"answers-{result['manifest']['id']}-{stamp}.json"
