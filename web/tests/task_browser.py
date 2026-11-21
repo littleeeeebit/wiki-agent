@@ -218,6 +218,9 @@ def main():
             reply += " ![Synthetic outside](https://example.com/x.png) [**![Synthetic wrapped](C:/fixture/shots/before.png)**](https://example.com/target)"
             # Agents link a result picture more often than they embed it (ai-generation's panorama reports).
             reply += "\n\n[Synthetic linked result](C:/fixture/shots/result.webp)"
+            # A citation inside a link is the link's words; a broken picture with no alt still shows something.
+            reply += "\n\n[see `src/app.ts:3` here](https://example.com/cited) [![](C:/fixture/shots/missing.png)](https://example.com/broken)"
+            reply += " [![ ](C:/fixture/shots/missing.png)](https://example.com/spaced) [source[^a]](https://example.com/noted)\n\n[^a]: Note."
             return {"rows": [{"role": "assistant", "text": reply,
                     "steps": [{"kind": "progress", "text": f"Synthetic translation progress {translation_mode}"},
                               {"kind": "tool", "text": f"Synthetic translation tool {translation_mode}"},
@@ -251,7 +254,10 @@ def main():
                               {"path": "overall-architecture/web/router", "description": "Leaf details", "diagram": ""},
                               *[{**node, "path": "actual/" + node["path"]} for node in architecture_nodes]]}
         if path == "image":
-            pictures.append(parse_qs(urlparse(str(request.url)).query))
+            query = parse_qs(urlparse(str(request.url)).query)
+            if query["path"][0].endswith("missing.png"):   # a picture the checkout no longer holds
+                return Response(status_code=404)
+            pictures.append(query)
             return Response(PNG, media_type="image/png")
         if path == "file":
             params = parse_qs(urlparse(str(request.url)).query)
@@ -722,6 +728,13 @@ def main():
             wrapped = page.locator('a[href="https://example.com/target"]')   # under formatting too, the link's content
             expect(wrapped.get_by_role("img", name="Synthetic wrapped")).to_be_visible()
             assert wrapped.get_by_role("button").count() == 0
+            expect(page.get_by_role("link", name="Synthetic wrapped", exact=True)).to_have_count(1)   # named once
+            cited = page.locator('a[href="https://example.com/cited"]')
+            expect(cited.locator("code")).to_have_text("src/app.ts:3")
+            assert cited.get_by_role("button").count() == 0   # one click, one control
+            for href in ("broken", "spaced"):   # no alt, or only spaces: the file's name
+                expect(page.locator(f'a[href="https://example.com/{href}"]')).to_have_text("missing.png")
+            assert page.locator('a[href="https://example.com/noted"] a').count() == 0   # anchors do not nest
             assert page.get_by_role("img", name="Synthetic outside").count() == 0   # a web address stays its alt text
             page.route("https://example.com/**", lambda route: route.fulfill(body="Synthetic PR"))
             with page.expect_popup() as popup:
