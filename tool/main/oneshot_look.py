@@ -437,8 +437,8 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
 
 # The text a frame carries, drawn or not, as separate streams: the text and CDATA nodes outside code of its document
 # and of each open shadow root, joined so a value split across elements reads as one; beside each, its rendered
-# text, where hidden text between two visible parts no longer splits them (the document's `innerText`, else the
-# nodes `innerText`'s rule keeps: laid out, their element's `visibility` visible); as `values`, the value,
+# text, where hidden text between two visible parts no longer splits them (the nodes `innerText`'s rule keeps: laid
+# out, their element's `visibility` visible, never the getter, which on a hidden root reads stylesheets); as `values`, the value,
 # placeholder and alt of its fields and images. A secret in hidden text has reached the browser all the same. Never
 # markup or a stylesheet, which a short secret would match on a clean page.
 SHOWN = """() => {
@@ -457,8 +457,7 @@ SHOWN = """() => {
     NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) if (outside(n, root) && keep(n)) out.push(n.data);
     return out.join(''); };
-  const top = document.documentElement;
-  texts.push(plain(document), top && typeof top.innerText === 'string' ? top.innerText : plain(document, drawn));
+  texts.push(plain(document), plain(document, drawn));
   const visit = root => {
     for (const el of root.querySelectorAll('*')) {
       for (const a of ['value', 'placeholder', 'alt']) if (el.hasAttribute(a)) values.push(el.getAttribute(a));
@@ -488,12 +487,24 @@ def still(page):
             pass
     for s in sessions:
         s.send("Emulation.setScriptExecutionDisabled", {"value": True})
+    # An animation not started yet, held, starts later in its before phase, so the picture and the read differ:
+    # every one starts first. ponytail: a second at most, then held as it is
+    for _ in range(40):
+        try:
+            if not any(f.evaluate("() => document.getAnimations().some(a => a.pending)") for f in page.frames):
+                break
+        except Error:   # a frame gone: the read after says so
+            break
+        time.sleep(0.025)
+    for s in sessions:
+        s.send("Animation.setPlaybackRate", {"playbackRate": 0})   # a CSS animation can show or hide rendered text
     try:
         yield
     finally:
         for s in sessions:
             try:
                 s.send("Emulation.setScriptExecutionDisabled", {"value": False})
+                s.send("Animation.setPlaybackRate", {"playbackRate": 1})
                 s.detach()
             except Error:   # a frame gone with the page
                 pass

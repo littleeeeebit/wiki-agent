@@ -229,6 +229,9 @@ def test_shadow_text_drawn_or_not_is_seen_and_no_stylesheet_svg_frame_or_pair_of
         assert bool(look.secrets_shown(page, {"key-gap": "[N1]"})) == (not host)
     page.set_content(f"<main>{gap}</main>")
     assert look.secrets_shown(page, {"key-gap": "[N1]"})   # the document's own rendered text
+    for root in ("", " hidden"):   # a hidden root's rendered text is empty, never its stylesheets
+        page.set_content(f"<html{root}><body><main>Ready</main><style>.a > .b {{ color: red }}</style></body></html>")
+        assert look.secrets_shown(page, {">": "[N1]"}) == ""
     svg = "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%2F%3E"
     page.set_content(f"<main>Ready</main><iframe src=\"{svg}\"></iframe>")
     page.frames[1].wait_for_load_state()
@@ -243,6 +246,30 @@ def test_shadow_text_drawn_or_not_is_seen_and_no_stylesheet_svg_frame_or_pair_of
     assert look.secrets_shown(page, {"abcd": "[N1]", "cdef": "[N2]"}) == ""   # each stream is matched alone
 
 
+def test_an_animation_not_started_yet_starts_before_it_is_held(browser):
+    for _ in range(10):   # held while pending, it started later in its before phase in about a third of runs
+        page = browser.new_page(offline=True)
+        page.set_content("<p id='t'>x</p>")
+        page.add_style_tag(content="@keyframes m { from { opacity: 0 } } #t { animation: m 5s linear infinite }")
+        with look.still(page):
+            at = page.evaluate("document.getAnimations()[0].currentTime")
+            page.screenshot()
+            time.sleep(0.05)
+            assert page.evaluate("document.getAnimations()[0].currentTime") == at
+        page.close()
+
+
+def test_rendered_text_an_animation_would_change_holds_while_the_page_is_still(browser):
+    page = browser.new_page(offline=True)
+    page.set_content("<main>key-<span>note</span>gap</main><style>@keyframes off { to { visibility: hidden } }"
+                     " span { animation: off 50ms 600ms both }</style>")
+    with look.still(page):
+        assert look.secrets_shown(page, {"key-gap": "[N1]"}) == ""
+        time.sleep(1)
+        assert look.secrets_shown(page, {"key-gap": "[N1]"}) == ""   # the span never hides while held
+    page.close()
+
+
 def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser):
     page = browser.new_page(offline=True)
     page.set_content("<p id='t'>0</p><iframe srcdoc=\"<p id='f'>0</p><script>let i = 0; "
@@ -252,13 +279,17 @@ def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser)
     def read():
         return [f.evaluate("() => document.body.innerText") for f in page.frames]
 
+    def moved():
+        return page.evaluate("document.getAnimations()[0].currentTime")
+
+    page.add_style_tag(content="@keyframes m { to { opacity: 0 } } #t { animation: m 5s linear infinite }")
     with look.still(page):
-        before = read()
+        before, at = read(), moved()
         page.screenshot()
         time.sleep(0.2)
-        assert read() == before
+        assert read() == before and moved() == at   # a CSS animation, which can show or hide rendered text, holds too
     time.sleep(0.2)
-    assert read() != before
+    assert read() != before and moved() != at
 
 
 def test_an_app_the_command_cannot_start_is_refused_with_its_output(tmp_path):

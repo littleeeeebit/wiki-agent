@@ -183,17 +183,20 @@ has never stands in.
 
 The web look masks only each finding's text, so a secret as short as a JSON
 delimiter never changes its shape. Each screen is read and shot while no
-script of it or of its frames runs (`oneshot_look.still`), and the picture
-is kept only if every frame still holds the document read, since a refresh
-navigates with scripts off.
+script or animation of it or of its frames runs (`oneshot_look.still`), and
+the picture is kept only if every frame still holds the document read, since
+a refresh navigates with scripts off. An animation not started yet is let
+start before it is held, since one held while pending starts later in its
+before phase.
 
 What is read is the text the page carries, drawn or not, each stream matched
 on its own: the text and CDATA nodes outside code of every frame's document
 and of each open shadow root, joined so a value split across elements reads
 as one; beside each, its rendered text, so hidden text between two visible
-parts never splits a value the screen joins (a document's `innerText`, and
-for a shadow root or an SVG frame the nodes the same rule keeps: laid out,
-their element's `visibility` visible); and the value, placeholder and alt
+parts never splits a value the screen joins: the nodes `innerText`'s rule
+keeps, laid out and their element's `visibility` visible, read node by node
+since the getter on a hidden root falls back to text that includes
+stylesheets; and the value, placeholder and alt
 of fields and images; never markup or a stylesheet. Within one stream a value broken across lines still
 matches. A secret in hidden text has reached the browser all the same, so it
 is the app's leak to fix, and whether the browser draws it is never asked. A
