@@ -73,8 +73,8 @@ export type PhoneRound = {
 }
 /** What the owner approves for the owner's desktop round (`oneshot_pc.plan`), and the approval it records. */
 export type PcPlan = {
-  head: string; build: string; freeze: string; checks: string[]; starts: string[]
-  captures: { check: string; kind: 'window' | 'surface'; reads: string }[]
+  attempt: string; head: string; build: string; freeze: string; checks: string[]; starts: string[]
+  captures: { check: string; by: 'round' | 'app'; kind: 'window' | 'surface'; reads: string }[]
 }
 export type PcApproval = PcPlan & { surface: boolean; ts: number }
 /** The owner's desktop round before R3 (`oneshot_pc`): `waiting` for the owner's approval, then `approved`. */
@@ -139,10 +139,9 @@ export const api = {
     .then((r) => json<{ devices: Handset[]; owned: Owned[] }>(r, '연결된 휴대폰')),
   phone: (repo: string, serial: string, keep: boolean) => post(`${base(repo)}/phone`, { serial, keep }).then(answer),
   stopPhone: (repo: string) => post(`${base(repo)}/phone/stop`, {}).then(answer),
-  // The owner's one-time approval of the round exactly as `plan` showed it (`oneshot_pc.approve`).
+  // The owner's one-time approval of the round exactly as `plan` showed it, whole (`oneshot_pc.approve`).
   approvePc: (repo: string, plan: PcPlan, surface: boolean) =>
-    post(`${base(repo)}/pc/approve`, { head: plan.head, build: plan.build, freeze: plan.freeze, checks: plan.checks, surface })
-      .then(answer),
+    post(`${base(repo)}/pc/approve`, { plan, surface }).then(answer),
 }
 
 // The stages in order. `talk` and `gate` wait for the owner; the rest run on their own.

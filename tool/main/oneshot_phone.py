@@ -295,7 +295,7 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
         passed = not any(f["severity"] == "high" for f in findings)
         return {"status": "passed" if passed else "failed", "round": n, "model": picked["model"], "size": size,
                 "findings": findings, "timing": frames, "memory_kb": used, "head": o["front_built_head"],
-                "apks": o["apks"], "detail": ""}
+                "apks": o["apks"], "front_build": o.get("front_build"), "detail": ""}
     finally:
         try:
             call(home, "shell", "rm", "-f", device.DUMP)
@@ -387,14 +387,14 @@ def waits(repo: str, fields: dict) -> dict:
 
 
 def earlier(repo: str, o: dict) -> None:
-    """A run an earlier version stopped before R3 for its kind: with no phone round passed, this version waits
-    for the phone; with one passed, it opens R3's sheet."""
+    """A run an earlier version stopped before R3 for its kind: with no phone round passed on its current HEAD, APKs
+    and build, this version waits for the phone; with one, it opens R3's sheet."""
 
-    from . import oneshot_critique   # it imports this module
+    from . import oneshot_critique, oneshot_pc   # they import this module
     stop = o.get("stopped") or {}
     if "android" not in kinds_of(o) or o.get("stage") != "r3" or stop.get("reason") != "kind" or oneshot_spec.held(o):
         return   # a run this version still holds before R3 (with `desktop`) stays as it is
-    if (o.get("phone") or {}).get("status") == "passed":
+    if oneshot_pc.phoned(o):   # the guard's own test: a pass of another HEAD, APKs or build waits for the phone
         oneshot_spec.saved(repo, oneshot={"stopped": None, "working": None, "r3": oneshot_critique.opening(o)})
     else:
         oneshot_spec.saved(repo, oneshot={"stage": STAGE, "stopped": None, "working": None,

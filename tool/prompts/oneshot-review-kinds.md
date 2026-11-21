@@ -75,9 +75,12 @@ on your `act` and passes only when your `expect` did not hold before it and
 holds after it.
 An `owner` check gives the step that sets the capture going in `act`, as a
 `look` one does, and what it observes in `observe`, exactly one of:
-`{"report": {"id": "…"}}` or `{"report": {"file": "…"}}`, where the program
-reports what it captured, an element's value or a UTF-8 file relative to its
-data folder, which must contain the fixture's words;
+`{"report": {"id": "…", "from": "…"}}` or
+`{"report": {"file": "…", "from": "…"}}`, where the program reports what it
+captured, an element's value or a UTF-8 file relative to its data folder,
+which must contain the fixture's words, `from` naming what it captures:
+`fixture`, the fixture's window, or `screen`, the region of the screen the
+fixture covers, which runs only when the owner allows that region to be read;
 `{"window": {"shows": "…"}}`, the round's capture of the program's main window
 (`"in": "owned"` for the one it owns), which an independent critic judges
 against `shows`; or `{"composition": {"shows": "…"}}`, the round's capture of

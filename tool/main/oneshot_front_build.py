@@ -222,8 +222,10 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
     # The fixes this turn was sent with are built now: a resumed build no longer carries them. A run this version
     # holds at the critique is saved stopped in the same write, so no poll sees it resumable.
-    passed = {"stage": "critique", "front_built_head": verdict["head"], "looks": looks, "attempts": 0,
-              "working": "critique", "fix": None, **({"device": device, "apks": apks} if android else {})}
+    # `front_build` names this accepted build: a device round's pass counts only for the build it ran, so a rebuild
+    # clears every earlier one, even of the same HEAD and the same APK digests.
+    passed = {"stage": "critique", "front_built_head": verdict["head"], "front_build": uuid.uuid4().hex, "looks": looks,
+              "attempts": 0, "working": "critique", "fix": None, **({"device": device, "apks": apks} if android else {})}
     if oneshot_spec.held({**o, "stage": "critique"}):
         passed.update(working=None, stopped=oneshot_spec.kind_stop("critique"))
     oneshot_spec.saved(spec["repo"], oneshot=passed)

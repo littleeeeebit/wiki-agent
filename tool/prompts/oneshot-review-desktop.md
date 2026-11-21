@@ -71,9 +71,13 @@ show it, and that check's `source`:
   round. It passes only on what is observed. Give the step that sets the
   capture going in `act`, as for `look`, and what the check observes in
   `observe`, exactly one of:
-  - `{"report": {"id": "…"}}` or `{"report": {"file": "…"}}`: where the
-    program reports what it captured, an element's value or a UTF-8 file
-    relative to its data folder, which must contain the fixture's words;
+  - `{"report": {"id": "…", "from": "…"}}` or
+    `{"report": {"file": "…", "from": "…"}}`: where the program reports what
+    it captured, an element's value or a UTF-8 file relative to its data
+    folder, which must contain the fixture's words. `from` is what the
+    program captures: `fixture`, the fixture's window, or `screen`, the
+    region of the screen the fixture covers, which runs only when the owner
+    allows that region to be read;
   - `{"window": {"shows": "…"}}`: the round captures the program's main
     window (`"in": "owned"` for the one it owns), and an independent critic
     judges whether it shows what `shows` says;
@@ -107,7 +111,7 @@ A short answer, then exactly one fenced block whose info string is
 `oneshot-review`, holding one JSON object:
 
 ```oneshot-review
-{"verdict": "approve", "head": "<the HEAD you were given, in full>", "findings": [{"location": "core/src/reader.rs:42", "severity": "P2", "reason": "…", "evidence": "…"}, {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R2", "check": "…", "source": "owner", "act": {"action": "invoke", "id": "capture"}, "observe": {"report": {"id": "captured-text"}}}}, {"location": "core/src/settings.rs:9", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R3", "check": "…", "source": "look", "act": {"action": "toggle", "id": "translate-on"}, "expect": {"id": "translate-on", "toggle": "On"}}}]}
+{"verdict": "approve", "head": "<the HEAD you were given, in full>", "findings": [{"location": "core/src/reader.rs:42", "severity": "P2", "reason": "…", "evidence": "…"}, {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R2", "check": "…", "source": "owner", "act": {"action": "invoke", "id": "capture"}, "observe": {"report": {"id": "captured-text", "from": "screen"}}}}, {"location": "core/src/settings.rs:9", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R3", "check": "…", "source": "look", "act": {"action": "toggle", "id": "translate-on"}, "expect": {"id": "translate-on", "toggle": "On"}}}]}
 ```
 
 `verdict` is `refuse` exactly when a P0 or P1 finding without `device`

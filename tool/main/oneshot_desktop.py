@@ -43,6 +43,7 @@ MAX_STEPS = 20
 WINDOWS = ("main", "owned")   # where a step acts and its postcondition reads: the main window or the one it owns
 ACT = ("action", "id", "value", "in")   # what a step does, apart from its name and postcondition
 OBSERVES = ("report", "window", "composition")   # what an `owner` check observes (plan 9e5)
+REPORTS_FROM = ("fixture", "screen")   # what the app captures for a `report`: the fixture's window, or a surface
 MAX_SHOWS = 500   # characters in the sentence the critic judges a capture against
 # A setting the look passes is one of two things, so a path to another place on this PC has no spelling left to
 # take, however Windows, a C runtime, a web view or the app's own expansion would read it:
@@ -251,16 +252,19 @@ def postcondition(expect, read: bool = True) -> str:
 
 def observed(seen) -> str:
     """Why `seen` is not what an `owner` check observes: exactly one of `report`, the app's own report of what it
-    captured (an element's value by its `id`, with `in: owned` in the window the main window owns, or a UTF-8
-    `file` under `{data}`), `window`, the round's capture of the main window or with `in: owned` the one it owns,
-    or `composition`, its capture of the fixture's region; each of the last two with the `shows` sentence the
-    critic judges it against. Empty when it is one."""
+    captured `from` the fixture's window or the screen the fixture covers (an element's value by its `id`, with
+    `in: owned` in the window the main window owns, or a UTF-8 `file` under `{data}`), `window`, the round's
+    capture of the main window or with `in: owned` the one it owns, or `composition`, its capture of the fixture's
+    region; each of the last two with the `shows` sentence the critic judges it against. Empty when it is one."""
 
     if not isinstance(seen, dict) or len(seen) != 1 or next(iter(seen)) not in OBSERVES \
             or not isinstance(v := next(iter(seen.values())), dict):
         return "observe 는 report, window, composition 중 하나만 담은 객체다"
     what = next(iter(seen))
     if what == "report":
+        if v.get("from") not in REPORTS_FROM:
+            return "observe.report 의 from 은 앱이 캡처하는 곳, fixture(고정 창) 나 screen(고정 창이 덮은 화면) 이다"
+        v = {k: x for k, x in v.items() if k != "from"}
         if set(v) == {"file"}:
             try:
                 _relative(v["file"], "observe.report.file")

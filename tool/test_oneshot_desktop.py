@@ -184,7 +184,8 @@ LOOK = {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "번�
                                      "expect": {"id": "translate", "toggle": "On"}}}
 OWNER = {**LOOK, "device": {**{k: v for k, v in LOOK["device"].items() if k not in ("act", "expect")},
                             "check": "고정 창을 캡처한 결과가 `{data}/seen.txt` 에 그 글을 담는다", "source": "owner",
-                            "act": {"action": "invoke", "id": "capture"}, "observe": {"report": {"file": "seen.txt"}}}}
+                            "act": {"action": "invoke", "id": "capture"},
+                            "observe": {"report": {"file": "seen.txt", "from": "fixture"}}}}
 
 
 def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
@@ -203,18 +204,20 @@ def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
         with pytest.raises(ValueError, match="`expect`"):   # a `look` check names its step and what it brings about
             oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], **bad}}), "h", devices)
     for bad in ({"expect": LOOK["device"]["expect"]}, {"act": None}, {"observe": None}, {"observe": {}},
-                {"observe": {"report": {"file": "../seen.txt"}}}, {"observe": {"report": {"id": "seen", "in": "other"}}},
+                {"observe": {"report": {"file": "../seen.txt", "from": "fixture"}}},
+                {"observe": {"report": {"file": "seen.txt"}}}, {"observe": {"report": {"file": "seen.txt", "from": "monitor"}}},
+                {"observe": {"report": {"id": "seen", "in": "other", "from": "screen"}}},
                 {"observe": {"window": {"shows": " "}}}, {"observe": {"composition": {"shows": "글", "in": "owned"}}},
-                {"observe": {"report": {"id": "seen"}, "window": {"shows": "글"}}}):
+                {"observe": {"report": {"id": "seen", "from": "screen"}, "window": {"shows": "글"}}}):
         with pytest.raises(ValueError, match="`observe`"):   # an owner's names its step and what it observes
             oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], **bad}}), "h", devices)
     with pytest.raises(ValueError, match="`source`"):   # a `look` one observes nothing
         oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], "observe": OWNER["device"]["observe"]}}),
                                   "h", devices)
-    for fine in ({"report": {"id": "seen", "in": "owned"}}, {"window": {"shows": "고정 창의 글을 번역한 문장"}},
+    for fine in ({"report": {"id": "seen", "in": "owned", "from": "screen"}}, {"window": {"shows": "고정 창의 글을 번역한 문장"}},
                  {"composition": {"shows": "고정 창 위에 번역문이 겹쳐 보인다"}}):
         assert oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], "observe": fine}}), "h", devices)
-    assert oneshot_review.owing(found)[1]["observe"] == {"report": {"file": "seen.txt"}}
+    assert oneshot_review.owing(found)[1]["observe"] == {"report": {"file": "seen.txt", "from": "fixture"}}
     assert oneshot_review.owing(found)[0]["act"] == {"action": "toggle", "id": "translate"}
     gone = {**LOOK, "device": {k: v for k, v in LOOK["device"].items() if k not in ("source", "act", "expect")}}
     with pytest.raises(ValueError, match="`source`"):

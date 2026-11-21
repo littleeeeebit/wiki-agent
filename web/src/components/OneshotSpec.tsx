@@ -204,9 +204,10 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       {idle && view.stage === 'phone' && (
         <PhonePick repo={repo} round={o.phone} busy={busy} act={act} />
       )}
-      {/* Held at its `kind` stop in this version: the approval is recorded, and the round runs in the next. */}
+      {/* Held at its `kind` stop in this version: the approval is recorded, and the round runs in the next. Keyed by
+          the plan, so another plan starts with nothing allowed. */}
       {!view.working && view.stage === 'pc' && view.pc_plan && (
-        <PcApprove repo={repo} view={view} plan={view.pc_plan} busy={busy} act={act} />
+        <PcApprove key={JSON.stringify(view.pc_plan)} repo={repo} view={view} plan={view.pc_plan} busy={busy} act={act} />
       )}
       {idle && view.stage === 'r3' && view.r3_sheet && o.r3 && (
         <Sheet key={`r3-${o.r3.round}-${view.r3_brief?.source}`} gate="r3" text={view.r3_sheet}
@@ -243,7 +244,7 @@ function PcApprove({ repo, view, plan, busy, act }: {
         <label className="flex items-baseline gap-2.5">
           <input type="checkbox" checked={given ? given.surface : surface} disabled={!!given}
             onChange={(e) => setSurface(e.target.checked)} />
-          <span>고정 창이 덮은 화면 영역을 읽어도 된다</span>
+          <span>고정 창이 덮은 화면 영역을 읽어도 된다 (회차와 앱 모두)</span>
         </label>
       )}
       <Decide>
@@ -268,10 +269,11 @@ function PcApprove({ repo, view, plan, busy, act }: {
         </section>
         {plan.captures.length > 0 && (
           <section aria-label="읽을 것" className="flex flex-col gap-2">
-            <Title><span>회차가 찍을 것</span></Title>
+            <Title><span>찍고 읽을 것</span></Title>
             <ul className="flex flex-col gap-1.5">
               {plan.captures.map((c) => (
-                <li key={c.check}><span className="font-mono text-[12px] text-faint">{c.check}</span> {c.reads}
+                <li key={c.check}><span className="font-mono text-[12px] text-faint">{c.check}</span>{' '}
+                  {c.by === 'app' ? '앱이 읽는 ' : '회차가 찍는 '}{c.reads}
                   {c.kind === 'surface' && <span className="text-muted-foreground"> — 그 영역에 뜬 알림도 함께 찍힌다</span>}</li>
               ))}
             </ul>

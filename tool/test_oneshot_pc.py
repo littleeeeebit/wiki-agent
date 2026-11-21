@@ -12,8 +12,9 @@ from test_oneshot_spec import o, world  # noqa: F401 — `world` is the temporar
 
 BUILD: dict = {}   # the run's frozen build, a real copy at the worktree's HEAD (`held`)
 REPORT = {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처한 글이 보인다",
-          "act": {"action": "invoke", "id": "capture"}, "observe": {"report": {"id": "seen"}}}
+          "act": {"action": "invoke", "id": "capture"}, "observe": {"report": {"id": "seen", "from": "fixture"}}}
 SURFACE = {**REPORT, "id": "O3", "observe": {"composition": {"shows": "고정 창 위에 번역문이 겹친다"}}}
+SCREEN = {**REPORT, "id": "O4", "observe": {"report": {"file": "seen.txt", "from": "screen"}}}   # the app reads it
 LOOK = {"id": "O1", "kind": "desktop", "source": "look", "requirement": "R1", "check": "켜진다",
         "act": {"action": "toggle", "id": "on"}, "expect": {"id": "on", "toggle": "On"}}
 
@@ -35,9 +36,10 @@ def held(world, monkeypatch, tmp_path):  # noqa: F811 — the imported fixture, 
     return world
 
 
-def approval(**changed) -> pc.Approval:
-    return pc.Approval(**{"head": BUILD["head"], "build": BUILD["identity"], "freeze": BUILD["freeze"],
-                          "checks": ["O2", "O3"], "surface": True, **changed})
+def approval(surface: bool = True, **changed) -> pc.Approval:
+    """The approval of the plan the screen shows now, with `changed` fields as a stale screen would hold them."""
+
+    return pc.Approval(plan={**pc.plan(o()), **changed}, surface=surface)
 
 
 def test_the_owner_approves_once_exactly_what_the_round_starts_and_reads(held):
@@ -45,9 +47,12 @@ def test_the_owner_approves_once_exactly_what_the_round_starts_and_reads(held):
     assert "O2, O3" in o()["stopped"]["detail"] and "승인하면" in o()["stopped"]["detail"]
     plan = pc.extra(oneshot_spec.spec_of("budget"))["pc_plan"]
     assert plan["checks"] == ["O2", "O3"] and plan["starts"] == ["app.exe", "oneshot-fixture (O2)", "oneshot-fixture (O3)"]
-    assert plan["captures"] == [{"check": "O3", "kind": "surface", "reads": "oneshot-fixture 가 덮은 화면 영역"}]
+    assert plan["captures"] == [{"check": "O2", "by": "app", "kind": "window", "reads": "oneshot-fixture 창"},
+                                {"check": "O3", "by": "round", "kind": "surface", "reads": "oneshot-fixture 가 덮은 화면 영역"}]
     assert pc.approved(o()) is None   # absent: nothing recorded, nothing runs
-    for stale in ({"head": "c" * 40}, {"build": "d" * 64}, {"freeze": "f0"}, {"checks": ["O2"]}):
+    owned = {"check": "O3", "by": "round", "kind": "window", "reads": "앱의 주 창이 가진 창"}
+    for stale in ({"head": "c" * 40}, {"build": "d" * 64}, {"freeze": "f0"}, {"checks": ["O2"]}, {"attempt": "old"},
+                  {"captures": [plan["captures"][0], owned]}):   # the same ids, another window to read
         with pytest.raises(HTTPException, match="지금 회차와 다르다"):
             pc.approve("budget", approval(**stale))
     assert not o()["pc"].get("approval")
@@ -61,7 +66,15 @@ def test_the_owner_approves_once_exactly_what_the_round_starts_and_reads(held):
         oneshot_spec.resume("budget")
 
 
+def test_an_approval_of_a_build_the_worktree_has_left_is_refused(held):
+    oneshot_spec.saved("budget", oneshot={"desktop_build": {**BUILD, "head": "c" * 40}})   # the worktree moved on
+    with pytest.raises(HTTPException, match="다시 빌드한 뒤"):
+        pc.approve("budget", approval())
+    assert not o()["pc"].get("approval")
+
+
 def test_a_restart_or_a_new_build_after_the_approval_sends_the_run_back_to_waiting(held):
+    before = approval()   # the screen's request, prepared before the restart
     pc.approve("budget", approval())
     oneshot_spec.saved("budget", oneshot={"desktop_build": {**BUILD, "freeze": "f2"}})   # rebuilt: another freeze
     assert pc.approved(o()) is None   # never applied to a different launch
@@ -70,18 +83,32 @@ def test_a_restart_or_a_new_build_after_the_approval_sends_the_run_back_to_waiti
     oneshot_spec.recover()
     assert o()["stage"] == "pc" and o()["pc"]["status"] == "waiting" and not o()["pc"].get("approval")
     assert o()["stopped"]["reason"] == "kind" and "승인하면" in o()["stopped"]["detail"]
-    pc.approve("budget", approval())   # approved afresh
+    with pytest.raises(HTTPException, match="지금 회차와 다르다"):   # another wait: the earlier request is stale
+        pc.approve("budget", before)
+    pc.approve("budget", approval())   # approved afresh, off the plan shown now
     assert pc.approved(o())
 
 
+def test_an_expired_approval_never_blocks_the_approval_of_the_plan_shown_now(held):
+    pc.approve("budget", approval())
+    oneshot_spec.saved("budget", oneshot={"owed": [LOOK, REPORT, {**SURFACE, "observe": {"window": {"shows": "글"}}}]})
+    assert pc.approved(o()) is None   # O3 now reads another capture
+    pc.approve("budget", approval())
+    assert pc.approved(o())["captures"][1]["kind"] == "window"
+
+
 def test_a_surface_the_owner_does_not_allow_leaves_its_check_pending_and_r3_closed(held):
+    oneshot_spec.saved("budget", oneshot={"owed": [LOOK, REPORT, SURFACE, SCREEN]})
+    assert pc.plan(o())["captures"][2] == {"check": "O4", "by": "app", "kind": "surface",
+                                           "reads": "oneshot-fixture 가 덮은 화면 영역"}
     pc.approve("budget", approval(surface=False))
-    assert pc.unrun(o()) == ["O3"]
+    assert pc.unrun(o()) == ["O3", "O4"]   # the round's surface and the app's alike
     passed = {"status": "passed", "head": BUILD["head"], "freeze": BUILD["freeze"], "passed": ["O2"]}
     oneshot_spec.saved("budget", oneshot={"pc": {**o()["pc"], **passed}})
-    assert not pc.passed(o())   # O3 still pending
-    oneshot_spec.saved("budget", oneshot={"pc": {**o()["pc"], "passed": ["O2", "O3"]}})
+    assert not pc.passed(o())   # O3 and O4 still pending
+    oneshot_spec.saved("budget", oneshot={"pc": {**o()["pc"], "passed": ["O2", "O3", "O4"]}})
     assert pc.passed(o()) and not pc.passed({**o(), "desktop_build": {**BUILD, "freeze": "f2"}})
+    assert not pc.passed({**o(), "front_build": "another"})   # a rebuild of the same freeze's files
 
 
 def test_an_owner_check_from_an_earlier_review_stays_pending_and_is_never_approved_to_run(held):
@@ -89,7 +116,7 @@ def test_an_owner_check_from_an_earlier_review_stays_pending_and_is_never_approv
     oneshot_spec.saved("budget", oneshot={"owed": [bare]})
     assert pc.unrun(o()) == ["O2"] and pc.plan(o())["checks"] == []
     with pytest.raises(HTTPException, match="돌릴 수 있는 검사가 없다"):
-        pc.approve("budget", approval(checks=[]))
+        pc.approve("budget", approval())
     assert not pc.passed({**o(), "pc": {"status": "passed", "head": BUILD["head"], "freeze": "f1", "passed": []}})
 
 
@@ -111,17 +138,28 @@ def test_the_guarded_entry_holds_r3_until_every_due_device_round_passed(held):
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "phone", "working": "phone", "stopped": None, "pc": None,
                                           "front_built_head": BUILD["head"], "apks": {"app.apk": "x"},
-                                          "phone": {"status": "running"}})
-    passed = {"status": "passed", "detail": "", "head": BUILD["head"], "apks": {"app.apk": "x"}}
+                                          "front_build": "b1", "phone": {"status": "running"}})
+    passed = {"status": "passed", "detail": "", "head": BUILD["head"], "apks": {"app.apk": "x"}, "front_build": "b1"}
     assert not callable(oneshot_phone.settled("budget", passed))   # the phone passed first: the owner's round is next
     assert o()["stage"] == "pc" and o()["phone"]["status"] == "passed" and o()["stopped"]["reason"] == "kind"
     assert not o().get("r3")
     # The owner's round passed on this build: the phone's pass on this HEAD still stands, and R3 opens (held here).
     oneshot_spec.saved("budget", oneshot={"pc": {"status": "passed", "head": BUILD["head"], "freeze": "f1",
-                                                 "passed": ["O2", "O3"]}})
+                                                 "front_build": "b1", "passed": ["O2", "O3"]}})
     assert pc.onward("budget", {}) is None and o()["stage"] == "r3" and o()["stopped"]["reason"] == "kind"
-    # A rebuild on a new HEAD clears both passes: the phone is due again first.
-    oneshot_spec.saved("budget", oneshot={"stage": "critique", "front_built_head": "c" * 40,
-                                          "desktop_build": {**BUILD, "head": "c" * 40, "freeze": "f2"}})
+    # A rebuild of the same HEAD and the same APK digests clears both passes: the phone is due again first.
+    oneshot_spec.saved("budget", oneshot={"stage": "critique", "front_build": "b2",
+                                          "desktop_build": {**BUILD, "freeze": "f2"}})
     pc.onward("budget", {})
     assert o()["stage"] == "phone" and o()["phone"]["status"] == "waiting"
+
+
+def test_an_earlier_versions_android_run_held_at_r3_reopens_only_on_a_pass_of_its_current_build(held):
+    from main import oneshot_phone
+
+    old = {"status": "passed", "head": "c" * 40, "apks": {"app.apk": "old"}}
+    oneshot_spec.saved("budget", oneshot={"intent": {"restated": "화면 번역기", "kind": "android"}, "stage": "r3",
+                                          "working": None, "front_built_head": BUILD["head"], "apks": {"app.apk": "x"},
+                                          "phone": old, "pc": None, "stopped": {"reason": "kind", "state": "r3"}})
+    oneshot_phone.earlier("budget", o())
+    assert o()["stage"] == "phone" and o()["phone"]["status"] == "waiting" and not o().get("r3")

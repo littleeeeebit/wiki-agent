@@ -333,6 +333,9 @@ source, and the server assigns it:
   - `report`: the app's own report of what it captured, the value of an
     element (`id`, with `in: owned` in the window the main window owns) or a
     UTF-8 file under `{data}` (`file`), which must contain the fixture's text.
+    Its `from` names what the app captures: `fixture`, the fixture's window,
+    or `screen`, the region the fixture covers. An app that reads the screen
+    reads a surface, so that check runs only when the approval allows it.
   - `window`: the round's window-bound capture of the app's main window, or
     with `in: owned` the one it owns, which must show what `shows` says.
   - `composition`: the round's surface capture of the fixture's region, which
