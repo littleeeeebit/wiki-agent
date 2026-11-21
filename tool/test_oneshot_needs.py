@@ -17,7 +17,8 @@ from test_main import client, no_machine_settings  # noqa: F401 — the fixture 
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, STACK, android  # noqa: F401 — `android` is the fixture
 from test_oneshot_spec import o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
 
-ENV = f"ONESHOT_TEST_{uuid.uuid4().hex.upper()}"
+ENV = f"ONESHOT_TEST_{uuid.uuid4().hex.upper()}"   # one per test process: workers never share a target
+OURS = {ENV, f"{ENV}_NEW"}   # every target these tests write; the owner's own `budget` keys are never touched
 KEY = {"id": "N1", "what": "번역 API 키", "kind": "secret", "env": ENV}
 ACCOUNT = {"id": "N2", "what": "번역 서비스 계정", "kind": "account"}
 PYTHON = {"id": "N3", "what": "파이썬 실행 파일", "kind": "tool"}
@@ -35,8 +36,12 @@ def at_r1(android):  # noqa: F811 — the imported fixture, by its name
         "design": sheet.parsed(with_needs(KEY, ACCOUNT, PYTHON, SAMPLE), "android"),
         "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": []}})
     yield android
-    for env in needs.kept("budget"):
+    for env in OURS:
         release.secret_delete(needs.name("budget", env))
+
+
+def ours() -> set[str]:
+    return set(needs.kept("budget")) & OURS
 
 
 def src() -> str:
@@ -127,7 +132,7 @@ def test_a_need_given_wrong_is_refused_naming_nothing_typed_and_nothing_is_kept(
     with pytest.raises(HTTPException, match=said) as e:
         give(nid, **body)
     assert not body.get("value", "").strip() or body["value"] not in e.value.detail
-    assert not o().get("given") and needs.kept("budget") == []
+    assert not o().get("given") and ours() == set()
 
 
 def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
@@ -144,7 +149,7 @@ def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
         with pytest.raises(HTTPException, match="바뀌었다") as e:
             late()
         assert e.value.status_code == 409
-    assert needs.kept("budget") == []
+    assert ours() == set()
 
 
 def test_a_refused_body_never_comes_back_in_the_answer():
@@ -172,11 +177,23 @@ def test_a_secret_a_redesign_renamed_is_still_listed_and_can_be_removed_at_any_s
     give("N1", value="old")
     renamed = with_needs({**KEY, "env": f"{ENV}_NEW"})
     oneshot_spec.saved("budget", oneshot={"design": sheet.parsed(renamed, "android"), "stage": "build"})
-    assert oneshot_spec.status("budget")["secrets_kept"] == [ENV]
+    assert ENV in oneshot_spec.status("budget")["secrets_kept"]
     shown = needs.forget("budget", ENV)
-    assert shown["secrets_kept"] == [] and release.secret_read(needs.name("budget", ENV)) is None
+    assert ENV not in shown["secrets_kept"] and release.secret_read(needs.name("budget", ENV)) is None
     with pytest.raises(HTTPException, match="대문자"):
         needs.forget("budget", "../other")
+
+
+@pytest.mark.parametrize("repo", ["no-spec-here", "budget*", "a/b"])
+def test_a_secret_is_removed_only_for_a_repository_with_a_oneshot_spec(at_r1, repo):
+    held = needs.name(repo, ENV)   # a credential under that name, whoever wrote it
+    release.secret_write(held, "stays")
+    try:
+        with pytest.raises(HTTPException) as e:
+            needs.forget(repo, ENV)
+        assert e.value.status_code == 404 and release.secret_read(held) == "stays"
+    finally:
+        release.secret_delete(held)
 
 
 def test_a_host_without_credential_manager_shows_the_sheet_and_refuses_a_secret(at_r1, monkeypatch):
@@ -185,7 +202,7 @@ def test_a_host_without_credential_manager_shows_the_sheet_and_refuses_a_secret(
 
     monkeypatch.setattr(release, "_advapi", absent)   # this machine has it; the host the check is about does not
     view = oneshot_spec.status("budget")
-    assert view["secrets_kept"] == [] and not next(n for n in view["needs"] if n["id"] == "N1")["given"]
+    assert not set(view["secrets_kept"]) & OURS and not next(n for n in view["needs"] if n["id"] == "N1")["given"]
     with pytest.raises(HTTPException, match="자격 증명 관리자가 없다") as e:
         give("N1", value="x")
     assert e.value.status_code == 409

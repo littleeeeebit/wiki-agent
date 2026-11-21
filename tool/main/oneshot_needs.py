@@ -213,5 +213,6 @@ def forget(repo: str, env: str) -> dict:
     if not ENV.fullmatch(env):
         raise HTTPException(400, "`env` 는 대문자 환경 변수 이름이다")
     with oneshot._lock:
-        stored(repo, env, None)
-    return view(spec_of(repo))
+        spec = spec_of(repo)   # a repository with no oneshot spec here is refused before the store is touched
+        stored(spec["repo"], env, None)
+    return view(spec)
