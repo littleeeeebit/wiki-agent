@@ -21,6 +21,8 @@ REQUIREMENT_KEYS = frozenset({"id", "text", "source", "status", *CONDITIONS, "de
 CAPABILITY_KEYS = ("permission", "prompt", "risk")
 RID = re.compile(r"R[1-9]\d*")
 
+# Every call that leaves the product, with its failure handling and what the owner gives it (`oneshot_needs`).
+OUTSIDE = ("oneshot-outside", re.compile(r"X[1-9]\d*"), ("target", "does", "failure", "needs"))
 # Each design item kind: its block, its id pattern and the keys it carries.
 KINDS = {
     "entities": ("oneshot-entities", re.compile(r"E[1-9]\d*"), ("name", "fields", "relations")),
@@ -28,6 +30,7 @@ KINDS = {
     "flows": ("oneshot-flows", re.compile(r"F[1-9]\d*"), ("name", "steps")),
     "assumptions": ("oneshot-assumptions", re.compile(r"A[1-9]\d*"), ("what", "why", "rejected")),
     "tests": ("oneshot-tests", re.compile(r"T[1-9]\d*"), ("test_name", "given", "when", "then")),
+    "outside": OUTSIDE,
 }
 BLOCKS = ",".join(block for block, _, _ in KINDS.values())
 # An Android app's core design (`docs/plans/oneshot/7-android.md`, "S3"): modules and their contracts instead
@@ -35,7 +38,7 @@ BLOCKS = ",".join(block for block, _, _ in KINDS.values())
 CORE = {
     "modules": ("oneshot-modules", re.compile(r"M[1-9]\d*"),
                 ("name", "contract", "inputs", "outputs", "errors", "state", "stores", "calls")),
-    "outside": ("oneshot-outside", re.compile(r"X[1-9]\d*"), ("target", "does", "failure", "needs")),
+    "outside": OUTSIDE,
     "assumptions": KINDS["assumptions"],
     "tests": KINDS["tests"],
 }
@@ -120,7 +123,7 @@ def blocks(kind: str | list[str] = "webapp") -> str:
     return ",".join(block for block, _, _ in table(kind).values())
 
 
-EMPTY = {"outside"}   # an app that never leaves the phone has no outside calls
+EMPTY = {"outside"}   # a product that never leaves the device has no outside calls
 
 
 def _items(name: str, value, kinds: dict = KINDS) -> list[dict]:
@@ -253,6 +256,11 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict,
     for t in design["tests"]:
         if not req_ids & set(t["depends_on"]) or not api_ids & set(t["depends_on"]):
             raise ValueError(f"{t['id']}: 시험하는 요구와 부르는 엔드포인트를 `depends_on` 에 적어야 한다")
+    for x in design["outside"]:
+        if not req_ids & set(x["depends_on"]) or not api_ids & set(x["depends_on"]):
+            raise ValueError(f"{x['id']}: 이 바깥 호출을 쓰는 요구와 그것을 부르는 엔드포인트를 `depends_on` 에 적어야 한다")
+    from . import oneshot_needs   # it imports this module
+    oneshot_needs.owed(design)   # one id per need, one need per `env`
     for f in design["flows"]:
         if missing := sorted({s["api"] for s in f["steps"] if s["api"]} - set(f["depends_on"])):
             raise ValueError(f"{f['id']}: 단계가 부르는 엔드포인트를 `depends_on` 에 적어야 한다 — {', '.join(missing)}")
@@ -265,7 +273,8 @@ def checked(design: dict, reqs: list[dict], glossary: list[dict], profile: dict,
             raise ValueError(f"{r['id']}: 이 시나리오를 확인할 테스트가 없다")
     words = [(e["id"], e["name"]) for e in design["entities"]] + \
             [(e["id"], f["name"]) for e in design["entities"] for f in e["fields"]] + \
-            [(p["id"], t) for p in design["api"] for t in (p["path"], p["does"])]
+            [(p["id"], t) for p in design["api"] for t in (p["path"], p["does"])] + \
+            [(x["id"], t) for x in design["outside"] for t in (x["target"], x["does"])]
     avoided(words, glossary)
 
 
@@ -535,6 +544,7 @@ def sheet(spec: dict) -> str:
               for p in design["api"][:MAX_ROWS]]
     if len(design["api"]) > MAX_ROWS:
         lines.append(f"\n그 밖의 엔드포인트 {len(design['api']) - MAX_ROWS}개는 아래 접힌 부분에 있다")
+    lines += leaving(design, "서버", mark)   # a design from before the web had outside calls has none
     lines += tested_scenarios(design, reqs, mark)
     lines += ["", "<details><summary>흐름, 요청·응답, 용어집</summary>", ""]
     for f in design["flows"]:
@@ -557,6 +567,17 @@ def folded_tail(design: dict, glossary: list[dict], mark) -> list[str]:
     return lines + ["", *[f"- {g['term']}: {g['meaning']}" for g in glossary], "", "</details>", ""]
 
 
+def leaving(design: dict, place: str, mark) -> list[str]:
+    """The sheet's calls that leave `place`, and what the owner gives them."""
+
+    if not (outside := design.get("outside")):
+        return []
+    from . import oneshot_needs   # it imports this module
+    return ["", f"## {place} 밖으로 나가는 호출", "", "| id | 대상 | 하는 일 | 실패할 때 |", "| --- | --- | --- | --- |",
+            *[f"| {x['id']}{mark(x['id'])} | {_cell(x['target'])} | {_cell(x['does'])} | {_cell(x['failure'])} |"
+              for x in outside], *oneshot_needs.section(design)]
+
+
 def core_sheet(spec: dict) -> str:
     """An installed app's R1 sheet (Android or PC, or several kinds): the module table where a web app has its
     API table, the platform capabilities with the prompt each causes and its distribution risk, and every call
@@ -571,7 +592,7 @@ def core_sheet(spec: dict) -> str:
     intent = o.get("intent") or {}
     kinds = intent.get("kinds") or [intent.get("kind", "android")]   # a record from before kinds has its one `kind`
     several = len(kinds) > 1
-    device, leaving = ("기기", "앱") if several else ("PC", "PC") if kinds == ["desktop"] else ("폰", "폰")
+    device, device_out = ("기기", "앱") if several else ("PC", "PC") if kinds == ["desktop"] else ("폰", "폰")
     lines += ["", "## 나중에 되돌리기 어려운 것", "",
               f"- {device}에 저장하는 것: {'; '.join(_cell(s) for s in stored) or '없음'}",
               f"- 플랫폼 권한: {', '.join(f'`{r['capability']['permission']}`' for r in abilities) or '없음'}"]
@@ -603,13 +624,7 @@ def core_sheet(spec: dict) -> str:
         lines += ["", "## 서버 API", "", "| id | 메서드 | 경로 | 하는 일 |", "| --- | --- | --- | --- |"]
         lines += [f"| {p['id']}{mark(p['id'])} | {p['method']} | `{_cell(p['path'])}` | {_cell(p['does'])} |"
                   for p in design["api"]]
-    if design["outside"]:
-        lines += ["", f"## {leaving} 밖으로 나가는 호출", "", "| id | 대상 | 하는 일 | 실패할 때 |",
-                  "| --- | --- | --- | --- |"]
-        lines += [f"| {x['id']}{mark(x['id'])} | {_cell(x['target'])} | {_cell(x['does'])} | {_cell(x['failure'])} |"
-                  for x in design["outside"]]
-        from . import oneshot_needs   # it imports this module
-        lines += oneshot_needs.section(design)
+    lines += leaving(design, device_out, mark)
     lines += tested_scenarios(design, reqs, mark)
     lines += ["", "<details><summary>모듈의 입력·출력·상태, 테스트, 용어집</summary>", ""]
     for n, m in enumerate(design["modules"]):   # a module past the table shows its contract and calls here

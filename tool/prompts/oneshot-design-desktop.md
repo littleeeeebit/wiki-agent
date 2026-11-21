@@ -23,7 +23,7 @@ itself.
 A short answer, then exactly these four fenced blocks, each JSON:
 
 - `oneshot-modules`: `[{"id": "M1", "name": "…", "contract": "…", "inputs": {"name": "type"}, "outputs": {"name": "type"}, "errors": ["…"], "state": "…", "stores": "…", "calls": ["M2", "X1"], "depends_on": ["R1"]}]`
-- `oneshot-outside`: `[{"id": "X1", "target": "…", "does": "…", "failure": "…", "depends_on": ["R3"]}]`
+- `oneshot-outside`: `[{"id": "X1", "target": "…", "does": "…", "failure": "…", "depends_on": ["R3"], "needs": [{"id": "N1", "what": "…", "kind": "secret", "env": "SERVICE_API_KEY"}]}]`
 - `oneshot-assumptions`: `[{"id": "A1", "what": "…", "why": "…", "rejected": "…", "depends_on": ["R2"]}]`
 - `oneshot-tests`: `[{"id": "T1", "test_name": "test_…", "given": "…", "when": "…", "then": "…", "depends_on": ["R1", "M1"]}]`
 
@@ -35,6 +35,16 @@ call (`X`) is anything that leaves the computer: an API, a download, a cloud
 model. Its `failure` says what the program does when the call fails or is
 slow. A program that never leaves the computer returns `oneshot-outside` as
 `[]`.
+
+`needs` lists what only the owner can give that call, so that its tests run
+against the real service and never a fake: `secret` for a value such as an
+API key (`env` names the environment variable the tests and the product read
+it from, in capitals), `account` for an account or project that must exist,
+`tool` for a program that must be installed, `file` for a file the product
+reads. Write `what` in Korean, as the owner would name it. Two calls that use
+the same thing list it under the same id with the same fields. A call that
+needs nothing, such as a public page, has `needs: []`. The owner gives every
+need on the sheet before approving it, and the run waits until they do.
 
 Design the modules so their contracts can be tested on this PC without a
 Windows session of their own: logic that reads the screen, decides or
@@ -57,6 +67,8 @@ requirements list and glossary in an `oneshot-spec` block,
   called by a module that does. A module reached by neither is out of scope.
 - Every `calls` entry names an existing module or outside call, never the
   module itself, and every outside call is called by some module.
+- A need's id is `N1`, `N2` …; one id names one need, and one `env` belongs
+  to one id. A `secret` names its `env`; no other kind has one.
 - Every scenario (a requirement with `postconditions`) has a module that
   names it and a test that names it. A test names its requirement and every
   module whose contract it checks.

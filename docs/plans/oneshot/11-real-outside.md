@@ -79,9 +79,9 @@ stops: the owner gives the rest and approves.
 ### What 11a1 builds: the record, the store and the gate
 
 11a is split in two. 11a1 is the server side: a design may carry `needs`, the
-owner can give each one, and approval waits for all of them. No prompt asks
-for `needs` yet, so a run today sees no change. 11a2 adds the sheet's inputs
-and the prompts, and gives the single-kind web design its `oneshot-outside`.
+owner can give each one, and approval waits for all of them. 11a2 adds the
+screen's inputs and the prompts, and gives the single-kind web design its
+`oneshot-outside`.
 
 `oneshot_needs.parsed` checks `needs` where the outside call is checked. A
 call without `needs` needs nothing, so a design from before this step still
@@ -123,6 +123,29 @@ redesign. The sheet gains "주인이 줄 것": each need with its kind, the call
 that need it and the requirements those calls depend on. The sheet is also
 the committed design document, so it never says whether a need is given.
 The spec's view carries `needs`, each with `given`, for the screen.
+
+### What 11a2 builds: the prompts and the screen
+
+Every design prompt returns `needs` on each outside call, with the four
+kinds, the `env` rule and the instruction that tests run against the real
+service. The single-kind web design gains `oneshot-outside` as its sixth
+block. Its server has no modules, so an outside call names the requirement
+it serves and the endpoint that makes it in `depends_on`, the way a test
+names both. The web sheet lists the server's outside calls under its API,
+with "주인이 줄 것" after them. A web design stored before this step has no
+outside calls and shows none.
+
+The R1 screen shows "주인이 줄 것" above the sheet. Each need has its kind,
+its `env`, the calls that use it and whether it is given:
+
+- a `secret` is typed into a hidden field and is never shown again;
+- an `account` is confirmed with one button;
+- a `tool` takes a program name or path;
+- a `file` takes an absolute path.
+
+Each give or take-back sends the `source` of the sheet on screen. At any
+stage, the screen lists each secret Credential Manager still holds for the
+repository that no need of today's design names, and removes it on request.
 
 ### Tests and builds use the real thing
 
@@ -179,8 +202,8 @@ knows the values, at commit time, rather than in the reviewer's reading.
 
 | # | Step | Status |
 | --- | --- | --- |
-| 11a1 | A design's outside calls may carry `needs`; the owner gives each (secrets to Credential Manager), the sheet lists them, and R1 approval waits for all of them | In progress |
-| 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | Not started |
+| 11a1 | A design's outside calls may carry `needs`; the owner gives each (secrets to Credential Manager), the sheet lists them, and R1 approval waits for all of them | Done — #416 |
+| 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | In progress |
 | 11b | Tests and build prompts without fakes; the gate's environment carries the secrets; CI skips name the need | Not started |
 | 11c | The review refuses a fake inside a test file | Not started |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |

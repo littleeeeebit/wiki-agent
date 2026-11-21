@@ -6,6 +6,8 @@ export type Decision = { approve?: boolean; edit?: string }
 // A web app's feature names its served endpoints; an Android app's names its core parts.
 export type Feature = { id: string; name: string; class: Freq; why: string; endpoints?: string[]; parts?: string[]; kinds?: string[] }
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
+/** What the owner gives an outside call (`oneshot_needs.shown`): a secret's value never comes back, only `given`. */
+export type Need = { id: string; what: string; kind: 'secret' | 'account' | 'tool' | 'file'; env?: string; calls: string[]; given: boolean }
 /** A program a PC app's stack runs on this PC, and how a CI runner gets it (`oneshot_profile.tools_of`). */
 export type Tool = { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, string> } }
 /** A tool with its whole setup, as the owner confirms it: the setup's kind named, then its value, an action's
@@ -91,6 +93,8 @@ export type SpecView = SpecSummary & {
   }
   requirements?: { id: string; text: string; status: string; kinds?: string[] }[]
   sheet?: string; items?: string[]; brief?: Brief
+  /** The design's needs, and every `env` Credential Manager holds a secret of this repository under. */
+  needs?: Need[]; secrets_kept?: string[]
   // Several kinds: `kinds` is set, and `first_screen` holds one line for each kind.
   board?: { features: Feature[]; first_screen: string | Record<string, string> | null; frequency: Record<string, Freq>
             kinds?: { id: string; name: string }[] }
@@ -114,6 +118,12 @@ export const api = {
   board: (repo: string, frequency: Record<string, Freq>, first_screen: string | Record<string, string>) =>
     post(`${base(repo)}/board`, { frequency, first_screen }).then(answer),
   decide: (repo: string, gate: string, body: object) => post(`${base(repo)}/${gate}`, body).then(answer),
+  // A need given or taken back on the R1 sheet the owner sees (`source`); a kept secret removed at any stage.
+  give: (repo: string, id: string, body: { value?: string; confirmed?: boolean }, source = '') =>
+    post(`${base(repo)}/needs/${id}`, { ...body, source }).then(answer),
+  takeBack: (repo: string, id: string, source = '') =>
+    post(`${base(repo)}/needs/${id}?source=${encodeURIComponent(source)}`, undefined, 'DELETE').then(answer),
+  forget: (repo: string, env: string) => post(`${base(repo)}/secrets/${env}`, undefined, 'DELETE').then(answer),
   phones: (repo: string) => get(`${base(repo)}/phone/devices`)
     .then((r) => json<{ devices: Handset[]; owned: Owned[] }>(r, '연결된 휴대폰')),
   phone: (repo: string, serial: string, keep: boolean) => post(`${base(repo)}/phone`, { serial, keep }).then(answer),

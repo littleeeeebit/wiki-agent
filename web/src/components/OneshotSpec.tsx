@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn, Zoom } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
+import { Needs } from '@/components/OneshotNeeds'
 import { Track } from '@/components/OneshotTrack'
 import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName, toolText,
@@ -173,9 +174,18 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       </>} />
     )
   }
+  const source = view.brief?.source ?? ''   // the R1 sheet the owner sees: a need is given on it
   return (
     <>
       {faulted}
+      {(view.needs?.length || view.secrets_kept?.length) ? (
+        <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
+          <Needs needs={view.needs ?? []} kept={view.secrets_kept ?? []} editable={idle && view.stage === 'r1'} busy={busy}
+            give={(id, body) => act(() => api.give(repo, id, body, source))}
+            takeBack={(id) => act(() => api.takeBack(repo, id, source))}
+            forget={(env) => act(() => api.forget(repo, env))} />
+        </div>
+      ) : null}
       {idle && view.stage === 'r1' && view.sheet && o.r1 && (
         <Sheet key={`r1-${o.r1.round}-${view.brief?.source}`} gate="r1" text={view.sheet} items={view.items ?? []}
           state={o.r1} busy={busy} brief={view.brief}

@@ -6,8 +6,10 @@ a name no run uses, removed afterwards; the files and programs are real ones.
 """
 
 import json
+import re
 import sys
 import uuid
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -15,7 +17,7 @@ from fastapi import HTTPException
 from main import oneshot, oneshot_brief as brief, oneshot_needs as needs, oneshot_sheet as sheet, oneshot_spec, release, specs
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, STACK, android  # noqa: F401 — `android` is the fixture
-from test_oneshot_spec import o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
+from test_oneshot_spec import DESIGN as WEB, GLOSSARY as WEB_GLOSSARY, PROFILE, REQS as WEB_REQS, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
 
 ENV = f"ONESHOT_TEST_{uuid.uuid4().hex.upper()}"   # one per test process: workers never share a target
 OURS = {ENV, f"{ENV}_NEW"}   # every target these tests write; the owner's own `budget` keys are never touched
@@ -82,6 +84,38 @@ def test_two_calls_share_a_need_by_its_id_and_one_id_or_env_for_two_needs_is_ref
         design["outside"][1]["needs"] = [clash]
         with pytest.raises(ValueError, match=said):
             needs.owed(design)
+
+
+@pytest.mark.parametrize("prompt", ["oneshot-design", "oneshot-design-android", "oneshot-design-desktop", "oneshot-design-kinds"])
+def test_every_design_prompt_asks_for_needs_in_the_shape_the_server_takes(prompt):
+    text = (Path(__file__).parent / "prompts" / f"{prompt}.md").read_text(encoding="utf-8")
+    example = json.loads(re.search(r"- `oneshot-outside`: `(\[.*?\])`\n", text)[1])
+    assert needs.parsed(example[0]["needs"], "X1") == [{"id": "N1", "what": "…", "kind": "secret", "env": "SERVICE_API_KEY"}]
+    assert all(f"`{k}`" in text for k in needs.KINDS) and "never a fake" in text
+
+
+WEB_CALL = {"id": "X1", "target": "환율 서비스", "does": "오늘 환율을 받아 온다", "failure": "어제 환율로 적고 그렇다고 보여 준다",
+            "depends_on": ["R1", "P1"], "needs": [KEY]}
+
+
+def test_a_web_server_s_outside_call_names_its_requirement_and_endpoint_and_its_needs_reach_the_sheet(world):  # noqa: F811
+    design = sheet.parsed({**WEB, "oneshot-outside": [WEB_CALL]})
+    sheet.checked(design, WEB_REQS, WEB_GLOSSARY, PROFILE)
+    oneshot_spec.saved("budget", requirements=WEB_REQS, oneshot={"glossary": WEB_GLOSSARY, "design": design, "stage": "r1"})
+    text = sheet.sheet(specs.load("budget", oneshot.BRANCH))
+    assert "## 서버 밖으로 나가는 호출" in text and "| X1 | 환율 서비스 | 오늘 환율을 받아 온다 |" in text
+    assert f"| N1 | 번역 API 키 | 비밀 값 `{ENV}` | X1 | R1 |" in text and "X1" in sheet.decidable(design, WEB_REQS)
+    for bad, said in ((["P1"], "쓰는 요구"), (["R1"], "부르는 엔드포인트")):
+        with pytest.raises(ValueError, match=said):
+            sheet.checked(sheet.parsed({**WEB, "oneshot-outside": [{**WEB_CALL, "depends_on": bad}]}), WEB_REQS, WEB_GLOSSARY, PROFILE)
+    second = {**WEB_CALL, "id": "X2", "depends_on": ["R2", "P2"], "needs": [{**KEY, "id": "N2"}]}
+    with pytest.raises(ValueError, match=f"같은 `{ENV}`"):
+        sheet.checked(sheet.parsed({**WEB, "oneshot-outside": [WEB_CALL, second]}), WEB_REQS, WEB_GLOSSARY, PROFILE)
+    with pytest.raises(ValueError, match="`oneshot-outside` 블록"):   # the web design always says whether it leaves
+        sheet.parsed({k: v for k, v in WEB.items() if k != "oneshot-outside"})
+    del design["outside"]   # a web design stored before it had outside calls
+    oneshot_spec.saved("budget", oneshot={"design": design})
+    assert "밖으로 나가는 호출" not in sheet.sheet(specs.load("budget", oneshot.BRANCH))
 
 
 def test_a_design_from_before_needs_needs_nothing():
