@@ -440,7 +440,8 @@ function Md({ text, zoom }: { text: string; zoom: (src: string) => void }) {
             <button type="button" className="inline-block" onClick={() => zoom(String(src))} title="크게 본다">{image}</button>
           )
         },
-        a: ({ href, title, children }) => <a href={href} title={title}><InLink.Provider value>{children}</InLink.Provider></a>,
+        // Every attribute the default anchor had (a footnote's id and label too), with `InLink` around its text.
+        a: ({ node: _node, children, ...attributes }) => <a {...attributes}><InLink.Provider value>{children}</InLink.Provider></a>,
         table: ({ children }) => <div className="overflow-x-auto"><table>{children}</table></div>,
         code: ({ className, children }) => className === 'language-mermaid'
           ? <Mermaid code={String(children ?? '').replace(/\n$/, '')} /> : <code className={className}>{children}</code>,

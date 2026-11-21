@@ -30,7 +30,9 @@ SHEET = f"""# 백엔드 설계 — demo
 - R1: 지출을 적으면 이번 달 합계에 더해진다
 - R2: 지난 달을 고르면 그 달 목록이 보인다
 
-![R1 화면](/shot.png) [![R1 원본](/shot.png)](https://example.com/r1)
+![R1 화면](/shot.png) [![R1 원본](/shot.png)](https://example.com/r1) 원본 설명[^r1].
+
+[^r1]: 첫 화면이다.
 
 ## 엔드포인트
 
@@ -215,6 +217,8 @@ def main():
         linked = sheet.get_by_role("link", name="R1 원본", exact=True)   # a linked picture is the link's content
         expect(linked.get_by_role("img", name="R1 원본")).to_be_visible()
         assert linked.get_by_role("button").count() == 0
+        back = sheet.locator("a[data-footnote-backref]").get_attribute("href")   # a footnote returns to its reference
+        assert back and sheet.locator(f'[id="{back[1:]}"]').count() == 1, back
         thumb = sheet.get_by_role("button", name="R1 화면")
         thumb.click()
         zoom = page.get_by_role("dialog", name="화면 사진")
