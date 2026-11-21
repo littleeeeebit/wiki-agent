@@ -76,12 +76,28 @@ def swap(temporary: Path, file: Path) -> None:
             time.sleep(0.025)
 
 
+def folded(text: str) -> str:
+    """`text` with case folded away, the Turkish dotted and dotless i included, which `text-transform` can draw
+    under a page's `lang`: any casing of a secret is that secret."""
+    return text.casefold().replace("ı", "i").replace("̇", "")
+
+
+def _cased(c: str) -> str:
+    """A pattern for one character in any casing `folded` treats as the same."""
+    if folded(c) == "i":
+        return "[iIıİ]̇?"
+    forms = sorted({f for f in (c, c.lower(), c.upper(), c.casefold()) if len(f) == 1})
+    return "[" + "".join(re.escape(f) for f in forms) + "]" if len(forms) > 1 else re.escape(c)
+
+
 def masked(text: str, hide: dict[str, str] | None) -> str:
-    """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced by its label,
-    the longest first."""
-    for value in sorted(hide or {}, key=len, reverse=True):
-        text = text.replace(value, hide[value])
-    return text
+    """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced in any casing by
+    its label, the longest first. ponytail: a casing that changes length, such as `ß` drawn as `SS`, stays."""
+    values = sorted((v for v in hide or {} if v), key=len, reverse=True)
+    if not values:
+        return text
+    pattern = re.compile("|".join("(" + "".join(_cased(c) for c in v) + ")" for v in values))
+    return pattern.sub(lambda m: hide[values[m.lastindex - 1]], text)
 
 
 def python_environment(env: dict | None = None) -> dict:

@@ -337,3 +337,11 @@ def test_a_secret_not_given_never_falls_back_to_a_variable_the_server_has(at_r1,
     assert ENV not in needs.gate_env(spec, None) and ENV not in build.toolchain(spec)
     assert build.toolchain(spec)["JAVA_HOME"] == "set"
     assert needs.gate_env({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}, None) is None
+
+
+def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
+    from common import masked
+
+    hide = {"key-in": "[N1]", "key-in-long": "[N2]"}
+    assert masked("KEY-IN, Key-In-Long, key-ın, KEY-İN, key-out", hide) == "[N1], [N2], [N1], [N1], key-out"
+    assert masked("text", {}) == "text" and masked("a+b", {"A+B": "[N1]"}) == "[N1]"   # literal, never a pattern

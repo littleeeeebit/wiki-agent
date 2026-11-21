@@ -242,6 +242,8 @@ def test_shadow_text_drawn_or_not_is_seen_and_no_stylesheet_svg_frame_or_pair_of
     assert look.secrets_shown(page, {"Reader": "[N1]"})
     page.set_content("<main>KEY-<b>Mixed</b></main>")   # any casing of a value is that value
     assert look.secrets_shown(page, {"key-mixed": "[N1]"})
+    page.set_content("<main lang='tr' style='text-transform: lowercase'>KEY-IN</main>")   # drawn `key-ın`
+    assert look.secrets_shown(page, {"key-ın": "[N1]"}) and look.secrets_shown(page, {"KEY-İN": "[N2]"})
     for root in ("", " hidden"):   # a hidden root's rendered text is empty, never its stylesheets
         page.set_content(f"<html{root}><body><main>Ready</main><style>.a > .b {{ color: red }}</style></body></html>")
         assert look.secrets_shown(page, {">": "[N1]"}) == ""

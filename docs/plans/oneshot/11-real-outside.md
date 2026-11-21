@@ -200,7 +200,9 @@ stylesheets. The value, placeholder and alt of fields and images are read
 too; never markup or a stylesheet. Matching is a union over the streams and
 ignores case, decided with the owner on 2026-11-22: `text-transform` can
 draw any casing of a value, and a casing of a secret counts as the secret.
-Within one stream a value broken across lines still matches. A secret in hidden text has reached the browser all the same, so it
+One fold serves matching and masking (`common.folded`): case folding plus
+the Turkish dotted and dotless i a page's `lang` can draw, so the critic's
+findings and stop reasons are masked in every casing too. Within one stream a value broken across lines still matches. A secret in hidden text has reached the browser all the same, so it
 is the app's leak to fix, and whether the browser draws it is never asked. A
 screen whose text carries a secret, or has a frame that cannot be read, is a
 high finding and is never shot. The critic sends its pictures to a model,

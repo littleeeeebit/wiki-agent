@@ -25,7 +25,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
-from common import masked, process, shell
+from common import folded, masked, process, shell
 
 from .oneshot_screens import VIEWPORTS, api_paths
 
@@ -528,13 +528,13 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
             raise TypeError
     except (Error, TypeError, KeyError):
         return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
-    # Case is ignored, as `text-transform` can draw any casing; within one stream, a value broken across lines
+    # Case is ignored, as `text-transform` can draw any casing (`folded`); within one stream, a value broken across lines
     # reads as one
-    texts, values = [t.casefold() for t in texts], [v.casefold() for v in values]
+    texts, values = [folded(t) for t in texts], [folded(v) for v in values]
     flats = ["".join(t.split()) for t in texts]
 
     def seen(value: str) -> bool:
-        value = value.casefold()
+        value = folded(value)
         flat = "".join(value.split())
         return (any(value in t for t in texts + values) or bool(flat) and any(flat in f for f in flats))
 
