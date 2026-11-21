@@ -8,10 +8,12 @@ follows the conventions the build prompt fixes: one port from `PORT`, its data u
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
+from urllib.parse import quote
 from unittest.mock import patch
 
 import pytest
@@ -89,7 +91,7 @@ def app_tree(tmp_path):
     except Exception as exc:   # no package or no browser on this machine
         pytest.skip(f"Playwright 가 없다 — {exc}")
 
-    def made(first=FIRST, frequency=FREQUENCY):
+    def made(first=FIRST, frequency=FREQUENCY, hide=None):
         tree = tmp_path / "tree"
         (tree / "app").mkdir(parents=True, exist_ok=True)
         (tree / "e2e").mkdir(exist_ok=True)
@@ -98,7 +100,8 @@ def app_tree(tmp_path):
         (tree / "app" / "index.html").write_text(INDEX.replace("FIRST", first), encoding="utf-8")
         (tree / "e2e" / "seed.json").write_text(json.dumps([{"method": "POST", "path": "/items", "body": {"name": "커피"}}]),
                                                 encoding="utf-8")
-        found = look.look(tree, f'"{sys.executable}" -m app', FRONT, frequency, OPS, ["desktop"], tmp_path / "shots")
+        found = look.look(tree, f'"{sys.executable}" -m app', FRONT, frequency, OPS, ["desktop"], tmp_path / "shots",
+                          hide=hide)
         return found, tmp_path / "shots"
 
     return made
@@ -133,10 +136,190 @@ def test_a_never_feature_on_any_screen_is_high(app_tree):
     assert any("화면에 없기로" in what for what in high(found))
 
 
+def test_a_page_that_holds_a_secret_is_never_shot_and_its_findings_name_only_the_need(app_tree):
+    value = f"key-{os.getpid()}-{time.time_ns()}"
+    found, shots = app_tree(FIRST + f"<p>{value}</p>", hide={value: "[N1]"})
+    assert high(found) and all("[N1]" in w for w in high(found) if "비밀" in w)
+    # S1 renders it once its items load; the other screens carry it only in their script, which no picture shows
+    assert {(f["screen"], f["state"]) for f in found if "[N1]" in f["what"]} == {("S1", "empty"), ("S1", "full")}
+    assert value not in json.dumps(found, ensure_ascii=False)
+    assert not list(shots.glob("S1-*-empty.png")) + list(shots.glob("S1-*-full.png"))
+    assert (shots / "S2-desktop-full.png").is_file() and (shots / "S1-desktop-loading.png").is_file()
+
+
+def test_a_one_character_secret_masks_only_the_findings_text():
+    found = [look.finding("high", "S1", "desktop", "full", "콘솔 오류: [x] boom")]
+    with patch.object(look, "_looked", lambda *a: found):
+        assert look.look(*[None] * 7, hide={"]": "[N1]", "high": "[N2]"}) == [{**found[0], "what": "콘솔 오류: [x[N1] boom"}]
+
+
+@pytest.fixture
+def browser():
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            yield browser
+        finally:
+            browser.close()
+
+
+def shot_of(browser, html, folder, hide, ready=None):
+    page = browser.new_page(offline=True)
+    page.set_content(html)
+    if ready:
+        page.wait_for_function(ready)
+    with patch.object(look, "opened", lambda *a: page):
+        found = look.shot(None, "", {"id": "S1", "route": "/"}, "desktop", "full", re.compile("$^"), folder, {}, hide)
+    return found, (folder / "S1-desktop-full.png").is_file()
+
+
+def test_a_frame_that_shows_a_secret_is_never_shot_and_a_short_secret_only_in_markup_is_not_shown(browser, tmp_path):
+    value = f"key-{os.getpid()}"
+    found, picture = shot_of(browser, f"<main><iframe srcdoc='<p>error: {value}</p>'></iframe></main>", tmp_path,
+                             {value: "[N1]"}, "() => document.querySelector('iframe').contentDocument?.body?.innerText")
+    assert [f["severity"] for f in found] == ["high"] and "[N1]" in found[0]["what"] and not picture
+    html = "<main id='m'>Ready</main><script>window.ready = () => 1 > 0</script>"
+    assert shot_of(browser, html, tmp_path, {">": "[N1]"}) == ([], True)   # tag syntax and code show nothing
+
+
+def test_a_secret_split_across_elements_is_seen_and_a_stylesheet_never_counts(browser, tmp_path):
+    found, picture = shot_of(browser, "<p><span>key-</span><b>split</b></p>", tmp_path, {"key-split": "[N1]"})
+    assert "[N1]" in found[0]["what"] and not picture
+    html = "<main>Ready</main><svg><style>.unused > path { fill: black; }</style></svg>"
+    assert shot_of(browser, html, tmp_path, {">": "[N1]"}) == ([], True)
+
+
+def test_a_document_that_replaces_the_one_read_before_the_picture_is_read_again(browser, tmp_path):
+    value, page = f"key-{os.getpid()}", browser.new_page(offline=True)
+    page.route("https://look.test/next", lambda route: route.fulfill(content_type="text/html", body=f"<p>{value}</p>"))
+    page.set_content("<meta http-equiv='refresh' content='1; url=https://look.test/next'><main>Ready</main>")
+    shoot = page.screenshot
+
+    def late(**kw):   # the refresh lands while the picture is taken, scripts off
+        page.wait_for_url("https://look.test/next", timeout=10000)
+        return shoot(**kw)
+
+    page.screenshot = late
+    with patch.object(look, "opened", lambda *a: page):
+        found = look.shot(None, "", {"id": "S1", "route": "/"}, "desktop", "full", re.compile("$^"), tmp_path, {},
+                          {value: "[N1]"})
+    assert "[N1]" in found[0]["what"] and not (tmp_path / "S1-desktop-full.png").exists()
+
+
+SHADOW = "(host, html) => { host.attachShadow({mode: 'open'}).innerHTML = html; }"
+
+
+def test_shadow_text_drawn_or_not_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_makes_a_finding(browser):
+    page = browser.new_page(offline=True)
+    for html, hide, seen in (
+            ("key-<b>shadow</b>", {"key-shadow": "[N1]"}, True),   # a shadow root's own text node
+            ("<p style='opacity: 0'>key-clear</p>", {"key-clear": "[N1]"}, True),   # carried, drawn or not
+            ("<table><tr style='visibility: collapse'><td>key-row</td></tr></table>", {"key-row": "[N1]"}, True),
+            ("<section><style>.a > .b { color: red }</style></section>", {">": "[N1]"}, False)):
+        for hidden in ("", " hidden"):
+            page.set_content(f"<main>Ready</main><div{hidden}></div>")
+            page.locator("div").evaluate(SHADOW, html)
+            assert bool(look.secrets_shown(page, hide)) == seen   # a hidden host carries its text all the same
+    gap = "<span>key-</span><span hidden>note</span><span style='visibility: hidden'>more</span><b>gap</b>"
+    for host in ("", " hidden"):   # shown joined past hidden text between; under a hidden host, neither carried nor shown
+        page.set_content(f"<main>Ready</main><div{host}></div>")
+        page.locator("div").evaluate(SHADOW, gap)
+        assert bool(look.secrets_shown(page, {"key-gap": "[N1]"})) == (not host)
+    page.set_content(f"<main>{gap}</main>")
+    assert look.secrets_shown(page, {"key-gap": "[N1]"})   # the document's own rendered text
+    for cased, carried, shown in (("uppercase", "key-up", "KEY-UP"), ("lowercase", "KEY-LOW", "key-low"),
+                                  ("capitalize", "key cap", "Key Cap")):
+        page.set_content(f"<main>Ready <span style='text-transform: {cased}'>{carried}</span></main>")
+        assert look.secrets_shown(page, {shown: "[N1]"})   # cased as drawn
+        page.locator("main").evaluate(SHADOW, f"<p style='text-transform: {cased}'>{carried}</p>")
+        assert look.secrets_shown(page, {shown: "[N1]"})
+    word = "<p style='text-transform: capitalize'><span>read</span><b>er</b></p>"   # one word across elements
+    page.set_content(f"<main>{word}</main><input value='kept'>")
+    page.evaluate("document.querySelector('input').select()")
+    assert look.secrets_shown(page, {"Reader": "[N1]"})
+    assert page.evaluate("[document.activeElement.selectionStart, document.activeElement.selectionEnd]") == [0, 4]
+    page.locator("main").evaluate(SHADOW, word)
+    assert look.secrets_shown(page, {"Reader": "[N1]"})
+    page.set_content("<main>key-<span style='user-select: none'>sel</span>end</main>")   # beyond a selection
+    assert look.secrets_shown(page, {"key-selend": "[N1]"})
+    for root in ("", " hidden"):   # a hidden root's rendered text is empty, never its stylesheets
+        page.set_content(f"<html{root}><body><main>Ready</main><style>.a > .b {{ color: red }}</style></body></html>")
+        assert look.secrets_shown(page, {">": "[N1]"}) == ""
+    svg = "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%2F%3E"
+    page.set_content(f"<main>Ready</main><iframe src=\"{svg}\"></iframe>")
+    page.frames[1].wait_for_load_state()
+    assert look.secrets_shown(page, {"key-x": "[N1]"}) == ""   # an SVG frame with no text is read, not a crash
+    label = "data:image/svg+xml," + quote("<svg xmlns='http://www.w3.org/2000/svg'><text y='20'><![CDATA[key-x]]></text>"
+                                          "<style><![CDATA[.a > .b {}]]></style></svg>")
+    page.set_content(f"<main>Ready</main><iframe src=\"{label}\"></iframe>")
+    page.frames[1].wait_for_load_state()
+    assert "[N1]" in look.secrets_shown(page, {"key-x": "[N1]"}) and look.secrets_shown(page, {">": "[N2]"}) == ""
+    page.set_content("<p>ab</p><iframe srcdoc='<p>cd</p>'></iframe><input value='ef'>")
+    page.wait_for_function("() => document.querySelector('iframe').contentDocument?.body?.innerText")
+    assert look.secrets_shown(page, {"abcd": "[N1]", "cdef": "[N2]"}) == ""   # each stream is matched alone
+
+
+def test_an_animation_not_started_yet_starts_before_it_is_held(browser):
+    for _ in range(10):   # held while pending, it started later in its before phase in about a third of runs
+        page = browser.new_page(offline=True)
+        page.set_content("<p id='t'>x</p>")
+        page.add_style_tag(content="@keyframes m { from { opacity: 0 } } #t { animation: m 5s linear infinite }")
+        with look.still(page):
+            at = page.evaluate("document.getAnimations()[0].currentTime")
+            page.screenshot()
+            time.sleep(0.05)
+            assert page.evaluate("document.getAnimations()[0].currentTime") == at
+        page.close()
+
+
+def test_rendered_text_an_animation_would_change_holds_while_the_page_is_still(browser):
+    page = browser.new_page(offline=True)
+    page.set_content("<main>key-<span>note</span>gap</main><style>@keyframes off { to { visibility: hidden } }"
+                     " span { animation: off 50ms 600ms both }</style>")
+    with look.still(page):
+        assert look.secrets_shown(page, {"key-gap": "[N1]"}) == ""
+        time.sleep(1)
+        assert look.secrets_shown(page, {"key-gap": "[N1]"}) == ""   # the span never hides while held
+    page.close()
+
+
+def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser):
+    page = browser.new_page(offline=True)
+    page.set_content("<p id='t'>0</p><iframe srcdoc=\"<p id='f'>0</p><script>let i = 0; "
+                     "setInterval(() => document.getElementById('f').textContent = ++i, 2)</script>\"></iframe>"
+                     "<script>let n = 0; setInterval(() => document.getElementById('t').textContent = ++n, 2)</script>")
+    page.wait_for_function("() => +document.getElementById('t').textContent > 5")
+    def read():
+        return [f.evaluate("() => document.body.innerText") for f in page.frames]
+
+    def moved():
+        return page.evaluate("document.getAnimations()[0].currentTime")
+
+    page.add_style_tag(content="@keyframes m { to { opacity: 0 } } #t { animation: m 5s linear infinite }")
+    with look.still(page):
+        before, at = read(), moved()
+        page.screenshot()
+        time.sleep(0.2)
+        assert read() == before and moved() == at   # a CSS animation, which can show or hide rendered text, holds too
+    time.sleep(0.2)
+    assert read() != before and moved() != at
+
+
 def test_an_app_the_command_cannot_start_is_refused_with_its_output(tmp_path):
     with pytest.raises(ValueError, match="띄우지 못했다"):
         with look.served(tmp_path, f'"{sys.executable}" -c "print(42)"', tmp_path):
             pass
+
+
+def test_the_app_starts_with_the_secrets_it_was_given_and_its_refusal_never_shows_one(tmp_path):
+    value = f"key-{os.getpid()}-{time.time_ns()}"
+    (tmp_path / "boom.py").write_text("import os\nprint('using', os.environ['SERVICE_KEY'])\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="띄우지 못했다") as e:
+        look.look(tmp_path, f'"{sys.executable}" boom.py', FRONT, FREQUENCY, OPS, ["desktop"], tmp_path / "shots",
+                  env={**os.environ, "SERVICE_KEY": value}, hide={value: "[N1]"})
+    assert "using [N1]" in str(e.value) and value not in str(e.value)   # it read the key, and the refusal hid it
 
 
 def test_an_app_whose_process_tree_cannot_be_owned_is_never_started(tmp_path):

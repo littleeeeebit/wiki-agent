@@ -76,6 +76,14 @@ def swap(temporary: Path, file: Path) -> None:
             time.sleep(0.025)
 
 
+def masked(text: str, hide: dict[str, str] | None) -> str:
+    """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced by its label,
+    the longest first."""
+    for value in sorted(hide or {}, key=len, reverse=True):
+        text = text.replace(value, hide[value])
+    return text
+
+
 def python_environment(env: dict | None = None) -> dict:
     """Child commands use the running interpreter without shell activation."""
     env = dict(os.environ if env is None else env)

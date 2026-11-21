@@ -5,6 +5,7 @@ turn (`oneshot.ask`) is a stand-in that records the images it was handed; the re
 the real session sends with them is in `test_session_images.py`.
 """
 
+import json
 import os
 import re
 from unittest.mock import patch
@@ -22,6 +23,7 @@ from test_session_images import PNG
 HIGH = {"severity": "high", "route": "/", "viewport": "desktop", "state": "full", "what": "합계가 안 보인다",
         "fix": "합계를 맨 위에 크게 둔다"}
 LOW = {**HIGH, "severity": "low", "what": "여백이 좁다", "fix": "여백을 16px 로"}
+SHOT_WITH = {"budget": (1, {"key-9f2": "[N1]"})}   # what round 1's web app carried, as its look recorded it
 
 
 def o() -> dict:
@@ -90,10 +92,12 @@ def test_a_critique_outside_its_schema_is_refused(judged, finding, why):
 
 def test_the_critic_sees_each_screenshot_and_two_clean_rounds_open_r3(judged):
     heard, asking = critic(said(), said())
-    with asking:
+    with asking, patch.dict(critique.front_build.MASKS, SHOT_WITH):
         critique.critique("budget")
         assert o()["stage"] == "critique" and o()["working"] == "critique" and len(o()["critiques"]) == 1
+        assert "budget" in critique.front_build.MASKS   # a second critique of the same shots still reads it
         critique.critique("budget")   # nothing to fix: the same shots looked at again
+        assert "budget" not in critique.front_build.MASKS   # no critique reads them again: the secrets leave memory
     assert o()["stage"] == "r3" and [c["clean"] for c in o()["critiques"]] == [True, True]
     role, text, images = heard[0]
     assert role == "critic" and [p.name for p in images][:3] == ["S1-desktop-full.png", "S2-desktop-full.png",
@@ -104,9 +108,11 @@ def test_the_critic_sees_each_screenshot_and_two_clean_rounds_open_r3(judged):
 def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts(judged):
     _, sent = judged
     _, asking = critic(said(HIGH, LOW), said(LOW), said())
-    with asking:
+    with asking, patch.dict(critique.front_build.MASKS, SHOT_WITH):
         critique.critique("budget")
         assert o()["stage"] == "build-front" and sent[-1][:2] == ("budget", "build-front")
+        assert "budget" not in critique.front_build.MASKS   # that look is retired with its secrets
+        critique.front_build.MASKS["budget"] = (2, {})   # what the fixes' look records
         assert sent[-1][2].index("합계가 안 보인다") < sent[-1][2].index("여백이 좁다")   # high first
         oneshot_spec.saved("budget", oneshot={"stage": "critique", "looks": [*o()["looks"], look(2)]})
         critique.critique("budget")   # clean, with a low finding: fixed once more
@@ -114,6 +120,31 @@ def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts
         oneshot_spec.saved("budget", oneshot={"stage": "critique", "looks": [*o()["looks"], look(3)]})
         critique.critique("budget")
     assert o()["stage"] == "r3" and [c["clean"] for c in o()["critiques"]] == [False, True, True]
+
+
+def test_a_secret_a_picture_drew_is_kept_out_of_what_the_critic_wrote(judged):
+    _, sent = judged
+    _, asking = critic(said({**HIGH, "what": "화면에 key-9f2 가 보인다", "fix": "key-9f2 를 지운다"}))
+    with asking, patch.dict(critique.front_build.MASKS, SHOT_WITH):
+        critique.critique("budget")
+    assert "key-9f2" not in json.dumps([o()["critiques"], sent], ensure_ascii=False, default=str)
+    assert "화면에 [N1] 가 보인다" in sent[-1][2]
+
+
+@pytest.mark.parametrize("answers", [(RuntimeError("the model quoted key-9f2"),), ("key-9f2", "key-9f2")])
+def test_a_critic_turn_that_fails_quoting_a_secret_never_writes_it(judged, answers):
+    details, stop = [], oneshot.Store.stop
+    _, asking = critic(*answers)
+    with asking, patch.dict(critique.front_build.MASKS, SHOT_WITH),             patch.object(oneshot.Store, "stop", lambda self, reason, detail: details.append(detail) or stop(self, reason, detail)):
+        critique.critique("budget")
+    assert details and o()["stopped"]["reason"] == "critique" and "key-9f2" not in json.dumps(details + [o()["stopped"]])
+
+
+def test_shots_a_restarted_server_holds_no_mask_for_are_taken_again(judged):
+    heard, asking = critic(said())
+    with asking, patch.dict(critique.front_build.MASKS, clear=True),             patch.object(critique.oneshot_needs, "secret_needs", lambda spec: [("N1", {"env": "SERVICE_KEY"})]):
+        critique.critique("budget")
+    assert heard == [] and o()["stage"] == "build-front" and "다시 찍는다" in o()["stopped"]["detail"]
 
 
 def test_a_mechanical_high_finding_overrides_a_clean_critique(judged):

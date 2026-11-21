@@ -17,8 +17,11 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from common import masked
+
 from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_device as device, \
-    oneshot_front_build as front_build, oneshot_pr, oneshot_review as review, oneshot_screens as screens, oneshot_spec
+    oneshot_front_build as front_build, oneshot_needs, oneshot_pr, oneshot_review as review, \
+    oneshot_screens as screens, oneshot_spec
 from .oneshot_profile import kinds_of, shape
 from .oneshot_sheet import KIND_NAMES
 from .query import ROOT
@@ -116,13 +119,21 @@ def critique(repo: str) -> None:
         if missing:
             review.rebuild(repo, store, f"비평할 화면 사진이 없다 — {', '.join(missing[:6])}", front_build.STAGE)
             return None
+        # The look shoots no screen whose text shows a secret, but a picture can still draw one (owner, 2026-11-21):
+        # what the critic writes is kept with `[N1]` in its place, by the secrets the shots were taken with.
+        at, hide = front_build.MASKS.get(repo, (None, {}))
+        if at != look["round"] and oneshot_needs.secret_needs(spec):
+            review.rebuild(repo, store, "화면 사진을 찍은 뒤 서버가 다시 켜져, 사진에 든 비밀을 가릴 값이 없다 — 다시 찍는다",
+                           front_build.STAGE)
+            return None
         found = oneshot.turned(store, "critic", CRITIC_PROMPT, critique_text(one, seen, shown), "oneshot-critique",
-                               lambda value: critique_of(value, one), tree, tuple(shown))
+                               lambda value: critique_of(value, one), tree, tuple(shown), hide)
         if found is None:   # a refused or failed image turn is never a critique that saw nothing wrong
             stopped = store.get().get("stopped") or {}
             if stopped.get("reason") == "block":
                 store.stop("critique", stopped.get("detail") or "")
             return None
+        found = [{**f, "what": masked(f["what"], hide), "fix": masked(f["fix"], hide)} for f in found]
         return lambda: judged(repo, store, spec, seen, [{**f, "kind": kind} for f in found] if kind else found, kind)
 
     review.holding(repo, "화면 비평", body, "front_built_head", front_build.STAGE)
@@ -165,6 +176,8 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
     if done and kind and critic_kind({**o, "critiques": rounds}):   # the next kind's turn, on the same shots
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
         return lambda: oneshot_spec.handoff(repo, "critique") or True
+    if done:   # no critique reads these shots again: their secrets leave memory (a later critique shoots anew)
+        front_build.MASKS.pop(repo, None)
     if done and "android" in kinds_of(o):
         from . import oneshot_phone   # it imports this module
         return oneshot_phone.waits(repo, rounds)   # the owner's phone comes before R3
@@ -190,6 +203,7 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
                                              "working": front_build.STAGE,
                                              "fix": {"who": "An independent read-only critic judged the screenshots",
                                                      "findings": todo}})
+    front_build.MASKS.pop(repo, None)   # this look is retired: the fixes' build takes another with its own
     return lambda: oneshot_build.send(repo, front_build.STAGE, front_turn(spec))
 
 
