@@ -176,6 +176,8 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
     if done and kind and critic_kind({**o, "critiques": rounds}):   # the next kind's turn, on the same shots
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
         return lambda: oneshot_spec.handoff(repo, "critique") or True
+    if done:   # no critique reads these shots again: their secrets leave memory (a later critique shoots anew)
+        front_build.MASKS.pop(repo, None)
     if done and "android" in kinds_of(o):
         from . import oneshot_phone   # it imports this module
         return oneshot_phone.waits(repo, rounds)   # the owner's phone comes before R3

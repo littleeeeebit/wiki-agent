@@ -23,6 +23,7 @@ from test_session_images import PNG
 HIGH = {"severity": "high", "route": "/", "viewport": "desktop", "state": "full", "what": "합계가 안 보인다",
         "fix": "합계를 맨 위에 크게 둔다"}
 LOW = {**HIGH, "severity": "low", "what": "여백이 좁다", "fix": "여백을 16px 로"}
+SHOT_WITH = {"budget": (1, {"key-9f2": "[N1]"})}   # what round 1's web app carried, as its look recorded it
 
 
 def o() -> dict:
@@ -91,10 +92,12 @@ def test_a_critique_outside_its_schema_is_refused(judged, finding, why):
 
 def test_the_critic_sees_each_screenshot_and_two_clean_rounds_open_r3(judged):
     heard, asking = critic(said(), said())
-    with asking:
+    with asking, patch.dict(critique.front_build.MASKS, SHOT_WITH):
         critique.critique("budget")
         assert o()["stage"] == "critique" and o()["working"] == "critique" and len(o()["critiques"]) == 1
+        assert "budget" in critique.front_build.MASKS   # a second critique of the same shots still reads it
         critique.critique("budget")   # nothing to fix: the same shots looked at again
+        assert "budget" not in critique.front_build.MASKS   # no critique reads them again: the secrets leave memory
     assert o()["stage"] == "r3" and [c["clean"] for c in o()["critiques"]] == [True, True]
     role, text, images = heard[0]
     assert role == "critic" and [p.name for p in images][:3] == ["S1-desktop-full.png", "S2-desktop-full.png",
@@ -115,9 +118,6 @@ def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts
         oneshot_spec.saved("budget", oneshot={"stage": "critique", "looks": [*o()["looks"], look(3)]})
         critique.critique("budget")
     assert o()["stage"] == "r3" and [c["clean"] for c in o()["critiques"]] == [False, True, True]
-
-
-SHOT_WITH = {"budget": (1, {"key-9f2": "[N1]"})}   # what round 1's web app carried, as its look recorded it
 
 
 def test_a_secret_a_picture_drew_is_kept_out_of_what_the_critic_wrote(judged):

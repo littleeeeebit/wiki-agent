@@ -215,6 +215,8 @@ def test_shadow_text_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_make
     page = browser.new_page(offline=True)
     for html, hide, seen in (
             ("key-<b>shadow</b>", {"key-shadow": "[N1]"}, True),   # a shadow root's own text node
+            ("<span style='display: contents'>key-boxless</span>", {"key-boxless": "[N1]"}, True),   # no box, still drawn
+            ("<p style='opacity: 0'>key-clear</p>", {"key-clear": "[N1]"}, False),   # laid out, never drawn
             ("<section><style>.a > .b { color: red }</style></section>", {">": "[N1]"}, False)):
         for hidden in ("", " hidden"):
             page.set_content(f"<main>Ready</main><div{hidden}></div>")

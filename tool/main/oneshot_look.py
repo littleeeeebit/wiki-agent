@@ -442,9 +442,19 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
 # match on a clean page.
 SHOWN = """() => {
   const code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']), texts = [], values = [];
+  const up = e => e.parentElement || (e.parentNode && e.parentNode.host) || null;
+  const shows = n => {   // laid out, not hidden, and under no transparent box; a boxless `display: contents` passes up
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    if (!range.getClientRects().length) return false;
+    let el = up(n);
+    if (!el) return true;
+    if (getComputedStyle(el).visibility !== 'visible') return false;
+    while (el && getComputedStyle(el).display === 'contents') el = up(el);
+    return !el || !el.checkVisibility || el.checkVisibility({opacityProperty: true, visibilityProperty: true});
+  };
   const outside = (n, root) => {
-    const owner = n.parentElement || (n.parentNode && n.parentNode.host);
-    if (owner && owner.checkVisibility && !owner.checkVisibility({visibilityProperty: true})) return false;
+    if (!shows(n)) return false;
     for (let p = n.parentNode; p && p !== root; p = p.parentNode)
       if (code.has(String(p.nodeName).toUpperCase())) return false;
     return true;
