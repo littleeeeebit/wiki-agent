@@ -148,12 +148,16 @@ def upstream():
                 self.end_headers()
                 self.wfile.write(b'data: {"error": {"message": "bad key \\u0073k-fixture"}}\n\n')
                 return
-            if self.path.startswith(("/v1/twotypes", "/v1/gzip")):   # a body no one can be sure how to read
-                self.send_response(200)
+            if self.path.startswith(("/v1/twotypes", "/v1/joined", "/v1/notjson", "/v1/gzip")):
+                self.send_response(200)   # a body no one can be sure how to read
                 said = b'data: {"error": {"message": "bad key \\u0073k-fixture"}}\n\n'
                 if self.path.startswith("/v1/twotypes"):
                     self.send_header("content-type", "application/json")
                     self.send_header("content-type", "text/event-stream")
+                elif self.path.startswith("/v1/joined"):   # as an intermediary may combine them
+                    self.send_header("content-type", "application/json, text/event-stream")
+                elif self.path.startswith("/v1/notjson"):   # labelled JSON, read by a client as SSE
+                    self.send_header("content-type", "application/json")
                 else:
                     self.send_header("content-type", "text/event-stream")
                     self.send_header("content-encoding", "gzip")
@@ -284,7 +288,7 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         status, _, body = sent(relay.url, {"x-api-key": token}, "/v1/mixedcase")
         assert status == 200 and body == b'data: {"error": {"message": "bad key [key]"}}\n\n'
         # Copies of Content-Type that disagree, or a coding over the body: refused before a success header goes out.
-        for path in ("/v1/twotypes", "/v1/gzip"):
+        for path in ("/v1/twotypes", "/v1/joined", "/v1/notjson", "/v1/gzip"):
             status, _, body = sent(relay.url, {"x-api-key": token}, path)
             assert status == 502 and b"sk-fixture" not in body and b"0073" not in body, path
         # Field values keep every octet: an allowed header with one past ASCII goes on, and comes back.
@@ -304,12 +308,12 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         assert status == 502 and "location" not in headers
         (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=\n", encoding="utf-8")
         assert sent(relay.url, {"x-api-key": token})[0] == 503
-        assert len(got) == 10
+        assert len(got) == 12
         # Framing: a POST without a length, with two that disagree, or chunked never goes on.
         assert raw(relay.url, [("x-api-key", token)], declared=None, length=False)[0] == 411
         assert raw(relay.url, [("x-api-key", token), ("content-length", "3")])[0] == 400
         assert raw(relay.url, [("x-api-key", token), ("transfer-encoding", "chunked")])[0] == 400
-        assert len(got) == 10
+        assert len(got) == 12
         # Every connection served, closed-delimited or not, leaves nothing behind.
         assert drained(relay)
     finally:
@@ -507,6 +511,22 @@ def test_an_event_that_crosses_the_limit_in_the_chunk_that_ends_it_is_still_refu
     assert events.feed(b"data: " + b"x" * 1000) == []
     with pytest.raises(ValueError):
         events.feed(b"x" * deepseek_relay.LONGEST_EVENT + b"\n\n")
+
+
+def test_a_bom_at_any_line_start_is_read_the_way_the_sdk_reads_it():
+    """Anthropic's SDK drops one BOM at the start of every line: a later field keeps no BOM to hide behind, and a line
+    that is only a BOM ends the event, here as there. A BOM split across chunks counts the same."""
+
+    bom = b"\xef\xbb\xbf"
+    hidden = b'event: error\n' + bom + b'data: {"error": {"message": "bad key \\u0073k-fixture"}}\n\n'
+    for layout in ([hidden], [hidden[:14], hidden[14:]], [hidden[:15], hidden[15:]]):   # whole, then split mid-BOM
+        events = deepseek_relay.Events("sk-fixture")
+        out = b"".join(o for part in layout for o in events.feed(part)) + events.rest()
+        assert out == b'event: error\ndata: {"error": {"message": "bad key [key]"}}\n\n', layout
+    events = deepseek_relay.Events("sk-fixture")
+    assert events.feed(b"data: 1\n" + bom + b"\ndata: 2\n\n") == [b"data: 1\n\n", b"data: 2\n\n"]
+    events = deepseek_relay.Events("sk-fixture")   # a BOM that never finishes is ordinary bytes
+    assert events.feed(b"data: 1\n\n\xef\xbb") == [b"data: 1\n\n"] and events.rest() == b"\xef\xbb"
 
 
 def test_an_event_exactly_at_the_limit_passes_however_its_blank_line_is_split():

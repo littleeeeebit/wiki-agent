@@ -62,8 +62,10 @@ def media_type(headers: list[tuple[str, str]]) -> str | None:
     """The media type alone, lower case: `Text/Event-Stream; charset=utf-8` is `text/event-stream` (RFC 9110 8.3.1).
     None when copies disagree, since then no one can say how a reader will take the body."""
 
-    types = {v.split(";")[0].strip().lower() for k, v in headers if k == "content-type"}
-    return None if len(types) > 1 else next(iter(types), "")
+    values = [v for k, v in headers if k == "content-type"]
+    if len(values) > 1 or any("," in v for v in values):   # repeated, or several joined into one field
+        return None
+    return values[0].split(";")[0].strip().lower() if values else ""
 
 
 def plain(headers: list[tuple[str, str]]) -> bool:
@@ -108,11 +110,34 @@ def redacted_json(raw: bytes, key: str) -> bytes | None:
 
 class Events:
     """A server-sent event stream cut into whole events, each with the key gone: literal anywhere, JSON-escaped in its
-    data. Line endings (CRLF, CR or LF) become LF and a leading BOM goes first, so the fields read here are the
-    fields any parser reads. A CR is a line end at once; an LF right after it, even in the next chunk, is dropped."""
+    data. Line endings (CRLF, CR or LF) become LF, and one BOM at the start of any line goes (the WHATWG parser drops
+    it at the stream's start, Anthropic's SDK at every line's), so the fields read here are the fields any of those
+    parsers reads, blank lines included. A CR is a line end at once; an LF right after it, even in the next chunk,
+    is dropped. A BOM split across chunks waits for its last byte."""
 
     def __init__(self, key: str):
-        self.key, self.pending, self.after_cr, self.first = key, b"", False, True
+        self.key, self.pending, self.after_cr = key, b"", False
+        self.line_start, self.held = True, b""   # at the start of a line; the first bytes of a BOM seen there
+
+    def _unbom(self, data: bytes) -> bytes:
+        data, self.held = self.held + data, b""
+        out, i = bytearray(), 0
+        while i < len(data):
+            if self.line_start:
+                if data.startswith(BOM, i):
+                    i += len(BOM)
+                elif len(data) - i < len(BOM) and BOM.startswith(data[i:]):
+                    self.held = data[i:]
+                    break
+                self.line_start = False
+                continue
+            end = data.find(b"\n", i)
+            if end < 0:
+                out += data[i:]
+                break
+            out += data[i:end + 1]
+            i, self.line_start = end + 1, True
+        return bytes(out)
 
     def feed(self, chunk: bytes) -> list[bytes]:
         if not chunk:
@@ -120,9 +145,7 @@ class Events:
         if self.after_cr and chunk.startswith(b"\n"):
             chunk = chunk[1:]
         self.after_cr = chunk.endswith(b"\r")
-        self.pending += chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-        if self.first and len(self.pending) >= len(BOM):
-            self.pending, self.first = self.pending.removeprefix(BOM), False
+        self.pending += self._unbom(chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
         out = []
         while (end := self.pending.find(b"\n\n")) >= 0:
             if end > LONGEST_EVENT:   # measured before it is cleaned or sent, however it arrived
@@ -137,7 +160,7 @@ class Events:
     def rest(self) -> bytes:
         """At the end of the stream: an unfinished event goes out cleaned."""
 
-        rest, self.pending = self.pending.removeprefix(BOM) if self.first else self.pending, b""
+        rest, self.pending, self.held = self.pending + self.held, b"", b""   # a BOM never finished is just bytes
         return clean_event(rest, self.key) if rest else b""
 
 
@@ -395,6 +418,11 @@ class Relay:
                 body += chunk
                 if len(body) > LONGEST_BODY:
                     return await answer(conn, writer, 502, "DeepSeek 의 답이 너무 크다 — 넘기지 않는다")
+            try:   # what is not JSON the scrubber cannot read the way a client might, so it does not go on
+                if body.strip():
+                    json.loads(body)
+            except ValueError:
+                return await answer(conn, writer, 502, "DeepSeek 의 답이 JSON 이 아니다 — 넘기지 않는다")
             writer.write(conn.send(start) + conn.send(h11.Data(data=clean_body(bytes(body), key)))
                          + conn.send(h11.EndOfMessage()))
             return await drained(writer)
