@@ -437,10 +437,11 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
 
 # The text a frame carries, drawn or not, as separate streams: the text and CDATA nodes outside code of its document
 # and of each open shadow root, joined so a value split across elements reads as one; beside each, its rendered
-# text, where hidden text between two visible parts no longer splits them (the nodes `innerText`'s rule keeps: laid
-# out, their element's `visibility` visible, cased by `text-transform`; never the getter, which on a hidden root
-# reads stylesheets); as `values`, the value,
-# placeholder and alt of its fields and images. A secret in hidden text has reached the browser all the same. Never
+# text twice over, where hidden text between two visible parts no longer splits them: the root's contents as the
+# browser serialises a selection of them (its own casing and word breaks, but no `user-select: none` text), and the
+# nodes `innerText`'s rule keeps (laid out, their element's `visibility` visible, each cased by `text-transform`;
+# never the getter, which on a hidden root reads stylesheets); as `values`, the value, placeholder and alt of its
+# fields and images. Matching is a union, so a value is missed only where every stream misses it. A secret in hidden text has reached the browser all the same. Never
 # markup or a stylesheet, which a short secret would match on a clean page.
 SHOWN = """() => {
   const code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']), texts = [], values = [];
@@ -467,12 +468,26 @@ SHOWN = """() => {
       if (text !== null) out.push(text);
     }
     return out.join(''); };
-  texts.push(plain(document), plain(document, drawn));
+  // The page's own selection, and the focused field's, are put back; scripts are off, so no handler sees a change
+  const selected = root => {
+    const s = getSelection(), kept = Array.from({length: s.rangeCount}, (_, i) => s.getRangeAt(i));
+    const field = document.activeElement, range = field && typeof field.selectionStart === 'number'
+      ? [field.selectionStart, field.selectionEnd, field.selectionDirection] : null;
+    s.removeAllRanges();
+    s.setBaseAndExtent(root, 0, root, root.childNodes.length);
+    const text = s.toString();
+    s.removeAllRanges();
+    kept.forEach(r => s.addRange(r));
+    if (range) { field.focus(); field.setSelectionRange(...range); }
+    return text;
+  };
+  const read = root => [plain(root), plain(root, drawn), selected(root.documentElement || root)];
+  texts.push(...(document.documentElement ? read(document) : []));
   const visit = root => {
     for (const el of root.querySelectorAll('*')) {
       for (const a of ['value', 'placeholder', 'alt']) if (el.hasAttribute(a)) values.push(el.getAttribute(a));
       if (typeof el.value === 'string') values.push(el.value);
-      if (el.shadowRoot) { texts.push(plain(el.shadowRoot), plain(el.shadowRoot, drawn)); visit(el.shadowRoot); }
+      if (el.shadowRoot) { texts.push(...read(el.shadowRoot)); visit(el.shadowRoot); }
     }
   };
   visit(document);

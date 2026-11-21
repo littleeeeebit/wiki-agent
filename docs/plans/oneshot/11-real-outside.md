@@ -192,14 +192,18 @@ before phase.
 What is read is the text the page carries, drawn or not, each stream matched
 on its own: the text and CDATA nodes outside code of every frame's document
 and of each open shadow root, joined so a value split across elements reads
-as one; beside each, its rendered text, so hidden text between two visible
-parts never splits a value the screen joins: the nodes `innerText`'s rule
-keeps, laid out and their element's `visibility` visible, cased by their
-`text-transform` as drawn, read node by node
-since the getter on a hidden root falls back to text that includes
-stylesheets; and the value, placeholder and alt
-of fields and images; never markup or a stylesheet. Within one stream a value broken across lines still
-matches. A secret in hidden text has reached the browser all the same, so it
+as one. Beside each are two readings of its rendered text, so hidden text
+between two visible parts never splits a value the screen joins. One is the
+root's contents as the browser serialises a selection of them, with its own
+casing and word breaks; the page's selection and the focused field's are put
+back after. The other, for text a selection leaves out such as
+`user-select: none`, is the nodes `innerText`'s rule keeps (laid out, their
+element's `visibility` visible), each cased by its `text-transform` and read
+node by node, since the getter on a hidden root falls back to text that
+includes stylesheets. The value, placeholder and alt of fields and images
+are read too; never markup or a stylesheet. Matching is a union, so a value
+is missed only where every stream misses it. Within one stream a value
+broken across lines still matches. A secret in hidden text has reached the browser all the same, so it
 is the app's leak to fix, and whether the browser draws it is never asked. A
 screen whose text carries a secret, or has a frame that cannot be read, is a
 high finding and is never shot. The critic sends its pictures to a model,
