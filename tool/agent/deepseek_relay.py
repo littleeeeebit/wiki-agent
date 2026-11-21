@@ -131,6 +131,7 @@ class Events:
     def __init__(self, key: str):
         self.key, self.pending, self.after_cr = key, b"", False
         self.line_start, self.held = True, b""   # at the start of a line; the first bytes of a BOM seen there
+        self.broken = False   # an event could not go on: the stream ends after the events before it
 
     def _unbom(self, data: bytes) -> bytes:
         data, self.held = self.held + data, b""
@@ -154,21 +155,28 @@ class Events:
         return bytes(out)
 
     def feed(self, chunk: bytes) -> list[bytes]:
-        if not chunk:
+        """The events this chunk completed, cleaned. An event that cannot go on (past `LONGEST_EVENT` in or out, or
+        data not plainly JSON) sets `broken` and ends the list there: the events before it still go on, so what the
+        caller gets does not depend on how the transport split the stream."""
+
+        if not chunk or self.broken:
             return []
         if self.after_cr and chunk.startswith(b"\n"):
             chunk = chunk[1:]
         self.after_cr = chunk.endswith(b"\r")
         self.pending += self._unbom(chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
         out = []
-        while (end := self.pending.find(b"\n\n")) >= 0:
-            if end > LONGEST_EVENT:   # measured before it is cleaned or sent, however it arrived
+        try:
+            while (end := self.pending.find(b"\n\n")) >= 0:
+                if end > LONGEST_EVENT:   # measured before it is cleaned or sent, however it arrived
+                    raise ValueError("an event past LONGEST_EVENT")
+                out.append(clean_event(self.pending[:end], self.key) + b"\n\n")
+                self.pending = self.pending[end + 2:]
+            # The first newline of a delimiter still waiting for its second is not part of the event.
+            if len(self.pending) - self.pending.endswith(b"\n") > LONGEST_EVENT:
                 raise ValueError("an event past LONGEST_EVENT")
-            out.append(clean_event(self.pending[:end], self.key) + b"\n\n")
-            self.pending = self.pending[end + 2:]
-        # The first newline of a delimiter still waiting for its second is not part of the event.
-        if len(self.pending) - self.pending.endswith(b"\n") > LONGEST_EVENT:
-            raise ValueError("an event past LONGEST_EVENT")
+        except ValueError:
+            self.broken, self.pending = True, b""
         return out
 
     def rest(self) -> bytes:
@@ -190,13 +198,32 @@ def clean_event(event: bytes, key: str) -> bytes:
     if not data:
         return event
     fixed = rewritten_json(b"\n".join(data), key)
+    if len(fixed) > LONGEST_EVENT:   # ASCII escapes can grow it up to sixfold: the limit holds for what goes out too
+        raise ValueError("an event past LONGEST_EVENT once written again")
     return b"\n".join([line for line, is_data in zip(lines, field) if not is_data] + [b"data: " + fixed])
 
 
 def clean_body(body: bytes, key: str) -> bytes:
-    """A JSON answer written again by `rewritten_json` (ValueError when it is not plainly JSON); an empty one stays."""
+    """A JSON answer written again by `rewritten_json` (ValueError when it is not plainly JSON, or past
+    `LONGEST_BODY` once written); an empty one stays."""
 
-    return rewritten_json(body, key) if body.strip() else body
+    if not body.strip():
+        return body
+    cleaned = rewritten_json(body, key)
+    if len(cleaned) > LONGEST_BODY:
+        raise ValueError("an answer past LONGEST_BODY once written again")
+    return cleaned
+
+
+PART = 64 << 10   # bytes queued on a caller's connection at a time: a slow reader holds no more than this
+
+
+async def send_body(writer: asyncio.StreamWriter, conn: h11.Connection, data: bytes) -> None:
+    """`data` as the response body's next bytes, in parts of `PART`, each drained before the next is queued."""
+
+    for at in range(0, len(data), PART):
+        writer.write(conn.send(h11.Data(data=data[at:at + PART])))
+        await drained(writer)
 
 
 def error_kind(body: bytes, key: str) -> str:
@@ -442,25 +469,25 @@ class Relay:
                 cleaned = clean_body(bytes(body), key)
             except ValueError:
                 return await answer(conn, writer, 502, "DeepSeek 의 답이 읽을 수 있는 JSON 이 아니다 — 넘기지 않는다")
-            writer.write(conn.send(start) + conn.send(h11.Data(data=cleaned)) + conn.send(h11.EndOfMessage()))
+            writer.write(conn.send(start))
+            await send_body(writer, conn,cleaned)
+            writer.write(conn.send(h11.EndOfMessage()))
             return await drained(writer)
         writer.write(conn.send(start))
         await drained(writer)
         events = Events(key)
         async for chunk in chunks():
-            try:
-                ready = events.feed(chunk)   # a whole event goes on the moment it is complete
-            except ValueError:   # past `LONGEST_EVENT`, or JSON too deep to scrub (`TooDeep`)
-                return None   # the stream ends there, unfinished, which the caller can tell
+            ready = events.feed(chunk)   # a whole event goes on the moment it is complete
             if ready:
-                writer.write(conn.send(h11.Data(data=b"".join(ready))))
-                await drained(writer)
+                await send_body(writer, conn,b"".join(ready))
+            if events.broken:   # past `LONGEST_EVENT`, or data not plainly JSON (`TooDeep` included)
+                return None   # the stream ends there, unfinished, which the caller can tell
         try:
             rest = events.rest()
         except ValueError:
             return None
         if rest:
-            writer.write(conn.send(h11.Data(data=rest)))
+            await send_body(writer, conn,rest)
         writer.write(conn.send(h11.EndOfMessage()))
         await drained(writer)
 
