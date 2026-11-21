@@ -124,6 +124,7 @@ def close_turns() -> None:
     query.close_all()
     for thread in threads:
         thread.join()
+    agent.deepseek.close()   # no CLI is left to use the relay; a server started again in this process makes another
 
 
 def ended_first(server) -> None:

@@ -15,6 +15,8 @@ import lint
 import repo_graph
 import repo_lint
 
+from agent import deepseek
+
 from . import architecture, prerequisite_review, query, runtime, specs, work
 
 
@@ -203,7 +205,7 @@ def repair(path: Path, spec: dict, problems: list[tuple[str, str]]) -> None:
     with query._lock:
         work._runs[str(path)] = run
     try:
-        work.remember(path, "user", prompt)
+        work.remember(path, "user", prompt, provider=deepseek.of(chat))
         work.feed.put({"kind": "started", "path": str(path), "turn": run.turn})
         for ev in chat.say(prompt, run.halt):
             run.put({"kind": ev.kind, "text": ev.text, "meta": ev.meta,
@@ -219,7 +221,7 @@ def repair(path: Path, spec: dict, problems: list[tuple[str, str]]) -> None:
         watcher.join()
         try:
             work.remember(path, "assistant", final, error=failed, steps=work.steps(run.events),
-                          turn=run.turn, cell=chat.id, started_at=run.started_at)
+                          turn=run.turn, cell=chat.id, started_at=run.started_at, provider=deepseek.of(chat))
         finally:
             run.finish()
             work.feed.put({"kind": "work-record", "path": str(path)})

@@ -914,7 +914,7 @@ def dispatch(path: Path, ended: Run) -> None:
         release()
         errorlog.record("work-queue", exc, path=key, turn=ended.turn)
         remember(path, "assistant", "", error=f"기다리던 지시를 보내지 못했다 — {type(exc).__name__}: {exc}"
-                                                f"\n지시: {order.text}")
+                                                f"\n지시: {order.text}", provider=deepseek.provider(order.model))
         feed.put({"kind": "turn", "path": key, "turn": "", "session_id": ""})
 
 

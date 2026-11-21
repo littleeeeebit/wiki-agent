@@ -564,7 +564,7 @@ def consume(path: Path, run: work.Run, text: str) -> tuple[str, str, dict, int, 
     `(final, failed, meta, tools, web)`. The record leaves out the CLI's
     session id, so a later session in this worktree never resumes this one."""
 
-    work.remember(path, "user", text)
+    work.remember(path, "user", text, provider=deepseek.of(run.chat))
     final, failed, meta, tools, web = "", "", {}, 0, 0
     try:
         for ev in run.chat.say(text, run.halt):

@@ -18,7 +18,9 @@ import json
 from pathlib import Path
 import re
 import secrets
+import select
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -68,7 +70,12 @@ ROUTE = ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS"
 SHELL = re.compile(r'[%!$`"^&|<>]')
 # Request headers the relay passes on. Everything else (any credential, cookie or custom header a policy adds) stays.
 FORWARD = {"content-type", "accept", "anthropic-version", "anthropic-beta", "user-agent"}
-HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "set-cookie", "server", "date"}
+# Response headers it passes back. The rest (connection fields, cookies, whatever an upstream or a proxy adds) stays.
+BACK = {"content-type", "retry-after", "request-id", "x-request-id"}
+BACK_PREFIX = ("anthropic-ratelimit-", "x-ratelimit-")
+LARGEST = 64 << 20   # bytes in one request: a turn with several screenshots stays well inside
+WORKERS = 16         # requests in flight at once; the app's turns each hold one
+IDLE = 120.0         # seconds the relay waits on a silent caller before it lets the request go
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -82,18 +89,22 @@ class Relay:
     with the real key and the allowed headers alone. Anything else ends here. A policy that sends the CLI somewhere
     else sends the token, never the key, and a credential a policy adds never reaches DeepSeek.
 
-    Ownership: one per process (`relay()`), started on first use, closed at exit (`close()`). It holds a loopback
-    server on its own thread and a scratch folder with the token for the key helper."""
+    Ownership: one per process (`relay()`), started on first use, closed with the app server and at exit
+    (`close()`). It holds a loopback server on its own thread, the connections in flight, and a scratch folder with
+    the token for the key helper. Closing cuts every connection, waits for their threads and removes the folder."""
 
     def __init__(self, upstream: str = URL, env: Path | None = None):
         self.upstream, self.env = upstream.rstrip("/"), env or settings.HUB / ".env"
         self.token = secrets.token_urlsafe(32)
-        self.folder = Path(tempfile.mkdtemp(prefix="deepseek-relay-"))
-        (self.folder / ".env").write_text(f"DEEPSEEK_API_KEY={self.token}\n", encoding="utf-8")
         self.opener = urllib.request.build_opener(_NoRedirect)
+        self.slots = threading.BoundedSemaphore(WORKERS)
+        self.open: set = set()   # sockets in flight, both sides: `close` cuts them
+        self.open_lock = threading.Lock()
         relay = self
 
         class Handler(BaseHTTPRequestHandler):
+            timeout = IDLE
+
             def do_POST(self):
                 relay.serve(self)
 
@@ -103,7 +114,17 @@ class Relay:
                 pass
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.server.daemon_threads = True
+        self.server.daemon_threads, self.server.block_on_close = False, True   # `server_close` waits for them
+        folder = None
+        try:   # a construction that fails half way leaves neither the listener nor the token behind
+            folder = Path(tempfile.mkdtemp(prefix="deepseek-relay-"))
+            (folder / ".env").write_text(f"DEEPSEEK_API_KEY={self.token}\n", encoding="utf-8")
+        except BaseException:
+            self.server.server_close()
+            if folder is not None:
+                shutil.rmtree(folder, ignore_errors=True)
+            raise
+        self.folder = folder
         threading.Thread(target=self.server.serve_forever, name="deepseek-relay", daemon=True).start()
 
     @property
@@ -111,18 +132,38 @@ class Relay:
         return f"http://127.0.0.1:{self.server.server_port}"
 
     def admitted(self, headers) -> bool:
-        """Every credential the request carries is the token, and it carries one."""
+        """The request carries the token, at most once in each credential header, and no other credential."""
 
-        given = [v for v in (headers.get("x-api-key"), headers.get("authorization")) if v is not None]
-        return bool(given) and all(v in (self.token, f"Bearer {self.token}") for v in given) \
-            and headers.get("proxy-authorization") is None
+        given = {name: headers.get_all(name) or [] for name in ("x-api-key", "authorization", "proxy-authorization")}
+        sent = given["x-api-key"] + given["authorization"]
+        return (bool(sent) and not given["proxy-authorization"] and all(len(v) <= 1 for v in given.values())
+                and all(v in (self.token, f"Bearer {self.token}") for v in sent))
 
     def serve(self, request: BaseHTTPRequestHandler) -> None:
-        body = request.rfile.read(int(request.headers.get("Content-Length") or 0))
-        if not self.admitted(request.headers):
+        if not self.admitted(request.headers):   # before any body is read: a stranger holds no worker
             return self.answer(request, 401, "DeepSeek 중계: 이 앱이 준 토큰이 아니다")
         if not request.path.startswith("/v1/"):
             return self.answer(request, 404, f"DeepSeek 중계가 넘기지 않는 경로: {request.path}")
+        try:
+            size = int(request.headers.get("Content-Length") or 0)
+        except ValueError:
+            size = -1
+        if not 0 <= size <= LARGEST:
+            return self.answer(request, 413, "DeepSeek 중계: 요청이 너무 크거나 길이가 없다")
+        if not self.slots.acquire(blocking=False):
+            return self.answer(request, 503, "DeepSeek 중계가 바쁘다 — 잠시 뒤 다시 보내라")
+        with self.open_lock:
+            self.open.add(request.connection)
+        try:
+            self.forward(request, request.rfile.read(size))
+        except OSError:   # the caller went silent past `IDLE`, or away
+            pass
+        finally:
+            with self.open_lock:
+                self.open.discard(request.connection)
+            self.slots.release()
+
+    def forward(self, request: BaseHTTPRequestHandler, body: bytes) -> None:
         key = settings.entries(self.env).get("DEEPSEEK_API_KEY")
         if not key:
             return self.answer(request, 503, "DeepSeek 키가 없다: 허브의 .env 에 DEEPSEEK_API_KEY 를 넣어라")
@@ -130,43 +171,102 @@ class Relay:
         outgoing = urllib.request.Request(self.upstream + request.path, data=body if request.command == "POST" else None,
                                           method=request.command,
                                           headers={**headers, "x-api-key": key, "Authorization": f"Bearer {key}"})
+        started = False
         try:
-            with self.opener.open(outgoing, timeout=600) as up:
-                self.stream(request, up.status, up.headers, up)
-        except urllib.error.HTTPError as exc:
-            with exc:
-                self.stream(request, exc.code, exc.headers, exc)
-        except (OSError, ValueError) as exc:   # unreachable, timed out, or the client went away
             try:
+                up = self.opener.open(outgoing, timeout=600)
+            except urllib.error.HTTPError as exc:
+                up = exc
+            with up:
+                status = up.getcode()
+                if 300 <= status < 400:   # handed on, a client that follows it would leave the relay
+                    return self.answer(request, 502, "DeepSeek 이 요청을 다른 곳으로 돌렸다 — 따라가지 않는다")
+                upstream = _socket_of(up)
+                with self.open_lock:
+                    self.open.add(upstream)
+                try:
+                    started = True
+                    self.stream(request, status, up.headers, up, key)
+                finally:
+                    with self.open_lock:
+                        self.open.discard(upstream)
+        except (OSError, ValueError) as exc:   # unreachable, timed out, cut, or the caller went away
+            if not started:
                 self.answer(request, 502, f"DeepSeek 에 닿지 못했다 — {type(exc).__name__}")
-            except OSError:
-                pass
+            # once the headers have gone out, the caller sees a stream that ends early: nothing more is written
 
-    @staticmethod
-    def stream(request: BaseHTTPRequestHandler, status: int, headers, body) -> None:
+    def stream(self, request: BaseHTTPRequestHandler, status: int, headers, body, key: str) -> None:
         request.send_response(status)
         for k, v in headers.items():
-            if k.lower() not in HOP:
-                request.send_header(k, v)
+            if k.lower() in BACK or k.lower().startswith(BACK_PREFIX):
+                request.send_header(k, v.replace(key, "[key]"))
         request.end_headers()
-        read = getattr(body, "read1", body.read)
-        while chunk := read(65536):   # a server-sent event goes on as it arrives
-            request.wfile.write(chunk)
-            request.wfile.flush()
+        if status >= 400:   # an error is read whole and never echoes the key, whatever upstream or a proxy put in it
+            request.wfile.write(body.read(1 << 20).replace(key.encode(), b"[key]"))
+            return
+        gone = threading.Event()
+        watcher = threading.Thread(target=self.watch, args=(request.connection, _socket_of(body), gone), daemon=True)
+        watcher.start()
+        try:
+            read = getattr(body, "read1", body.read)
+            while chunk := read(65536):   # a server-sent event goes on as it arrives
+                request.wfile.write(chunk)
+                request.wfile.flush()
+        finally:
+            gone.set()
+            watcher.join()
+
+    @staticmethod
+    def watch(client, upstream, done: threading.Event) -> None:
+        """While an answer streams, a caller that hangs up (the person pressed Stop) cuts the request to DeepSeek
+        too, so generation stops with it rather than at the next event or the read timeout."""
+
+        while not done.wait(0.5):
+            try:
+                ready, _, _ = select.select([client], [], [], 0)
+                if ready and client.recv(1, socket.MSG_PEEK) == b"":
+                    break
+            except (OSError, ValueError):
+                break
+        else:
+            return
+        _cut(upstream)
 
     @staticmethod
     def answer(request: BaseHTTPRequestHandler, status: int, message: str) -> None:
         payload = json.dumps({"type": "error", "error": {"type": "api_error", "message": message}},
                              ensure_ascii=False).encode("utf-8")
-        request.send_response(status)
-        request.send_header("content-type", "application/json")
-        request.end_headers()
-        request.wfile.write(payload)
+        try:
+            request.send_response(status)
+            request.send_header("content-type", "application/json")
+            request.end_headers()
+            request.wfile.write(payload)
+        except OSError:
+            pass
 
     def close(self) -> None:
         self.server.shutdown()
-        self.server.server_close()
+        with self.open_lock:
+            cut = list(self.open)
+        for sock in cut:
+            _cut(sock)
+        self.server.server_close()   # joins every request thread, now that none can block
         shutil.rmtree(self.folder, ignore_errors=True)
+
+
+def _socket_of(response):
+    """The socket under a urllib response, to cut it from another thread; None when there is none to cut."""
+
+    raw = getattr(getattr(response, "fp", None), "raw", None)
+    return getattr(raw, "_sock", None)
+
+
+def _cut(sock) -> None:
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
 
 _relay: Relay | None = None
