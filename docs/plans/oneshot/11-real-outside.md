@@ -208,8 +208,11 @@ critique reads those shots again, whether R3 opens or the fixes go back to
 the builder. A server started since has none, and a run with a secret takes
 those shots again before any critique. A shadow root's or an SVG frame's
 text counts only where it is drawn: laid out, visible by its own element's
-computed `visibility`, and under no transparent box. A boxless
-`display: contents` element passes the opacity check to the box around it.
+computed `visibility`, in no collapsed table row or column, and under no
+transparent box. A boxless `display: contents` element passes the opacity
+check to the box around it. An animation not started yet is let start
+before it is held, since one held while pending starts later in its before
+phase.
 
 11b1 stops there. The build agent's own shell does not have the secrets yet,
 so a test that needs one skips when the agent runs it and must pass in the

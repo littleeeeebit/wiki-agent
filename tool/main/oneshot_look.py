@@ -452,6 +452,10 @@ SHOWN = """() => {
     let el = up(n);
     if (!el) return true;
     if (getComputedStyle(el).visibility !== 'visible') return false;
+    for (let a = el; a; a = up(a)) {   // a collapsed table row or column paints none of its cells
+      const s = getComputedStyle(a);
+      if (s.visibility === 'collapse' && /^table-(row|column)/.test(s.display)) return false;
+    }
     while (el && getComputedStyle(el).display === 'contents') el = up(el);
     return !el || !el.checkVisibility || el.checkVisibility({opacityProperty: true});
   };
@@ -495,6 +499,16 @@ def still(page):
             pass
     for s in sessions:
         s.send("Emulation.setScriptExecutionDisabled", {"value": True})
+    # An animation not started yet, held, starts later in its before phase, so the picture and the read differ:
+    # every one starts first. ponytail: a second at most, then held as it is
+    for _ in range(40):
+        try:
+            if not any(f.evaluate("() => document.getAnimations().some(a => a.pending)") for f in page.frames):
+                break
+        except Error:   # a frame gone: the read after says so
+            break
+        time.sleep(0.025)
+    for s in sessions:
         s.send("Animation.setPlaybackRate", {"playbackRate": 0})   # a CSS animation can show or hide text
     try:
         yield

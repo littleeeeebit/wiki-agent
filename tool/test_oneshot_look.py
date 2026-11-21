@@ -220,6 +220,8 @@ def test_shadow_text_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_make
             ("<p style='visibility: hidden'><span style='display: contents; visibility: visible'>key-up</span></p>",
              {"key-up": "[N1]"}, True),   # visible under a hidden ancestor
             ("<p style='visibility: hidden'><span>key-down</span></p>", {"key-down": "[N1]"}, False),
+            *((f"<table><tr style='visibility: {row}'><td style='display: contents; visibility: visible'>key-row</td></tr>"
+               "</table>", {"key-row": "[N1]"}, row == "hidden") for row in ("hidden", "collapse")),   # collapse paints none
             ("<section><style>.a > .b { color: red }</style></section>", {">": "[N1]"}, False)):
         for hidden in ("", " hidden"):
             page.set_content(f"<main>Ready</main><div{hidden}></div>")
@@ -238,6 +240,19 @@ def test_shadow_text_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_make
     page.set_content("<p>ab</p><iframe srcdoc='<p>cd</p>'></iframe><input value='ef'>")
     page.wait_for_function("() => document.querySelector('iframe').contentDocument?.body?.innerText")
     assert look.secrets_shown(page, {"abcd": "[N1]", "cdef": "[N2]"}) == ""   # each stream is matched alone
+
+
+def test_an_animation_not_started_yet_starts_before_it_is_held(browser):
+    for _ in range(10):   # held while pending, it started later in its before phase in about a third of runs
+        page = browser.new_page(offline=True)
+        page.set_content("<p id='t'>x</p>")
+        page.add_style_tag(content="@keyframes m { from { opacity: 0 } } #t { animation: m 5s linear infinite }")
+        with look.still(page):
+            at = page.evaluate("document.getAnimations()[0].currentTime")
+            page.screenshot()
+            time.sleep(0.05)
+            assert page.evaluate("document.getAnimations()[0].currentTime") == at
+        page.close()
 
 
 def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser):
