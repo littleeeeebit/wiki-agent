@@ -49,9 +49,9 @@ def provider(model: str | None) -> str:
 
 
 def of(chat) -> str:
-    """The provider a live session's turns go to."""
+    """The provider a live session's turns go to; a cell that names no model is Claude's, as before DeepSeek."""
 
-    return "codex" if chat.is_codex else provider(chat.model)
+    return "codex" if chat.is_codex else provider(getattr(chat, "model", None))
 
 
 # What would carry a turn, or a credential, past the endpoint and key helper set here. An empty value reads as
