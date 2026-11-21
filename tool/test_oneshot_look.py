@@ -183,6 +183,30 @@ def test_a_frame_that_shows_a_secret_is_never_shot_and_a_short_secret_only_in_ma
     assert shot_of(browser, html, tmp_path, {">": "[N1]"}) == ([], True)   # tag syntax and code show nothing
 
 
+def test_a_secret_split_across_elements_is_seen_and_a_stylesheet_never_counts(browser, tmp_path):
+    found, picture = shot_of(browser, "<p><span>key-</span><b>split</b></p>", tmp_path, {"key-split": "[N1]"})
+    assert "[N1]" in found[0]["what"] and not picture
+    html = "<main>Ready</main><svg><style>.unused > path { fill: black; }</style></svg>"
+    assert shot_of(browser, html, tmp_path, {">": "[N1]"}) == ([], True)
+
+
+def test_a_document_that_replaces_the_one_read_before_the_picture_is_read_again(browser, tmp_path):
+    value, page = f"key-{os.getpid()}", browser.new_page(offline=True)
+    page.route("https://look.test/next", lambda route: route.fulfill(content_type="text/html", body=f"<p>{value}</p>"))
+    page.set_content("<meta http-equiv='refresh' content='1; url=https://look.test/next'><main>Ready</main>")
+    shoot = page.screenshot
+
+    def late(**kw):   # the refresh lands while the picture is taken, scripts off
+        page.wait_for_url("https://look.test/next", timeout=10000)
+        return shoot(**kw)
+
+    page.screenshot = late
+    with patch.object(look, "opened", lambda *a: page):
+        found = look.shot(None, "", {"id": "S1", "route": "/"}, "desktop", "full", re.compile("$^"), tmp_path, {},
+                          {value: "[N1]"})
+    assert "[N1]" in found[0]["what"] and not (tmp_path / "S1-desktop-full.png").exists()
+
+
 def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser):
     page = browser.new_page(offline=True)
     page.set_content("<p id='t'>0</p><iframe srcdoc=\"<p id='f'>0</p><script>let i = 0; "

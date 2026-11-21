@@ -183,10 +183,13 @@ has never stands in.
 
 The web look masks only each finding's text, so a secret as short as a JSON
 delimiter never changes its shape. Each screen is read and shot while no
-script of it or of its frames runs (`oneshot_look.still`), so the picture
-shows what was read. What is read is what a picture can show as text: every
-frame's text outside code, open shadow roots, and the value, placeholder
-and alt of fields and images, never the markup around them. A screen that
+script of it or of its frames runs (`oneshot_look.still`), and the picture
+is kept only if every frame still holds the document read, since a refresh
+navigates with scripts off. What is read is what a picture can show as
+text: every frame's rendered text, which joins a value split across
+elements, open shadow roots, and the value, placeholder and alt of fields
+and images; never markup or a stylesheet. A value broken across lines still
+matches. A screen that
 shows a secret, or has a frame that cannot be read, is a high finding and
 is never shot: the critic sends its pictures to a model, and a high finding
 sends the build back before the critic runs. A secret drawn into a canvas,

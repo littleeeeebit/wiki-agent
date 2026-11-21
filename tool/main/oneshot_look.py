@@ -435,22 +435,27 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
     return findings
 
 
-# What a picture of a frame can show as text: its text outside code, its open shadow roots', and the value,
-# placeholder and alt of its fields and images; never the markup around them, which a short secret would match.
+# What a picture of a frame can show as text: its rendered text, which joins a value split across elements and
+# leaves out code and hidden text, its open shadow roots' (which that text skips), and the value, placeholder and
+# alt of its fields and images; never markup or a stylesheet, which a short secret would match on a clean page.
 SHOWN = """() => {
-  const out = [], code = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
+  const out = [document.documentElement.innerText], code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']);
   const visit = root => {
-    const walk = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
-    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-      if (n.nodeType === Node.TEXT_NODE) { if (!code.has(n.parentNode.nodeName)) out.push(n.data); continue; }
-      for (const a of ['value', 'placeholder', 'alt']) if (n.hasAttribute(a)) out.push(n.getAttribute(a));
-      if (typeof n.value === 'string') out.push(n.value);
-      if (n.shadowRoot) visit(n.shadowRoot);
+    for (const el of root.querySelectorAll('*')) {
+      for (const a of ['value', 'placeholder', 'alt']) if (el.hasAttribute(a)) out.push(el.getAttribute(a));
+      if (typeof el.value === 'string') out.push(el.value);
+      if (el.shadowRoot) {
+        out.push([...el.shadowRoot.children].filter(c => !code.has(c.tagName.toUpperCase()))
+                 .map(c => c.innerText ?? '').join('\\n'));
+        visit(el.shadowRoot);
+      }
     }
   };
   visit(document);
   return out;
 }"""
+# Each frame's document, marked on first sight: a frame showing another document since gets another mark.
+DOCUMENT = "() => document.__look ??= `${performance.timeOrigin}-${Math.random()}`"
 
 
 @contextmanager
@@ -485,12 +490,38 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
     from playwright.sync_api import Error
 
     try:
-        shown = [text for frame in page.frames for text in frame.evaluate(SHOWN)]
+        shown = "\n".join(text for frame in page.frames for text in frame.evaluate(SHOWN))
     except Error:
         return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
-    if leaked := sorted({label for value, label in hide.items() if any(value in text for text in shown)}):
+    flat = "".join(shown.split())   # a value broken across lines still reads as one
+    if leaked := sorted({label for value, label in hide.items() if value in shown or "".join(value.split()) in flat}):
         return f"화면에 비밀 값 {', '.join(leaked)} 이 보인다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다"
     return ""
+
+
+def documents(page) -> list[str] | None:
+    from playwright.sync_api import Error
+
+    try:
+        return [frame.evaluate(DOCUMENT) for frame in page.frames]
+    except Error:   # a frame gone while it was read
+        return None
+
+
+def same_picture(page, hide: dict[str, str], picture: str) -> str:
+    """Write the screenshot of a still `page` to `picture` when what was read is what was shot: no value of `hide`
+    shows, and every frame still holds the document read, since a refresh navigates with scripts off. Else why."""
+
+    for _ in range(3):
+        if (before := documents(page)) is None:
+            continue
+        if why := secrets_shown(page, hide):
+            return why
+        data = page.screenshot(full_page=True)
+        if documents(page) == before:
+            Path(picture).write_bytes(data)
+            return ""
+    return "찍는 동안 화면이 다른 문서로 바뀌어 비밀 값이 보이지 않는지 확인하지 못했다"
 
 
 def shot(browser, url: str, s: dict, view: str, state: str, api: re.Pattern, folder: Path, shown: dict,
@@ -507,10 +538,7 @@ def shot(browser, url: str, s: dict, view: str, state: str, api: re.Pattern, fol
         else:
             # ponytail: text only; a secret drawn into a canvas, an image or a stylesheet's `content` is not seen
             with still(page):
-                if why := secrets_shown(page, hide):
-                    errors.append(why)
-                else:
-                    page.screenshot(path=picture, full_page=True)
+                errors += [why for why in [same_picture(page, hide, picture)] if why]
         wide = page.evaluate("document.documentElement.scrollWidth") > VIEWPORTS[view][0]
         if state == "full":
             for f in shown:
