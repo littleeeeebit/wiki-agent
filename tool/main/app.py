@@ -30,7 +30,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AnyHttpUrl, BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 
 import translate
@@ -181,7 +182,9 @@ async def validation_error(request: Request, exc: RequestValidationError):
     # Validation exceptions embed submitted inputs; record only locations/types.
     errorlog.record("http", "Invalid request", method=request.method, route=request.url.path, status=422,
                     fields=[{"loc": e["loc"], "type": e["type"]} for e in exc.errors()])
-    return await request_validation_exception_handler(request, exc)
+    # The answer leaves the input out too: a refused body may hold a secret the owner typed.
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(
+        [{k: v for k, v in e.items() if k != "input"} for e in exc.errors()])})
 
 
 @app.middleware("http")

@@ -89,11 +89,14 @@ parses.
 
 The owner gives a need with `POST /api/oneshot/spec/{repo}/needs/{id}` and
 removes it with `DELETE` on the same path. Both work only while the run
-waits at R1 with no turn running.
+waits at R1 with no turn running. Both name the sheet the owner saw (its
+`source`, 409 otherwise), because after a redesign the same id may name
+another need. No answer or error repeats what the owner typed, and a body
+the server cannot read comes back without its input, on every route.
 
 | `kind` | Body | Kept |
 | --- | --- | --- |
-| `secret` | `value`, 1–4096 characters after trimming | Credential Manager, `wiki-agent/oneshot/<repo>/<env>`; the spec and the answer never hold it |
+| `secret` | `value`, trimmed, at most 2560 bytes as UTF-16, what one credential holds | Credential Manager, `wiki-agent/oneshot/<repo>/<env>`; the spec and the answer never hold it |
 | `account` | `confirmed: true` | `given[id]`, with the need's `what` |
 | `tool` | `value`, a program name or path | `given[id]`, with the path `shutil.which` resolves; refused when there is none |
 | `file` | `value`, an absolute path | `given[id]`, with the resolved path; refused unless a file is there |
@@ -107,7 +110,12 @@ A need counts as given in three cases:
 
 A redesign that changes what a need is therefore asks for it again. A secret
 stays under its `env` for the repository's next run until the owner removes
-it.
+it. The view lists every `env` Credential Manager holds a secret of the
+repository under (`secrets_kept`), read from the store itself rather than
+the design. `DELETE /api/oneshot/spec/{repo}/secrets/{env}` removes one at
+any stage, including one a redesign renamed or dropped. A host without
+Credential Manager shows the sheet with every secret missing and refuses
+to store one.
 
 `POST …/r1` refuses an approval while any need is missing, with 409 naming
 each missing id and `what`. An edit with comments still goes to the

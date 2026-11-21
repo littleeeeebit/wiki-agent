@@ -12,8 +12,8 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot_needs as needs, oneshot_sheet as sheet, oneshot_spec, release, specs, oneshot
-from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
+from main import oneshot, oneshot_brief as brief, oneshot_needs as needs, oneshot_sheet as sheet, oneshot_spec, release, specs
+from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, STACK, android  # noqa: F401 — `android` is the fixture
 from test_oneshot_spec import o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
 
@@ -35,7 +35,18 @@ def at_r1(android):  # noqa: F811 — the imported fixture, by its name
         "design": sheet.parsed(with_needs(KEY, ACCOUNT, PYTHON, SAMPLE), "android"),
         "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": []}})
     yield android
-    release.secret_delete(needs.name("budget", ENV))
+    for env in needs.kept("budget"):
+        release.secret_delete(needs.name("budget", env))
+
+
+def src() -> str:
+    """The R1 sheet as the owner sees it now."""
+
+    return brief.source(brief.snapshot(specs.load("budget", oneshot.BRANCH), "r1"))
+
+
+def give(nid: str, **body) -> dict:
+    return needs.give("budget", nid, needs.Given(**body, source=src()))
 
 
 def approve():
@@ -91,10 +102,10 @@ def test_approval_waits_for_every_need_and_a_secret_reaches_only_credential_mana
     sample = tmp_path / "page.png"
     sample.write_bytes(b"\x89PNG")
     value = f"key-{uuid.uuid4().hex}"
-    needs.give("budget", "N1", needs.Given(value=f" {value}\n"))
-    needs.give("budget", "N2", needs.Given(confirmed=True))
-    needs.give("budget", "N3", needs.Given(value=sys.executable))
-    shown = needs.give("budget", "N4", needs.Given(value=str(sample)))
+    give("N1", value=f" {value}\n")
+    give("N2", confirmed=True)
+    give("N3", value=sys.executable)
+    shown = give("N4", value=str(sample))
     assert all(n["given"] for n in shown["needs"])
     assert release.secret_read(needs.name("budget", ENV)) == value
     record = (specs.load("budget", oneshot.BRANCH), shown)
@@ -105,42 +116,90 @@ def test_approval_waits_for_every_need_and_a_secret_reaches_only_credential_mana
 
 
 @pytest.mark.parametrize("nid, body, said", [
-    ("N1", needs.Given(value="  "), "1–4096"),
-    ("N2", needs.Given(), "확인해야"),
-    ("N3", needs.Given(value="no-such-program-anywhere"), "PATH"),
-    ("N4", needs.Given(value="relative/page.png"), "절대 경로"),
-    ("N9", needs.Given(value="x"), "설계에 없는"),
+    ("N1", {"value": "  "}, "2560바이트"),
+    ("N1", {"value": "k" * 1281}, "2560바이트"),   # 2,562 bytes as UTF-16
+    ("N2", {}, "확인해야"),
+    ("N3", {"value": "no-such-program-anywhere"}, "PATH"),
+    ("N4", {"value": "relative/page.png"}, "절대 경로"),
+    ("N9", {"value": "x"}, "설계에 없는"),
 ])
-def test_a_need_given_wrong_is_refused_and_nothing_is_kept(at_r1, nid, body, said):
-    with pytest.raises(HTTPException, match=said):
-        needs.give("budget", nid, body)
-    assert not o().get("given") and release.secret_read(needs.name("budget", ENV)) is None
+def test_a_need_given_wrong_is_refused_naming_nothing_typed_and_nothing_is_kept(at_r1, nid, body, said):
+    with pytest.raises(HTTPException, match=said) as e:
+        give(nid, **body)
+    assert not body.get("value", "").strip() or body["value"] not in e.value.detail
+    assert not o().get("given") and needs.kept("budget") == []
+
+
+def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
+    give("N1", value="k" * 1280)
+    assert release.secret_read(needs.name("budget", ENV)) == "k" * 1280
+
+
+def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
+    seen = src()
+    moved = with_needs({**KEY, "env": f"{ENV}_NEW"})   # the same id now names another provider's key
+    oneshot_spec.saved("budget", oneshot={"design": sheet.parsed(moved, "android")})
+    for late in (lambda: needs.give("budget", "N1", needs.Given(value="old provider", source=seen)),
+                 lambda: needs.take_back("budget", "N1", seen)):
+        with pytest.raises(HTTPException, match="바뀌었다") as e:
+            late()
+        assert e.value.status_code == 409
+    assert needs.kept("budget") == []
+
+
+def test_a_refused_body_never_comes_back_in_the_answer():
+    marker = f"typed-{uuid.uuid4().hex}"
+    answer = client().post("/api/oneshot/spec/budget/needs/N1", json={"value": [marker]})
+    assert answer.status_code == 422 and marker not in answer.text and answer.json()["detail"][0]["loc"]
 
 
 def test_a_need_can_be_given_only_at_r1_with_no_turn_running(at_r1):
     oneshot_spec.saved("budget", oneshot={"working": "redesign"})
     with pytest.raises(HTTPException) as e:
-        needs.give("budget", "N2", needs.Given(confirmed=True))
+        give("N2", confirmed=True)
     assert e.value.status_code == 409 and not o().get("given")
 
 
 def test_a_redesign_that_changes_what_a_need_is_asks_again_but_a_secret_stays_under_its_env(at_r1):
-    needs.give("budget", "N1", needs.Given(value="kept"))
-    needs.give("budget", "N2", needs.Given(confirmed=True))
+    give("N1", value="kept")
+    give("N2", confirmed=True)
     renamed = with_needs({**KEY, "what": "새 번역 API 키"}, {**ACCOUNT, "what": "유료 번역 계정"})
     oneshot_spec.saved("budget", oneshot={"design": sheet.parsed(renamed, "android")})
     assert [(n["id"], n["given"]) for n in oneshot_spec.status("budget")["needs"]] == [("N1", True), ("N2", False)]
 
 
+def test_a_secret_a_redesign_renamed_is_still_listed_and_can_be_removed_at_any_stage(at_r1):
+    give("N1", value="old")
+    renamed = with_needs({**KEY, "env": f"{ENV}_NEW"})
+    oneshot_spec.saved("budget", oneshot={"design": sheet.parsed(renamed, "android"), "stage": "build"})
+    assert oneshot_spec.status("budget")["secrets_kept"] == [ENV]
+    shown = needs.forget("budget", ENV)
+    assert shown["secrets_kept"] == [] and release.secret_read(needs.name("budget", ENV)) is None
+    with pytest.raises(HTTPException, match="대문자"):
+        needs.forget("budget", "../other")
+
+
+def test_a_host_without_credential_manager_shows_the_sheet_and_refuses_a_secret(at_r1, monkeypatch):
+    def absent():
+        raise ValueError("Windows only")
+
+    monkeypatch.setattr(release, "_advapi", absent)   # this machine has it; the host the check is about does not
+    view = oneshot_spec.status("budget")
+    assert view["secrets_kept"] == [] and not next(n for n in view["needs"] if n["id"] == "N1")["given"]
+    with pytest.raises(HTTPException, match="자격 증명 관리자가 없다") as e:
+        give("N1", value="x")
+    assert e.value.status_code == 409
+
+
 def test_what_was_given_can_be_taken_back(at_r1, tmp_path):
     sample = tmp_path / "page.png"
     sample.write_bytes(b"x")
-    needs.give("budget", "N1", needs.Given(value="gone soon"))
-    needs.give("budget", "N4", needs.Given(value=str(sample)))
-    needs.take_back("budget", "N1")
-    shown = needs.take_back("budget", "N4")
+    give("N1", value="gone soon")
+    give("N4", value=str(sample))
+    needs.take_back("budget", "N1", src())
+    shown = needs.take_back("budget", "N4", src())
     assert release.secret_read(needs.name("budget", ENV)) is None and "N4" not in o()["given"]
     assert not any(n["given"] for n in shown["needs"])
-    needs.give("budget", "N4", needs.Given(value=str(sample)))
+    give("N4", value=str(sample))
     sample.unlink()   # a file that is gone is not given
     assert not next(n for n in oneshot_spec.status("budget")["needs"] if n["id"] == "N4")["given"]
