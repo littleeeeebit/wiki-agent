@@ -361,13 +361,13 @@ class ChatSession:
         if self.isolated:
             # `--bare` would skip the subscription login too. The sign-in is
             # kept; only the settings, hooks and tools are isolated.
-            cmd += ["--setting-sources", "", "--settings", json.dumps({"disableAllHooks": True, "fastMode": self.fast}),
-                    "--strict-mcp-config", "--no-session-persistence"]
+            flags = deepseek.flags(self.model, {"disableAllHooks": True, "fastMode": self.fast})
+            cmd += ["--setting-sources", "", "--settings", json.dumps(flags), "--strict-mcp-config", "--no-session-persistence"]
         else:
             # Shared user skills can carry the previous desktop host's routing
             # instructions. Native hooks and the app's prompts own this workflow.
             cmd += ["--disable-slash-commands"]
-            cmd += ["--settings", json.dumps({"fastMode": self.fast})]
+            cmd += ["--settings", json.dumps(deepseek.flags(self.model, {"fastMode": self.fast}))]
         if self.model:
             cmd += ["--model", self.model]
         if effort := deepseek.effort(self.model, self.effort):
@@ -805,6 +805,8 @@ class ChatSession:
         fast = self.fast if fast is None else fast
         if (model or None) == self.model and (effort or None) == self.effort and fast == self.fast:
             return
+        if deepseek.provider(model) != deepseek.provider(self.model):
+            self.session_id, self.quota = None, []   # another provider's transcript and limits: neither carries
         self.model = model or None
         self.effort = effort or None
         self.fast = fast

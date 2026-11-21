@@ -27,7 +27,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, output_of
+from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, deepseek, output_of
 from common.process import background_options
 from common.paths import RAW
 from common import errorlog
@@ -128,7 +128,7 @@ def all_provider_usage() -> dict:
         chats += [run.chat for run in loop._review_runs.values()]
     providers = []
     for provider in ("claude", "codex"):
-        matching = [chat for chat in chats if chat.is_codex == (provider == "codex")]
+        matching = [chat for chat in chats if ("codex" if chat.is_codex else deepseek.provider(chat.model)) == provider]
         if not matching:
             providers.append(provider_usage(provider))
             continue
@@ -533,7 +533,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
                                bypass=bypass, **release_repair.unshared(spec))
             chat._spec_system = prompt
             chat.settled = SETTLING.search
-            chat.session_id = resumable(recall(path), chat.is_codex)
+            chat.session_id = resumable(recall(path), deepseek.provider(model))
             _sessions[key] = chat
         else:
             if chat.bypass != bypass:

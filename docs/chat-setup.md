@@ -185,8 +185,10 @@ Only the terminal is omitted, and the rest is the same. To exit, use `Ctrl+C`.
 If only Codex is installed, the actual model queried during installation is selected by default. If both are installed, Claude is the default.
 To select a different CLI on the screen, that CLI must also be installed and logged in.
 DeepSeek Flash (DeepSeek V4.1 Flash) runs on the Claude CLI, pointed at DeepSeek's Anthropic-compatible endpoint. It
-needs the Claude CLI and a `DEEPSEEK_API_KEY` in the hub's `.env`. With no effort chosen it thinks at `max`, and the
-screen shows no account quota or cost for it, since both would be the Claude login's.
+needs the Claude CLI and a `DEEPSEEK_API_KEY` in the hub's `.env`; the CLI reads the key through `apiKeyHelper`, so the
+commands and hooks it starts never see it in their environment. With no effort chosen it thinks at `max`, and the
+screen shows no account quota or cost for it, since both would be the Claude login's. Switching a conversation between
+Claude and DeepSeek starts a new one: neither provider resumes the other's transcript.
 
 ### Source updates
 

@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agent import ChatSession, read_tools
+from agent import ChatSession, deepseek, read_tools
 from common import errorlog, worktree_home
 from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
@@ -555,7 +555,7 @@ def cell(spec: dict, path: Path) -> ChatSession:
                        **({"verification": verify_dir, "env": env} if verify_dir is not None else {}))
     try:
         saved = json.loads((folder(*key) / "session.json").read_text(encoding="utf-8"))
-        if (saved.get("provider") == ("codex" if chat.is_codex else "claude")
+        if (saved.get("provider") == deepseek.provider(model)
                 and (saved.get("tools_profile") == tools_profile if verify_dir is not None or chat.is_codex else True)):
             chat.session_id = saved.get("session_id")
     except (OSError, ValueError, AttributeError):
@@ -920,7 +920,7 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
                     kept.parent.mkdir(parents=True, exist_ok=True)
                     kept.write_text(json.dumps({"session_id": ev.meta["session_id"],
                                                 "tools_profile": CLOUD_PROFILE if verification.cloud(spec) else READ_PROFILE,
-                                                "provider": "codex" if chat.is_codex else "claude"}) + "\n",
+                                                "provider": "codex" if chat.is_codex else deepseek.provider(chat.model)}) + "\n",
                                     encoding="utf-8")
             elif ev.kind == "error":
                 failed = ev.text
