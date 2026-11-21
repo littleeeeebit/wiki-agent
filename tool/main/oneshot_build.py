@@ -27,7 +27,7 @@ from xml.etree import ElementTree
 from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
-from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
+from . import connect, oneshot, oneshot_android, oneshot_needs, oneshot_spec, refactor_run, runtime, specs, work
 from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled
 from .query import _lock as work_lock, hold
 
@@ -261,16 +261,18 @@ TOOLCHAIN = ("JAVA_HOME", "ANDROID_HOME", "ANDROID_USER_HOME", "GRADLE_USER_HOME
 
 
 def toolchain(spec: dict) -> dict | None:
-    """The environment an Android run's tests and gate run in, or `None` for the server's own."""
+    """The environment an Android run's tests and gate run in, or `None` for the server's own; either with the
+    owner's secrets for the outside calls."""
 
-    return oneshot_android.build_env() if shape(spec["oneshot"]) == "android" else None
+    return oneshot_needs.gate_env(spec, oneshot_android.build_env() if shape(spec["oneshot"]) == "android" else None)
 
 
 def built_env(spec: dict) -> dict | None:
     """The environment a gate that builds the app runs in (S7, S8): an Android app's, alone or among several
-    kinds, since several kinds' gate builds the Android app on the core; else the server's own."""
+    kinds, since several kinds' gate builds the Android app on the core; else the server's own. Either has the
+    owner's secrets for the outside calls."""
 
-    return oneshot_android.build_env() if "android" in kinds_of(spec["oneshot"]) else None
+    return oneshot_needs.gate_env(spec, oneshot_android.build_env() if "android" in kinds_of(spec["oneshot"]) else None)
 
 
 def toolchain_text(spec: dict) -> str:
@@ -299,7 +301,8 @@ def tools_text(o: dict) -> str:
 def tests_text(spec: dict) -> str:
     kind = shape(spec["oneshot"])
     text = oneshot.prompt("tests", kind).replace("{tests}", json.dumps(planned(spec), ensure_ascii=False, indent=2)) \
-        .replace("{profile}", environment(spec["oneshot"])).replace("{tools}", tools_text(spec["oneshot"]))
+        .replace("{profile}", environment(spec["oneshot"])).replace("{tools}", tools_text(spec["oneshot"])) \
+        .replace("{needs}", oneshot_needs.told(spec))
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 
@@ -307,7 +310,8 @@ def build_text(spec: dict) -> str:
     o = spec["oneshot"]
     kind = shape(o)
     text = oneshot.prompt("build", kind).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
-        .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o))
+        .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o)) \
+        .replace("{needs}", oneshot_needs.told(spec))
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 

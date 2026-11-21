@@ -6,6 +6,7 @@ a name no run uses, removed afterwards; the files and programs are real ones.
 """
 
 import json
+import os
 import re
 import sys
 import uuid
@@ -14,7 +15,8 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_brief as brief, oneshot_needs as needs, oneshot_sheet as sheet, oneshot_spec, release, specs
+from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
+    oneshot_sheet as sheet, oneshot_spec, release, specs
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, STACK, android  # noqa: F401 — `android` is the fixture
 from test_oneshot_spec import DESIGN as WEB, GLOSSARY as WEB_GLOSSARY, PROFILE, REQS as WEB_REQS, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -261,3 +263,31 @@ def test_what_was_given_can_be_taken_back(at_r1, tmp_path):
     give("N4", value=str(sample))
     sample.unlink()   # a file that is gone is not given
     assert not next(n for n in oneshot_spec.status("budget")["needs"] if n["id"] == "N4")["given"]
+
+
+def test_every_gate_the_run_runs_has_each_given_secret_and_the_prompts_name_only_its_variable(at_r1, tmp_path, monkeypatch):
+    spec = lambda: specs.load("budget", oneshot.BRANCH)  # noqa: E731
+    base = {k: "set" for k in build.TOOLCHAIN}   # the Android toolchain, as this host would have it
+    monkeypatch.setattr(oneshot_android, "build_env", lambda: dict(base))
+    assert needs.gate_env(spec(), None) is None and build.toolchain(spec()) == base
+    sample = tmp_path / "page.png"
+    sample.write_bytes(b"x")
+    value = f"key-{uuid.uuid4().hex}"
+    give("N1", value=value)
+    give("N3", value=sys.executable)
+    give("N4", value=str(sample))
+    assert build.toolchain(spec()) == {**base, ENV: value} == build.built_env(spec())
+    server = needs.gate_env(spec(), None)   # the server's own environment, with the secret on top
+    assert server[ENV] == value and server.get("PATH") == os.environ.get("PATH")
+    oneshot_spec.saved("budget", oneshot={"tests_head": "a" * 40, "gate": "pytest", "contract": ["tests/test_x.py"]})
+    for text in (build.tests_text(spec()), build.build_text(spec())):
+        assert "{needs}" not in text and value not in text and ("Nothing in the tests is a fake" in text or "Add no fake" in text)
+        assert f"- `{ENV}`: N1 번역 API 키, a secret (X1)" in text and f"a file at `{sample.resolve()}`" in text
+        assert "N2 번역 서비스 계정, an account the owner has (X1)" in text
+    take = needs.take_back("budget", "N1", src())
+    assert take and needs.gate_env(spec(), {"BASE": "server"}) == {"BASE": "server"}   # removed: no gate gets it
+
+
+def test_a_run_whose_calls_need_nothing_is_told_so():
+    assert needs.told({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}) == \
+        "- none: no outside call needs anything from the owner"

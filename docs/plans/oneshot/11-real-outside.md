@@ -161,9 +161,19 @@ device or a screen left to that kind's device stage. The server sets every
 (`oneshot_build.built_env`). The gate already fails a run with a skipped
 contract case, so a test that skipped for want of a key fails locally.
 
+The tests and the build are told every need: a secret by its variable, a
+program or a file by the path it was given at, an account by what it is,
+never a value (`oneshot_needs.told`). Every gate the server runs for the run
+has each given secret, read from Credential Manager for that gate
+(`oneshot_needs.gate_env`, through `toolchain` and `built_env`). That covers
+the tests stage, the build's gate, the front build's gate and the pull
+request's gate. 11b1 stops there: the build agent's own shell does not have
+the secrets yet, so a test that needs one skips when the agent runs it and
+must pass in the server's gate.
+
 In CI the variables are absent. Each test that needs one skips with the need's
 id in its reason, and the run's CI summary lists those skips as owed to the
-local gate. A public repository never receives a secret.
+local gate (11b2). A public repository never receives a secret.
 
 ### The review reads fakes as weakened contracts
 
@@ -207,7 +217,8 @@ knows the values, at commit time, rather than in the reviewer's reading.
 | # | Step | Status |
 | --- | --- | --- |
 | 11a1 | A design's outside calls may carry `needs`; the owner gives each (secrets to Credential Manager), the sheet lists them, and R1 approval waits for all of them | Done — #416 |
-| 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | In progress |
-| 11b | Tests and build prompts without fakes; the gate's environment carries the secrets; CI skips name the need | Not started |
+| 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | Done — #417 |
+| 11b1 | Tests and build prompts without fakes, told every need; every gate the server runs carries the given secrets | In progress |
+| 11b2 | The build agent's own turns carry the secrets under the server's leak check; the CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Not started |
 | 11c | The review refuses a fake inside a test file | Not started |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |

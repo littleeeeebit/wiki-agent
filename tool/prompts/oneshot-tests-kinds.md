@@ -26,9 +26,21 @@ describes them. The tests run on this PC in the stack's `tests` runner, with
 no emulator, no device and no Windows session of their own: `cargo test` for a
 Rust core, Gradle's JVM tests for Kotlin Multiplatform, and so on. Reach the
 module inside each test body, so the tests run while it does not exist yet. A
-call that leaves the app is replaced by a fake in the tests; none goes to the
-network. A platform module is tested through the contract the rest of the
-core relies on, with the platform faked.
+platform module is tested through the contract the rest of the core relies
+on.
+
+Nothing in the tests is a fake, mock, stub or stand-in of anything. A call
+that leaves the app is made for real, against the service itself, with what
+the owner gave for it:
+
+{needs}
+
+A test reads a secret from its environment variable, which the server sets
+whenever it runs the tests on this PC. When the variable is absent, as in CI,
+the test skips with the need's id in its reason, such as `N1`; when the
+server runs the tests, nothing may skip. A check that needs a device, a window or the screen is not a contract test:
+it belongs to that kind's own device or screen stage. Never print a secret's
+value, and never write it into a file, a test name or a message.
 
 ```json
 {tests}
@@ -55,7 +67,7 @@ End the turn with one fenced block:
 - `root`: the folder, from the repository root, that the report's relative
   `file` paths start from. Leave it `""` when they start at the root.
 - `contract`: every file that holds a planned test, or code a planned test
-  runs from its own test code (a shared helper, a fake, a base class).
+  runs from its own test code (a shared helper, a base class).
 - `config`: the files that only configure the test runner. Keep the runner's
   configuration out of the core's build file where the tool allows it, since
   the build will still change that file.

@@ -18,6 +18,18 @@ the endpoints it depends on, as `api.yaml` describes them. Reach the
 application inside each test body, so the tests run while it does not exist
 yet.
 
+Nothing in the tests is a fake, mock, stub or stand-in of anything. A call
+that leaves the server is made for real, against the service itself, with what
+the owner gave for it:
+
+{needs}
+
+A test reads a secret from its environment variable, which the server sets
+whenever it runs the tests on this PC. When the variable is absent, as in CI,
+the test skips with the need's id in its reason, such as `N1`; when the
+server runs the tests, nothing may skip. A check that needs a browser belongs to the screen stages, not here. Never print a secret's
+value, and never write it into a file, a test name or a message.
+
 ```json
 {tests}
 ```

@@ -1,15 +1,19 @@
 """What the owner gives an outside call: checked on the design, kept where each kind belongs, and every one given
 before R1 may be approved.
 
-`docs/plans/oneshot/11-real-outside.md` ("11a1") is the design. A `secret` lives in Windows Credential Manager under
+`docs/plans/oneshot/11-real-outside.md` ("11a1", "11b1") is the design. A `secret` lives in Windows Credential Manager under
 `wiki-agent/oneshot/<repo>/<env>`, never in the spec, the record, an answer or an error; it stays there for the
 repository's next run until the owner removes it, which they can at any stage, since the store itself lists what
 it holds (`kept`). The other kinds are kept in the spec's `oneshot.given` with the `what` they were given for, so a
 redesign that changes what a need is asks for it again. Giving or removing a need names the sheet it was made on.
+
+The tests and the build are told every need (`told`), and every gate the server runs for the run has each given
+secret in its environment under its `env` (`gate_env`); the value is read from the store for that gate only.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -118,6 +122,46 @@ def shown(spec: dict) -> list[dict]:
 
 def missing(spec: dict) -> list[dict]:
     return [n for n in shown(spec) if not n["given"]]
+
+
+def secrets(spec: dict) -> dict[str, str]:
+    """Each given secret's value by its `env`, read from the store for one gate; a need not given is absent."""
+
+    out = {}
+    for n, _ in owed(spec["oneshot"].get("design") or {}).values():
+        if n["kind"] == "secret":
+            try:
+                value = release.secret_read(name(spec["repo"], n["env"]))
+            except (OSError, ValueError):   # no store on this host, or one that cannot be read: the gate runs without
+                value = None
+            if value is not None:
+                out[n["env"]] = value
+    return out
+
+
+def gate_env(spec: dict, env: dict | None) -> dict | None:
+    """`env`, the server's own when `None`, with every given secret set; `env` itself when the run needs none."""
+
+    if not (found := secrets(spec)):
+        return env
+    return {**(os.environ if env is None else env), **found}
+
+
+def told(spec: dict) -> str:
+    """The needs as the tests and the build read them: a secret by its variable, a program or a file by the path
+    it was given at, an account by what it is. Never a secret's value."""
+
+    given = spec["oneshot"].get("given") or {}
+    lines = []
+    for nid, (n, calls) in owed(spec["oneshot"].get("design") or {}).items():
+        uses = ", ".join(x["id"] for x in calls)
+        if n["kind"] == "secret":
+            lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret ({uses})")
+        elif n["kind"] in ("tool", "file") and (path := (given.get(nid) or {}).get("path")):
+            lines.append(f"- {nid} {n['what']}, a {'program' if n['kind'] == 'tool' else 'file'} at `{path}` ({uses})")
+        else:
+            lines.append(f"- {nid} {n['what']}, an account the owner has ({uses})")
+    return "\n".join(lines) or "- none: no outside call needs anything from the owner"
 
 
 def kept(repo: str) -> list[str]:
