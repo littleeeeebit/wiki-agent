@@ -133,7 +133,7 @@ def test_a_pc_apps_two_clean_rounds_on_one_build_wait_before_r3_with_its_owner_c
 
 def test_a_look_that_ran_none_of_the_pc_apps_owed_look_checks_goes_back_to_the_build(judged):
     owed = {"id": "O1", "kind": "desktop", "source": "look", "requirement": "R1", "check": "켜짐",
-            "expect": {"id": "translate-on", "toggle": "On"}}
+            "act": {"action": "toggle", "id": "translate-on"}, "expect": {"id": "translate-on", "toggle": "On"}}
     screens = [{**{k: v for k, v in s.items() if k != "route"}, "surface": "window"} for s in FRONT["screens"]]
     oneshot_spec.saved("budget", oneshot={"intent": {"restated": "가계부", "kind": "desktop"}, "owed": [owed],
                                           "front": {**FRONT, "screens": screens}, "looks": [pc_look(1, "a" * 64)],
@@ -144,9 +144,11 @@ def test_a_look_that_ran_none_of_the_pc_apps_owed_look_checks_goes_back_to_the_b
     assert heard == [("PC 앱에서 확인할 O1 을 마지막 화면 검사가 돌리지 않았다", "build-front")]
 
 
-def test_a_build_seen_before_never_brings_its_clean_rounds_back():
-    rounds = [{"head": "h", "clean": True, "build": b} for b in ("A", "B", "A")]
-    assert not critique.passed(rounds, "h", "A") and critique.passed([*rounds, rounds[-1]], "h", "A")
+def test_a_build_frozen_again_never_brings_back_its_clean_rounds_whichever_kind_judged_between():
+    rounds = [{"head": "h", "clean": True, "build": "A", "ts": 1}, {"head": "h", "clean": True, "build": "A", "ts": 3}]
+    assert critique.passed(rounds, "h", "A") and not critique.passed(rounds, "h", "A", since=2)   # A frozen again at 2
+    assert critique.passed([*rounds, {**rounds[-1], "ts": 4}], "h", "A", since=2)
+    assert critique.frozen_at({"desktop_build": {"frozen": 2.5}}) == 2.5 and critique.frozen_at({}) == 0
 
 
 def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts(judged):

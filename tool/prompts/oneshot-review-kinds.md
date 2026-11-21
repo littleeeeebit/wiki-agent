@@ -62,11 +62,16 @@ stable `AutomationId` and its name, value or toggle state), `owner` when it
 needs what a session with no owner's screen cannot show (a capture of
 another program's window or of the screen, or how an overlay composes over
 it), checked against a fixture window whose content is known and passed only
-on what is observed. A `look` check names the element and its state, and
-its `expect` is that postcondition as the driver reads it: the element's
+on what is observed. A `look` check names the element and its state. Its
+`act` is the step that must bring it about: an `action` (`invoke`,
+`set_value` with its `value`, `toggle`, `select`, `expand`, `collapse`,
+`scroll_into_view`) on the control whose `AutomationId` is `id`. Its
+`expect` is the postcondition as the driver reads it: the element's
 `AutomationId` as `id` with its `name`, `value` or `toggle` (`On`, `Off`,
-`Indeterminate`), and `"in": "owned"` when it is in a window the main window
-owns. The build scripts the scenario; the look passes only on your `expect`.
+`Indeterminate`). Either takes `"in": "owned"` when it is in a window the
+main window owns. The build may add steps that lead to yours; the look ends
+on your `act` and passes only when your `expect` did not hold before it and
+holds after it.
 A capture check names where the program reports what it captured: an element's
 value, or a file in its data folder. A composition check reads the fixture's
 region of the screen. A "capturing" label or the program's own drawn window is

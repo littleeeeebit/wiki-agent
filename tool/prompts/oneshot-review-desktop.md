@@ -54,12 +54,16 @@ show it, and that check's `source`:
 
 - `look` when the postcondition is a UI Automation state a driver reads: an
   element with a stable `AutomationId` and its name, value or toggle state
-  after the scenario. Name the element and the state in `check`, and give
-  that postcondition as the driver reads it in `expect`: the element's
+  after the scenario. Name the element and the state in `check`. Give the
+  step that must bring it about in `act`: an `action` (`invoke`,
+  `set_value` with its `value`, `toggle`, `select`, `expand`, `collapse`,
+  `scroll_into_view`) on the control whose `AutomationId` is `id`. Give the
+  postcondition as the driver reads it in `expect`: the element's
   `AutomationId` as `id` with its `name`, `value` or `toggle` (`On`, `Off`,
-  `Indeterminate`), and `"in": "owned"` when it is in a window the main
-  window owns. The build scripts the scenario; the look passes only on your
-  `expect`.
+  `Indeterminate`). Either takes `"in": "owned"` when it is in a window the
+  main window owns. The build may add steps that lead to yours; the look
+  ends on your `act` and passes only when your `expect` did not hold before
+  it and holds after it.
 - `owner` when the postcondition needs what a session with no owner's screen
   cannot show: a capture of another program's window or of the screen, or how
   a per-pixel-alpha overlay composes. The check runs against a fixture window
@@ -93,7 +97,7 @@ A short answer, then exactly one fenced block whose info string is
 `oneshot-review`, holding one JSON object:
 
 ```oneshot-review
-{"verdict": "approve", "head": "<the HEAD you were given, in full>", "findings": [{"location": "core/src/reader.rs:42", "severity": "P2", "reason": "…", "evidence": "…"}, {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R2", "check": "…", "source": "owner"}}, {"location": "core/src/settings.rs:9", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R3", "check": "…", "source": "look", "expect": {"id": "translate-on", "toggle": "On"}}}]}
+{"verdict": "approve", "head": "<the HEAD you were given, in full>", "findings": [{"location": "core/src/reader.rs:42", "severity": "P2", "reason": "…", "evidence": "…"}, {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R2", "check": "…", "source": "owner"}}, {"location": "core/src/settings.rs:9", "severity": "P1", "reason": "…", "evidence": "…", "area": "…", "device": {"kind": "desktop", "requirement": "R3", "check": "…", "source": "look", "act": {"action": "toggle", "id": "translate-on"}, "expect": {"id": "translate-on", "toggle": "On"}}}]}
 ```
 
 `verdict` is `refuse` exactly when a P0 or P1 finding without `device`

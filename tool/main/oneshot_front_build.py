@@ -98,12 +98,13 @@ def build_front_text(spec: dict) -> str:
     if "{viewports}" in text:   # a web app's, alone or among the kinds
         text = text.replace("{viewports}", ", ".join(views(o["profile"], "webapp" if shape(o) == "kinds" else "")))
     text = text.replace("{profile}", environment(o)).replace("{tools}", oneshot_build.tools_text(o)) \
-        .replace("{window}", o["profile"].get("window", "")) \
-        .replace("{desktop_owed}", "\n".join(f"- `{x['id']}` ({x['requirement']}, `{x['location']}`): {x['check']} — "
-                                             f"{x['reason']} · expect `{json.dumps(x['expect'], ensure_ascii=False)}`"
-                                             for x in oneshot_desktop.looked_for(o)) or "- (none)")
+        .replace("{window}", o["profile"].get("window", ""))
+    # The review's checks go in last, as written: no later substitution may rewrite what the builder copies.
+    pc_owed = "\n".join(f"- `{x['id']}` ({x['requirement']}, `{x['location']}`): {x['check']} — {x['reason']} · act "
+                        f"`{json.dumps(x['act'], ensure_ascii=False)}` · expect `{json.dumps(x['expect'], ensure_ascii=False)}`"
+                        for x in oneshot_desktop.looked_for(o)) or "- (none)"
     if "android" not in kinds_of(o):
-        return text
+        return text.replace("{desktop_owed}", pc_owed)
     if shape(o) == "kinds":   # the Android parts read only what applies to the Android app
         spec, o = (one := as_kind(spec, "android")), one["oneshot"]
     size = DEVICES[o["profile"]["device"]]
@@ -114,7 +115,7 @@ def build_front_text(spec: dict) -> str:
                                      for x in oneshot_device.owed(spec)) or "- (none)") \
         .replace("{permissions}", ", ".join(f"`{p}`" for p in oneshot_device.grants(spec)) or "none") \
         .replace("{suffix}", oneshot_device.suffix(o)) \
-        .replace("{fixture}", "yes" if oneshot_device.reads_screen(spec) else "no")
+        .replace("{fixture}", "yes" if oneshot_device.reads_screen(spec) else "no").replace("{desktop_owed}", pc_owed)
 
 
 def begin(repo: str) -> None:
@@ -176,7 +177,7 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     stopped = lambda: run.halt.is_set() or runtime.stopping.is_set()   # noqa: E731
     shots = store.folder / "build" / f"r{n}"
     shutil.rmtree(shots, ignore_errors=True)
-    findings, apks = [], {}
+    findings, apks, proven = [], {}, []
     for k in kinds:   # in the owner's order; a kind that fails sends the build back before the next is looked at
         one = as_kind(spec, k) if several else spec
         specs.note(run, f"{'에뮬레이터에 앱을 설치해' if k == 'android' else '앱을 띄워'} 화면을 찍는다 · {n}회차"
@@ -196,16 +197,17 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         findings += found
         if stopped() or any(f["severity"] == "high" for f in found):
             break
+        if k == "desktop":   # its look passed: it ran every `look` owed check, each failure a high finding
+            proven = [x["id"] for x in oneshot_desktop.looked_for(o)]
     if stopped():   # a look cut short passes nothing: the stage stays `build-front`, resumable
         return "화면 검사 중에 멈췄다 — [재개] 로 빌드부터 다시 검사한다"
     # The app ran the tree's code, `live_cmd` may build: what was shot must still be the HEAD the gate passed.
     if (now := oneshot_build.head(path)) != verdict["head"] or specs.dirty(path):
         return (f"앱을 띄워 찍는 동안 작업트리가 바뀌었다 — HEAD `{now[:12]}`, 게이트는 `{verdict['head'][:12]}`. "
                 "`live_cmd` 와 앱은 추적하는 파일을 바꾸지 않는다")
-    # A PC app's look that passes ran every `look` owed check, each failure a high finding: the critic reads which.
+    # The critic reads which owed checks the PC app's passed look ran; a look that failed or never got there, none.
     looks = [*(o.get("looks") or []), {"round": n, "head": verdict["head"], "findings": findings,
-                                       **({"build": build["identity"], "proven": [
-                                           x["id"] for x in oneshot_desktop.looked_for(o)]} if build else {})}]
+                                       **({"build": build["identity"], "proven": proven} if build else {})}]
     if high := [f for f in findings if f["severity"] == "high"]:
         oneshot_spec.saved(spec["repo"], oneshot={"looks": looks})
         return "화면 검사에서 고칠 것이 나왔다 — " + " / ".join(
@@ -233,7 +235,8 @@ def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> tuple[dict |
     staging = oneshot_spec.store(spec["repo"]).folder / "desktop"
     into = staging / f"build-{time.time_ns()}"
     try:
-        build = {**oneshot_desktop.frozen(path, desktop, into), "head": head, "checks": desktop["checks"]}
+        build = {**oneshot_desktop.frozen(path, desktop, into), "head": head, "checks": desktop["checks"],
+                 "frozen": time.time()}   # clean critiques count from here, for every kind
     except BaseException:
         shutil.rmtree(into, ignore_errors=True)
         raise

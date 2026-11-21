@@ -232,34 +232,41 @@ def checks(runs: Launches, spec: dict, build: dict) -> list[dict]:
         if scenario is None:
             out.append(finding(lead, "full", f"{failed} — 빌드에 그 시나리오가 없다 · 확인: {x['check']}"))
             continue
-        report = runs.drive(scenario["screen"], scenario["state"], scenario["steps"])
-        wants = [*(s["expect"] for s in scenario["steps"][:-1]), x["expect"]]
-        if proved(report, wants):
+        # The review's step and postcondition close the scenario, whatever the build wrote there.
+        steps = [*scenario["steps"][:-1], {"name": scenario["steps"][-1]["name"], **x["act"], "expect": x["expect"]}]
+        report = runs.drive(scenario["screen"], scenario["state"], steps)
+        if proved(report, [s["expect"] for s in steps]):
             continue
         why = [f for f in desktop_driver.findings(report) if f.startswith("step ")][:2] or \
             ["the driver's read was not complete" if not complete(report) else
-             "a step's postcondition was not read on one element of its window, after the step before"]
+             "a step's postcondition was not read on one element of its window after the step before, "
+             "or held before the last step"]
         out.append(finding(scenario["screen"], scenario["state"], f"{failed} — {'; '.join(why)} · 확인: {x['check']}"))
     return out
 
 
 def proved(report: dict, wants: list[dict]) -> bool:
     """A complete read in which step k acted and its state, read after step k-1's (the start's for the first),
-    shows `wants[k]` on the one element its id names in the window it names."""
+    shows `wants[k]` on the one element its id names in the window it names; the last one's did not show before
+    that step, so the step brought it about."""
 
     import desktop_driver
+
+    def shows(sid: str, want: dict) -> bool:
+        window = desktop_driver.scope(report, states[sid], want.get("in", "main"))
+        return window is not None and desktop_driver.holds(states[sid], want, window)
 
     order = [s["id"] for s in report.get("states") or []]
     states, steps, at = dict(zip(order, report.get("states") or [])), report.get("steps") or [], 0
     if not complete(report) or len(steps) != len(wants):
         return False
-    for step, want in zip(steps, wants):
+    for n, (step, want) in enumerate(zip(steps, wants), 1):
         if not step.get("acted") or step.get("state") not in states or order.index(step["state"]) <= at:
             return False
+        if n == len(steps) and shows(order[at], want):   # already so before the step: it proves nothing
+            return False
         at = order.index(step["state"])
-        state = states[step["state"]]
-        window = desktop_driver.scope(report, state, want.get("in", "main"))
-        if window is None or not desktop_driver.holds(state, want, window):
+        if not shows(step["state"], want):
             return False
     return True
 

@@ -115,6 +115,12 @@ def expectation(expect) -> tuple[str, str] | None:
     return None
 
 
+def units(text: str) -> int:
+    """`text`'s length as Windows counts it, in UTF-16 code units: the driver's `$MAX_VALUE` counts these."""
+
+    return len(text.encode("utf-16-le")) // 2
+
+
 def wanted(expect: dict) -> dict:
     """What a postcondition reads on one element: its non-blank `id` and `name`, and its `value` and `toggle` state."""
 

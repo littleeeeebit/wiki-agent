@@ -544,39 +544,44 @@ def test_a_manifest_that_no_longer_digests_to_the_saved_identity_is_altered(tmp_
 
 ON = {"id": "translate-on", "toggle": "On"}
 OWED = [{"id": "O1", "kind": "desktop", "source": "look", "requirement": "R2", "check": "번역을 켜면 켜짐으로 보인다",
-         "expect": ON},
+         "act": {"action": "toggle", "id": "translate-on"}, "expect": ON},
         {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R3", "check": "캡처에 글이 있다"},
         {"id": "O3", "kind": "desktop", "source": "look", "requirement": "R3", "check": "이전 버전의 미룬 검사"}]
 SCENARIO = {"O1": {"screen": "S1", "state": "full", "steps": [
     {"name": "on", "action": "toggle", "id": "translate-on", "expect": ON}]}}
-UNSCOPED = "a step's postcondition was not read on one element of its window, after the step before"
+UNSCOPED = ("a step's postcondition was not read on one element of its window after the step before, "
+            "or held before the last step")
 
 
 @pytest.mark.parametrize("case, why", [
     ("on", None), ("off", "step on: its postcondition was not read"),
     ("in the dialog", UNSCOPED),   # the main window's switch stayed off, a dialog's same-named one is on
     ("stale", UNSCOPED),           # the step points back at the start state, which already showed it on
-    ("its own expect", UNSCOPED),  # the builder read the switch's unchanged name instead of the review's toggle
+    ("already on", UNSCOPED),      # on before the review's step too: the step brought nothing about
+    ("its own expect", "step on: its postcondition was not read"),   # the review's toggle is read, not the name
+    ("its own act", None),         # the review's toggle is what runs, not the builder's `refresh`
     ("unscripted", "빌드에 그 시나리오가 없다")])
-def test_a_look_check_passes_only_on_the_reviews_postcondition_read_where_it_names(tmp_path, case, why):
+def test_a_look_check_passes_only_on_the_reviews_step_and_postcondition_where_it_names(tmp_path, case, why):
     started, scenarios = [], {} if case == "unscripted" else SCENARIO
-    if case == "its own expect":
-        scenarios = {"O1": {**SCENARIO["O1"], "steps": [{**SCENARIO["O1"]["steps"][0],
-                                                         "expect": {"id": "translate-on", "name": "번역"}}]}}
+    if case in ("its own expect", "its own act"):
+        mine = {"expect": {"id": "translate-on", "name": "번역"}} if case == "its own expect" else \
+            {"action": "invoke", "id": "refresh"}
+        scenarios = {"O1": {**SCENARIO["O1"], "steps": [{**SCENARIO["O1"]["steps"][0], **mine}]}}
 
     def answer(sid, state, steps):   # the toggle leaves the main window's switch on, or not
-        started.append((sid, state, [s["name"] for s in steps]))
+        started.append((sid, state, [(s["name"], s["action"], s["id"]) for s in steps]))
         switch = node("translate-on", id="translate-on", name="번역", patterns=["Toggle"], toggle="Off")
-        after = [{**switch, "toggle": "On" if case == "on" else "Off"}]
+        after = [{**switch, "toggle": "On" if case in ("on", "already on", "its own act") else "Off"}]
         if case == "in the dialog":
             return report([switch], windows=(MAIN, DIALOG), steps=[
                 {**steps[0], "shows": [*after, {**switch, "window": DIALOG, "toggle": "On"}]}])
-        got = report([{**switch, "toggle": "On"} if case == "stale" else switch], steps=[{**steps[0], "shows": after}])
+        got = report([{**switch, "toggle": "On"} if case in ("stale", "already on") else switch],
+                     steps=[{**steps[0], "shows": after}])
         return {**got, "steps": [{**got["steps"][0], "state": "s00"}]} if case == "stale" else got
 
     spec = {"oneshot": {"front": {"screens": SCREENS}, "owed": OWED}}
     found = pc_look.checks(Runs(tmp_path / "evidence", answer), spec, {"checks": scenarios})
-    assert started == ([("S1", "full", ["on"])] if scenarios else [])   # O2 and the unscripted O3 wait for the owner
+    assert started == ([("S1", "full", [("on", "toggle", "translate-on")])] if scenarios else [])   # O2, O3: the owner's
     assert [f["what"] for f in found] == ([] if why is None else [
         f"PC 앱에서 확인할 O1(R2) 이 통과하지 못했다 — {why} · 확인: 번역을 켜면 켜짐으로 보인다"])
     assert [x["id"] for x in pc_look.oneshot_desktop.owner_owed(spec["oneshot"])] == ["O2", "O3"]

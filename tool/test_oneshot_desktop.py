@@ -180,8 +180,9 @@ def test_a_built_pc_app_core_is_reviewed(desktop, kinds):
 
 LOOK = {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "번역 켜기가 꺼진 채 남는다", "evidence": "x",
         "area": "toggle", "device": {"kind": "desktop", "requirement": "R1", "check": "`translate` 토글이 켜진다",
-                                     "source": "look", "expect": {"id": "translate", "toggle": "On"}}}
-OWNER = {**LOOK, "device": {**{k: v for k, v in LOOK["device"].items() if k != "expect"},
+                                     "source": "look", "act": {"action": "toggle", "id": "translate"},
+                                     "expect": {"id": "translate", "toggle": "On"}}}
+OWNER = {**LOOK, "device": {**{k: v for k, v in LOOK["device"].items() if k not in ("act", "expect")},
                             "check": "고정 창을 캡처한 결과가 `{data}/seen.txt` 에 그 글을 담는다", "source": "owner"}}
 
 
@@ -196,13 +197,15 @@ def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
     for bad in ({"source": None}, {"source": "screen"}, {"source": "Look"}):   # neither source: no deferral
         with pytest.raises(ValueError, match="`source`"):
             oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], **bad}}), "h", devices)
-    for bad in ({"expect": None}, {"expect": {"id": "translate"}}, {"expect": {"name": "번역"}}):
-        with pytest.raises(ValueError, match="`expect`"):   # a `look` check names the postcondition the driver reads
+    for bad in ({"expect": None}, {"expect": {"id": "translate"}}, {"expect": {"name": "번역"}}, {"act": None},
+                {"act": {"action": "click", "id": "translate"}}, {"act": {"action": "set_value", "id": "translate"}}):
+        with pytest.raises(ValueError, match="`expect`"):   # a `look` check names its step and what it brings about
             oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], **bad}}), "h", devices)
-    with pytest.raises(ValueError, match="`expect`"):   # an owner's check names none
-        oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], "expect": LOOK["device"]["expect"]}}),
-                                  "h", devices)
-    gone = {**LOOK, "device": {k: v for k, v in LOOK["device"].items() if k not in ("source", "expect")}}
+    for extra in ({"expect": LOOK["device"]["expect"]}, {"act": LOOK["device"]["act"]}):   # an owner's names neither
+        with pytest.raises(ValueError, match="`expect`"):
+            oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], **extra}}), "h", devices)
+    assert oneshot_review.owing(found)[0]["act"] == {"action": "toggle", "id": "translate"}
+    gone = {**LOOK, "device": {k: v for k, v in LOOK["device"].items() if k not in ("source", "act", "expect")}}
     with pytest.raises(ValueError, match="`source`"):
         oneshot_review.verdict_of(approve(gone), "h", devices)
     phone = {"android": {"R1"}}   # an Android deferral names none
