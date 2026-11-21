@@ -198,9 +198,10 @@ def clean_event(event: bytes, key: str) -> bytes:
     if not data:
         return event
     fixed = rewritten_json(b"\n".join(data), key)
-    if len(fixed) > LONGEST_EVENT:   # ASCII escapes can grow it up to sixfold: the limit holds for what goes out too
-        raise ValueError("an event past LONGEST_EVENT once written again")
-    return b"\n".join([line for line, is_data in zip(lines, field) if not is_data] + [b"data: " + fixed])
+    out = b"\n".join([line for line, is_data in zip(lines, field) if not is_data] + [b"data: " + fixed])
+    if len(out) > LONGEST_EVENT:   # ASCII escapes can grow it sixfold: the whole event that goes out, measured as
+        raise ValueError("an event past LONGEST_EVENT once written again")   # it came, before its blank line
+    return out
 
 
 def clean_body(body: bytes, key: str) -> bytes:

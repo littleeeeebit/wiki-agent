@@ -560,6 +560,11 @@ def test_an_event_past_the_limit_once_written_again_is_refused():
 
     wide = "é".encode() * (deepseek_relay.LONGEST_EVENT // 4)   # half the limit in, three times it out
     assert broken(b'data: {"n": 1}\n\ndata: "' + wide + b'"\n\n') == [b'data: {"n": 1}\n\n']
+    # The JSON fits once written again, but its other fields and `data: ` take the whole event past the limit.
+    fits = deepseek_relay.LONGEST_EVENT - 2   # the quoted string's length once written: just under the limit
+    near = b'"' + "é".encode() * ((fits - 2) // 6) + b"x" * ((fits - 2) % 6) + b'"'
+    assert len(deepseek_relay.rewritten_json(near, "sk-fixture")) == fits
+    assert broken(b"event: delta\ndata: " + near + b"\n\n") == []
     with pytest.raises(ValueError):
         deepseek_relay.clean_body(b'"' + "é".encode() * (deepseek_relay.LONGEST_BODY // 4) + b'"', "sk-fixture")
 
