@@ -20,8 +20,6 @@ INTERACTIVE = {"Button", "CheckBox", "ComboBox", "Edit", "Hyperlink", "ListItem"
                "Slider", "Spinner", "SplitButton", "TabItem", "TreeItem"}
 ACTING = {"Invoke", "Toggle", "SelectionItem", "ExpandCollapse", "Value"}
 ACTIONS = ("invoke", "set_value", "toggle", "select", "expand", "collapse", "scroll_into_view")   # the driver's `Act`
-WAIT = "wait"   # the server's own step, never a build's: no control acted on, a measured wait, then a state
-MAX_WAIT_MS = 120_000   # the driver's `$MAX_WAIT_MS`: a control waits no longer
 PROPERTIES = ("id", "name", "value", "toggle")   # what a postcondition reads on an element
 TOGGLES = ("On", "Off", "Indeterminate")
 MAX_VALUE = 1000   # the driver's `$MAX_VALUE`: a longer value is recorded as null
@@ -50,19 +48,15 @@ def _allowed(op: str | None, wait: float, settle_ms: int) -> float:
         return wait + PHASE_SECONDS
     if op == "settle":
         return settle_ms / 1000 + PHASE_SECONDS
-    if op.startswith("wait ") and op[5:].isdigit():   # a control's measured wait, as long as it says, bounded
-        return min(int(op[5:]), MAX_WAIT_MS) / 1000 + PHASE_SECONDS
     return PHASE_SECONDS
 
 
 def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: float = 30, settle_ms: int = 1000,
-          key: str = "driver", halt=None, launch: tuple[int, int] | None = None) -> dict:
+          key: str = "driver", halt=None) -> dict:
     """Drive the app `look` started under `app`: choose its main window, size it to `window`, then shoot and read
     each state, before and after every step. The driver names each operation before it starts, and each is held
     to its own deadline. The driver's report, with `last` naming the last operation it entered and `ended`
     naming one whose deadline passed; the driver's job is then ended, and `end` holds the proof of that end.
-    `launch`, the wall-clock ms just before and after the app was started, comes back as `launched` on the
-    driver's own clock, where a control times its wait from.
     That report is also saved as `result.json` beside the driver's own files, so the evidence a reader opens
     later carries the deadline and the end proof, which the driver's `driver.json` cannot. A `halt` set while it
     runs ends the driver at once, `ended` then `halted`."""
@@ -71,7 +65,7 @@ def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: f
     folder = look.folder / "evidence" / key
     folder.mkdir()
     request = {"out": str(folder), "job": look.jobs[app].name, "window": list(window), "steps": steps,
-               "wait_seconds": wait, "settle_ms": settle_ms, "launch": list(launch) if launch else None}
+               "wait_seconds": wait, "settle_ms": settle_ms}
     (folder / "request.json").write_text(json.dumps(request, indent=1), encoding="utf-8")
     look.start(key, [str(POWERSHELL), *arguments(SCRIPT, folder / "request.json")], folder, halt=halt)
     ended, end = _watch(look.jobs[key], folder / "progress.json", wait, settle_ms, halt)

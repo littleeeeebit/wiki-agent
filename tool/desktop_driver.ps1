@@ -64,9 +64,6 @@ $out = $ask.out
 $report = [ordered]@{ phase = "starting"; main = $null; size = $null; states = @(); steps = @(); refusal = $null; error = $null }
 $UTILITY = @("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator", "IME", "MSCTFIME UI")
 $MAX_ITEMS = 2000   # a list's items counted at most: more is an unknown count, so its tree is not taken as whole
-$origin = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()   # the app's start, `launched`, on the same clock
-$clock = [System.Diagnostics.Stopwatch]::StartNew()   # each state's `at` and `done`, each step's `acted_at`, in ms
-$MAX_WAIT_MS = 120000   # a control's wait at most: the driver's `MAX_WAIT_MS`
 $MAX_VALUE = 1000   # a control's value recorded at most, in characters: a check's expected value is no longer
 $script:seq = 0
 
@@ -162,7 +159,6 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
   # `scrolled`: inside a container that scrolls, so a person reaches what lies past its edge by scrolling.
   # The process first, and nothing else of an element outside the app's job: an embedded fragment of another
   # process is marked by its pid alone and never walked. `Current` reads each property when it is asked for.
-  $t0 = $clock.ElapsedMilliseconds   # its properties are read from here to `t`
   $c = $element.Current; $owner = $c.ProcessId
   if (-not [Desk]::InApp([uint32]$owner)) {
     $script:nodes += [ordered]@{ window = $hwnd; depth = $depth; foreign = $true; pid = $owner }
@@ -188,11 +184,6 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     try { $node.toggle = [string]$element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
     catch { $node.toggle = $null }
   }
-  if ($patterns -contains "SelectionItem") {   # a radio button's or a list item's: a mode the lead-in may set
-    try { $node.selected = [bool]$element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected }
-    catch { $node.selected = $null }
-  }
-  $node.t0 = $t0; $node.t = $clock.ElapsedMilliseconds   # a control's coverage counts from this read
   $script:walked.Add($element)   # its identity is read by `Items`, under that operation's own deadline
   $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded
   if (-not $open) {
@@ -211,12 +202,10 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
 
 function State([string]$name) {   # every window of the app in this state, shot and read
   $id = "s{0:D2}" -f $report.states.Count   # unique and plain: it names the shots; the label stays in the report
-  $at = $clock.ElapsedMilliseconds
   Enter "list $id"
   $windows = @(Windows | Where-Object { -not $_.utility })
   $script:tops = @($windows | ForEach-Object { [int64]$_.hwnd })
-  $state = [ordered]@{ id = $id; name = $name; at = $at; listed = $clock.ElapsedMilliseconds; windows = $windows;
-                       shots = @(); reads = @(); nodes = @() }   # `listed`: its windows, and none else, known by then
+  $state = [ordered]@{ id = $id; name = $name; windows = $windows; shots = @(); reads = @(); nodes = @() }
   foreach ($w in $windows) {
     Enter "shoot $id $($w.hwnd)"
     $shot = Shoot $w $id
@@ -226,7 +215,6 @@ function State([string]$name) {   # every window of the app in this state, shot 
     $script:nodes, $script:lists = @(), @()
     $script:walked = New-Object 'System.Collections.Generic.List[object]'
     $read = [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
-    $began = $clock.ElapsedMilliseconds
     if (Current $w) {
       try {
         Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd
@@ -235,12 +223,10 @@ function State([string]$name) {   # every window of the app in this state, shot 
         else { $read = [ordered]@{ hwnd = $w.hwnd; read = $true } }
       } catch { $read.error = "the tree could not be read: $($_.Exception.Message)" }
     }
-    $read.from = $began; $read.at = $clock.ElapsedMilliseconds   # the window's walk, from its start to its end
     $state.reads += $read
     $state.nodes += $script:nodes
   }
-  $state.done = $clock.ElapsedMilliseconds   # every property of the state read by now
-  $report.states += $state   # saved by the caller, after a control's first sample
+  $report.states += $state; Save
   $state
 }
 
@@ -276,44 +262,6 @@ function Target($step) {
   [ordered]@{ element = $mine[0] }
 }
 
-function Probe($want) {
-  # A control's sample: the one element `want` names in its window, the window itself among them as a state
-  # reads it, with its name, value and toggle; `absent` when the window holds none. Read between `from` and `at`.
-  $from = $clock.ElapsedMilliseconds
-  $sample = [ordered]@{ from = $from }
-  try {
-    $root = [int64](Main)
-    if ($want.in -eq "owned") {
-      $owned = @(Windows | Where-Object { $_.owner -eq $root })
-      if ($owned.Count -gt 1) { throw "the main window owns $($owned.Count) windows, not one" }
-      if ($owned.Count -eq 0) {   # the main window proven above: no owned window holds no element either
-        $sample.absent = $true; $sample.at = $clock.ElapsedMilliseconds; return $sample
-      }
-      $root = [int64]$owned[0].hwnd
-    }
-    $others = @(Windows | ForEach-Object { [int64]$_.hwnd } | Where-Object { $_ -ne $root })
-    $A = [System.Windows.Automation.AutomationElement]
-    $all = $A::FromHandle([IntPtr]$root).FindAll([System.Windows.Automation.TreeScope]::Subtree,
-                         (New-Object System.Windows.Automation.PropertyCondition $A::AutomationIdProperty, $want.id))
-    $mine = @($all | Where-Object { -not (Nested $_ $root $others) -and [Desk]::InApp([uint32]$_.Current.ProcessId) })
-    if ($mine.Count -gt 1) { throw "$($mine.Count) elements match $($want.id)" }
-    if ($mine.Count -eq 0) { $sample.absent = $true }
-    else {
-      $e = $mine[0]; $c = $e.Current
-      $node = [ordered]@{ id = $c.AutomationId; name = $c.Name }
-      try {
-        $v = [string]$e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
-        $node.value = if ($v.Length -gt $MAX_VALUE) { $null } else { $v }
-      } catch {}
-      try { $node.toggle = [string]$e.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
-      catch {}
-      $sample.node = $node
-    }
-  } catch { $sample.error = "$($_.Exception.Message)" }
-  $sample.at = $clock.ElapsedMilliseconds
-  $sample
-}
-
 function Act($element, $step) {
   switch ($step.action) {
     "invoke" { $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
@@ -343,10 +291,7 @@ try {
   Enter "choose"
   $candidates = @(Candidates)
   if ($candidates.Count -ne 1) { $report.candidates = $candidates; Refuse "$($candidates.Count) candidate main windows at startup" }
-  $report.main = $candidates[0]
-  # The server's bounds on the app's start, its first process or a launcher's: none, and no control is timed.
-  $report.launched = if ($ask.launch) { @(([int64]$ask.launch[0] - $origin), ([int64]$ask.launch[1] - $origin)) } else { $null }
-  Save
+  $report.main = $candidates[0]; Save
 
   # Sized to S1's window without activation or a z-order change, and read back. SetWindowPos sizes the window with
   # its invisible resize borders; the frame read back is without them.
@@ -369,37 +314,15 @@ try {
   foreach ($step in $ask.steps) {
     $done = [ordered]@{ name = $step.name; action = $step.action; acted = $false; error = $null; state = $null; expect = $step.expect }
     $report.steps += $done
-    if ($step.action -eq "wait") {
-      # The server's control: nothing acted on, its expect's element sampled all along with no write between two
-      # samples, then the state read once `after[k]` ms have passed since each anchor k as it ended (the app's
-      # start, then each step's action), and the settle at least; `MAX_WAIT_MS` at most.
-      $done.acted = $true
-      $anchors = @([int64]$report.launched[1]) + @($report.steps |
-                   Where-Object { $null -ne $_.acted_at } | ForEach-Object { [int64]$_.acted_at })
-      $now = $clock.ElapsedMilliseconds
-      $until = $now + [int64]$ask.settle_ms
-      for ($k = 0; $k -lt [Math]::Min($anchors.Count, @($step.after).Count); $k++) {
-        $until = [Math]::Max($until, $anchors[$k] + [int64]@($step.after)[$k])
-      }
-      $until = [Math]::Min($until, $now + $MAX_WAIT_MS)
-      Enter "wait $($until - $now)"   # the one write before the state: none falls between two samples
-      [void](Probe $step.expect)   # the first search of a tree is slow: a warm-up, never a sample
-      $done.samples = @(Probe $step.expect)
-      while ($clock.ElapsedMilliseconds -lt $until) { Start-Sleep -Milliseconds 20; $done.samples += Probe $step.expect }
-      $done.state = (State "after-$($step.name)").id
-      Save; continue
-    }
-    Save   # the state before, kept back for a control's first sample
     Enter "find $($step.name)"
     $found = Target $step
     if ($found.error) { $done.error = $found.error; Save; continue }
     Enter "act $($step.name)"
-    $done.acting_at = $clock.ElapsedMilliseconds   # what the action sets going starts in between these two
-    try { Act $found.element $step; $done.acted = $true; $done.acted_at = $clock.ElapsedMilliseconds }
-    catch { $done.error = "$($_.Exception.Message)"; Save; continue }
+    try { Act $found.element $step; $done.acted = $true } catch { $done.error = "$($_.Exception.Message)"; Save; continue }
     Save
     Settle
     $done.state = (State "after-$($step.name)").id   # the server reads the postcondition off this state
+    Save
   }
   Enter "done"; Save
 } catch {

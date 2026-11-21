@@ -291,31 +291,6 @@ def test_a_check_reads_a_controls_value_and_toggle_state_after_its_steps(tmp_pat
     assert ("step on: its postcondition was not read" in desktop_driver.findings(report)) is not holds
 
 
-def test_the_servers_wait_step_acts_on_nothing_and_reads_the_state_after_the_same_settle(tmp_path):
-    script = tmp_path / "form.ps1"
-    script.write_text(WPF_FORM, encoding="utf-8")
-    steps = [{"name": "control", "action": desktop_driver.WAIT, "after": [6000],   # past the app's start
-              "expect": {"id": "translate-on", "toggle": "On"}}]
-    with desktop_session.look(tmp_path, "form-wait") as look:
-        began = time.time_ns() // 1_000_000
-        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                           str(script)], tmp_path)
-        launch = (began, time.time_ns() // 1_000_000)
-        report = desktop_driver.drive(look, "app", (400, 300), steps, wait=30, settle_ms=800, launch=launch)
-    [step] = report["steps"]
-    assert report["phase"] == "done" and step["acted"] and step["state"] == "s01" and not step["error"], report
-    states = {s["id"]: s for s in report["states"]}
-    assert [n.get("toggle") for n in states["s01"]["nodes"] if n.get("id") == "translate-on"] == ["Off"]
-    early, late = report["launched"]
-    assert early <= late < states["s00"]["at"] <= states["s00"]["done"] <= states["s01"]["at"]   # the app started first
-    assert states["s01"]["at"] - late >= 6000 and report["last"] == "done"   # read as late as asked
-    [read] = [{k: n[k] for k in ("id", "name", "toggle")} for n in states["s01"]["nodes"] if n.get("id") == "translate-on"]
-    assert read["toggle"] == "Off" and all(x["node"] == read for x in step["samples"])
-    spans = [(x["from"], x["at"]) for x in step["samples"]]
-    gaps = [b[1] - a[0] for a, b in zip(spans, spans[1:])]
-    assert max(gaps) <= 400, gaps   # sampled all along, no write between two (the look's `GAP_MS`), never acted on   # sampled all along (the look's `GAP_MS`), never acted on
-
-
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
     state = {"nodes": [{"id": "a", "name": "번역", "value": "", "toggle": "On"}, {"id": "b", "value": "x"},
                        {"id": "c", "toggle": "On", "foreign": True}]}
@@ -323,33 +298,6 @@ def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
     assert not desktop_driver.holds(state, {"id": "a", "value": "x"})   # `x` is another element's
     assert not desktop_driver.holds(state, {"id": "c", "toggle": "On"})   # another process's element
     assert desktop_driver.holds(state, {"name": "번역"}) and not desktop_driver.holds(state, {"value": "x"})   # no id, no name
-
-
-def test_a_controls_samples_of_an_owned_window_not_yet_open_are_proven_absences(tmp_path):
-    script = tmp_path / "form.ps1"
-    script.write_text(WPF_FORM, encoding="utf-8")
-    steps = [{"name": "control", "action": desktop_driver.WAIT, "after": [3000],
-              "expect": {"id": "result", "name": "found", "in": "owned"}}]
-    with desktop_session.look(tmp_path, "form-owned") as look:
-        began = time.time_ns() // 1_000_000
-        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                           str(script)], tmp_path)
-        report = desktop_driver.drive(look, "app", (400, 300), steps, wait=30, settle_ms=800,
-                                      launch=(began, time.time_ns() // 1_000_000))
-    [step] = report["steps"]
-    assert report["phase"] == "done" and step["samples"], report
-    assert all(x.get("absent") and "error" not in x and x["from"] <= x["at"] for x in step["samples"])
-    start = report["states"][0]
-    assert all(r["from"] <= r["at"] <= start["done"] for r in start["reads"])
-    assert all(start["at"] <= n["t0"] <= n["t"] <= start["done"] for n in start["nodes"] if not n["foreign"])
-    assert start["at"] <= start["listed"] <= min(r["from"] for r in start["reads"])
-
-
-def test_a_controls_measured_wait_has_its_own_bounded_deadline():
-    allowed = desktop_driver._allowed
-    assert allowed("wait 13000", 30, 1000) == 13 + desktop_driver.PHASE_SECONDS > allowed("settle", 30, 1000)
-    assert allowed("wait 999999", 30, 1000) == desktop_driver.MAX_WAIT_MS / 1000 + desktop_driver.PHASE_SECONDS
-    assert allowed("wait for a window", 30, 1000) == 30 + desktop_driver.PHASE_SECONDS
 
 
 def test_a_postcondition_in_a_window_reads_the_one_element_there_its_id_names():
