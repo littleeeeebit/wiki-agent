@@ -64,6 +64,7 @@ $out = $ask.out
 $report = [ordered]@{ phase = "starting"; main = $null; size = $null; states = @(); steps = @(); refusal = $null; error = $null }
 $UTILITY = @("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator", "IME", "MSCTFIME UI")
 $MAX_ITEMS = 2000   # a list's items counted at most: more is an unknown count, so its tree is not taken as whole
+$MAX_VALUE = 1000   # a control's value recorded at most, in characters: a check's expected value is no longer
 $script:seq = 0
 
 function Put([string]$name, $value) {   # UTF-8 without a byte order mark, replaced whole
@@ -171,6 +172,18 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     name = $c.Name; id = $c.AutomationId; enabled = $c.IsEnabled; offscreen = $c.IsOffscreen;
     rect = if ($b.IsEmpty) { $null } else { @([int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height) };
     patterns = $patterns; scrolled = $scrolled }
+  # What a check's postcondition may read beside the name: the value, null past $MAX_VALUE characters, so a cut
+  # one never matches; and the toggle state.
+  if ($patterns -contains "Value") {
+    try {
+      $v = [string]$element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+      $node.value = if ($v.Length -gt $MAX_VALUE) { $null } else { $v }
+    } catch { $node.value = $null }
+  }
+  if ($patterns -contains "Toggle") {
+    try { $node.toggle = [string]$element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
+    catch { $node.toggle = $null }
+  }
   $script:walked.Add($element)   # its identity is read by `Items`, under that operation's own deadline
   $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded
   if (-not $open) {

@@ -23,9 +23,10 @@ HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # The stage a kind waits at in this version, stopped with reason `kind` until its plan step lands. A kind not
 # here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2), and
 # several kinds without `desktop` since 9c4b. `desktop`, alone or among other kinds, runs its core path, S6, R2
-# and the frontend build with every kind's look, its PC app's included (9e4a), and waits at the critique until
-# the critic judges a PC app's shots (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
-KIND_STOPS: dict[str, str] = {"desktop": "critique"}
+# and the frontend build with every kind's look, its PC app's included (9e4a), and the critique with its `look`
+# owed checks and the phone round of an Android app among them (9e4b); it waits before R3 until the owner's
+# desktop round (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
+KIND_STOPS: dict[str, str] = {"desktop": "r3"}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
 STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "review", "split", "board", "frontend", "r2", "build-front",
                "critique", "phone", "r3", "pr", "done")

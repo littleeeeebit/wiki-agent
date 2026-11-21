@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import time
+import uuid
 from pathlib import Path
 
 from wiki import slots_for
@@ -99,8 +100,12 @@ def build_front_text(spec: dict) -> str:
         text = text.replace("{viewports}", ", ".join(views(o["profile"], "webapp" if shape(o) == "kinds" else "")))
     text = text.replace("{profile}", environment(o)).replace("{tools}", oneshot_build.tools_text(o)) \
         .replace("{window}", o["profile"].get("window", ""))
+    # The review's checks go in last, as written: no later substitution may rewrite what the builder copies.
+    pc_owed = "\n".join(f"- `{x['id']}` ({x['requirement']}, `{x['location']}`): {x['check']} — {x['reason']} · act "
+                        f"`{json.dumps(x['act'], ensure_ascii=False)}` · expect `{json.dumps(x['expect'], ensure_ascii=False)}`"
+                        for x in oneshot_desktop.looked_for(o)) or "- (none)"
     if "android" not in kinds_of(o):
-        return text
+        return text.replace("{desktop_owed}", pc_owed)
     if shape(o) == "kinds":   # the Android parts read only what applies to the Android app
         spec, o = (one := as_kind(spec, "android")), one["oneshot"]
     size = DEVICES[o["profile"]["device"]]
@@ -111,7 +116,7 @@ def build_front_text(spec: dict) -> str:
                                      for x in oneshot_device.owed(spec)) or "- (none)") \
         .replace("{permissions}", ", ".join(f"`{p}`" for p in oneshot_device.grants(spec)) or "none") \
         .replace("{suffix}", oneshot_device.suffix(o)) \
-        .replace("{fixture}", "yes" if oneshot_device.reads_screen(spec) else "no")
+        .replace("{fixture}", "yes" if oneshot_device.reads_screen(spec) else "no").replace("{desktop_owed}", pc_owed)
 
 
 def begin(repo: str) -> None:
@@ -143,7 +148,10 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         phone = as_kind(spec, "android") if several else spec
         device = oneshot_device.declared(path, final, oneshot_device.reads_screen(phone), oneshot_device.suffix(o))
     # A PC app's block names the program its look starts, apart from the installer S8 attaches.
+    # Its `checks` script each `look` check the backend review left for it, as a driver scenario.
     desktop = oneshot_desktop.declared(path, final) if "desktop" in kinds else None
+    if desktop is not None and (why := oneshot_desktop.scripted(desktop["checks"], spec)):
+        return why
     if "webapp" in kinds and not live:
         return "어댑터의 `live_cmd` 가 비었다 — 백엔드와 화면을 함께 띄우는 명령을 적는다"
     # The backend's own gate runs as the server knows it: the adapter's naming it proves nothing it runs. Several
@@ -170,7 +178,7 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     stopped = lambda: run.halt.is_set() or runtime.stopping.is_set()   # noqa: E731
     shots = store.folder / "build" / f"r{n}"
     shutil.rmtree(shots, ignore_errors=True)
-    findings, apks = [], {}
+    findings, apks, proven = [], {}, []
     for k in kinds:   # in the owner's order; a kind that fails sends the build back before the next is looked at
         one = as_kind(spec, k) if several else spec
         specs.note(run, f"{'에뮬레이터에 앱을 설치해' if k == 'android' else '앱을 띄워'} 화면을 찍는다 · {n}회차"
@@ -190,14 +198,18 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         findings += found
         if stopped() or any(f["severity"] == "high" for f in found):
             break
+        if k == "desktop":   # its look passed: it ran every `look` owed check, each failure a high finding
+            proven = [x["id"] for x in oneshot_desktop.looked_for(o)]
     if stopped():   # a look cut short passes nothing: the stage stays `build-front`, resumable
         return "화면 검사 중에 멈췄다 — [재개] 로 빌드부터 다시 검사한다"
     # The app ran the tree's code, `live_cmd` may build: what was shot must still be the HEAD the gate passed.
     if (now := oneshot_build.head(path)) != verdict["head"] or specs.dirty(path):
         return (f"앱을 띄워 찍는 동안 작업트리가 바뀌었다 — HEAD `{now[:12]}`, 게이트는 `{verdict['head'][:12]}`. "
                 "`live_cmd` 와 앱은 추적하는 파일을 바꾸지 않는다")
+    # The critic reads which owed checks the PC app's passed look ran; a look that failed or never got there, none.
     looks = [*(o.get("looks") or []), {"round": n, "head": verdict["head"], "findings": findings,
-                                       **({"build": build["identity"]} if build else {})}]
+                                       **({"build": build["identity"], "freeze": build["freeze"], "proven": proven,
+                                           "proof": oneshot_desktop_look.PROOF} if build else {})}]
     if high := [f for f in findings if f["severity"] == "high"]:
         oneshot_spec.saved(spec["repo"], oneshot={"looks": looks})
         return "화면 검사에서 고칠 것이 나왔다 — " + " / ".join(
@@ -205,8 +217,7 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
             for f in high[:12])
     # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
     # The fixes this turn was sent with are built now: a resumed build no longer carries them. A run this version
-    # holds at the critique (a PC app's critic is 9e4b's) is saved stopped in the same write, so no poll sees it
-    # resumable.
+    # holds at the critique is saved stopped in the same write, so no poll sees it resumable.
     passed = {"stage": "critique", "front_built_head": verdict["head"], "looks": looks, "attempts": 0,
               "working": "critique", "fix": None, **({"device": device, "apks": apks} if android else {})}
     if oneshot_spec.held({**o, "stage": "critique"}):
@@ -226,7 +237,8 @@ def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> tuple[dict |
     staging = oneshot_spec.store(spec["repo"]).folder / "desktop"
     into = staging / f"build-{time.time_ns()}"
     try:
-        build = {**oneshot_desktop.frozen(path, desktop, into), "head": head}
+        build = {**oneshot_desktop.frozen(path, desktop, into), "head": head, "checks": desktop["checks"],
+                 "freeze": uuid.uuid4().hex}   # this freeze, even of the same files: clean critiques count from it
     except BaseException:
         shutil.rmtree(into, ignore_errors=True)
         raise
