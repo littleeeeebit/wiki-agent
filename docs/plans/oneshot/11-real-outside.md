@@ -183,17 +183,25 @@ has never stands in.
 
 The web look masks only each finding's text, so a secret as short as a JSON
 delimiter never changes its shape. Each screen is read and shot while no
-script of it or of its frames runs (`oneshot_look.still`), and the picture
-is kept only if every frame still holds the document read, since a refresh
-navigates with scripts off. What is read is what a picture can show as
-text: every frame's rendered text, which joins a value split across
-elements, open shadow roots, and the value, placeholder and alt of fields
-and images; never markup or a stylesheet. A value broken across lines still
-matches. A screen that
-shows a secret, or has a frame that cannot be read, is a high finding and
-is never shot: the critic sends its pictures to a model, and a high finding
-sends the build back before the critic runs. A secret drawn into a canvas,
-an image or a stylesheet's `content` is not seen.
+script or animation of it or of its frames runs (`oneshot_look.still`),
+and the picture is kept only if every frame still holds the document read,
+since a refresh navigates with scripts off.
+
+What is read is what a picture can show as text, each stream matched on its
+own: every frame's rendered text, which joins a value split across elements,
+the text outside code of each open shadow root and of a frame with no
+rendered text, such as an SVG one, and the value, placeholder and alt of
+fields and images; never markup or a stylesheet. Within one stream a value
+broken across lines still matches. A screen that shows a secret, or has a
+frame that cannot be read, is a high finding and is never shot. The critic
+sends its pictures to a model, and a high finding sends the build back
+before the critic runs.
+
+The guard stops at text, decided with the owner on 2026-11-21. A secret
+drawn as pixels, into a canvas, an image or a stylesheet's `content`, can
+reach the critic, the same trust the build agent gets in 11b2. What the
+critic writes, its findings and the reason it stopped, is kept with `[N1]`
+in each secret's place.
 
 11b1 stops there. The build agent's own shell does not have the secrets yet,
 so a test that needs one skips when the agent runs it and must pass in the

@@ -207,6 +207,28 @@ def test_a_document_that_replaces_the_one_read_before_the_picture_is_read_again(
     assert "[N1]" in found[0]["what"] and not (tmp_path / "S1-desktop-full.png").exists()
 
 
+SHADOW = "(host, html) => { host.attachShadow({mode: 'open'}).innerHTML = html; }"
+
+
+def test_shadow_text_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_makes_a_finding(browser):
+    page = browser.new_page(offline=True)
+    for html, hide, seen in (
+            ("key-<b>shadow</b>", {"key-shadow": "[N1]"}, True),   # a shadow root's own text node
+            ("<section><style>.a > .b { color: red }</style></section>", {">": "[N1]"}, False)):
+        for hidden in ("", " hidden"):
+            page.set_content(f"<main>Ready</main><div{hidden}></div>")
+            page.locator("div").evaluate(SHADOW, html)
+            assert bool(look.secrets_shown(page, hide)) == seen
+    svg = "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%2F%3E"
+    page.set_content(f"<main>Ready</main><iframe src=\"{svg}\"></iframe>")
+    page.frames[1].wait_for_load_state()
+    assert page.frames[1].evaluate("() => document.documentElement.innerText") is None   # an SVG root has none
+    assert look.secrets_shown(page, {"key-x": "[N1]"}) == ""   # a frame with no rendered text is read, not a crash
+    page.set_content("<p>ab</p><iframe srcdoc='<p>cd</p>'></iframe><input value='ef'>")
+    page.wait_for_function("() => document.querySelector('iframe').contentDocument?.body?.innerText")
+    assert look.secrets_shown(page, {"abcd": "[N1]", "cdef": "[N2]"}) == ""   # each stream is matched alone
+
+
 def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser):
     page = browser.new_page(offline=True)
     page.set_content("<p id='t'>0</p><iframe srcdoc=\"<p id='f'>0</p><script>let i = 0; "
@@ -216,13 +238,17 @@ def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser)
     def read():
         return [f.evaluate("() => document.body.innerText") for f in page.frames]
 
+    def moved():
+        return page.evaluate("document.getAnimations()[0].currentTime")
+
+    page.add_style_tag(content="@keyframes m { to { opacity: 0 } } #t { animation: m 5s linear infinite }")
     with look.still(page):
-        before = read()
+        before, at = read(), moved()
         page.screenshot()
         time.sleep(0.2)
-        assert read() == before
+        assert read() == before and moved() == at   # a CSS animation, which can show or hide text, holds too
     time.sleep(0.2)
-    assert read() != before
+    assert read() != before and moved() != at
 
 
 def test_an_app_the_command_cannot_start_is_refused_with_its_output(tmp_path):

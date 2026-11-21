@@ -5,6 +5,7 @@ turn (`oneshot.ask`) is a stand-in that records the images it was handed; the re
 the real session sends with them is in `test_session_images.py`.
 """
 
+import json
 import os
 import re
 from unittest.mock import patch
@@ -114,6 +115,15 @@ def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts
         oneshot_spec.saved("budget", oneshot={"stage": "critique", "looks": [*o()["looks"], look(3)]})
         critique.critique("budget")
     assert o()["stage"] == "r3" and [c["clean"] for c in o()["critiques"]] == [False, True, True]
+
+
+def test_a_secret_a_picture_drew_is_kept_out_of_what_the_critic_wrote(judged):
+    _, sent = judged
+    _, asking = critic(said({**HIGH, "what": "화면에 key-9f2 가 보인다", "fix": "key-9f2 를 지운다"}))
+    with asking, patch.object(critique.oneshot_needs, "hidden", lambda spec, env: {"key-9f2": "[N1]"}):
+        critique.critique("budget")
+    assert "key-9f2" not in json.dumps([o()["critiques"], sent], ensure_ascii=False, default=str)
+    assert "화면에 [N1] 가 보인다" in sent[-1][2]
 
 
 def test_a_mechanical_high_finding_overrides_a_clean_critique(judged):

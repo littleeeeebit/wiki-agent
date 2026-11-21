@@ -435,24 +435,28 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
     return findings
 
 
-# What a picture of a frame can show as text: its rendered text, which joins a value split across elements and
-# leaves out code and hidden text, its open shadow roots' (which that text skips), and the value, placeholder and
-# alt of its fields and images; never markup or a stylesheet, which a short secret would match on a clean page.
+# What a picture of a frame can show as text, as separate streams: an HTML document's rendered text, which joins a
+# value split across elements and leaves out code and hidden text; the text nodes outside code of each open shadow
+# root (which that text skips) and of a document with no rendered text, such as an SVG one; and, as `values`, the
+# value, placeholder and alt of its fields and images. Never markup or a stylesheet, which a short secret would
+# match on a clean page.
 SHOWN = """() => {
-  const out = [document.documentElement.innerText], code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']);
+  const code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']), texts = [], values = [];
+  const outside = (n, root) => { for (let p = n.parentNode; p && p !== root; p = p.parentNode)
+    if (code.has(String(p.nodeName).toUpperCase())) return false; return true; };
+  const plain = root => { const out = [], walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) if (outside(n, root)) out.push(n.data); return out.join(''); };
+  const top = document.documentElement;
+  texts.push(top && typeof top.innerText === 'string' ? top.innerText : plain(document));
   const visit = root => {
     for (const el of root.querySelectorAll('*')) {
-      for (const a of ['value', 'placeholder', 'alt']) if (el.hasAttribute(a)) out.push(el.getAttribute(a));
-      if (typeof el.value === 'string') out.push(el.value);
-      if (el.shadowRoot) {
-        out.push([...el.shadowRoot.children].filter(c => !code.has(c.tagName.toUpperCase()))
-                 .map(c => c.innerText ?? '').join('\\n'));
-        visit(el.shadowRoot);
-      }
+      for (const a of ['value', 'placeholder', 'alt']) if (el.hasAttribute(a)) values.push(el.getAttribute(a));
+      if (typeof el.value === 'string') values.push(el.value);
+      if (el.shadowRoot) { texts.push(plain(el.shadowRoot)); visit(el.shadowRoot); }
     }
   };
   visit(document);
-  return out;
+  return {texts, values};
 }"""
 # Each frame's document, marked on first sight: a frame showing another document since gets another mark.
 DOCUMENT = "() => document.__look ??= performance.timeOrigin + '-' + Math.random()"
@@ -473,12 +477,14 @@ def still(page):
             pass
     for s in sessions:
         s.send("Emulation.setScriptExecutionDisabled", {"value": True})
+        s.send("Animation.setPlaybackRate", {"playbackRate": 0})   # a CSS animation can show or hide text
     try:
         yield
     finally:
         for s in sessions:
             try:
                 s.send("Emulation.setScriptExecutionDisabled", {"value": False})
+                s.send("Animation.setPlaybackRate", {"playbackRate": 1})
                 s.detach()
             except Error:   # a frame gone with the page
                 pass
@@ -490,11 +496,19 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
     from playwright.sync_api import Error
 
     try:
-        shown = "\n".join(text for frame in page.frames for text in frame.evaluate(SHOWN))
-    except Error:
+        read = [frame.evaluate(SHOWN) for frame in page.frames]
+        texts, values = [t for r in read for t in r["texts"]], [v for r in read for v in r["values"]]
+        if not all(isinstance(x, str) for x in texts + values):
+            raise TypeError
+    except (Error, TypeError, KeyError):
         return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
-    flat = "".join(shown.split())   # a value broken across lines still reads as one
-    if leaked := sorted({label for value, label in hide.items() if value in shown or "".join(value.split()) in flat}):
+    flats = ["".join(t.split()) for t in texts]   # within one stream, a value broken across lines reads as one
+
+    def seen(value: str) -> bool:
+        flat = "".join(value.split())
+        return (any(value in t for t in texts + values) or bool(flat) and any(flat in f for f in flats))
+
+    if leaked := sorted({label for value, label in hide.items() if seen(value)}):
         return f"화면에 비밀 값 {', '.join(leaked)} 이 보인다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다"
     return ""
 

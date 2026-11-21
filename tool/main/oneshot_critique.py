@@ -17,8 +17,11 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from common import masked
+
 from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_device as device, \
-    oneshot_front_build as front_build, oneshot_pr, oneshot_review as review, oneshot_screens as screens, oneshot_spec
+    oneshot_front_build as front_build, oneshot_needs, oneshot_pr, oneshot_review as review, \
+    oneshot_screens as screens, oneshot_spec
 from .oneshot_profile import kinds_of, shape
 from .oneshot_sheet import KIND_NAMES
 from .query import ROOT
@@ -118,11 +121,15 @@ def critique(repo: str) -> None:
             return None
         found = oneshot.turned(store, "critic", CRITIC_PROMPT, critique_text(one, seen, shown), "oneshot-critique",
                                lambda value: critique_of(value, one), tree, tuple(shown))
+        # The look shoots no screen whose text shows a secret, but a picture can still draw one (owner, 2026-11-21):
+        # what the critic writes is kept with `[N1]` in its place.
+        hide = oneshot_needs.hidden(spec, oneshot_needs.gate_env(spec, None))
         if found is None:   # a refused or failed image turn is never a critique that saw nothing wrong
             stopped = store.get().get("stopped") or {}
             if stopped.get("reason") == "block":
-                store.stop("critique", stopped.get("detail") or "")
+                store.stop("critique", masked(stopped.get("detail") or "", hide))
             return None
+        found = [{**f, "what": masked(f["what"], hide), "fix": masked(f["fix"], hide)} for f in found]
         return lambda: judged(repo, store, spec, seen, [{**f, "kind": kind} for f in found] if kind else found, kind)
 
     review.holding(repo, "화면 비평", body, "front_built_head", front_build.STAGE)
