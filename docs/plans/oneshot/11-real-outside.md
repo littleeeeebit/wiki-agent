@@ -63,8 +63,9 @@ outside call gains `needs`:
 | `file` | A path to a file the product reads (a model, a sample) | The path in the spec, checked to exist |
 
 A call that needs nothing from the owner (a public page, a local program the
-server installs) has `needs: []`. The server refuses a `secret` without an
-`env` name and an `env` name two needs share.
+server installs) has `needs: []`. Two calls that need the same thing list it
+under the same id with the same fields. The server refuses a `secret` without
+an `env` name, one id for two different needs, and one `env` under two ids.
 
 ### The sheet waits for them
 
@@ -74,6 +75,54 @@ written to Credential Manager when typed and never shown again; the sheet
 shows only whether it is set. Approval is refused while a need is missing,
 with the list of what is missing. The run stays at the sheet, and nothing
 stops: the owner gives the rest and approves.
+
+### What 11a1 builds: the record, the store and the gate
+
+11a is split in two. 11a1 is the server side: a design may carry `needs`, the
+owner can give each one, and approval waits for all of them. No prompt asks
+for `needs` yet, so a run today sees no change. 11a2 adds the sheet's inputs
+and the prompts, and gives the single-kind web design its `oneshot-outside`.
+
+`oneshot_needs.parsed` checks `needs` where the outside call is checked. A
+call without `needs` needs nothing, so a design from before this step still
+parses.
+
+The owner gives a need with `POST /api/oneshot/spec/{repo}/needs/{id}` and
+removes it with `DELETE` on the same path. Both work only while the run
+waits at R1 with no turn running. Both name the sheet the owner saw (its
+`source`, 409 otherwise), because after a redesign the same id may name
+another need. No answer or error repeats what the owner typed, and a body
+the server cannot read comes back without its input, on every route.
+
+| `kind` | Body | Kept |
+| --- | --- | --- |
+| `secret` | `value`, trimmed, at most 2560 bytes as UTF-16, what one credential holds | Credential Manager, `wiki-agent/oneshot/<repo>/<env>`; the spec and the answer never hold it |
+| `account` | `confirmed: true` | `given[id]`, with the need's `what` |
+| `tool` | `value`, a program name or path | `given[id]`, with the path `shutil.which` resolves; refused when there is none |
+| `file` | `value`, an absolute path | `given[id]`, with the resolved path; refused unless a file is there |
+
+A need counts as given in three cases:
+
+- A `secret` counts while Credential Manager holds its `env`.
+- An `account` counts while `given[id]` was given for the same `what`.
+- A `tool` or `file` counts while it was given for the same `what` and its
+  path is still a file.
+
+A redesign that changes what a need is therefore asks for it again. A secret
+stays under its `env` for the repository's next run until the owner removes
+it. The view lists every `env` Credential Manager holds a secret of the
+repository under (`secrets_kept`), read from the store itself rather than
+the design. `DELETE /api/oneshot/spec/{repo}/secrets/{env}` removes one at
+any stage, including one a redesign renamed or dropped. A host without
+Credential Manager shows the sheet with every secret missing and refuses
+to store one.
+
+`POST …/r1` refuses an approval while any need is missing, with 409 naming
+each missing id and `what`. An edit with comments still goes to the
+redesign. The sheet gains "주인이 줄 것": each need with its kind, the calls
+that need it and the requirements those calls depend on. The sheet is also
+the committed design document, so it never says whether a need is given.
+The spec's view carries `needs`, each with `given`, for the screen.
 
 ### Tests and builds use the real thing
 
@@ -130,7 +179,8 @@ knows the values, at commit time, rather than in the reviewer's reading.
 
 | # | Step | Status |
 | --- | --- | --- |
-| 11a | Every design returns `oneshot-outside` with `needs`; R1 shows them, keeps secrets in Credential Manager and refuses approval while one is missing | Not started |
+| 11a1 | A design's outside calls may carry `needs`; the owner gives each (secrets to Credential Manager), the sheet lists them, and R1 approval waits for all of them | In progress |
+| 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | Not started |
 | 11b | Tests and build prompts without fakes; the gate's environment carries the secrets; CI skips name the need | Not started |
 | 11c | The review refuses a fake inside a test file | Not started |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |

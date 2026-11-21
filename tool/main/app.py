@@ -30,7 +30,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AnyHttpUrl, BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 
 import translate
@@ -38,7 +39,7 @@ import agent
 from common import errorlog
 from common import settings as settings_file
 
-from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, release_api, runtime, specs, suite, survey, update, verification, wiring, work
+from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_needs, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, release_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
 from . import onboarding
 
@@ -155,6 +156,7 @@ app.include_router(planning.router)
 app.include_router(oneshot.router)
 app.include_router(oneshot_android.router)
 app.include_router(oneshot_spec.router)
+app.include_router(oneshot_needs.router)
 app.include_router(oneshot_front.router)
 app.include_router(oneshot_critique.router)
 app.include_router(oneshot_phone.router)
@@ -180,7 +182,9 @@ async def validation_error(request: Request, exc: RequestValidationError):
     # Validation exceptions embed submitted inputs; record only locations/types.
     errorlog.record("http", "Invalid request", method=request.method, route=request.url.path, status=422,
                     fields=[{"loc": e["loc"], "type": e["type"]} for e in exc.errors()])
-    return await request_validation_exception_handler(request, exc)
+    # The answer leaves the input out too: a refused body may hold a secret the owner typed.
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(
+        [{k: v for k, v in e.items() if k != "input"} for e in exc.errors()])})
 
 
 @app.middleware("http")

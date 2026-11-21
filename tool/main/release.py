@@ -590,8 +590,8 @@ def remote(repo: Path) -> str:
     return f"github.com/{found.group(1)}/{found.group(2)}".lower()
 
 
-def target(name: str) -> str:
-    return f"wiki-agent release key {name}"
+def target(name: str) -> str:   # a oneshot's secret is already whole: `wiki-agent/oneshot/<repo>/<env>`
+    return name if name.startswith("wiki-agent/") else f"wiki-agent release key {name}"
 
 
 class _Credential(ctypes.Structure):   # CREDENTIALW
