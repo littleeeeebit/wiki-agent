@@ -190,8 +190,11 @@ navigates with scripts off.
 What is read is the text the page carries, drawn or not, each stream matched
 on its own: the text and CDATA nodes outside code of every frame's document
 and of each open shadow root, joined so a value split across elements reads
-as one, and the value, placeholder and alt of fields and images; never
-markup or a stylesheet. Within one stream a value broken across lines still
+as one; beside each, its rendered text, so hidden text between two visible
+parts never splits a value the screen joins (a document's `innerText`, and
+for a shadow root or an SVG frame the nodes the same rule keeps: laid out,
+their element's `visibility` visible); and the value, placeholder and alt
+of fields and images; never markup or a stylesheet. Within one stream a value broken across lines still
 matches. A secret in hidden text has reached the browser all the same, so it
 is the app's leak to fix, and whether the browser draws it is never asked. A
 screen whose text carries a secret, or has a frame that cannot be read, is a

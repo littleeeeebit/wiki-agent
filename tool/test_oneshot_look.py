@@ -222,6 +222,13 @@ def test_shadow_text_drawn_or_not_is_seen_and_no_stylesheet_svg_frame_or_pair_of
             page.set_content(f"<main>Ready</main><div{hidden}></div>")
             page.locator("div").evaluate(SHADOW, html)
             assert bool(look.secrets_shown(page, hide)) == seen   # a hidden host carries its text all the same
+    gap = "<span>key-</span><span hidden>note</span><span style='visibility: hidden'>more</span><b>gap</b>"
+    for host in ("", " hidden"):   # shown joined past hidden text between; under a hidden host, neither carried nor shown
+        page.set_content(f"<main>Ready</main><div{host}></div>")
+        page.locator("div").evaluate(SHADOW, gap)
+        assert bool(look.secrets_shown(page, {"key-gap": "[N1]"})) == (not host)
+    page.set_content(f"<main>{gap}</main>")
+    assert look.secrets_shown(page, {"key-gap": "[N1]"})   # the document's own rendered text
     svg = "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%2F%3E"
     page.set_content(f"<main>Ready</main><iframe src=\"{svg}\"></iframe>")
     page.frames[1].wait_for_load_state()

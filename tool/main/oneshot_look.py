@@ -436,7 +436,9 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
 
 
 # The text a frame carries, drawn or not, as separate streams: the text and CDATA nodes outside code of its document
-# and of each open shadow root, joined so a value split across elements reads as one; as `values`, the value,
+# and of each open shadow root, joined so a value split across elements reads as one; beside each, its rendered
+# text, where hidden text between two visible parts no longer splits them (the document's `innerText`, else the
+# nodes `innerText`'s rule keeps: laid out, their element's `visibility` visible); as `values`, the value,
 # placeholder and alt of its fields and images. A secret in hidden text has reached the browser all the same. Never
 # markup or a stylesheet, which a short secret would match on a clean page.
 SHOWN = """() => {
@@ -446,15 +448,22 @@ SHOWN = """() => {
       if (code.has(String(p.nodeName).toUpperCase())) return false;
     return true;
   };
-  const plain = root => { const out = [], walk = document.createTreeWalker(root,
+  const drawn = n => {
+    const range = document.createRange(), el = n.parentElement || n.parentNode.host;
+    range.selectNodeContents(n);
+    return range.getClientRects().length > 0 && (!el || getComputedStyle(el).visibility === 'visible');
+  };
+  const plain = (root, keep = () => true) => { const out = [], walk = document.createTreeWalker(root,
     NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION);
-    for (let n = walk.nextNode(); n; n = walk.nextNode()) if (outside(n, root)) out.push(n.data); return out.join(''); };
-  texts.push(plain(document));
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) if (outside(n, root) && keep(n)) out.push(n.data);
+    return out.join(''); };
+  const top = document.documentElement;
+  texts.push(plain(document), top && typeof top.innerText === 'string' ? top.innerText : plain(document, drawn));
   const visit = root => {
     for (const el of root.querySelectorAll('*')) {
       for (const a of ['value', 'placeholder', 'alt']) if (el.hasAttribute(a)) values.push(el.getAttribute(a));
       if (typeof el.value === 'string') values.push(el.value);
-      if (el.shadowRoot) { texts.push(plain(el.shadowRoot)); visit(el.shadowRoot); }
+      if (el.shadowRoot) { texts.push(plain(el.shadowRoot), plain(el.shadowRoot, drawn)); visit(el.shadowRoot); }
     }
   };
   visit(document);
