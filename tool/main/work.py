@@ -296,13 +296,16 @@ def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:
     return memory.since_clear(rows)[-limit:]
 
 
-def handoff(rows: list[dict]) -> str:
+def handoff(rows: list[dict], provider: str) -> str:
     """What the conversation after a refusal starts from, beside the spec that
     is already its system prompt (`specs.system`): why it is new, the turns
-    before it, abridged, and what to do."""
+    before it on `provider` since it last took over, abridged, and what to do."""
 
     lines = []
     for row in rows:
+        if row.get("role") == "assistant" and row.get("provider", "claude") != provider:
+            lines = []   # another provider's turns, and what was asked of it: never carried across
+            continue
         text = str(row.get("text") or "").strip()
         if row.get("role") == "user" and text:
             lines.append("- Asked: " + text.splitlines()[0][:300])
@@ -848,7 +851,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                      provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **meta)
             if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
-                         handoff=handoff(recall(path)), provider=deepseek.of(chat))
+                         handoff=handoff(recall(path), deepseek.of(chat)), provider=deepseek.of(chat))
         except Exception as exc:
             # Transcript publication is not the execution boundary. A lost
             # record must not skip an already accepted review/plan handoff.

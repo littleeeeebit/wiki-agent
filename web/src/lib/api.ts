@@ -943,7 +943,7 @@ export const workDiff = (path: string, file = '') => get(`/api/work/diff?${new U
   .then((r) => json<Changes>(r, '코드 변경 현황'))
 
 export type ProviderStatus = {
-  provider: 'claude' | 'codex'
+  provider: 'claude' | 'codex' | 'deepseek'
   live: boolean; connection_ms: number | null; error: string
   quota: { name: string; used_percent: number | null; window_minutes?: number; resets_at: number | null; status?: string }[]
   usage: { input_tokens?: number; output_tokens?: number; cost_usd?: number; scope?: 'turn' | 'thread' }

@@ -34,7 +34,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import improvement
-from agent import ChatSession
+from agent import ChatSession, deepseek
 from common.budget import Budget, Cancelled, Exhausted
 
 from . import channels, loop, prerequisite_review, runtime, specs, work
@@ -588,7 +588,7 @@ def consume(path: Path, run: work.Run, text: str) -> tuple[str, str, dict, int, 
         try:
             work.remember(path, "assistant", final, error=failed, steps=made,
                           turn=run.turn, cell=run.chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
-                          provider="codex" if run.chat.is_codex else "claude",
+                          provider=deepseek.of(run.chat),
                           **{k: v for k, v in meta.items() if k not in ("session_id", "answer")})   # `answer` is in `final`
         except OSError as exc:  # a lost transcript row must not take the turn's usage with it
             note(run, f"대화 기록을 남기지 못했다 — {exc}")

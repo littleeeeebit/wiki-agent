@@ -29,7 +29,7 @@ def tree(tmp_path):
     """A repository beside a hub `.env` holding a fixture key."""
     (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(tmp_path / "repo")], check=True)
-    with patch.object(deepseek.settings, "HUB", tmp_path), patch.object(deepseek, "managed", lambda: []):
+    with patch.object(deepseek.settings, "HUB", tmp_path), patch.object(deepseek, "verify_route", lambda given: None):
         yield tmp_path / "repo"
 
 
@@ -94,10 +94,36 @@ def test_no_key_refuses_instead_of_falling_back_to_claude(tree):
         deepseek.flags("deepseek-flash", {})
 
 
-def test_a_route_it_cannot_hold_refuses_deepseek(tree, tmp_path):
-    with patch.object(deepseek, "managed", lambda: [{"env": {"ANTHROPIC_BASE_URL": "https://gateway.example"}}]), \
-         pytest.raises(RuntimeError, match="관리 설정"):
-        deepseek.flags("deepseek-flash", {})
+ROUTED = '''import json, os, subprocess, sys, urllib.request
+flags = json.loads(sys.argv[sys.argv.index("--settings") + 1])
+how = os.environ["FAKE_ROUTE"]
+if how != "away":   # "away": the turn went where policy sent it, never to the stand-in
+    key = subprocess.run(flags["apiKeyHelper"], shell=True, capture_output=True, text=True).stdout.strip()
+    token = key if how == "follows" else "gateway-token"
+    request = urllib.request.Request(flags["env"]["ANTHROPIC_BASE_URL"] + "/v1/messages", data=b"{}", method="POST",
+                                     headers={"Authorization": "Bearer " + token, "x-api-key": token})
+    try:
+        urllib.request.urlopen(request, timeout=10)
+    except Exception:
+        pass
+'''
+
+
+@pytest.mark.parametrize("how", ["follows", "gateway", "away"])
+def test_the_launch_checks_the_cli_really_follows_the_route(tmp_path, how):
+    fake = tmp_path / "cli.py"
+    fake.write_text(ROUTED, encoding="utf-8")
+    with patch("agent.chat_local.cli_command", lambda name: [sys.executable, str(fake)]), \
+         patch.dict(deepseek._verified, {"until": 0.0}), patch.dict("os.environ", {"FAKE_ROUTE": how}):
+        if how == "follows":
+            deepseek.verify_route({})
+            assert deepseek._verified["until"] > 0
+        else:   # a policy above `--settings` moved the endpoint, or put its own credential first
+            with pytest.raises(RuntimeError, match="DeepSeek 경로를 따르지 않는다"):
+                deepseek.verify_route({})
+
+
+def test_a_helper_path_a_shell_would_rewrite_refuses_deepseek(tree, tmp_path):
     odd = tmp_path / "100% hub"   # a space is quoted; a percent sign would expand in the helper's shell
     odd.mkdir()
     (odd / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
@@ -112,6 +138,11 @@ def test_saved_turns_and_handoffs_stay_with_their_provider():
     assert query.resumable(rows, "claude") is None and query.resumable(rows, "deepseek") == "ds"
     refused = [{"role": "context", "handoff": "- Asked: earlier", "provider": "claude"}]
     assert "earlier" in work.started_from(refused, "claude") and work.started_from(refused, "deepseek") == ""
+    # A Claude refusal after a DeepSeek turn: the handoff it writes holds only what Claude was asked and said.
+    mixed = [{"role": "user", "text": "asked deepseek"}, {"role": "assistant", "text": "deepseek said", "provider": "deepseek"},
+             {"role": "user", "text": "asked claude"}, {"role": "assistant", "text": "claude said", "provider": "claude"}]
+    written = work.handoff(mixed, "claude")
+    assert "asked claude" in written and "claude said" in written and "deepseek" not in written
 
 
 def test_another_provider_is_a_new_conversation():

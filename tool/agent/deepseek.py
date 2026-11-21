@@ -11,11 +11,16 @@ key, somewhere else.
 
 from __future__ import annotations
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
+import tempfile
+import threading
+import time
 
 from common import settings
 
@@ -54,50 +59,88 @@ def of(chat) -> str:
 # What would carry a turn, or a credential, past the endpoint and key helper set here. An empty value reads as
 # unset, so the flag settings blank each one a user's or project's settings may hold (probed with a stand-in).
 ROUTE = ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_OAUTH_TOKEN",
-         "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS")
+         "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+         "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD")
 # A shell runs the helper: these would expand or split inside its double quotes.
 SHELL = re.compile(r'[%!$`"^&|<>]')
+PROBE_KEY = "deepseek-route-probe"
+VERIFIED_FOR = 600.0   # seconds a passed route check stands: policy rarely changes under a running server
+_verified = {"until": 0.0}
+_verify_lock = threading.Lock()
 
 
-def managed() -> list[dict]:
-    """Every managed settings object on this machine. They outrank `--settings`, so none may route the CLI."""
+def built(given: dict, url: str, env: Path) -> dict:
+    helper = Path(__file__).resolve().parents[1] / "deepseek_key.py"
+    paths = (sys.executable, str(helper), str(env))
+    if any(SHELL.search(p) for p in paths):
+        raise RuntimeError(f"DeepSeek 키 도우미 경로에 셸 문자가 있다: {' · '.join(paths)}")
+    return {**given, "apiKeyHelper": " ".join(f'"{p}"' for p in paths),
+            "env": {"ANTHROPIC_BASE_URL": url, **dict.fromkeys(ROLES, MODEL),
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", **dict.fromkeys(ROUTE, "")}}
 
-    if os.name == "nt":
-        roots = [Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "ClaudeCode"]
-    else:
-        roots = [Path("/Library/Application Support/ClaudeCode"), Path("/etc/claude-code")]
-    files = [p for root in roots for p in [root / "managed-settings.json", *sorted(root.glob("managed-settings.d/*.json"))]]
-    found = [json.loads(p.read_text(encoding="utf-8")) for p in files if p.is_file()]
-    if os.name == "nt":
-        import winreg
 
-        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-            try:
-                with winreg.OpenKey(hive, r"SOFTWARE\Policies\ClaudeCode") as key:
-                    found.append(json.loads(winreg.QueryValueEx(key, "Settings")[0]))
-            except OSError:
+def verify_route(given: dict) -> None:
+    """Start the CLI once with these very settings, pointed at a loopback stand-in and a dummy key, and refuse unless
+    the request reaches the stand-in carrying that key alone. Managed settings, an MDM profile, a policy helper or a
+    signed-in gateway all outrank `--settings`; whichever of them reroutes the CLI, its effect shows here, at no
+    cost to the real key."""
+
+    from .chat_local import cli_command
+
+    with _verify_lock:
+        if time.monotonic() < _verified["until"]:
+            return
+        seen: list[tuple] = []
+
+        class Stand(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                if "messages" in self.path:
+                    seen.append((self.headers.get("Authorization"), self.headers.get("x-api-key")))
+                self.send_response(400)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"type":"error","error":{"type":"invalid_request_error","message":"route probe"}}')
+
+            def log_message(self, *args):
                 pass
-    return found
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Stand)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="deepseek-route-") as scratch:
+                (Path(scratch) / ".env").write_text(f"DEEPSEEK_API_KEY={PROBE_KEY}\n", encoding="utf-8")
+                probe = built({**given, "disableAllHooks": True}, f"http://127.0.0.1:{server.server_port}",
+                              Path(scratch) / ".env")
+                try:
+                    subprocess.run([*cli_command("claude"), "-p", "route probe", "--model", MODEL, "--settings",
+                                    json.dumps(probe), "--strict-mcp-config", "--no-session-persistence", "--tools", ""],
+                                   cwd=scratch, env=environment(MODEL, dict(os.environ)), stdin=subprocess.DEVNULL,
+                                   capture_output=True, timeout=90)
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            server.shutdown()
+            server.server_close()
+        honest = {f"Bearer {PROBE_KEY}", PROBE_KEY, None}
+        if not seen or any(auth not in honest or key not in honest for auth, key in seen):
+            raise RuntimeError("이 PC 의 Claude CLI 는 DeepSeek 경로를 따르지 않는다 — 관리 정책·MDM·로그인한 게이트웨이가 "
+                               "엔드포인트나 인증을 정한다. DeepSeek 은 쓰지 않는다")
+        _verified["until"] = time.monotonic() + VERIFIED_FOR
 
 
 def flags(model: str | None, given: dict) -> dict:
-    """The `--settings` JSON: `given` itself, or for DeepSeek with its endpoint, key helper and model names."""
+    """The `--settings` JSON: `given` itself, or for DeepSeek with its endpoint, key helper and model names, once
+    the CLI is seen to follow them (`verify_route`)."""
 
     if model != MODEL:
         return given
     env = settings.HUB / ".env"
     if not settings.entries(env).get("DEEPSEEK_API_KEY"):
         raise RuntimeError("DeepSeek 키가 없다: 허브의 .env 에 DEEPSEEK_API_KEY 를 넣어라")
-    helper = Path(__file__).resolve().parents[1] / "deepseek_key.py"
-    paths = (sys.executable, str(helper), str(env))
-    if any(SHELL.search(p) for p in paths):
-        raise RuntimeError(f"DeepSeek 키 도우미 경로에 셸 문자가 있다: {' · '.join(paths)}")
-    for policy in managed():
-        if policy.get("apiKeyHelper") or set(policy.get("env") or {}) & {"ANTHROPIC_BASE_URL", *ROUTE}:
-            raise RuntimeError("관리 설정이 Claude CLI 의 엔드포인트나 인증을 정한다 — DeepSeek 은 이 PC 에서 쓰지 않는다")
-    return {**given, "apiKeyHelper": " ".join(f'"{p}"' for p in paths),
-            "env": {"ANTHROPIC_BASE_URL": URL, **dict.fromkeys(ROLES, MODEL),
-                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", **dict.fromkeys(ROUTE, "")}}
+    made = built(given, URL, env)
+    verify_route(given)
+    return made
 
 
 def environment(model: str | None, base: dict) -> dict:

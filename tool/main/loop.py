@@ -546,8 +546,11 @@ def cell(spec: dict, path: Path) -> ChatSession:
                "implementation, committing, pushing, or accessing production. Return the verdict as the final "
                "answer. Do not read or print .env or secrets; tests may load the prepared environment."
                if verify_dir is not None else "")
-    try:   # a refused review conversation's successor starts from it (`refused_cell`)
-        context += "\n\n" + (folder(*key) / "handoff.md").read_text(encoding="utf-8")
+    try:   # a refused review conversation's successor on the same provider starts from it (`refused_cell`)
+        told = (folder(*key) / "handoff.md").read_text(encoding="utf-8")
+        stamp = re.match(r"<!-- provider: (\w+) -->\n", told)
+        if (stamp.group(1) if stamp else "claude") == deepseek.provider(model):
+            context += "\n\n" + told[stamp.end() if stamp else 0:]
     except OSError:
         pass
     chat = ChatSession(path, tools=CLOUD_TOOLS if verify_dir is not None else REVIEW_TOOLS,
@@ -591,7 +594,7 @@ def restated(spec: dict, path: Path, text: str, instruction: str = "") -> str:
             + "\n" + before + report)
 
 
-def refused_cell(spec: dict) -> None:
+def refused_cell(spec: dict, provider: str) -> None:
     """A review conversation the provider refused cannot be continued: the cell
     and its saved session go, and the next one starts from a handoff — the spec,
     the rounds so far, why it is new and what to do (`work.handoff` for the
@@ -605,7 +608,7 @@ def refused_cell(spec: dict) -> None:
         lines += [f"  - {f['head'][:200]} → {f.get('disposition') or 'no disposition yet'}" for f in r.get("items") or []]
     (folder(*key) / "session.json").unlink(missing_ok=True)
     (folder(*key) / "handoff.md").write_text(
-        "## Why this conversation is new\n"
+        f"<!-- provider: {provider} -->\n## Why this conversation is new\n"
         # Never the refusal itself: a classifier that reads the whole context flags talk of an earlier flag.
         "The previous review conversation stopped before it finished and cannot be continued, so this review "
         "starts fresh. The pull request and its "
@@ -939,7 +942,7 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
             release()
             run.finish()
     if work.REFUSED.search(failed):
-        refused_cell(specs.load(loop.repo, loop.sid) or spec)
+        refused_cell(specs.load(loop.repo, loop.sid) or spec, deepseek.of(chat))
         if answered.strip():   # it went on to an answer: the round judges that, and never asks again
             loop.refused = True
             return answered
