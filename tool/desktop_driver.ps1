@@ -191,6 +191,7 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     try { $node.selected = [bool]$element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected }
     catch { $node.selected = $null }
   }
+  $node.t = $clock.ElapsedMilliseconds   # when its properties were read: a control's coverage starts there
   $script:walked.Add($element)   # its identity is read by `Items`, under that operation's own deadline
   $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded
   if (-not $open) {
@@ -223,6 +224,7 @@ function State([string]$name) {   # every window of the app in this state, shot 
     $script:nodes, $script:lists = @(), @()
     $script:walked = New-Object 'System.Collections.Generic.List[object]'
     $read = [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
+    $began = $clock.ElapsedMilliseconds
     if (Current $w) {
       try {
         Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd
@@ -231,6 +233,7 @@ function State([string]$name) {   # every window of the app in this state, shot 
         else { $read = [ordered]@{ hwnd = $w.hwnd; read = $true } }
       } catch { $read.error = "the tree could not be read: $($_.Exception.Message)" }
     }
+    $read.from = $began; $read.at = $clock.ElapsedMilliseconds   # the window's walk, from its start to its end
     $state.reads += $read
     $state.nodes += $script:nodes
   }
@@ -280,7 +283,10 @@ function Probe($want) {
     $root = [int64](Main)
     if ($want.in -eq "owned") {
       $owned = @(Windows | Where-Object { $_.owner -eq $root })
-      if ($owned.Count -ne 1) { throw "the main window owns $($owned.Count) windows, not one" }
+      if ($owned.Count -gt 1) { throw "the main window owns $($owned.Count) windows, not one" }
+      if ($owned.Count -eq 0) {   # the main window proven above: no owned window holds no element either
+        $sample.absent = $true; $sample.at = $clock.ElapsedMilliseconds; return $sample
+      }
       $root = [int64]$owned[0].hwnd
     }
     $others = @(Windows | ForEach-Object { [int64]$_.hwnd } | Where-Object { $_ -ne $root })
@@ -366,8 +372,7 @@ try {
       # any write, then the state read once `after[k]` ms have passed since each anchor k as it ended (the app's
       # start, then each step's action), and the settle at least; `MAX_WAIT_MS` at most.
       $done.acted = $true
-      $done.samples = @(Probe $step.expect)
-      Save
+      $done.samples = @(Probe $step.expect)   # the report is written after the wait's own state, never inside it
       $anchors = @([int64]$report.launched[1]) + @($report.steps |
                    Where-Object { $null -ne $_.acted_at } | ForEach-Object { [int64]$_.acted_at })
       $now = $clock.ElapsedMilliseconds

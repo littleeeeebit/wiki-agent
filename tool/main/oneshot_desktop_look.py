@@ -23,7 +23,7 @@ VIEW = "window"
 PREFIX = "feature:"
 END_SECONDS = 30
 SETTLE_MS = 1000
-PROOF = 4   # how a look proves a `look` check: a look saved with another proves none of them
+PROOF = 5   # how a look proves a `look` check: a look saved with another proves none of them
 LOOK_SECONDS = 30 * 60   # a whole look: every screen and state, the probes and the owed checks
 TRY = "try"   # the one step a `sometimes` probe takes; a probe that does not show the feature misses this one
 MISSED = f"step {TRY}: its postcondition was not read"
@@ -319,12 +319,17 @@ def unmoved(control: dict, run: dict, steps: list[dict], after: list[int], volat
         return False
     want, samples = steps[-1]["expect"], control["steps"][-1].get("samples") or []
     # A sample read its element, or proved there is none, somewhere between its `from` and its `at`: the gap
-    # between two is at most the later one's end less the earlier one's start. A failed lookup reads nothing.
-    read = [x for x in samples if (x.get("node") or x.get("absent")) and type(x.get("from")) is int
-            and type(x.get("at")) is int]
-    spans = [(states[-2]["done"], states[-2]["done"]), *((x["from"], x["at"]) for x in read),
-             (states[-1]["at"], states[-1]["at"])]
-    if not read or any(b[1] - a[0] > GAP_MS for a, b in zip(spans, spans[1:])):
+    # between two is at most the later one's end less the earlier one's start. A failed lookup, or one that did
+    # not read a property the postcondition names, reads nothing. The states either side count from when they
+    # read that element.
+    need = desktop_driver.wanted(want)
+    read = [x for x in samples if type(x.get("from")) is int and type(x.get("at")) is int and (
+        x.get("absent") or isinstance(x.get("node"), dict) and all(k in x["node"] for k in need))]
+    first, last = when(control, states[-2], want, end=False), when(control, states[-1], want, end=True)
+    if not read or first is None or last is None:
+        return False
+    spans = [(first, first), *((x["from"], x["at"]) for x in read), (last, last)]
+    if any(b[1] - a[0] > GAP_MS for a, b in zip(spans, spans[1:])):
         return False
     return all(states[-1]["at"] - m >= a for m, a in zip(anchors(control, len(steps), late=True), after)) \
         and all(seen(control, states[k], volatile) == seen(run, ran[k], volatile) for k in range(len(steps))) \
@@ -332,18 +337,37 @@ def unmoved(control: dict, run: dict, steps: list[dict], after: list[int], volat
         and refuted(control, states[-2], want) and refuted(control, states[-1], want)
 
 
+def when(report: dict, state: dict, want: dict, end: bool) -> int | None:
+    """When `state` read the element `want` names: its properties' own time, or, with none there, its window's
+    walk, from its start (or with `end` to its end); with no owned window to hold it, the state's own read."""
+
+    import desktop_driver
+
+    window = desktop_driver.scope(report, state, want.get("in", "main"))
+    if window is None:
+        return state["done"] if end else state["at"]
+    nodes = [n for n in state["nodes"] if not n.get("foreign") and n.get("window") == window and n.get("id") == want["id"]]
+    if len(nodes) == 1 and type(nodes[0].get("t")) is int:
+        return nodes[0]["t"]
+    t = next((r for r in state.get("reads") or [] if r.get("hwnd") == window), {}).get("at" if end else "from")
+    return t if type(t) is int else None
+
+
 SEEN = ("name", "value", "toggle", "selected", "enabled")
+DRIFTS = ("name", "value")   # what a `volatile` element may change by itself: its toggle, selection and state count
 
 
 def seen(report: dict, state: dict, volatile: set[str] = frozenset()) -> list[tuple]:
-    """What `state` shows of the app: each element with an id outside `volatile`, by the window it is in (the
-    main one, one it owns, another), with its name, value, toggle and selection state and whether it is enabled."""
+    """What `state` shows of the app: each element with an id, by the window it is in (the main one, one it owns,
+    another), with its name, value, toggle and selection state and whether it is enabled; a `volatile` one's
+    name and value aside."""
 
     main = report["main"]["hwnd"]
     role = {w["hwnd"]: "main" if w["hwnd"] == main else "owned" if w.get("owner") == main else "other"
             for w in state.get("windows") or []}
-    return sorted((role.get(n.get("window"), "other"), n["id"], *(str(n.get(k)) for k in SEEN))
-                  for n in state["nodes"] if not n.get("foreign") and n.get("id") and n["id"] not in volatile)
+    return sorted((role.get(n.get("window"), "other"), n["id"],
+                   *("~" if n["id"] in volatile and k in DRIFTS else str(n.get(k)) for k in SEEN))
+                  for n in state["nodes"] if not n.get("foreign") and n.get("id"))
 
 
 def refuted(report: dict, state: dict, want: dict) -> bool:

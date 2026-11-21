@@ -139,9 +139,9 @@ End the turn with exactly one fenced block whose info string is
   UTF-16 characters. The look also runs the steps before the last one and
   then waits without acting, and fails the check when the app does not look
   the same as in the real run; an optional `volatile` lists, by
-  `AutomationId`, up to 20 elements that change by themselves, such as a
-  clock, which that comparison skips. It never names an element a step's
-  `expect` reads.
+  `AutomationId`, up to 20 elements whose text changes by itself, such as a
+  clock; that comparison skips their name and value, never their toggle or
+  selection. It never names an element a step's `expect` reads.
 
 `run.folder` and `installer` are relative to the repository root;
 `run.program` and `run.cwd` are relative to `run.folder`. Every path uses

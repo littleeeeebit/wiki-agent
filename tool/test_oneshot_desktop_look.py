@@ -44,8 +44,8 @@ def report(nodes: list[dict], windows=(MAIN,), sid="S1", steps=(), owners=None) 
                 "windows": [{"hwnd": h, "frame": [0, 0, 1280, 800], "owner": owners.get(h, 0 if h == MAIN else MAIN)}
                             for h in windows],
                 "shots": [{"hwnd": h, "drawn": True, "file": f"s{i:02d}-{h}.png"} for h in windows],
-                "reads": [{"hwnd": h, "read": True} for h in windows],
-                "nodes": [window(h) for h in windows] + held}
+                "reads": [{"hwnd": h, "read": True, "from": i * 1000, "at": i * 1000 + 100} for h in windows],
+                "nodes": [window(h) for h in windows] + [{"t": i * 1000 + 50, **n} for n in held]}
 
     states = [state(0, "start", nodes)] + [state(i, f"after-{s['name']}", s.pop("shows")) for i, s in enumerate(steps, 1)]
     return {"phase": "done", "main": {"hwnd": MAIN}, "launched": [-600, -400], "size": {"asked": [1280, 800], "moved": True,
@@ -569,7 +569,10 @@ def late(got: dict, at: int, sample: dict, blip: dict | None = None) -> dict:
     samples = [{"from": t - 50, "at": t, "node": sample} for t in range(got["states"][-2]["done"] + 200, at, 200)]
     if blip:
         samples[len(samples) // 2] = {**samples[len(samples) // 2], "node": blip}
-    return {**got, "states": [*got["states"][:-1], {**got["states"][-1], "at": at, "done": at + 100}],
+    final = got["states"][-1]
+    final = {**final, "at": at, "done": at + 100, "nodes": [{**n, "t": at + 50} if "t" in n else n for n in final["nodes"]],
+             "reads": [{**r, "from": at, "at": at + 100} for r in final["reads"]]}
+    return {**got, "states": [*got["states"][:-1], final],
             "steps": [*got["steps"][:-1], {**got["steps"][-1], "samples": samples}]}
 
 
@@ -611,6 +614,13 @@ def test_a_control_counts_only_read_late_enough_with_its_lead_in_alike():
     gone = late(control("hi"), 2300, off)   # proved absent: read, and false
     gone["steps"][-1]["samples"] = [{"from": x["from"], "at": x["at"], "absent": True} for x in gone["steps"][-1]["samples"]]
     assert pc_look.unmoved(gone, run, steps, after)
+    blind = late(control("hi"), 2300, {k: v for k, v in off.items() if k != "toggle"})   # its toggle unread
+    assert not pc_look.unmoved(blind, run, steps, after)
+    slow = late(control("hi"), 2300, off)   # the state before read the switch 600 ms before it finished
+    slow["states"][1]["nodes"] = [{**n, "t": 500} if n.get("id") == "translate-on" else n for n in slow["states"][1]["nodes"]]
+    assert not pc_look.unmoved(slow, run, steps, after)
+    manual = late(control("hi", picked={**auto, "selected": False}), 2300, off)   # volatile is its text alone
+    assert not pc_look.unmoved(manual, run, steps, after, {"auto"})
     gone = report([], windows=(3,), owners={3: 0})   # the main window lost: no owned window proves nothing
     assert not pc_look.refuted({**gone, "main": {"hwnd": MAIN}}, gone["states"][0], {**on, "in": "owned"})
 
