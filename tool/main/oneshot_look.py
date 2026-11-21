@@ -530,16 +530,18 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
         return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
     # A value as spelled, or in any casing `text-transform` can draw (`folded`, whose fold of a character can depend
     # on the one before); within one stream, a value broken across lines reads as one
-    spelled = texts + values
-    texts, values = [folded(t) for t in texts], [folded(v) for v in values]
-    flats = ["".join(t.split()) for t in texts]
+    def spelling(form):   # every stream and value in one spelling, and each stream with its whitespace gone
+        return form, [form(x) for x in texts + values], ["".join(form(t).split()) for t in texts]
+
+    spellings = [spelling(str), spelling(folded)]
 
     def seen(value: str) -> bool:
-        if value and any(value in t for t in spelled):
-            return True
-        value = folded(value)
-        flat = "".join(value.split())
-        return bool(value) and (any(value in t for t in texts + values) or bool(flat) and any(flat in f for f in flats))
+        for form, whole, flats in spellings:
+            v = form(value)
+            flat = "".join(v.split())
+            if v and (any(v in t for t in whole) or bool(flat) and any(flat in f for f in flats)):
+                return True
+        return False
 
     if leaked := sorted({label for value, label in hide.items() if seen(value)}):
         return f"화면이 담은 글자에 비밀 값 {', '.join(leaked)} 이 들어 있다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다"
