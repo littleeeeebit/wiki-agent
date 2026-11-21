@@ -455,7 +455,7 @@ SHOWN = """() => {
   return out;
 }"""
 # Each frame's document, marked on first sight: a frame showing another document since gets another mark.
-DOCUMENT = "() => document.__look ??= `${performance.timeOrigin}-${Math.random()}`"
+DOCUMENT = "() => document.__look ??= performance.timeOrigin + '-' + Math.random()"
 
 
 @contextmanager
