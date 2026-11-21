@@ -5,25 +5,25 @@ other credential, goes on to DeepSeek with the real key and DeepSeek's own heade
 A policy that sends the CLI somewhere else sends the token, never the key, and a credential a policy adds never
 reaches DeepSeek.
 
-Ownership: the relay owns its listener, every connection it has accepted, every connection it opens to DeepSeek, the
-threads that serve them, and a scratch folder with the token for the CLI's key helper. A caller that hangs up cuts its
-request to DeepSeek at once, waiting for headers or reading the answer. `close()` cuts everything, joins the threads
-and removes the folder.
+Ownership: one asyncio loop on one thread owns the listener, every connection, the upstream client (httpx) and every
+socket under them; no other thread touches a socket. Each connection is a task. A caller that hangs up cancels its
+task, which cancels the upstream exchange wherever it is: connecting, sending, waiting for headers or streaming.
+`close()` cancels every task, closes the client and the listener, stops the loop and removes the token folder.
 """
 
 from __future__ import annotations
 
-import http.client
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import asyncio
 import json
 from pathlib import Path
+import re
 import secrets
-import select
 import shutil
-import socket
 import tempfile
 import threading
-import urllib.parse
+
+import h11
+import httpx
 
 from common import settings
 
@@ -36,267 +36,277 @@ LARGEST = 64 << 20   # bytes in one request: a turn with several screenshots sta
 WORKERS = 16         # connections served at once; the app's turns each hold one
 IDLE = 120.0         # seconds the relay waits on a silent caller before it lets the connection go
 UPSTREAM = 600.0     # seconds DeepSeek may stay silent mid-answer
-JOIN = 10.0          # seconds `close` waits for a thread it has already cut loose
+CONNECT = 30.0       # seconds to reach DeepSeek at all
+JOIN = 10.0          # seconds `close` waits for the loop to wind down
+EVENT_END = re.compile(rb"\r?\n\r?\n")
 
 
-def nominated(headers) -> set[str]:
+def nominated(headers: list[tuple[str, str]]) -> set[str]:
     """The header names a `Connection` field marks as this connection's own: never passed across."""
 
-    return {n.strip().lower() for v in headers.get_all("connection") or [] for n in v.split(",") if n.strip()}
+    return {n.strip().lower() for k, v in headers if k == "connection" for n in v.split(",") if n.strip()}
 
 
-class Scrub:
-    """The key, wherever it falls in a stream, replaced before a byte reaches the CLI. It holds back the few bytes
-    that could start an occurrence the next chunk completes."""
-
-    def __init__(self, key: str):
-        self.key, self.held = key.encode(), b""
-
-    def __call__(self, chunk: bytes) -> bytes:
-        joined = (self.held + chunk).replace(self.key, b"[key]")
-        keep = len(self.key) - 1
-        self.held, out = (joined[-keep:], joined[:-keep]) if keep and len(joined) > keep else (joined, b"")
-        return out
-
-    def rest(self) -> bytes:
-        out, self.held = self.held, b""
-        return out
+def _redact(value, key: str):
+    if isinstance(value, str):
+        return value.replace(key, "[key]")
+    if isinstance(value, list):
+        return [_redact(v, key) for v in value]
+    if isinstance(value, dict):
+        return {_redact(k, key): _redact(v, key) for k, v in value.items()}
+    return value
 
 
-class _Server(ThreadingHTTPServer):
-    daemon_threads = True   # interpreter exit never waits on a worker; `Relay.close` cuts and joins them itself
+def redacted_json(raw: bytes, key: str) -> bytes | None:
+    """`raw` as JSON with the key gone from every decoded string, so no escaped form survives; None when `raw` is not
+    JSON or carries no key once decoded."""
 
-    def __init__(self, relay: Relay, handler):
-        self.relay = relay
-        super().__init__(("127.0.0.1", 0), handler)
-
-    def verify_request(self, request, client_address) -> bool:
-        return self.relay.slots.acquire(blocking=False)   # no slot: the server closes it before reading a byte
-
-    def process_request(self, request, client_address) -> None:
-        self.relay.hold(request)
-        super().process_request(request, client_address)
-
-    def process_request_thread(self, request, client_address) -> None:
-        self.relay.threads.add(threading.current_thread())
-        try:
-            super().process_request_thread(request, client_address)
-        finally:
-            self.relay.threads.discard(threading.current_thread())
-            self.relay.let_go(request)
-            self.relay.slots.release()
-
-    def handle_error(self, request, client_address) -> None:
-        pass   # a connection cut by `close` or by its caller ends quietly; the caller already has its answer or none
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    clean = _redact(value, key)
+    return None if clean == value else json.dumps(clean, ensure_ascii=False).encode("utf-8")
 
 
-class Relay:
-    def __init__(self, upstream: str, env: Path):
-        parts = urllib.parse.urlsplit(upstream)
-        self.connection = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
-        self.host, self.prefix, self.env = parts.netloc, parts.path.rstrip("/"), env
-        self.token = secrets.token_urlsafe(32)
-        self.slots = threading.BoundedSemaphore(WORKERS)
-        self.open: set = set()   # sockets in flight, both sides: `close` cuts them
-        self.threads: set = set()
-        self.lock = threading.Lock()
-        relay = self
+def clean_event(event: bytes, key: str) -> bytes:
+    """One server-sent event (without its blank line) with the key gone, literal or JSON-escaped in its data."""
 
-        class Handler(BaseHTTPRequestHandler):
-            timeout = IDLE
-
-            def do_POST(self):
-                relay.serve(self)
-
-            do_GET = do_POST
-
-            def log_message(self, *args):
-                pass
-
-        self.server = _Server(self, Handler)
-        folder = None
-        try:   # a construction that fails half way leaves neither the listener nor the token behind
-            folder = Path(tempfile.mkdtemp(prefix="deepseek-relay-"))
-            (folder / ".env").write_text(f"DEEPSEEK_API_KEY={self.token}\n", encoding="utf-8")
-        except BaseException:
-            self.server.server_close()
-            if folder is not None:
-                shutil.rmtree(folder, ignore_errors=True)
-            raise
-        self.folder = folder
-        threading.Thread(target=self.server.serve_forever, name="deepseek-relay", daemon=True).start()
-
-    @property
-    def url(self) -> str:
-        return f"http://127.0.0.1:{self.server.server_port}"
-
-    def hold(self, sock) -> None:
-        with self.lock:
-            self.open.add(sock)
-
-    def let_go(self, sock) -> None:
-        with self.lock:
-            self.open.discard(sock)
-
-    def admitted(self, headers) -> bool:
-        """The request carries the token, at most once in each credential header, and no other credential."""
-
-        given = {name: headers.get_all(name) or [] for name in ("x-api-key", "authorization", "proxy-authorization")}
-        sent = given["x-api-key"] + given["authorization"]
-        return (bool(sent) and not given["proxy-authorization"] and all(len(v) <= 1 for v in given.values())
-                and all(v in (self.token, f"Bearer {self.token}") for v in sent))
-
-    def framed(self, request: BaseHTTPRequestHandler) -> int | None:
-        """The body length a request declares, when it declares it once and plainly: a POST names one length, and
-        nothing comes chunked; a GET carries none."""
-
-        lengths = request.headers.get_all("content-length") or []
-        if request.headers.get_all("transfer-encoding") or len(lengths) > 1:
-            return None
-        if request.command == "GET":
-            return 0 if not lengths or lengths[0].strip() == "0" else None
-        try:
-            size = int(lengths[0]) if lengths else -1
-        except ValueError:
-            return None
-        return size if size >= 0 else None
-
-    def serve(self, request: BaseHTTPRequestHandler) -> None:
-        if not self.admitted(request.headers):   # before any body is read
-            return answer(request, 401, "DeepSeek 중계: 이 앱이 준 토큰이 아니다")
-        if not request.path.startswith("/v1/"):
-            return answer(request, 404, f"DeepSeek 중계가 넘기지 않는 경로: {request.path}")
-        size = self.framed(request)
-        if size is None:
-            return answer(request, 400, "DeepSeek 중계: 본문 길이가 없거나 둘이거나, 나눠 보냈다")
-        if size > LARGEST:
-            return answer(request, 413, "DeepSeek 중계: 요청이 너무 크다")
-        try:
-            body = request.rfile.read(size)
-        except OSError:   # the caller went silent past `IDLE`, or away
-            return None
-        if len(body) < size:   # it hung up part way: nothing half sent goes on
-            return answer(request, 400, "DeepSeek 중계: 본문이 끝까지 오지 않았다")
-        key = settings.entries(self.env).get("DEEPSEEK_API_KEY")
-        if not key:
-            return answer(request, 503, "DeepSeek 키가 없다: 허브의 .env 에 DEEPSEEK_API_KEY 를 넣어라")
-        self.forward(request, body, key)
-
-    def forward(self, request: BaseHTTPRequestHandler, body: bytes, key: str) -> None:
-        dropped = nominated(request.headers)
-        headers = {k: v for k, v in request.headers.items() if k.lower() in FORWARD and k.lower() not in dropped}
-        upstream = self.connection(self.host, timeout=UPSTREAM)
-        started, gone = False, threading.Event()
-        try:
-            upstream.connect()   # owned before a byte is sent: a hang-up cuts it from here on
-            self.hold(upstream.sock)
-            watcher = threading.Thread(target=watch, args=(request.connection, upstream.sock, gone), daemon=True)
-            watcher.start()
-            try:
-                upstream.request(request.command, self.prefix + request.path, body=body if body else None,
-                                 headers={**headers, "x-api-key": key, "Authorization": f"Bearer {key}"})
-                reply = upstream.getresponse()   # http.client never follows a redirect
-                started = True
-                self.stream(request, reply, key)
-            finally:
-                gone.set()
-                watcher.join()
-                self.let_go(upstream.sock)
-        except (OSError, http.client.HTTPException, ValueError) as exc:   # unreachable, timed out, cut, or gone
-            if not started:
-                answer(request, 502, f"DeepSeek 에 닿지 못했다 — {type(exc).__name__}")
-            # once the headers have gone out, the caller sees a stream that ends early: nothing more is written
-        finally:
-            upstream.close()
-
-    def stream(self, request: BaseHTTPRequestHandler, reply, key: str) -> None:
-        if 300 <= reply.status < 400:   # handed on, a client that follows it would leave the relay
-            return answer(request, 502, "DeepSeek 이 요청을 다른 곳으로 돌렸다 — 따라가지 않는다")
-        if reply.status >= 400:   # the relay's own words: whatever upstream or a proxy wrote stays here
-            return answer(request, reply.status, f"DeepSeek 오류 {reply.status}: {error_kind(reply.read(1 << 20), key)}",
-                          kept=passed(reply.msg, key))
-        scrub = Scrub(key)   # an error inside a 200 answer, or anything else, never carries the key either
-        request.send_response(reply.status)
-        for k, v in passed(reply.msg, key):
-            request.send_header(k, v)
-        request.end_headers()
-        while chunk := reply.read1(65536):   # a server-sent event goes on as it arrives
-            request.wfile.write(scrub(chunk))
-            request.wfile.flush()
-        request.wfile.write(scrub.rest())
-
-    def close(self) -> None:
-        self.server.shutdown()
-        with self.lock:
-            cut = list(self.open)
-            threads = list(self.threads)
-        for sock in cut:
-            _cut(sock)
-        for thread in threads:
-            thread.join(JOIN)
-        self.server.server_close()
-        shutil.rmtree(self.folder, ignore_errors=True)
+    event = event.replace(key.encode(), b"[key]")
+    lines = event.split(b"\n")
+    data = [line.rstrip(b"\r")[5:].removeprefix(b" ") for line in lines if line.startswith(b"data:")]
+    fixed = redacted_json(b"\n".join(data), key) if data else None
+    if fixed is None:
+        return event
+    return b"\n".join([line for line in lines if not line.startswith(b"data:")] + [b"data: " + fixed])
 
 
-def passed(msg, key: str) -> list[tuple[str, str]]:
-    dropped = nominated(msg)
-    return [(k, v.replace(key, "[key]")) for k, v in msg.items()
-            if k.lower() not in dropped and (k.lower() in BACK or k.lower().startswith(BACK_PREFIX))]
+def clean_body(body: bytes, key: str) -> bytes:
+    body = body.replace(key.encode(), b"[key]")
+    return redacted_json(body, key) or body
 
 
 def error_kind(body: bytes, key: str) -> str:
-    """The error's type and message from DeepSeek's JSON, decoded first so no escaped form of the key survives the
-    scrub; `?` when it is not that shape."""
+    """The error's type and message from DeepSeek's JSON, decoded and redacted before it is cut short; `?` when it is
+    not that shape."""
 
     try:
         error = json.loads(body.decode("utf-8")).get("error") or {}
     except (ValueError, AttributeError):
         return "?"
-    said = f"{error.get('type') or '?'} — {str(error.get('message') or '')[:300]}" if isinstance(error, dict) else "?"
-    return said.replace(key, "[key]")
+    if not isinstance(error, dict):
+        return "?"
+    return f"{error.get('type') or '?'} — {error.get('message') or ''}".replace(key, "[key]")[:300]
 
 
-def answer(request: BaseHTTPRequestHandler, status: int, message: str, kept=()) -> None:
-    payload = json.dumps({"type": "error", "error": {"type": "api_error", "message": message}},
-                         ensure_ascii=False).encode("utf-8")
-    try:
-        request.send_response(status)
-        request.send_header("content-type", "application/json")
-        for k, v in kept:
-            if k.lower() != "content-type":
-                request.send_header(k, v)
-        request.end_headers()
-        request.wfile.write(payload)
-    except OSError:
+class Relay:
+    def __init__(self, upstream: str, env: Path):
+        self.upstream, self.env = upstream.rstrip("/"), env
+        self.token = secrets.token_urlsafe(32)
+        self.tasks: set[asyncio.Task] = set()
+        self.folder: Path | None = None
+        self.loop = asyncio.new_event_loop()
+        ready, failed = threading.Event(), []
+
+        def run():
+            asyncio.set_event_loop(self.loop)
+            try:
+                self.loop.run_until_complete(self._start())
+            except BaseException as exc:   # handed to the constructor, which raises it
+                failed.append(exc)
+                return
+            finally:
+                ready.set()
+            self.loop.run_forever()
+
+        self.thread = threading.Thread(target=run, name="deepseek-relay", daemon=True)
+        self.thread.start()
+        ready.wait()
+        if failed:
+            self.thread.join()
+            self.loop.close()
+            raise failed[0]
+        try:   # a construction that fails half way leaves neither the listener nor the token behind
+            self.folder = Path(tempfile.mkdtemp(prefix="deepseek-relay-"))
+            (self.folder / ".env").write_text(f"DEEPSEEK_API_KEY={self.token}\n", encoding="utf-8")
+        except BaseException:
+            self.close()
+            raise
+
+    async def _start(self) -> None:
+        self.client = httpx.AsyncClient(timeout=httpx.Timeout(UPSTREAM, connect=CONNECT), follow_redirects=False)
+        self.server = await asyncio.start_server(self._accept, "127.0.0.1", 0)
+        self.port = self.server.sockets[0].getsockname()[1]
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def admitted(self, headers: list[tuple[str, str]]) -> bool:
+        """The request carries the token, at most once in each credential header, and no other credential."""
+
+        given = {name: [v for k, v in headers if k == name]
+                 for name in ("x-api-key", "authorization", "proxy-authorization")}
+        sent = given["x-api-key"] + given["authorization"]
+        return (bool(sent) and not given["proxy-authorization"] and all(len(v) <= 1 for v in given.values())
+                and all(v in (self.token, f"Bearer {self.token}") for v in sent))
+
+    async def _accept(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if len(self.tasks) >= WORKERS:   # full: closed before a byte is read
+            writer.close()
+            return
+        task = asyncio.current_task()
+        self.tasks.add(task)
+        try:
+            await self._serve(reader, writer)
+        except (OSError, asyncio.TimeoutError, h11.ProtocolError):
+            pass   # the caller went silent past `IDLE`, broke off mid-message, or went away
+        finally:
+            self.tasks.discard(task)
+            writer.close()
+
+    async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        conn = h11.Connection(h11.SERVER)
+
+        async def next_event():
+            while (event := conn.next_event()) is h11.NEED_DATA:
+                conn.receive_data(await reader.read(65536))
+            return event
+
+        try:
+            request = await asyncio.wait_for(next_event(), IDLE)
+        except h11.RemoteProtocolError:   # two different lengths, a broken chunk header, and the like
+            return await answer(None, writer, 400, "DeepSeek 중계: 요청 형식이 틀렸다")
+        if not isinstance(request, h11.Request):
+            return None
+        headers = [(k.decode("latin-1").lower(), v.decode("latin-1")) for k, v in request.headers]
+        path = request.target.decode("latin-1")
+        if not self.admitted(headers):   # before any body is read
+            return await answer(conn, writer, 401, "DeepSeek 중계: 이 앱이 준 토큰이 아니다")
+        if not path.startswith("/v1/"):
+            return await answer(conn, writer, 404, f"DeepSeek 중계가 넘기지 않는 경로: {path}")
+        declared = [v for k, v in headers if k == "content-length"]
+        # h11 refuses lengths that disagree and merges equal ones (RFC 9110 section 8.6); chunked never comes in.
+        if any(k == "transfer-encoding" for k, _ in headers):
+            return await answer(conn, writer, 400, "DeepSeek 중계: 본문을 나눠 보내지 마라")
+        if not declared and method_of(request) != "GET":
+            return await answer(conn, writer, 411, "DeepSeek 중계: 본문 길이가 없다")
+        if declared and int(declared[0]) > LARGEST:   # h11 has already refused a length that is not a number
+            return await answer(conn, writer, 413, "DeepSeek 중계: 요청이 너무 크다")
+        body = bytearray()
+        # A caller that hangs up before its body is whole makes h11 raise: nothing half sent goes on.
+        while not isinstance(event := await asyncio.wait_for(next_event(), IDLE), h11.EndOfMessage):
+            body += event.data
+            if len(body) > LARGEST:   # chunked past the limit
+                return await answer(conn, writer, 413, "DeepSeek 중계: 요청이 너무 크다")
+        key = settings.entries(self.env).get("DEEPSEEK_API_KEY")
+        if not key:
+            return await answer(conn, writer, 503, "DeepSeek 키가 없다: 허브의 .env 에 DEEPSEEK_API_KEY 를 넣어라")
+        method = method_of(request)
+        work = asyncio.ensure_future(self._forward(conn, writer, method, path, headers, bytes(body), key))
+        gone = asyncio.ensure_future(hangup(reader))
+        try:
+            await asyncio.wait({work, gone}, return_when=asyncio.FIRST_COMPLETED)
+        finally:   # the caller gone: the exchange with DeepSeek is cancelled wherever it stands
+            for task in (work, gone):
+                task.cancel()
+            await asyncio.gather(work, gone, return_exceptions=True)
+
+    async def _forward(self, conn, writer, method: str, path: str, headers, body: bytes, key: str) -> None:
+        dropped = nominated(headers)
+        sent = [(k, v) for k, v in headers if k in FORWARD and k not in dropped]
+        outgoing = self.client.build_request(method, self.upstream + path, content=body or None,
+                                             headers=sent + [("x-api-key", key), ("authorization", f"Bearer {key}")])
+        try:
+            reply = await self.client.send(outgoing, stream=True)
+        except httpx.HTTPError as exc:
+            return await answer(conn, writer, 502, f"DeepSeek 에 닿지 못했다 — {type(exc).__name__}")
+        try:
+            await self._stream(conn, writer, reply, key)
+        except httpx.HTTPError:
+            pass   # once the headers have gone out, the caller sees a stream that ends early
+        finally:
+            await reply.aclose()
+
+    async def _stream(self, conn, writer, reply: httpx.Response, key: str) -> None:
+        back = [(k.lower(), v.replace(key, "[key]")) for k, v in reply.headers.multi_items()]
+        dropped = nominated(back)
+        kept = [(k, v) for k, v in back if k not in dropped and (k in BACK or k.startswith(BACK_PREFIX))]
+        if 300 <= reply.status_code < 400:   # handed on, a client that follows it would leave the relay
+            return await answer(conn, writer, 502, "DeepSeek 이 요청을 다른 곳으로 돌렸다 — 따라가지 않는다")
+        if reply.status_code >= 400:   # the relay's own words: whatever upstream or a proxy wrote stays here
+            said = bytearray()
+            async for chunk in reply.aiter_bytes():
+                said += chunk
+                if len(said) >= 1 << 20:
+                    break
+            return await answer(conn, writer, reply.status_code,
+                                f"DeepSeek 오류 {reply.status_code}: {error_kind(bytes(said), key)}", kept)
+        writer.write(conn.send(h11.Response(status_code=reply.status_code, headers=kept + [("connection", "close")])))
+        await writer.drain()
+        events = reply.headers.get("content-type", "").startswith("text/event-stream")
+        held = b""
+        async for chunk in reply.aiter_bytes():
+            held += chunk
+            if not events:
+                continue   # one JSON answer: cleaned whole at the end
+            while found := EVENT_END.search(held):   # a whole event goes on the moment it is complete
+                writer.write(conn.send(h11.Data(data=clean_event(held[:found.start()], key) + found.group())))
+                held = held[found.end():]
+            await writer.drain()
+        if held:
+            writer.write(conn.send(h11.Data(data=clean_event(held, key) if events else clean_body(held, key))))
+        writer.write(conn.send(h11.EndOfMessage()))
+        await writer.drain()
+
+    async def _stop(self) -> None:
+        self.server.close()
+        for task in list(self.tasks):
+            task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
+        await self.client.aclose()
+        await self.server.wait_closed()
+
+    def close(self) -> None:
+        if self.thread.is_alive():
+            try:
+                asyncio.run_coroutine_threadsafe(self._stop(), self.loop).result(JOIN)
+            except Exception:   # noqa: BLE001 - the loop stops and the folder goes regardless
+                pass
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self.thread.join(JOIN)
+        if not self.thread.is_alive() and not self.loop.is_closed():
+            self.loop.close()
+        if self.folder is not None:
+            shutil.rmtree(self.folder, ignore_errors=True)
+
+
+def method_of(request: h11.Request) -> str:
+    return request.method.decode("latin-1")
+
+
+async def hangup(reader: asyncio.StreamReader) -> None:
+    """Returns when the caller hangs up (the person pressed Stop); whatever it sends after its request is ignored."""
+
+    while await reader.read(65536):
         pass
 
 
-def watch(client, upstream, done: threading.Event) -> None:
-    """While a request is out, a caller that hangs up (the person pressed Stop) cuts it at DeepSeek too, whether it
-    waits for headers or reads the answer."""
+async def answer(conn: h11.Connection | None, writer: asyncio.StreamWriter, status: int, message: str,
+                 kept=()) -> None:
+    """The relay's own JSON error, then the connection closes. `conn` is None once h11 has refused the request."""
 
-    while not done.wait(0.5):
-        try:
-            ready, _, _ = select.select([client], [], [], 0)
-            if ready and client.recv(1, socket.MSG_PEEK) == b"":
-                break
-        except (OSError, ValueError):
-            break
-    else:
-        return
-    _cut(upstream)
-
-
-def _cut(sock) -> None:
-    """End a socket another thread may be blocked on. On Windows a shutdown alone does not wake a blocked read, so
-    the descriptor is closed too, past the file objects (`makefile`) that would otherwise keep it open."""
-
-    if sock is not None:
-        try:
-            sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        try:
-            sock._real_close()
-        except OSError:
-            pass
+    payload = json.dumps({"type": "error", "error": {"type": "api_error", "message": message}},
+                         ensure_ascii=False).encode("utf-8")
+    headers = [(k, v) for k, v in kept if k != "content-type"]
+    headers += [("content-type", "application/json"), ("content-length", str(len(payload))), ("connection", "close")]
+    try:
+        if conn is None:
+            head = f"HTTP/1.1 {status} Error\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers) + "\r\n"
+            writer.write(head.encode("latin-1") + payload)
+        else:
+            writer.write(conn.send(h11.Response(status_code=status, headers=headers)) + conn.send(h11.Data(data=payload))
+                         + conn.send(h11.EndOfMessage()))
+        await writer.drain()
+    except OSError:
+        pass
