@@ -15,7 +15,8 @@ export function Picture({ src, alt, fallback }: { src?: string; alt?: string; fa
   const [broken, setBroken] = useState(false)
   const [zoomed, setZoomed] = useState(false)
   const local = !!src && !/^(https?|data|blob):/i.test(src) && !src.startsWith('//')
-  if (!repo || !local || broken) return fallback ?? <span>{alt}</span>
+  // With no alt, the file's name: a picture that cannot be drawn never leaves its link with nothing to show.
+  if (!repo || !local || broken) return fallback ?? <span>{alt || src?.split(/[\\/]/).pop() || '그림'}</span>
   const url = `/api/image?${new URLSearchParams({ repo, path: src })}`
   const image = <img src={url} alt={alt ?? ''} loading="lazy" onError={() => setBroken(true)}
     className="max-h-[480px] w-full rounded-md border border-border bg-background object-contain" />
@@ -25,7 +26,8 @@ export function Picture({ src, alt, fallback }: { src?: string; alt?: string; fa
     <span className="my-2 inline-block w-[calc(50%-0.5rem)] min-w-[200px] max-w-full align-top">
       {linked ? image : <button type="button" onClick={(e) => { e.stopPropagation(); setZoomed(true) }} title="크게 본다"
         aria-label={alt ? `${alt} 크게 보기` : '크게 보기'} className="block w-full cursor-zoom-in rounded-md">{image}</button>}
-      {alt && <span className="mt-1 block text-[12px] text-muted-foreground">{alt}</span>}
+      {/* Seen, not read: the image's alt, or the zoom button's label, already names it. */}
+      {alt && <span aria-hidden="true" className="mt-1 block text-[12px] text-muted-foreground">{alt}</span>}
       {/* On the body, not in the paragraph: a dialog is flow content, and an enclosing link must not own its clicks. */}
       {zoomed && createPortal(<Zoom src={url} alt={alt} close={() => setZoomed(false)} />, document.body)}
     </span>

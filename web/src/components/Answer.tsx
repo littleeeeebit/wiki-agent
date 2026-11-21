@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useContext } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Candidates } from '@/components/Candidates'
@@ -80,8 +80,12 @@ export const Answer = memo(function Answer({ text, korean, remote, onPeek, onDec
               <table>{children}</table>
             </div>
           ),
-          code: ({ className, children }) => {
+          code: function Code({ className, children }) {
             const raw = String(children ?? '').replace(/\n$/, '')
+            // Inside a link's text a citation is the link's words: a control of its own would sit in the anchor
+            // and one click would trigger both.
+            const inLink = useContext(InLink)
+            if (inLink && !className) return <code>{children}</code>
 
             // A ```retro-candidates fence: the retro's candidates, which get
             // buttons. `korean` goes in because the translator protects a
