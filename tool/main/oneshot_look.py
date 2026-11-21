@@ -25,7 +25,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
-from common import process, shell
+from common import masked, process, shell
 
 from .oneshot_screens import VIEWPORTS, api_paths
 
@@ -223,13 +223,14 @@ def owned(apps: Tree, port: int) -> bool | None:
 
 
 @contextmanager
-def served(tree: Path, cmd: str, data: Path, stopped=never):
+def served(tree: Path, cmd: str, data: Path, stopped=never, base: dict | None = None):
     """The app running from `cmd` in `tree` on a free port with its data in `data`: its URL.
     Every process it started is killed on the way out; a tree it cannot own is never started, and
-    a port another program took meanwhile is refused before a request goes to it."""
+    a port another program took meanwhile is refused before a request goes to it. `base` is the environment it
+    starts from, the server's own when `None`."""
 
     port = free_port()
-    env = {**os.environ, "PORT": str(port), "APP_DATA_DIR": str(data), "PYTHONUNBUFFERED": "1"}
+    env = {**(os.environ if base is None else base), "PORT": str(port), "APP_DATA_DIR": str(data), "PYTHONUNBUFFERED": "1"}
     argv, use_shell = shell.launch("gate", command=cmd)
     log = tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace")
     proc = subprocess.Popen(argv, shell=use_shell, cwd=tree, env=env, stdin=subprocess.DEVNULL, stdout=log,
@@ -386,10 +387,21 @@ def placement(browser, url: str, front: dict, frequency: dict, view: str, api: r
 
 
 def look(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], views: list[str],
-         folder: Path, stopped=never) -> list[dict]:
+         folder: Path, stopped=never, *, env: dict | None = None, hide: dict[str, str] | None = None) -> list[dict]:
     """Every screen at every viewport in `empty`, `full`, `loading` and `error`, shot into `folder` as
-    `<screen>-<viewport>-<state>.png`; the findings, the placement check's included."""
+    `<screen>-<viewport>-<state>.png`; the findings, the placement check's included. The app starts from `env`,
+    and neither a finding nor a refusal carries a value of `hide` (`common.masked`)."""
 
+    try:
+        found = _looked(tree, cmd, front, frequency, ops, views, folder, stopped, env)
+    except ValueError as exc:
+        raise ValueError(masked(str(exc), hide)) from None
+    # ponytail: a value JSON escapes differently (a quote, a backslash) is not found in the findings
+    return json.loads(masked(json.dumps(found, ensure_ascii=False), hide)) if hide else found
+
+
+def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], views: list[str],
+            folder: Path, stopped, env: dict | None) -> list[dict]:
     from playwright.sync_api import sync_playwright
 
     shutil.rmtree(folder, ignore_errors=True)
@@ -402,7 +414,7 @@ def look(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], vie
             for data_state, states in (("empty", ["empty"]), ("full", ["full", "loading", "error"])):
                 data = Path(scratch) / data_state
                 data.mkdir()
-                with served(tree, cmd, data, stopped) as url:
+                with served(tree, cmd, data, stopped, env) as url:
                     if data_state == "full":
                         seeded(tree, url)
                     for s in front["screens"]:

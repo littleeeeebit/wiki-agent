@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import threading
 import uuid
 from pathlib import Path
 
@@ -269,7 +270,7 @@ def test_every_gate_the_run_runs_has_each_given_secret_and_the_prompts_name_only
     spec = lambda: specs.load("budget", oneshot.BRANCH)  # noqa: E731
     base = {k: "set" for k in build.TOOLCHAIN}   # the Android toolchain, as this host would have it
     monkeypatch.setattr(oneshot_android, "build_env", lambda: dict(base))
-    assert needs.gate_env(spec(), None) is None and build.toolchain(spec()) == base
+    assert ENV not in needs.gate_env(spec(), None) and build.toolchain(spec()) == base   # not given: none
     sample = tmp_path / "page.png"
     sample.write_bytes(b"x")
     value = f"key-{uuid.uuid4().hex}"
@@ -281,7 +282,7 @@ def test_every_gate_the_run_runs_has_each_given_secret_and_the_prompts_name_only
     assert server[ENV] == value and server.get("PATH") == os.environ.get("PATH")
     oneshot_spec.saved("budget", oneshot={"tests_head": "a" * 40, "gate": "pytest", "contract": ["tests/test_x.py"]})
     for text in (build.tests_text(spec()), build.build_text(spec())):
-        assert "{needs}" not in text and value not in text and ("Nothing in the tests is a fake" in text or "Add no fake" in text)
+        assert "{needs}" not in text and value not in text and "fake, mock, stub or stand-in" in text
         assert f"- `{ENV}`: N1 번역 API 키, a secret (X1)" in text and f"a file at `{sample.resolve()}`" in text
         assert "N2 번역 서비스 계정, an account the owner has (X1)" in text
     take = needs.take_back("budget", "N1", src())
@@ -291,3 +292,42 @@ def test_every_gate_the_run_runs_has_each_given_secret_and_the_prompts_name_only
 def test_a_run_whose_calls_need_nothing_is_told_so():
     assert needs.told({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}) == \
         "- none: no outside call needs anything from the owner"
+
+
+REPORTER = """import os, sys
+value = os.environ["{env}"]
+print("calling the service with", value)
+name = value if sys.argv[2] == "named" else "test_translates"
+open(sys.argv[1], "w", encoding="utf-8").write(
+    f'<testsuite><testcase classname="c" name="{{name}}"><failure message="{{value}}">{{value}}</failure></testcase></testsuite>')
+sys.exit(int(sys.argv[3]))
+"""
+
+
+def test_a_gate_never_shows_a_secret_and_its_report_is_read_once_and_removed(at_r1, tmp_path, monkeypatch):
+    monkeypatch.setattr(oneshot_android, "build_env", lambda: dict(os.environ))
+    value = f"key-{uuid.uuid4().hex}"
+    give("N1", value=value)
+    script = tmp_path / "reporter.py"
+    script.write_text(REPORTER.format(env=ENV), encoding="utf-8")
+    spec, run = specs.load("budget", oneshot.BRANCH), type("Run", (), {"halt": threading.Event()})()
+    reports = oneshot_spec.store("budget").folder / "junit"
+    command = f'"{sys.executable}" "{script}" {{report}}'
+    assert build.junit(at_r1, run, spec, command + " plain 0") == [("c", "test_translates", "", "failure")]
+    for args, said in ((" named 0", "사례 이름에 비밀 값이 들어 있다 — \\[N1\\]"),):
+        with pytest.raises(ValueError, match=said) as e:
+            build.junit(at_r1, run, spec, command + args)
+        assert value not in str(e.value)
+    code, out, _ = specs.gate(f'"{sys.executable}" "{script}" {tmp_path / "r.xml"} plain 1', at_r1, threading.Event(),
+                              env=build.toolchain(spec), hide=needs.hidden(spec))
+    assert code == 1 and "calling the service with [N1]" in out and value not in out
+    assert not list(reports.glob("*.xml"))   # no report outlives its read
+
+
+def test_a_secret_not_given_never_falls_back_to_a_variable_the_server_has(at_r1, monkeypatch):
+    monkeypatch.setenv(ENV, "the server's own key")
+    monkeypatch.setattr(oneshot_android, "build_env", lambda: {**os.environ, "JAVA_HOME": "set"})
+    spec = specs.load("budget", oneshot.BRANCH)
+    assert ENV not in needs.gate_env(spec, None) and ENV not in build.toolchain(spec)
+    assert build.toolchain(spec)["JAVA_HOME"] == "set"
+    assert needs.gate_env({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}, None) is None

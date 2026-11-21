@@ -8,7 +8,8 @@ it holds (`kept`). The other kinds are kept in the spec's `oneshot.given` with t
 redesign that changes what a need is asks for it again. Giving or removing a need names the sheet it was made on.
 
 The tests and the build are told every need (`told`), and every gate the server runs for the run has each given
-secret in its environment under its `env` (`gate_env`); the value is read from the store for that gate only.
+secret in its environment under its `env` (`gate_env`); the value is read from the store for that gate only, and
+the gate's output shows `[N1]` where it would stand (`hidden`).
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import os
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -124,27 +126,45 @@ def missing(spec: dict) -> list[dict]:
     return [n for n in shown(spec) if not n["given"]]
 
 
-def secrets(spec: dict) -> dict[str, str]:
-    """Each given secret's value by its `env`, read from the store for one gate; a need not given is absent."""
+def _secret_needs(spec: dict) -> list[tuple[str, dict]]:
+    return [(nid, n) for nid, (n, _) in owed(spec["oneshot"].get("design") or {}).items() if n["kind"] == "secret"]
 
-    out = {}
-    for n, _ in owed(spec["oneshot"].get("design") or {}).values():
-        if n["kind"] == "secret":
-            try:
-                value = release.secret_read(name(spec["repo"], n["env"]))
-            except (OSError, ValueError):   # no store on this host, or one that cannot be read: the gate runs without
-                value = None
-            if value is not None:
-                out[n["env"]] = value
+
+def _given(spec: dict) -> list[tuple[str, str, str]]:
+    """`(id, env, value)` for each given secret, read from the store for one use; a need not given is absent."""
+
+    out = []
+    for nid, n in _secret_needs(spec):
+        try:
+            value = release.secret_read(name(spec["repo"], n["env"]))
+        except (OSError, ValueError):   # no store on this host, or one that cannot be read: it is not given
+            value = None
+        if value:
+            out.append((nid, n["env"], value))
     return out
 
 
-def gate_env(spec: dict, env: dict | None) -> dict | None:
-    """`env`, the server's own when `None`, with every given secret set; `env` itself when the run needs none."""
+def secrets(spec: dict) -> dict[str, str]:
+    """Each given secret's value by its `env`."""
 
-    if not (found := secrets(spec)):
+    return {env: value for _, env, value in _given(spec)}
+
+
+def hidden(spec: dict) -> dict[str, str]:
+    """What a gate's output shows instead of each given secret: `[N1]` for its value and its URL-quoted form."""
+
+    # ponytail: the raw and URL-quoted forms only; another encoding of a value (base64, JSON-escaped) still shows
+    return {form: f"[{nid}]" for nid, _, value in _given(spec) for form in {value, quote(value, safe="")}}
+
+
+def gate_env(spec: dict, env: dict | None) -> dict | None:
+    """`env`, the server's own when `None`, with every given secret set. A secret the design names but the store
+    does not hold is removed, so a variable of that name the server happens to have never stands in for it."""
+
+    if not (declared := {n["env"].upper() for _, n in _secret_needs(spec)}):
         return env
-    return {**(os.environ if env is None else env), **found}
+    base = {k: v for k, v in (os.environ if env is None else env).items() if k.upper() not in declared}
+    return {**base, **secrets(spec)}
 
 
 def told(spec: dict) -> str:

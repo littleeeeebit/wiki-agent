@@ -75,7 +75,7 @@ def checked(tree, block=BLOCK, found=(), looked=None):
 
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)), \
             patch.object(front_build.oneshot_desktop_look, "look", look), \
-            patch.object(front_build.oneshot_look, "look", lambda *a: looked.append("webapp") or []):
+            patch.object(front_build.oneshot_look, "look", lambda *a, **k: looked.append("webapp") or []):
         then = oneshot_build.checked(tree, Run(), spec(), report() + fenced(pc.BLOCK, block))
         if then:
             then()

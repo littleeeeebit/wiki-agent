@@ -154,9 +154,12 @@ repository that no need of today's design names, and removes it on request.
 ### Tests and builds use the real thing
 
 `oneshot-tests*.md` and `oneshot-build*.md` lose the fake rule and gain its
-opposite: no fake, mock, stub or stand-in of anything, an outside call made
-for real with the environment the server sets, and a check that needs a
-device or a screen left to that kind's device stage. The server sets every
+opposite: no fake, mock, stub or stand-in of an outside call, which is made
+for real with the environment the server sets. The one stand-in a test may
+use is for the device platform a thin platform module wraps (the Android
+framework, a Windows API), decided with the owner on 2026-11-21: that
+module's contract is tested on this PC against it, and the kind's device or
+screen stage checks the real one. A web app's tests have no stand-in at all. The server sets every
 `secret` need's `env` in the environment of the gate it runs
 (`oneshot_build.built_env`). The gate already fails a run with a skipped
 contract case, so a test that skipped for want of a key fails locally.
@@ -167,9 +170,17 @@ never a value (`oneshot_needs.told`). Every gate the server runs for the run
 has each given secret, read from Credential Manager for that gate
 (`oneshot_needs.gate_env`, through `toolchain` and `built_env`). That covers
 the tests stage, the build's gate, the front build's gate and the pull
-request's gate. 11b1 stops there: the build agent's own shell does not have
-the secrets yet, so a test that needs one skips when the agent runs it and
-must pass in the server's gate.
+request's gate, and the web app the front build starts for its screenshots.
+Each gate's output shows `[N1]` where a secret's value or its URL-quoted form
+would stand (`common.masked`, `oneshot_needs.hidden`). The JUnit report is
+read once and deleted, and a case whose name holds a secret is refused. A
+secret the design names but the store does not hold is removed from the
+environment, so a variable of that name the server has never stands in.
+
+11b1 stops there. The build agent's own shell does not have the secrets yet,
+so a test that needs one skips when the agent runs it and must pass in the
+server's gate. The PC app's screen check and the Android device stages
+start the product without them; they gain them in 11b2.
 
 In CI the variables are absent. Each test that needs one skips with the need's
 id in its reason, and the run's CI summary lists those skips as owed to the
@@ -219,6 +230,6 @@ knows the values, at commit time, rather than in the reviewer's reading.
 | 11a1 | A design's outside calls may carry `needs`; the owner gives each (secrets to Credential Manager), the sheet lists them, and R1 approval waits for all of them | Done — #416 |
 | 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | Done — #417 |
 | 11b1 | Tests and build prompts without fakes, told every need; every gate the server runs carries the given secrets | In progress |
-| 11b2 | The build agent's own turns carry the secrets under the server's leak check; the CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Not started |
+| 11b2 | The build agent's own turns carry the secrets under the server's leak check; the PC app's screen check and the Android device stages get them; the CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Not started |
 | 11c | The review refuses a fake inside a test file | Not started |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |

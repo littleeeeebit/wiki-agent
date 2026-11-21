@@ -139,6 +139,15 @@ def test_an_app_the_command_cannot_start_is_refused_with_its_output(tmp_path):
             pass
 
 
+def test_the_app_starts_with_the_secrets_it_was_given_and_its_refusal_never_shows_one(tmp_path):
+    value = f"key-{os.getpid()}-{time.time_ns()}"
+    (tmp_path / "boom.py").write_text("import os\nprint('using', os.environ['SERVICE_KEY'])\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="띄우지 못했다") as e:
+        look.look(tmp_path, f'"{sys.executable}" boom.py', FRONT, FREQUENCY, OPS, ["desktop"], tmp_path / "shots",
+                  env={**os.environ, "SERVICE_KEY": value}, hide={value: "[N1]"})
+    assert "using [N1]" in str(e.value) and value not in str(e.value)   # it read the key, and the refusal hid it
+
+
 def test_an_app_whose_process_tree_cannot_be_owned_is_never_started(tmp_path):
     started = []
     real = subprocess.Popen

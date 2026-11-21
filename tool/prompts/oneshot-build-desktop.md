@@ -31,7 +31,8 @@ A refusal comes back with the reason, at most three times in all.
 
 ## In this turn
 
-- Add no fake, mock, stub or stand-in of anything. The outside calls go to
+- Add no fake, mock, stub or stand-in of an outside call, and no stand-in
+  beyond the device platform a thin platform module wraps. The outside calls go to
   the real services with what the owner gave for them:
 
 {needs}

@@ -388,19 +388,25 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
 
     folder = oneshot_spec.store(spec["repo"]).folder / "junit"
     folder.mkdir(parents=True, exist_ok=True)
-    report = folder / f"run-{time.time_ns()}.xml"
-    _, text, cut = specs.gate(run_as(command.replace("{report}", literal(report.as_posix())), spec["oneshot"], path), path, run.halt,
-                              env=toolchain(spec), timeout=RUN_SECONDS)
-    if cut:
-        raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
-    try:
-        root = ElementTree.parse(report).getroot()
-    except (OSError, ElementTree.ParseError):
-        raise ValueError(f"테스트 명령이 `{{report}}` 에 JUnit 보고서를 쓰지 않았다 — {text.strip()[-800:]}") from None
-    return [(case.get("classname") or "", case.get("name") or "", case.get("file") or "",
-             # A skip anywhere, a cleanup's included, outranks the rest: nothing skipped counts either way.
-             next((k for k in ("skipped", "error", "failure") if case.find(k) is not None), "passed"))
-            for case in root.iter("testcase")]
+    report, hide = folder / f"run-{time.time_ns()}.xml", oneshot_needs.hidden(spec)
+    try:   # the report may quote a secret in a failure: read once and never kept
+        _, text, cut = specs.gate(run_as(command.replace("{report}", literal(report.as_posix())), spec["oneshot"], path),
+                                  path, run.halt, env=toolchain(spec), timeout=RUN_SECONDS, hide=hide)
+        if cut:
+            raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
+        try:
+            root = ElementTree.parse(report).getroot()
+        except (OSError, ElementTree.ParseError):
+            raise ValueError(f"테스트 명령이 `{{report}}` 에 JUnit 보고서를 쓰지 않았다 — {text.strip()[-800:]}") from None
+    finally:
+        report.unlink(missing_ok=True)
+    found = [(case.get("classname") or "", case.get("name") or "", case.get("file") or "",
+              # A skip anywhere, a cleanup's included, outranks the rest: nothing skipped counts either way.
+              next((k for k in ("skipped", "error", "failure") if case.find(k) is not None), "passed"))
+             for case in root.iter("testcase")]
+    if leaked := sorted({label for c in found for v, label in hide.items() if any(v in f for f in c[:3])}):
+        raise ValueError(f"테스트 사례 이름에 비밀 값이 들어 있다 — {', '.join(leaked)}: 값을 사례 이름에 넣지 말라")
+    return found
 
 
 QUOTES = "'‘’‚‛"   # every character PowerShell reads as a single quote
@@ -722,7 +728,8 @@ def built(path: Path, run, spec: dict, final: str) -> str:
         gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
     except ValueError as e:
         return str(e)
-    verdict = specs.judge(path, [gate], run.halt, lambda text: specs.note(run, text), env=toolchain(spec))
+    verdict = specs.judge(path, [gate], run.halt, lambda text: specs.note(run, text), env=toolchain(spec),
+                          hide=oneshot_needs.hidden(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := held(path, run, spec, verdict):
