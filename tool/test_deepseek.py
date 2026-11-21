@@ -6,6 +6,7 @@ The provider is a stand-in that records the command and the environment it was s
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import socket
 import subprocess
 import sys
 import threading
@@ -35,7 +36,7 @@ def tree(tmp_path):
     """A repository beside a hub `.env` holding a fixture key."""
     (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=sk-fixture\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(tmp_path / "repo")], check=True)
-    held = deepseek.Relay(env=tmp_path / ".env")
+    held = deepseek.Relay(deepseek.URL, tmp_path / ".env")
     with patch.object(deepseek.settings, "HUB", tmp_path), patch.object(deepseek, "_relay", held):
         yield tmp_path / "repo"
     held.close()
@@ -118,7 +119,25 @@ def upstream():
                 self.send_header("x-echo", self.headers["x-api-key"])
                 self.send_header("proxy-authenticate", "Basic")
                 self.end_headers()
-                self.wfile.write(f'{{"error": "bad key {self.headers["x-api-key"]}"}}'.encode())
+                said = {"type": "error", "error": {"type": "authentication_error",
+                                                   "message": f"bad key {self.headers['x-api-key']}"}}
+                self.wfile.write(json.dumps(said).replace("sk-", "\\u0073k-").encode())   # escaped, as JSON may
+                return
+            if self.path.startswith("/v1/inband"):   # an error inside a 200 stream, the key split across two writes
+                self.send_response(200)
+                self.send_header("content-type", "text/event-stream")
+                self.send_header("connection", "close, request-id")
+                self.send_header("request-id", "only-this-connection")
+                self.end_headers()
+                for part in (b"event: error\ndata: bad key sk-fix", b"ture\n\n"):
+                    self.wfile.write(part)
+                    self.wfile.flush()
+                    time.sleep(0.2)
+                return
+            if self.path.startswith("/v1/stall"):   # accepted, then silent before any header
+                self.connection.settimeout(10)
+                if self.connection.recv(1) == b"":
+                    cut.set()
                 return
             if self.path.startswith("/v1/moved"):
                 self.send_response(307)
@@ -186,19 +205,30 @@ def test_the_relay_alone_holds_the_key_and_passes_on_only_what_deepseek_needs(tm
         assert raw(relay.url, [("x-api-key", token)], declared=(64 << 20) + 1)[0] == 413   # refused unread
         # Upstream's error keeps its status, never the key it echoed, nor a header outside the allowed ones.
         status, headers, body = sent(relay.url, {"x-api-key": token}, "/v1/echo")
-        assert status == 401 and b"sk-fixture" not in body and b"[key]" in body and not {"x-echo", "proxy-authenticate"} & headers
+        assert status == 401 and not {"x-echo", "proxy-authenticate"} & headers
+        said = json.loads(body)["error"]["message"]
+        assert "authentication_error" in said and "[key]" in said and "sk-fixture" not in said and b"sk-fixture" not in body
+        # An error inside a 200 stream, the key split across writes: scrubbed all the same; a header the upstream
+        # marks as its connection's own stays.
+        status, headers, body = sent(relay.url, {"x-api-key": token}, "/v1/inband")
+        assert status == 200 and body == b"event: error\ndata: bad key [key]\n\n" and "request-id" not in headers
         status, headers, body = sent(relay.url, {"x-api-key": token}, "/v1/moved")   # a redirect ends at the relay
         assert status == 502 and "location" not in headers
         (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=\n", encoding="utf-8")
         assert sent(relay.url, {"x-api-key": token})[0] == 503
-        assert len(got) == 3
+        assert len(got) == 4
+        # Framing: a POST without a length, with two, or chunked, and a body that stops short, never go on.
+        assert raw(relay.url, [("x-api-key", token)], declared=None, length=False)[0] == 400
+        assert raw(relay.url, [("x-api-key", token), ("content-length", "2")])[0] == 400
+        assert raw(relay.url, [("x-api-key", token), ("transfer-encoding", "chunked")])[0] == 400
+        assert len(got) == 4
     finally:
         relay.close()
     assert not relay.folder.exists()
 
 
-def raw(url, headers, declared=None, path="/v1/messages"):
-    """A request http.client sends as written: repeated headers, a declared length its body never fills."""
+def raw(url, headers, declared=None, path="/v1/messages", length=True):
+    """A request http.client sends as written: repeated headers, a declared length its body never fills, none."""
 
     host, port = url.removeprefix("http://").split(":")
     conn = http.client.HTTPConnection(host, int(port), timeout=10)
@@ -206,8 +236,9 @@ def raw(url, headers, declared=None, path="/v1/messages"):
         conn.putrequest("POST", path)
         for name, value in headers:
             conn.putheader(name, value)
-        conn.putheader("content-length", str(declared if declared is not None else 2))
-        conn.endheaders(b"" if declared is not None else b"{}")
+        if length:
+            conn.putheader("content-length", str(declared if declared is not None else 2))
+        conn.endheaders(b"" if declared is not None or not length else b"{}")
         answer = conn.getresponse()
         return answer.status, answer.read()
     finally:
@@ -226,6 +257,19 @@ def test_a_caller_that_hangs_up_cuts_the_request_to_deepseek_and_close_waits_for
     answer.close()   # the person pressed Stop: the CLI is gone
     conn.close()
     assert cut.wait(5), "the relay must hang up on DeepSeek too"
+    # The same while DeepSeek has accepted the request but sent no header yet.
+    cut.clear()
+    conn = http.client.HTTPConnection(host, int(port), timeout=10)
+    conn.putrequest("POST", "/v1/stall")
+    conn.putheader("x-api-key", relay.token)
+    conn.putheader("content-length", "2")
+    conn.endheaders(b"{}")
+    time.sleep(0.5)
+    conn.close()
+    assert cut.wait(5), "a stall before headers must not outlive the caller"
+    # A connection that never finishes its headers holds a slot, and close cuts it too.
+    silent = socket.create_connection((host, int(port)))
+    silent.sendall(b"POST /v1/messages HTTP/1.1\r\n")
     # A request still in flight when the app closes: close cuts it rather than waiting out the read timeout.
     conn = http.client.HTTPConnection(host, int(port), timeout=10)
     conn.request("POST", "/v1/slow", body=b"{}", headers={"x-api-key": relay.token})
@@ -233,7 +277,8 @@ def test_a_caller_that_hangs_up_cuts_the_request_to_deepseek_and_close_waits_for
     began = time.monotonic()
     relay.close()
     conn.close()
-    assert time.monotonic() - began < 5 and not relay.folder.exists()
+    silent.close()
+    assert time.monotonic() - began < 5 and not relay.folder.exists() and not relay.threads
 
 
 def test_a_helper_path_a_shell_would_rewrite_refuses_deepseek(tmp_path):
