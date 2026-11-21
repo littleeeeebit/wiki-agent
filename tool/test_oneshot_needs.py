@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -349,6 +350,10 @@ def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
     assert masked("STRASSE, straße", {"strasse": "[N1]"}) == "[N1], [N1]"   # a casing that changes length
     assert masked("İd, mark ̇ here", {"i̇d": "[N1]", "̇": "[N2]"}) == "[N1], mark [N2] here"
     assert masked("ab", {"İ": "[N1]", "": "[N2]"}) == "ab"   # nothing folds to nothing
+    assert masked("İ", {"̇": "[N1]"}) == "I[N1]"   # as spelled, though the fold here drops it
+    many = "k " * 20000
+    started = time.monotonic()
+    assert masked(many, {"k": "[N1]"}) == "[N1] " * 20000 and time.monotonic() - started < 2   # linear in matches
 
 
 def test_a_secret_that_folds_to_nothing_shows_on_no_page():
@@ -360,3 +365,5 @@ def test_a_secret_that_folds_to_nothing_shows_on_no_page():
 
     page = type("Page", (), {"frames": [Frame()]})()
     assert secrets_shown(page, {"̇": "[N1]"}) and not secrets_shown(page, {"̇̇x": "[N1]"})
+    Frame.evaluate = lambda self, _: {"texts": ["İ"], "values": []}
+    assert secrets_shown(page, {"̇": "[N1]"})   # as spelled, though the fold here drops it

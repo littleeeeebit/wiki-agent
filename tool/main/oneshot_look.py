@@ -528,12 +528,15 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
             raise TypeError
     except (Error, TypeError, KeyError):
         return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
-    # Case is ignored, as `text-transform` can draw any casing (`folded`); within one stream, a value broken across lines
-    # reads as one
+    # A value as spelled, or in any casing `text-transform` can draw (`folded`, whose fold of a character can depend
+    # on the one before); within one stream, a value broken across lines reads as one
+    spelled = texts + values
     texts, values = [folded(t) for t in texts], [folded(v) for v in values]
     flats = ["".join(t.split()) for t in texts]
 
     def seen(value: str) -> bool:
+        if value and any(value in t for t in spelled):
+            return True
         value = folded(value)
         flat = "".join(value.split())
         return bool(value) and (any(value in t for t in texts + values) or bool(flat) and any(flat in f for f in flats))

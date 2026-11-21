@@ -92,21 +92,34 @@ def folded(text: str) -> str:
 
 
 def masked(text: str, hide: dict[str, str] | None) -> str:
-    """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced by its label in
-    every casing `folded` treats as the same, the longest first; a match inside one character covers all of it."""
+    """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced by its label as
+    spelled and in every casing `folded` treats as the same, the longest first; a match inside one character covers
+    all of it. Each character is claimed once, so the work grows with the matches, never with their square."""
+    if not hide:
+        return text
     folds = _folds(text)
     flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
-    spans: list[tuple[int, int, str]] = []
-    for value in sorted(hide or {}, key=lambda v: len(folded(v)), reverse=True):
+    taken, chosen = bytearray(len(text)), []
+
+    def claim(start: int, end: int, label: str) -> None:
+        if not any(taken[start:end]):
+            taken[start:end] = b"\x01" * (end - start)
+            chosen.append((start, end, label))
+
+    for value in sorted(hide, key=lambda v: max(len(v), len(folded(v))), reverse=True):
+        at = 0
+        while value and (at := text.find(value, at)) >= 0:   # as spelled: a fold can depend on what is around it
+            claim(at, at + len(value), hide[value])
+            at += 1
         needle, at = folded(value), 0
         while needle and (at := flat.find(needle, at)) >= 0:
-            start, end = owner[at], owner[at + len(needle) - 1] + 1
-            if not any(s < end and start < e for s, e, _ in spans):
-                spans.append((start, end, hide[value]))
+            claim(owner[at], owner[at + len(needle) - 1] + 1, hide[value])
             at += 1
-    for start, end, label in sorted(spans, reverse=True):
-        text = text[:start] + label + text[end:]
-    return text
+    out, last = [], 0
+    for start, end, label in sorted(chosen):
+        out += [text[last:start], label]
+        last = end
+    return "".join(out + [text[last:]])
 
 
 def python_environment(env: dict | None = None) -> dict:
