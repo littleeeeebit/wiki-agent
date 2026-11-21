@@ -93,6 +93,7 @@ type Props = {
   selectedSpec: Spec | null
   onSpecs: () => void
   onStart: BlockProps['onStart']
+  startChoice?: BlockProps['startChoice']
   /** A plan the Plan action started: select its worktree. */
   onPlanned: (spec: Spec) => void
   /** Show a finished run's graph paths on the map. */
@@ -130,7 +131,7 @@ const SCOPES = [
 
 /** The middle pane's conversation: ask the wiki under one focus, read the
  *  grounds, and settle the next task into a spec. */
-export function Query({ channels, options, on, seed, onChannels, onBusy, specs, selectedSpec, onSpecs, onStart, onPlanned,
+export function Query({ channels, options, on, seed, onChannels, onBusy, specs, selectedSpec, onSpecs, onStart, startChoice, onPlanned,
   onMapRun }: Props) {
   const [active, setActive] = useState('wiki')
   const [planning, setPlanning] = useState(false)
@@ -476,7 +477,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
                 || !('id' in b) || latestSpec.get(b.id) === m)} specs={specs} korean={on} busy={busy}
                 refactorMode={active === 'refactor' ? here?.refactor_mode ?? 'preserve' : undefined}
                 refactorGeneration={here?.refactor_generation} options={options}
-                onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />
+                onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} startChoice={startChoice} />
             ) : undefined}
             empty={active === 'next' ? propose : active === 'refactor' ? <span /> : undefined}
           />

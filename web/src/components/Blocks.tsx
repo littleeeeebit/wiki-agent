@@ -21,6 +21,8 @@ export type BlockProps = {
   onSpecs: () => void
   /** `choice` is a survey spec's fixed work model; otherwise the empty agent pane's. */
   onStart: (id: string, choice?: Choice) => Promise<void>
+  /** What `onStart` sends with no `choice`: the empty agent pane's pick, shown on the card before it is pressed. */
+  startChoice?: Choice
   refactorMode?: RefactorMode
   refactorGeneration?: number
   options?: api.Options | null   // what a survey card's implementation and review models are chosen again from
@@ -211,9 +213,9 @@ function SpecDetails({ spec, korean }: { spec: Spec; korean: boolean }) {
   </div>
 }
 
-export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, korean = false, refactorMode, refactorGeneration, options }:
+export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, startChoice, onRenamed, korean = false, refactorMode, refactorGeneration, options }:
   { spec: Spec; specs?: Spec[]; onRenamed: (id: string) => void; korean?: boolean; refactorMode?: RefactorMode; refactorGeneration?: number
-  } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart' | 'options'>) {
+  } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart' | 'startChoice' | 'options'>) {
   // A survey spec is refined in the conversation, never typed over, and runs on the roles its survey fixed.
   const surveyed = !!spec.refactor?.survey
   const roles = spec.refactor?.roles
@@ -312,6 +314,9 @@ export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, 
         </Btn>}
         {roles && <span aria-label="고정 모델" title="리팩터링을 시작할 때 고른 모델 — 이 명세의 모든 세션이 쓴다"
           className="basis-full text-[12.5px] text-muted-foreground">{rolesText(roles)}</span>}
+        {!roles && startChoice && spec.state === '정리됨' && <span aria-label="시작 모델" title="[시작] 이 이 모델로 첫 턴을 보낸다 — 아무 작업도 고르지 않은 빈 에이전트 칸에서 바꾼다"
+          className={`basis-full text-[12.5px] ${startChoice.model ? 'text-muted-foreground' : 'text-wait'}`}>구현 {startChoice.model
+            ? `${startChoice.model}${startChoice.effort ? ` · ${startChoice.effort}` : ''}` : '기본 모델 — 빈 에이전트 칸에서 고른다'}</span>}
         {roles && spec.state === '정리됨' && <RolesEditor spec={spec} roles={roles} options={options ?? null}
           busy={busy || !!working} onSaved={onSpecs} />}
         {spec.state === '정리됨' && <Btn tone="primary" disabled={edited || busy || !!working || !!locked.length}

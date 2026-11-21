@@ -360,6 +360,23 @@ def test_provider_switch_and_config_validation(tmp_path):
             assert web.post("/api/reset/wiki", json={"keep": "delete"}).status_code == 409
 
 
+def test_focus_model_survives_restart_per_project(tmp_path):
+    repos = {name: tmp_path / name for name in ("a", "b")}
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
+        web.post("/api/config/next", json={"repo": "a", "model": "opus", "effort": "high"}).raise_for_status()
+        chat._config.clear()   # a restart
+        assert (chat.config("next", "a")["model"], chat.config("next", "a")["effort"]) == ("opus", "high")
+        assert chat.config("next", "b")["model"] == "", "another project keeps its own default"
+        assert chat.config("retro", "a")["model"] == "", "another focus keeps its own default"
+        # A saved Codex model no longer listed falls back instead of failing the focus.
+        chat.chosen("a", "next", {"model": "codex:gone", "effort": "low"})
+        chat._config.clear()
+        with patch.object(chat_channels, "codex_models", return_value=[]):
+            assert chat.config("next", "a")["model"] == ""
+
+
 def test_project_shared_sessions_and_records_isolated(tmp_path):
     repos = {name: tmp_path / name for name in ("a", "b")}
     for repo in repos.values():

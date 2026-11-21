@@ -740,7 +740,7 @@ export default function App() {
             specs={specs}
             selectedSpec={spec}
             onSpecs={readSpecs}
-            onStart={start}
+            onStart={start} startChoice={choices[blank] ?? NO_CHOICE}
             onPlanned={planned}
             onMapRun={(run) => {
               setMapRun({ repo, run })

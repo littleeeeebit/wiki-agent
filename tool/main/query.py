@@ -133,8 +133,15 @@ def config(cid: str, name: str | None = None) -> dict:
     key = (name, cid)
     if key not in _config:
         channel = channels.get(cid)
-        model = channels.LOCAL.get("model", channel.model)
-        effort = channel.effort
+        # A pick made earlier in this project outlives a restart; without one, the machine's or the CLI's default.
+        picked = chosen(name).get(cid) or {}
+        if str(picked.get("model", "")).startswith("codex:"):
+            try:   # a Codex model gone from the list since is not this focus's to keep failing on
+                picked = picked if any(m["id"] == picked["model"] for m in channels.codex_models()) else {}
+            except Exception:
+                picked = {}
+        model = picked.get("model", channels.LOCAL.get("model", channel.model))
+        effort = picked.get("effort", channel.effort)
         if model.startswith("codex:"):
             try:
                 selected = next(m for m in channels.codex_models() if m["id"] == model)
@@ -151,6 +158,25 @@ def config(cid: str, name: str | None = None) -> dict:
                 _config[key].update(model=saved["survey"]["model"], effort=saved["survey"]["effort"],
                                     refactor_pinned=True)
     return _config[key]
+
+
+def chosen(name: str, cid: str = "", pick: dict | None = None) -> dict:
+    """The model and effort each focus of project `name` was last set to, by focus; given `pick`, it is
+    written for `cid` first. Kept only in memory, every restart put the conversation back on the default
+    model, and a spec it wrote then came from a model nobody picked."""
+    file = LOGS / "focus-model" / f"{name}.json"
+    try:
+        saved = json.loads(file.read_text(encoding="utf-8"))
+        saved = saved if isinstance(saved, dict) else {}
+    except (OSError, ValueError):
+        saved = {}
+    if pick is not None:
+        saved[cid] = pick
+        file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = file.with_suffix(".tmp")
+        temporary.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(file)
+    return saved
 
 
 def refactor_mode(name: str, mode: str = "", generation: int = 0, survey: dict | None = None) -> dict:
@@ -652,6 +678,7 @@ def configure(cid: str, body: Config) -> dict:
         moved = not switched and deepseek.provider(body.model) != deepseek.provider(cfg["model"])
         if not switched and not held:   # a pinned one keeps its survey's effort, an empty one too
             cfg.update(model=body.model, effort=body.effort or selected.get("default_effort", ""))
+            chosen(cfg["repo"], cid, {"model": cfg["model"], "effort": cfg["effort"]})
         if cid == "refactor" and body.refactor_mode is not None:
             if cfg.get("refactor_mode", "preserve") != body.refactor_mode:
                 cfg["refactor_generation"] = cfg.get("refactor_generation", 0) + 1
