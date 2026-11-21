@@ -388,8 +388,8 @@ def earlier(repo: str, o: dict) -> None:
 
     from . import oneshot_critique   # it imports this module
     stop = o.get("stopped") or {}
-    if "android" not in kinds_of(o) or o.get("stage") != "r3" or stop.get("reason") != "kind":
-        return
+    if "android" not in kinds_of(o) or o.get("stage") != "r3" or stop.get("reason") != "kind" or oneshot_spec.held(o):
+        return   # a run this version still holds before R3 (with `desktop`) stays as it is
     if (o.get("phone") or {}).get("status") == "passed":
         oneshot_spec.saved(repo, oneshot={"stopped": None, "working": None, "r3": oneshot_critique.opening(o)})
     else:

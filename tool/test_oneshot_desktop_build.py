@@ -123,13 +123,16 @@ def test_among_several_kinds_the_pc_app_is_frozen_and_looked_at_in_the_owners_or
 def test_a_look_check_owed_to_the_pc_app_needs_its_scenario_and_the_frozen_build_keeps_it(pc_build):
     oneshot_spec.saved("budget", oneshot={"owed": [{"id": "O1", "kind": "desktop", "source": "look",
                                                      "requirement": "R1", "check": "켜짐", "location": "core/a.rs:1",
-                                                     "reason": "UI 에서만 보인다"}]})
+                                                     "reason": "UI 에서만 보인다",
+                                                     "expect": {"id": "translate-on", "toggle": "On"}}]})
+    assert '`{"id": "translate-on", "toggle": "On"}`' in front_build.build_front_text(oneshot_spec.spec_of("budget"))
     sent = checked(pc_build)
     assert sent and "O1 의 시나리오가 없다" in sent[0][2] and not o().get("desktop_build")
     scenario = {"screen": "S1", "state": "full", "steps": [
         {"name": "on", "action": "toggle", "id": "translate-on", "expect": {"id": "translate-on", "toggle": "On"}}]}
     assert not checked(pc_build, {**BLOCK, "checks": {"O1": scenario}})
     assert o()["desktop_build"]["checks"] == {"O1": scenario} and o()["stage"] == "critique"
+    assert o()["looks"][-1]["proven"] == ["O1"]   # the look that passed ran it: the critic reads that
 
 
 def test_a_pc_look_finding_sends_the_build_back_and_keeps_the_frozen_build(pc_build):
@@ -419,19 +422,26 @@ CHECK = {"screen": "S1", "state": "full", "steps": [
     ({**TOGGLE, "expect": {"id": "translate-on", "toggle": "Yes"}}, "toggle 은"),
     ({**TOGGLE, "expect": {"id": "translate-on", "name": ""}}, "expect"),
     ({**TOGGLE, "expect": {"id": "translate-on"}}, "마지막 step"),   # the postcondition reads a property
+    ({**TOGGLE, "expect": {**TOGGLE["expect"], "in": "desktop"}}, "in 은 main 이나 owned"),
 ])
 def test_a_look_checks_scenario_outside_the_drivers_steps_is_refused(pc_build, step, why):
     assert pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "checks": {"O1": CHECK}}))["checks"] == {"O1": CHECK}
     with pytest.raises(ValueError, match=why):
         pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "checks": {"O1": {**CHECK, "steps": [step]}}}))
+    with pytest.raises(ValueError, match="screen 과 state 는 문자열"):   # a build correction, never a TypeError
+        pc.declared(pc_build, fenced(pc.BLOCK, {**BLOCK, "checks": {"O1": {**CHECK, "screen": []}}}))
 
 
 @pytest.mark.parametrize("checks, why", [
     ({"O1": CHECK}, ""), ({}, "O1 의 시나리오가 없다"), ({"O1": CHECK, "O9": CHECK}, "O9"),
-    ({"O1": {**CHECK, "screen": "S9"}}, "PC 앱의 화면"), ({"O1": {**CHECK, "state": "busy"}}, "PC 앱의 화면")])
+    ({"O1": CHECK, "O4": CHECK}, "O4"),   # an earlier version's `look` check without `expect` is the owner's
+    ({"O1": {**CHECK, "screen": "S9"}}, "PC 앱의 화면"), ({"O1": {**CHECK, "state": "busy"}}, "PC 앱의 화면"),
+    ({"O1": {**CHECK, "steps": [*CHECK["steps"][:1], {**TOGGLE, "expect": {"id": "translate-on", "name": "번역"}}]}},
+     "리뷰가 정한 결과")])   # the builder's own postcondition never stands in for the review's
 def test_the_checks_script_exactly_the_look_checks_owed_to_the_pc_app(pc_build, checks, why):
-    owed = [{"id": "O1", "kind": "desktop", "source": "look"}, {"id": "O2", "kind": "desktop", "source": "owner"},
-            {"id": "O3", "kind": "android"}]
+    owed = [{"id": "O1", "kind": "desktop", "source": "look", "expect": TOGGLE["expect"]},
+            {"id": "O2", "kind": "desktop", "source": "owner"}, {"id": "O3", "kind": "android"},
+            {"id": "O4", "kind": "desktop", "source": "look"}]
     run = {"oneshot": {"owed": owed, "front": {"screens": [{"id": "S1"}, {"id": "S2", "kind": "webapp"}]}}}
     got = pc.scripted(checks, run)
     assert (why in got if why else got == "") and (not why or got)

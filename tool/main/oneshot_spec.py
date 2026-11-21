@@ -319,7 +319,8 @@ def briefing(repo: str, gate: str, fields: dict):
 
     o = {**spec_of(repo)["oneshot"], **fields}
     if held(o):   # this version ends before the review it would open: the run waits there, its rounds kept
-        saved(repo, oneshot={**fields, "working": None, "stopped": kind_stop(o["stage"], o)})
+        saved(repo, oneshot={**{k: v for k, v in fields.items() if k != gate}, "working": None,
+                             "stopped": kind_stop(o["stage"], o)})   # the review's opening is never written
         return None
     saved(repo, oneshot={**fields, "working": "brief"})
     return lambda: briefed(repo, gate)
@@ -540,7 +541,8 @@ def kind_stop(stage: str, o: dict | None = None) -> dict:
     owner's desktop round still owes: they stay pending through the owned rounds."""
 
     if stage == "r3" and o is not None:
-        owner = [x["id"] for x in o.get("owed") or [] if x["kind"] == "desktop" and x.get("source") == "owner"]
+        from . import oneshot_desktop
+        owner = [x["id"] for x in oneshot_desktop.owner_owed(o)]
         return {"reason": "kind", "state": stage, "detail": "PC 앱 화면 비평을 두 번 깨끗하게 마쳤다 — "
                 + (f"주인 화면에서 확인할 {', '.join(owner)} 와 " if owner else "") + "R3 는 다음 버전에서 이어진다"}
     return {"reason": "kind", "state": stage, "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}

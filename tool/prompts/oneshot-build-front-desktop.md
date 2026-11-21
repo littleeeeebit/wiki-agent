@@ -131,8 +131,10 @@ End the turn with exactly one fenced block whose info string is
   window, or with `"in": "owned"` in the one window the main window owns.
   Its `expect` is the element the step leaves, by its `id`, with its
   `name`, `value` or `toggle` (`On`, `Off`, `Indeterminate`) as UI Automation
-  reads them. The last step's `expect` reads the check's postcondition: a
-  `name`, `value` or `toggle`. A value is at most 1000 characters.
+  reads them, in the main window, or with `"in": "owned"` in the one window
+  the main window owns; the id names one element there. The last step's
+  `expect` is the check's `expect` above, exactly as written. A value is at
+  most 1000 characters.
 
 `run.folder` and `installer` are relative to the repository root;
 `run.program` and `run.cwd` are relative to `run.folder`. Every path uses

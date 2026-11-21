@@ -200,6 +200,24 @@ def test_the_frozen_program_is_started_for_each_state_with_its_settings_and_the_
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_a_look_whose_clean_teardown_ends_past_its_deadline_goes_back_to_the_build(tmp_path, monkeypatch):
+    import desktop_session
+
+    @contextmanager
+    def slow(root, name):
+        yield type("Look", (), {"folder": tmp_path})()
+        monkeypatch.setattr(pc_look, "LOOK_SECONDS", 0)   # the clock crosses the deadline while the desktop ends
+
+    build = {"identity": "f" * 64, "folder": str(tmp_path), "launch": {}}
+    spec = {"repo": "budget", "oneshot": {"profile": {"window": "1280x800"}}}
+    with patch.object(desktop_session, "look", slow), patch.object(pc_look, "inspect", lambda *a: []), \
+            patch.object(pc_look, "checks", lambda *a: []), \
+            patch.object(pc_look.oneshot_spec, "store", lambda repo: type("S", (), {"folder": tmp_path})()), \
+            pytest.raises(ValueError, match="0분 안에 끝나지 않았다"):
+        pc_look.look(spec, build, tmp_path / "shots")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
 def test_a_look_whose_cleanup_is_not_proven_stops_the_stage(tmp_path):
     import desktop_session
 
@@ -257,6 +275,20 @@ def test_a_look_past_its_whole_deadline_halts_its_driver_and_goes_back_to_the_bu
         with pytest.raises(ValueError, match="0분 안에 끝나지 않았다"):
             runs.drive("S1", "empty", [])
     assert len(desk.started) == 1   # no start after the deadline
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_a_start_the_deadline_halts_says_so_and_any_other_halt_is_a_stop(tmp_path, monkeypatch):
+    import desktop_session
+
+    desk = Desk(tmp_path, refuse=desktop_session.Halted("halted before app.exe ran"))
+    runs, driving, kept = launches(tmp_path, desk)
+    with driving, kept:
+        with pytest.raises(ValueError, match="검사 중에 멈췄다"):   # the owner's stop, the deadline not reached
+            runs.drive("S1", "full", [])
+        monkeypatch.setattr(pc_look, "LOOK_SECONDS", 0)
+        with pytest.raises(ValueError, match="0분 안에 끝나지 않았다"):   # the deadline's, after the end is read
+            runs.drive("S1", "full", [])
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
@@ -510,25 +542,41 @@ def test_a_manifest_that_no_longer_digests_to_the_saved_identity_is_altered(tmp_
     assert "식별자와 맞지 않는다" in pc_look.oneshot_desktop.altered({**build, "identity": "0" * 64})
 
 
-OWED = [{"id": "O1", "kind": "desktop", "source": "look", "requirement": "R2", "check": "번역을 켜면 켜짐으로 보인다"},
-        {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R3", "check": "캡처에 글이 있다"}]
+ON = {"id": "translate-on", "toggle": "On"}
+OWED = [{"id": "O1", "kind": "desktop", "source": "look", "requirement": "R2", "check": "번역을 켜면 켜짐으로 보인다",
+         "expect": ON},
+        {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R3", "check": "캡처에 글이 있다"},
+        {"id": "O3", "kind": "desktop", "source": "look", "requirement": "R3", "check": "이전 버전의 미룬 검사"}]
 SCENARIO = {"O1": {"screen": "S1", "state": "full", "steps": [
-    {"name": "on", "action": "toggle", "id": "translate-on", "expect": {"id": "translate-on", "toggle": "On"}}]}}
+    {"name": "on", "action": "toggle", "id": "translate-on", "expect": ON}]}}
+UNSCOPED = "a step's postcondition was not read on one element of its window, after the step before"
 
 
-@pytest.mark.parametrize("after, scenarios, why", [
-    ("On", SCENARIO, None), ("Off", SCENARIO, "step on: its postcondition was not read"),
-    ("On", {}, "빌드에 그 시나리오가 없다")])
-def test_a_look_check_passes_only_on_its_postcondition_read_and_an_owner_check_waits(tmp_path, after, scenarios, why):
-    started = []
+@pytest.mark.parametrize("case, why", [
+    ("on", None), ("off", "step on: its postcondition was not read"),
+    ("in the dialog", UNSCOPED),   # the main window's switch stayed off, a dialog's same-named one is on
+    ("stale", UNSCOPED),           # the step points back at the start state, which already showed it on
+    ("its own expect", UNSCOPED),  # the builder read the switch's unchanged name instead of the review's toggle
+    ("unscripted", "빌드에 그 시나리오가 없다")])
+def test_a_look_check_passes_only_on_the_reviews_postcondition_read_where_it_names(tmp_path, case, why):
+    started, scenarios = [], {} if case == "unscripted" else SCENARIO
+    if case == "its own expect":
+        scenarios = {"O1": {**SCENARIO["O1"], "steps": [{**SCENARIO["O1"]["steps"][0],
+                                                         "expect": {"id": "translate-on", "name": "번역"}}]}}
 
-    def answer(sid, state, steps):   # the toggle leaves the switch `after`
+    def answer(sid, state, steps):   # the toggle leaves the main window's switch on, or not
         started.append((sid, state, [s["name"] for s in steps]))
-        switch = node("translate-on", id="translate-on", name="번역", patterns=["Toggle"])
-        return report([switch], steps=[{**steps[0], "shows": [{**switch, "toggle": after}]}])
+        switch = node("translate-on", id="translate-on", name="번역", patterns=["Toggle"], toggle="Off")
+        after = [{**switch, "toggle": "On" if case == "on" else "Off"}]
+        if case == "in the dialog":
+            return report([switch], windows=(MAIN, DIALOG), steps=[
+                {**steps[0], "shows": [*after, {**switch, "window": DIALOG, "toggle": "On"}]}])
+        got = report([{**switch, "toggle": "On"} if case == "stale" else switch], steps=[{**steps[0], "shows": after}])
+        return {**got, "steps": [{**got["steps"][0], "state": "s00"}]} if case == "stale" else got
 
     spec = {"oneshot": {"front": {"screens": SCREENS}, "owed": OWED}}
     found = pc_look.checks(Runs(tmp_path / "evidence", answer), spec, {"checks": scenarios})
-    assert started == ([("S1", "full", ["on"])] if scenarios else [])   # the owner's check never runs here
+    assert started == ([("S1", "full", ["on"])] if scenarios else [])   # O2 and the unscripted O3 wait for the owner
     assert [f["what"] for f in found] == ([] if why is None else [
         f"PC 앱에서 확인할 O1(R2) 이 통과하지 못했다 — {why} · 확인: 번역을 켜면 켜짐으로 보인다"])
+    assert [x["id"] for x in pc_look.oneshot_desktop.owner_owed(spec["oneshot"])] == ["O2", "O3"]

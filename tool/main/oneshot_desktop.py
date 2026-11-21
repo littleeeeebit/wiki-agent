@@ -40,6 +40,7 @@ MANIFEST_BYTES = 1 << 20
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 STEP_NAME = re.compile(r"[A-Za-z0-9_-]{1,40}")   # a check's step: it names the driver's operations and states
 MAX_STEPS = 20
+WINDOWS = ("main", "owned")   # where a step acts and its postcondition reads: the main window or the one it owns
 # A setting the look passes is one of two things, so a path to another place on this PC has no spelling left to
 # take, however Windows, a C runtime, a web view or the app's own expansion would read it:
 # - a whole remote URL with a host, an optional `name=` before it, in printable ASCII but `,` and `;`, so no list
@@ -203,22 +204,50 @@ def _checks(value) -> dict:
             if ("value" in s) != (s["action"] == "set_value") or "value" in s and not (
                     isinstance(s["value"], str) and len(s["value"]) <= desktop_driver.MAX_VALUE):
                 raise ValueError(f"{at} 의 value 는 set_value 에만, {desktop_driver.MAX_VALUE}자 이하 문자열로 적는다")
-            if s.get("in", "main") not in ("main", "owned"):
+            if s.get("in", "main") not in WINDOWS:
                 raise ValueError(f"{at} 의 in 은 main(주 창) 이나 owned(주 창이 가진 창) 이다")
-            expect = s.get("expect")
-            if not isinstance(expect, dict) or set(expect) - set(desktop_driver.PROPERTIES) \
-                    or not isinstance(expect.get("id"), str) or not expect["id"].strip() \
-                    or desktop_driver.wanted(expect) != expect:
-                raise ValueError(f"{at} 의 expect 는 결과로 볼 요소의 id 에 name, value, toggle 을 더한 문자열 객체다")
-            if "toggle" in expect and expect["toggle"] not in desktop_driver.TOGGLES or \
-                    len(expect.get("value", "")) > desktop_driver.MAX_VALUE:
-                raise ValueError(f"{at} 의 toggle 은 {', '.join(desktop_driver.TOGGLES)} 중 하나, value 는 "
-                                 f"{desktop_driver.MAX_VALUE}자 이하다")
+            if why := postcondition(s.get("expect"), read=False):
+                raise ValueError(f"{at} 의 {why}")
             steps.append({k: s[k] for k in ("name", "action", "id", "value", "in", "expect") if k in s})
-        if not {"name", "value", "toggle"} & set(steps[-1]["expect"]):
-            raise ValueError(f"{where} 의 마지막 step 은 요소의 name, value, toggle 중 하나를 결과로 읽는다")
-        out[cid] = {"screen": c.get("screen"), "state": c.get("state"), "steps": steps}
+        if why := postcondition(steps[-1]["expect"]):
+            raise ValueError(f"{where} 의 마지막 step 은 {why}")
+        if not all(isinstance(c.get(k), str) for k in ("screen", "state")):
+            raise ValueError(f"{where} 의 screen 과 state 는 문자열이다")
+        out[cid] = {"screen": c["screen"], "state": c["state"], "steps": steps}
     return out
+
+
+def postcondition(expect, read: bool = True) -> str:
+    """Why `expect` is not a postcondition the driver reads: an element by its `AutomationId` (`id`), in the main
+    window or with `in: owned` the one window it owns, with its `name`, `value` or `toggle` state (with `read`,
+    one at least); empty when it is one."""
+
+    import desktop_driver
+
+    plain = {k: v for k, v in expect.items() if k != "in"} if isinstance(expect, dict) else None
+    if plain is None or set(plain) - set(desktop_driver.PROPERTIES) or not isinstance(plain.get("id"), str) \
+            or not plain["id"].strip() or desktop_driver.wanted(plain) != plain or expect.get("in", "main") not in WINDOWS:
+        return "expect 는 결과로 볼 요소의 id 에 name, value, toggle 을 더한 문자열 객체이고, in 은 main 이나 owned 다"
+    if "toggle" in plain and plain["toggle"] not in desktop_driver.TOGGLES or \
+            len(plain.get("value", "")) > desktop_driver.MAX_VALUE:
+        return f"expect 의 toggle 은 {', '.join(desktop_driver.TOGGLES)} 중 하나, value 는 {desktop_driver.MAX_VALUE}자 이하다"
+    if read and not {"name", "value", "toggle"} & set(plain):
+        return "expect 에 요소의 name, value, toggle 중 하나를 결과로 읽는다"
+    return ""
+
+
+def looked_for(o: dict) -> list[dict]:
+    """The owed checks the look runs on the PC app: `look` ones whose review named the postcondition (`expect`)."""
+
+    return [x for x in o.get("owed") or [] if x["kind"] == "desktop" and x.get("source") == "look"
+            and isinstance(x.get("expect"), dict)]
+
+
+def owner_owed(o: dict) -> list[dict]:
+    """The PC app's owed checks the owner's desktop round runs: every one the look does not."""
+
+    ran = {x["id"] for x in looked_for(o)}
+    return [x for x in o.get("owed") or [] if x["kind"] == "desktop" and x["id"] not in ran]
 
 
 def scripted(checks: dict, spec: dict) -> str:
@@ -227,7 +256,8 @@ def scripted(checks: dict, spec: dict) -> str:
 
     from .oneshot_device import STATES
 
-    owed = [x["id"] for x in spec["oneshot"].get("owed") or [] if x["kind"] == "desktop" and x.get("source") == "look"]
+    looks = {x["id"]: x for x in looked_for(spec["oneshot"])}
+    owed = list(looks)
     if missing := [i for i in owed if i not in checks]:
         return (f"`{BLOCK}` 의 checks 에 PC 앱에서 확인할 {', '.join(missing)} 의 시나리오가 없다 — 미룬 검사마다 "
                 "screen, state, steps 를 적는다")
@@ -237,6 +267,9 @@ def scripted(checks: dict, spec: dict) -> str:
     for cid, c in checks.items():
         if c["screen"] not in ids or c["state"] not in STATES:
             return f"`{BLOCK}` 의 checks.{cid} 는 PC 앱의 화면({', '.join(sorted(ids))})과 상태({', '.join(STATES)})에서 시작한다"
+        if (last := c["steps"][-1]["expect"]) != (want := looks[cid]["expect"]):   # the review's, never the builder's
+            return (f"`{BLOCK}` 의 checks.{cid} 의 마지막 expect 는 리뷰가 정한 결과 "
+                    f"{json.dumps(want, ensure_ascii=False)} 그대로다 — 받은 값 {json.dumps(last, ensure_ascii=False)}")
     return ""
 
 

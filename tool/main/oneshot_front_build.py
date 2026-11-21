@@ -100,8 +100,8 @@ def build_front_text(spec: dict) -> str:
     text = text.replace("{profile}", environment(o)).replace("{tools}", oneshot_build.tools_text(o)) \
         .replace("{window}", o["profile"].get("window", "")) \
         .replace("{desktop_owed}", "\n".join(f"- `{x['id']}` ({x['requirement']}, `{x['location']}`): {x['check']} — "
-                                             f"{x['reason']}" for x in o.get("owed") or []
-                                             if x["kind"] == "desktop" and x.get("source") == "look") or "- (none)")
+                                             f"{x['reason']} · expect `{json.dumps(x['expect'], ensure_ascii=False)}`"
+                                             for x in oneshot_desktop.looked_for(o)) or "- (none)")
     if "android" not in kinds_of(o):
         return text
     if shape(o) == "kinds":   # the Android parts read only what applies to the Android app
@@ -202,8 +202,10 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     if (now := oneshot_build.head(path)) != verdict["head"] or specs.dirty(path):
         return (f"앱을 띄워 찍는 동안 작업트리가 바뀌었다 — HEAD `{now[:12]}`, 게이트는 `{verdict['head'][:12]}`. "
                 "`live_cmd` 와 앱은 추적하는 파일을 바꾸지 않는다")
+    # A PC app's look that passes ran every `look` owed check, each failure a high finding: the critic reads which.
     looks = [*(o.get("looks") or []), {"round": n, "head": verdict["head"], "findings": findings,
-                                       **({"build": build["identity"]} if build else {})}]
+                                       **({"build": build["identity"], "proven": [
+                                           x["id"] for x in oneshot_desktop.looked_for(o)]} if build else {})}]
     if high := [f for f in findings if f["severity"] == "high"]:
         oneshot_spec.saved(spec["repo"], oneshot={"looks": looks})
         return "화면 검사에서 고칠 것이 나왔다 — " + " / ".join(

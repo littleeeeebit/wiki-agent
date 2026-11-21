@@ -21,7 +21,7 @@ from fastapi import HTTPException
 
 from agent import read_tools
 
-from . import oneshot, oneshot_build, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
+from . import oneshot, oneshot_build, oneshot_desktop, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
 from .oneshot_profile import environment, kinds_of, shape
 from .query import _lock as work_lock, hold
 
@@ -263,7 +263,8 @@ def deferred(f: dict, devices: dict[str, set[str]]) -> bool:
     d = f["device"]
     return f["severity"] != "P2" and isinstance(d, dict) and d.get("kind") in devices \
         and d.get("requirement") in devices[d["kind"]] and isinstance(d.get("check"), str) and bool(d["check"].strip()) \
-        and (d.get("source") in SOURCES[d["kind"]] if d["kind"] in SOURCES else "source" not in d)
+        and (d.get("source") in SOURCES[d["kind"]] if d["kind"] in SOURCES else "source" not in d) \
+        and (not oneshot_desktop.postcondition(d.get("expect")) if d.get("source") == "look" else "expect" not in d)
 
 
 def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rules: dict | None = None) -> dict:
@@ -285,7 +286,9 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
         raise ValueError("`device` 는 P0·P1 발견에만 붙고, 기기가 있는 종류(" + (", ".join(devices or {}) or "이 실행엔 없다")
                          + "), 그 종류에 걸린 요구, 기기에서 볼 `check` 를 적는다 — PC 앱(`desktop`)은 `source` 로 "
                          "`look`(UI Automation 상태) 이나 `owner`(주인 화면에서만 보이는 캡처·합성) 를 적고, 둘 다 "
-                         "아니면 미루지 못한다. 안드로이드는 `source` 를 적지 않는다")
+                         "아니면 미루지 못한다. `look` 은 `expect` 로 결과를 적는다 — 요소의 `AutomationId`(id) 에 "
+                         "name, value, toggle 중 하나 이상, 주 창이 가진 창이면 `in: owned`. 안드로이드는 `source` 를 "
+                         "적지 않는다")
     serious = [f for f in findings if f["severity"] != "P2" and "device" not in f]
     if not all(area_of(f) for f in serious):
         raise ValueError("P0·P1 발견마다 그것이 걸린 동작 방식의 이름 `area` 를 적는다")
@@ -299,7 +302,7 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
                           **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
                           **({k: f[k] for k in ("breaks", "repro") if f.get(k)}),
-                          **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source")
+                          **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source", "expect")
                                          if k in f["device"]}}
                              if "device" in f else {})} for f in findings]}
 

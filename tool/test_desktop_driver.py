@@ -300,6 +300,18 @@ def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
     assert desktop_driver.holds(state, {"name": "번역"}) and not desktop_driver.holds(state, {"value": "x"})   # no id, no name
 
 
+def test_a_postcondition_in_a_window_reads_the_one_element_there_its_id_names():
+    on = {"id": "t", "toggle": "On"}
+    state = {"windows": [{"hwnd": 1, "owner": 0}, {"hwnd": 2, "owner": 1}],
+             "nodes": [{"window": 1, "id": "t", "toggle": "Off"}, {"window": 2, "id": "t", "toggle": "On"}]}
+    report = {"main": {"hwnd": 1}}
+    assert desktop_driver.holds(state, on) and not desktop_driver.holds(state, on, desktop_driver.scope(report, state, "main"))
+    assert desktop_driver.holds(state, on, desktop_driver.scope(report, state, "owned"))
+    twice = {**state, "nodes": [*state["nodes"], {"window": 2, "id": "t", "toggle": "On"}]}
+    assert not desktop_driver.holds(twice, on, 2)   # two elements carry the id: which one is unproven
+    assert desktop_driver.scope(report, {**state, "windows": state["windows"][:1]}, "owned") is None
+
+
 def test_a_result_that_cannot_be_saved_still_returns_the_unproven_end(tmp_path, monkeypatch):
     look = types.SimpleNamespace(folder=tmp_path, jobs={"app": types.SimpleNamespace(name="job"), "driver": None},
                                  check_key=lambda key: None, start=lambda *a, **k: None)

@@ -180,9 +180,9 @@ def test_a_built_pc_app_core_is_reviewed(desktop, kinds):
 
 LOOK = {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "번역 켜기가 꺼진 채 남는다", "evidence": "x",
         "area": "toggle", "device": {"kind": "desktop", "requirement": "R1", "check": "`translate` 토글이 켜진다",
-                                     "source": "look"}}
-OWNER = {**LOOK, "device": {**LOOK["device"], "check": "고정 창을 캡처한 결과가 `{data}/seen.txt` 에 그 글을 담는다",
-                            "source": "owner"}}
+                                     "source": "look", "expect": {"id": "translate", "toggle": "On"}}}
+OWNER = {**LOOK, "device": {**{k: v for k, v in LOOK["device"].items() if k != "expect"},
+                            "check": "고정 창을 캡처한 결과가 `{data}/seen.txt` 에 그 글을 담는다", "source": "owner"}}
 
 
 def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
@@ -192,10 +192,17 @@ def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
     found = oneshot_review.verdict_of(approve(LOOK, OWNER), "h", devices)
     assert [f["device"]["source"] for f in found["findings"]] == ["look", "owner"]
     assert [x["source"] for x in oneshot_review.owing(found)] == ["look", "owner"]
+    assert [x.get("expect") for x in oneshot_review.owing(found)] == [{"id": "translate", "toggle": "On"}, None]
     for bad in ({"source": None}, {"source": "screen"}, {"source": "Look"}):   # neither source: no deferral
         with pytest.raises(ValueError, match="`source`"):
             oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], **bad}}), "h", devices)
-    gone = {**LOOK, "device": {k: v for k, v in LOOK["device"].items() if k != "source"}}
+    for bad in ({"expect": None}, {"expect": {"id": "translate"}}, {"expect": {"name": "번역"}}):
+        with pytest.raises(ValueError, match="`expect`"):   # a `look` check names the postcondition the driver reads
+            oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], **bad}}), "h", devices)
+    with pytest.raises(ValueError, match="`expect`"):   # an owner's check names none
+        oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], "expect": LOOK["device"]["expect"]}}),
+                                  "h", devices)
+    gone = {**LOOK, "device": {k: v for k, v in LOOK["device"].items() if k not in ("source", "expect")}}
     with pytest.raises(ValueError, match="`source`"):
         oneshot_review.verdict_of(approve(gone), "h", devices)
     phone = {"android": {"R1"}}   # an Android deferral names none
@@ -609,6 +616,10 @@ def test_a_mixed_run_whose_phone_round_passed_waits_before_r3_instead_of_opening
     assert oneshot_phone.settled("budget", {"status": "passed", "detail": ""}) is None   # no brief is written
     assert o()["stage"] == "r3" and o()["phone"]["status"] == "passed" and o()["stopped"]["reason"] == "kind"
     assert not o().get("working") and "R3 는 다음 버전에서" in o()["stopped"]["detail"]
+    held = {k: v for k, v in o().items() if k != "ts"}
+    oneshot_phone.earlier("budget", o())   # the phone's recovery hook leaves a run this version holds as it is
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "kind" and not o().get("r3") and o()["stage"] == held["stage"] == "r3"
 
 
 def test_several_kinds_an_earlier_versions_run_held_at_the_critique_is_resumable(desktop):

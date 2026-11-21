@@ -62,8 +62,12 @@ stable `AutomationId` and its name, value or toggle state), `owner` when it
 needs what a session with no owner's screen cannot show (a capture of
 another program's window or of the screen, or how an overlay composes over
 it), checked against a fixture window whose content is known and passed only
-on what is observed. A `look` check names the element and its state. A
-capture check names where the program reports what it captured: an element's
+on what is observed. A `look` check names the element and its state, and
+its `expect` is that postcondition as the driver reads it: the element's
+`AutomationId` as `id` with its `name`, `value` or `toggle` (`On`, `Off`,
+`Indeterminate`), and `"in": "owned"` when it is in a window the main window
+owns. The build scripts the scenario; the look passes only on your `expect`.
+A capture check names where the program reports what it captured: an element's
 value, or a file in its data folder. A composition check reads the fixture's
 region of the screen. A "capturing" label or the program's own drawn window is
 never the evidence. A `desktop` finding that fits neither is never deferred,

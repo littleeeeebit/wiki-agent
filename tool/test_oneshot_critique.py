@@ -127,8 +127,26 @@ def test_a_pc_apps_two_clean_rounds_on_one_build_wait_before_r3_with_its_owner_c
         critique.critique("budget")
     assert [p.name for p in heard[0][2]][:1] == ["S1-window-full.png"] and o()["stage"] == "r3"
     assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"] and not o().get("working")
-    assert not (o().get("r3") or {}).get("brief") and [c.get("build") for c in o()["critiques"]] == \
-        ["a" * 64, "b" * 64, "b" * 64]
+    assert not o().get("r3") and [c.get("build") for c in o()["critiques"]] == ["a" * 64, "b" * 64, "b" * 64]
+    assert "r3_sheet" not in critique.extra(oneshot_spec.spec_of("budget"))   # a held run opens no review state
+
+
+def test_a_look_that_ran_none_of_the_pc_apps_owed_look_checks_goes_back_to_the_build(judged):
+    owed = {"id": "O1", "kind": "desktop", "source": "look", "requirement": "R1", "check": "켜짐",
+            "expect": {"id": "translate-on", "toggle": "On"}}
+    screens = [{**{k: v for k, v in s.items() if k != "route"}, "surface": "window"} for s in FRONT["screens"]]
+    oneshot_spec.saved("budget", oneshot={"intent": {"restated": "가계부", "kind": "desktop"}, "owed": [owed],
+                                          "front": {**FRONT, "screens": screens}, "looks": [pc_look(1, "a" * 64)],
+                                          "profile": {**o()["profile"], "window": "1280x800"}})   # 9e4a's look
+    heard, asking = critic(said())
+    with asking, patch.object(critique.review, "rebuild", lambda repo, store, why, stage: heard.append((why, stage))):
+        critique.critique("budget")
+    assert heard == [("PC 앱에서 확인할 O1 을 마지막 화면 검사가 돌리지 않았다", "build-front")]
+
+
+def test_a_build_seen_before_never_brings_its_clean_rounds_back():
+    rounds = [{"head": "h", "clean": True, "build": b} for b in ("A", "B", "A")]
+    assert not critique.passed(rounds, "h", "A") and critique.passed([*rounds, rounds[-1]], "h", "A")
 
 
 def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts(judged):

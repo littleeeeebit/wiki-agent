@@ -122,13 +122,30 @@ def wanted(expect: dict) -> dict:
             and (v.strip() or k in ("value", "toggle"))}
 
 
-def holds(state: dict, expect: dict) -> bool:
+def holds(state: dict, expect: dict, window: int | None = None) -> bool:
     """A step's postcondition, read off the state it left: one element of the app with every property it names, an
-    id or a name among them. A node of another process, an embedded fragment, never satisfies one."""
+    id or a name among them. A node of another process, an embedded fragment, never satisfies one. With `window`,
+    the element is the one node in that window its id or name names, so a same-named control elsewhere never
+    stands in for it."""
 
-    want = wanted(expect)
-    return bool(expectation(expect)) and any(not node.get("foreign") and all(node.get(k) == v for k, v in want.items())
-                                             for node in state["nodes"])
+    want, key = wanted(expect), expectation(expect)
+    if not key:
+        return False
+    nodes = [n for n in state["nodes"] if not n.get("foreign") and (window is None or n.get("window") == window)]
+    if window is not None:
+        nodes = [n for n in nodes if n.get(key[0]) == key[1]]
+        return len(nodes) == 1 and all(nodes[0].get(k) == v for k, v in want.items())
+    return any(all(node.get(k) == v for k, v in want.items()) for node in nodes)
+
+
+def scope(report: dict, state: dict, where: str) -> int | None:
+    """The window an expectation reads in `state`: the main window, or with `owned` the one window it owns."""
+
+    main = (report.get("main") or {}).get("hwnd")
+    if where != "owned" or main is None:
+        return main
+    owned = [w["hwnd"] for w in state.get("windows") or [] if w.get("owner") == main]
+    return owned[0] if len(owned) == 1 else None
 
 
 def findings(report: dict) -> list[str]:

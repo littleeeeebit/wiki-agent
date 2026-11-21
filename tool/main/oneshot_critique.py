@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_device as device, \
+from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_desktop, oneshot_device as device, \
     oneshot_front_build as front_build, oneshot_pr, oneshot_review as review, oneshot_screens as screens, oneshot_spec
 from .oneshot_profile import kinds_of, shape
 from .oneshot_sheet import KIND_NAMES
@@ -108,6 +108,11 @@ def critique(repo: str) -> None:
     def body(store, spec, tree):
         o = spec["oneshot"]
         look = o["looks"][-1]
+        # A look an earlier version passed ran none of the PC app's owed `look` checks: it is never evidence.
+        if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in (look.get("proven") or [])]:
+            review.rebuild(repo, store, f"PC 앱에서 확인할 {', '.join(unproven)} 을 마지막 화면 검사가 돌리지 않았다",
+                           front_build.STAGE)
+            return None
         # Several kinds: one kind a round, the critic seeing only that kind's shots and the harness's findings on them.
         kind = (critic_kind(o) or kinds_of(o)[-1]) if shape(o) == "kinds" else None
         one = front_build.as_kind(spec, kind) if kind else spec
@@ -131,9 +136,11 @@ def critique(repo: str) -> None:
 def passed(rounds: list[dict], head: str | None = None, build: str | None = None) -> bool:
     """Two clean critiques in a row, the last two of these; with `head`, of those on the HEAD the look passed
     (several kinds: a kind that passed before a fix is judged again on the fix). Only rounds of the look's frozen
-    PC app `build` count: a new build, even under the same HEAD, clears the clean rounds."""
+    PC app `build` count, since the build last changed: a new build, even under the same HEAD, clears the clean
+    rounds, and a build seen before them never brings its old ones back."""
 
-    on = [r for r in rounds if (head is None or r["head"] == head) and r.get("build") == build]
+    since = rounds[max((i + 1 for i, r in enumerate(rounds) if r.get("build") != build), default=0):]
+    on = [r for r in since if head is None or r["head"] == head]
     return len(on) >= 2 and on[-1]["clean"] and on[-2]["clean"]
 
 
@@ -317,7 +324,7 @@ class Decisions(BaseModel):
 
 def extra(spec: dict) -> dict:
     o = spec["oneshot"]
-    if o.get("stage") != "r3":
+    if o.get("stage") != "r3" or oneshot_spec.held(o):   # a run held before R3 has no sheet
         return {"critiques": o.get("critiques") or []} if o.get("critiques") else {}
     phone_shot = (lambda n, name: f"/api/oneshot/spec/{spec['repo']}/phone/shot/{n}/{name}") \
         if "android" in kinds_of(o) else None
