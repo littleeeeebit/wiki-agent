@@ -183,19 +183,20 @@ has never stands in.
 
 The web look masks only each finding's text, so a secret as short as a JSON
 delimiter never changes its shape. Each screen is read and shot while no
-script or animation of it or of its frames runs (`oneshot_look.still`),
-and the picture is kept only if every frame still holds the document read,
-since a refresh navigates with scripts off.
+script of it or of its frames runs (`oneshot_look.still`), and the picture
+is kept only if every frame still holds the document read, since a refresh
+navigates with scripts off.
 
-What is read is what a picture can show as text, each stream matched on its
-own: every frame's rendered text, which joins a value split across elements,
-the text outside code of each open shadow root and of a frame with no
-rendered text, such as an SVG one, and the value, placeholder and alt of
-fields and images; never markup or a stylesheet. Within one stream a value
-broken across lines still matches. A screen that shows a secret, or has a
-frame that cannot be read, is a high finding and is never shot. The critic
-sends its pictures to a model, and a high finding sends the build back
-before the critic runs.
+What is read is the text the page carries, drawn or not, each stream matched
+on its own: the text and CDATA nodes outside code of every frame's document
+and of each open shadow root, joined so a value split across elements reads
+as one, and the value, placeholder and alt of fields and images; never
+markup or a stylesheet. Within one stream a value broken across lines still
+matches. A secret in hidden text has reached the browser all the same, so it
+is the app's leak to fix, and whether the browser draws it is never asked. A
+screen whose text carries a secret, or has a frame that cannot be read, is a
+high finding and is never shot. The critic sends its pictures to a model,
+and a high finding sends the build back before the critic runs.
 
 The guard stops at text, decided with the owner on 2026-11-21. A secret
 drawn as pixels, into a canvas, an image or a stylesheet's `content`, can
@@ -206,13 +207,7 @@ in each secret's place, from the first write on (`oneshot.turned` takes
 (`oneshot_front_build.MASKS`), held in memory only. It is released once no
 critique reads those shots again, whether R3 opens or the fixes go back to
 the builder. A server started since has none, and a run with a secret takes
-those shots again before any critique. A shadow root's or an SVG frame's
-text counts only where it is drawn: laid out, visible by its own element's
-computed `visibility`, in no collapsed table row or column, and under no
-transparent box. A boxless `display: contents` element passes the opacity
-check to the box around it. An animation not started yet is let start
-before it is held, since one held while pending starts later in its before
-phase.
+those shots again before any critique.
 
 11b1 stops there. The build agent's own shell does not have the secrets yet,
 so a test that needs one skips when the agent runs it and must pass in the

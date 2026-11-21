@@ -435,32 +435,13 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
     return findings
 
 
-# What a picture of a frame can show as text, as separate streams: an HTML document's rendered text, which joins a
-# value split across elements and leaves out code and hidden text; the visible text and CDATA nodes outside code of
-# each open shadow root (which that text skips) and of a document with no rendered text, such as an SVG one; as `values`, the
-# value, placeholder and alt of its fields and images. Never markup or a stylesheet, which a short secret would
-# match on a clean page.
+# The text a frame carries, drawn or not, as separate streams: the text and CDATA nodes outside code of its document
+# and of each open shadow root, joined so a value split across elements reads as one; as `values`, the value,
+# placeholder and alt of its fields and images. A secret in hidden text has reached the browser all the same. Never
+# markup or a stylesheet, which a short secret would match on a clean page.
 SHOWN = """() => {
   const code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']), texts = [], values = [];
-  const up = e => e.parentElement || (e.parentNode && e.parentNode.host) || null;
-  // Laid out, visible by its own element's computed `visibility` (a descendant can be visible under a hidden
-  // ancestor), and under no transparent box, read off the first ancestor a boxless `display: contents` passes to.
-  const shows = n => {
-    const range = document.createRange();
-    range.selectNodeContents(n);
-    if (!range.getClientRects().length) return false;
-    let el = up(n);
-    if (!el) return true;
-    if (getComputedStyle(el).visibility !== 'visible') return false;
-    for (let a = el; a; a = up(a)) {   // a collapsed table row or column paints none of its cells
-      const s = getComputedStyle(a);
-      if (s.visibility === 'collapse' && /^table-(row|column)/.test(s.display)) return false;
-    }
-    while (el && getComputedStyle(el).display === 'contents') el = up(el);
-    return !el || !el.checkVisibility || el.checkVisibility({opacityProperty: true});
-  };
   const outside = (n, root) => {
-    if (!shows(n)) return false;
     for (let p = n.parentNode; p && p !== root; p = p.parentNode)
       if (code.has(String(p.nodeName).toUpperCase())) return false;
     return true;
@@ -468,8 +449,7 @@ SHOWN = """() => {
   const plain = root => { const out = [], walk = document.createTreeWalker(root,
     NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) if (outside(n, root)) out.push(n.data); return out.join(''); };
-  const top = document.documentElement;
-  texts.push(top && typeof top.innerText === 'string' ? top.innerText : plain(document));
+  texts.push(plain(document));
   const visit = root => {
     for (const el of root.querySelectorAll('*')) {
       for (const a of ['value', 'placeholder', 'alt']) if (el.hasAttribute(a)) values.push(el.getAttribute(a));
@@ -499,31 +479,19 @@ def still(page):
             pass
     for s in sessions:
         s.send("Emulation.setScriptExecutionDisabled", {"value": True})
-    # An animation not started yet, held, starts later in its before phase, so the picture and the read differ:
-    # every one starts first. ponytail: a second at most, then held as it is
-    for _ in range(40):
-        try:
-            if not any(f.evaluate("() => document.getAnimations().some(a => a.pending)") for f in page.frames):
-                break
-        except Error:   # a frame gone: the read after says so
-            break
-        time.sleep(0.025)
-    for s in sessions:
-        s.send("Animation.setPlaybackRate", {"playbackRate": 0})   # a CSS animation can show or hide text
     try:
         yield
     finally:
         for s in sessions:
             try:
                 s.send("Emulation.setScriptExecutionDisabled", {"value": False})
-                s.send("Animation.setPlaybackRate", {"playbackRate": 1})
                 s.detach()
             except Error:   # a frame gone with the page
                 pass
 
 
 def secrets_shown(page, hide: dict[str, str]) -> str:
-    """Why a picture of `page` now could show a value of `hide`, naming only its label, or empty."""
+    """Why `page` now carries a value of `hide` in its text, naming only its label, or empty."""
 
     from playwright.sync_api import Error
 
@@ -541,7 +509,7 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
         return (any(value in t for t in texts + values) or bool(flat) and any(flat in f for f in flats))
 
     if leaked := sorted({label for value, label in hide.items() if seen(value)}):
-        return f"화면에 비밀 값 {', '.join(leaked)} 이 보인다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다"
+        return f"화면이 담은 글자에 비밀 값 {', '.join(leaked)} 이 들어 있다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다"
     return ""
 
 

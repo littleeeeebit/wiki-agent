@@ -211,27 +211,21 @@ def test_a_document_that_replaces_the_one_read_before_the_picture_is_read_again(
 SHADOW = "(host, html) => { host.attachShadow({mode: 'open'}).innerHTML = html; }"
 
 
-def test_shadow_text_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_makes_a_finding(browser):
+def test_shadow_text_drawn_or_not_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_makes_a_finding(browser):
     page = browser.new_page(offline=True)
     for html, hide, seen in (
             ("key-<b>shadow</b>", {"key-shadow": "[N1]"}, True),   # a shadow root's own text node
-            ("<span style='display: contents'>key-boxless</span>", {"key-boxless": "[N1]"}, True),   # no box, still drawn
-            ("<p style='opacity: 0'>key-clear</p>", {"key-clear": "[N1]"}, False),   # laid out, never drawn
-            ("<p style='visibility: hidden'><span style='display: contents; visibility: visible'>key-up</span></p>",
-             {"key-up": "[N1]"}, True),   # visible under a hidden ancestor
-            ("<p style='visibility: hidden'><span>key-down</span></p>", {"key-down": "[N1]"}, False),
-            *((f"<table><tr style='visibility: {row}'><td style='display: contents; visibility: visible'>key-row</td></tr>"
-               "</table>", {"key-row": "[N1]"}, row == "hidden") for row in ("hidden", "collapse")),   # collapse paints none
+            ("<p style='opacity: 0'>key-clear</p>", {"key-clear": "[N1]"}, True),   # carried, drawn or not
+            ("<table><tr style='visibility: collapse'><td>key-row</td></tr></table>", {"key-row": "[N1]"}, True),
             ("<section><style>.a > .b { color: red }</style></section>", {">": "[N1]"}, False)):
         for hidden in ("", " hidden"):
             page.set_content(f"<main>Ready</main><div{hidden}></div>")
             page.locator("div").evaluate(SHADOW, html)
-            assert bool(look.secrets_shown(page, hide)) == (seen and not hidden)   # a hidden host shows nothing
+            assert bool(look.secrets_shown(page, hide)) == seen   # a hidden host carries its text all the same
     svg = "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%2F%3E"
     page.set_content(f"<main>Ready</main><iframe src=\"{svg}\"></iframe>")
     page.frames[1].wait_for_load_state()
-    assert page.frames[1].evaluate("() => document.documentElement.innerText") is None   # an SVG root has none
-    assert look.secrets_shown(page, {"key-x": "[N1]"}) == ""   # a frame with no rendered text is read, not a crash
+    assert look.secrets_shown(page, {"key-x": "[N1]"}) == ""   # an SVG frame with no text is read, not a crash
     label = "data:image/svg+xml," + quote("<svg xmlns='http://www.w3.org/2000/svg'><text y='20'><![CDATA[key-x]]></text>"
                                           "<style><![CDATA[.a > .b {}]]></style></svg>")
     page.set_content(f"<main>Ready</main><iframe src=\"{label}\"></iframe>")
@@ -240,19 +234,6 @@ def test_shadow_text_is_seen_and_no_stylesheet_svg_frame_or_pair_of_streams_make
     page.set_content("<p>ab</p><iframe srcdoc='<p>cd</p>'></iframe><input value='ef'>")
     page.wait_for_function("() => document.querySelector('iframe').contentDocument?.body?.innerText")
     assert look.secrets_shown(page, {"abcd": "[N1]", "cdef": "[N2]"}) == ""   # each stream is matched alone
-
-
-def test_an_animation_not_started_yet_starts_before_it_is_held(browser):
-    for _ in range(10):   # held while pending, it started later in its before phase in about a third of runs
-        page = browser.new_page(offline=True)
-        page.set_content("<p id='t'>x</p>")
-        page.add_style_tag(content="@keyframes m { from { opacity: 0 } } #t { animation: m 5s linear infinite }")
-        with look.still(page):
-            at = page.evaluate("document.getAnimations()[0].currentTime")
-            page.screenshot()
-            time.sleep(0.05)
-            assert page.evaluate("document.getAnimations()[0].currentTime") == at
-        page.close()
 
 
 def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser):
@@ -264,17 +245,13 @@ def test_a_page_is_still_while_it_is_read_and_shot_and_runs_again_after(browser)
     def read():
         return [f.evaluate("() => document.body.innerText") for f in page.frames]
 
-    def moved():
-        return page.evaluate("document.getAnimations()[0].currentTime")
-
-    page.add_style_tag(content="@keyframes m { to { opacity: 0 } } #t { animation: m 5s linear infinite }")
     with look.still(page):
-        before, at = read(), moved()
+        before = read()
         page.screenshot()
         time.sleep(0.2)
-        assert read() == before and moved() == at   # a CSS animation, which can show or hide text, holds too
+        assert read() == before
     time.sleep(0.2)
-    assert read() != before and moved() != at
+    assert read() != before
 
 
 def test_an_app_the_command_cannot_start_is_refused_with_its_output(tmp_path):
