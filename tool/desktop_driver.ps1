@@ -64,6 +64,7 @@ $out = $ask.out
 $report = [ordered]@{ phase = "starting"; main = $null; size = $null; states = @(); steps = @(); refusal = $null; error = $null }
 $UTILITY = @("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator", "IME", "MSCTFIME UI")
 $MAX_ITEMS = 2000   # a list's items counted at most: more is an unknown count, so its tree is not taken as whole
+$origin = [DateTime]::Now   # the app's start, `launched`, on the same clock
 $clock = [System.Diagnostics.Stopwatch]::StartNew()   # each state's `at` and `done`, each step's `acted_at`, in ms
 $MAX_WAIT_MS = 120000   # a control's wait at most: the driver's `MAX_WAIT_MS`
 $MAX_VALUE = 1000   # a control's value recorded at most, in characters: a check's expected value is no longer
@@ -266,6 +267,21 @@ function Target($step) {
   [ordered]@{ element = $mine[0] }
 }
 
+function Probe($want) {   # the one element `want` names, its name, value and toggle only: a control's sample
+  $at = $clock.ElapsedMilliseconds
+  $found = Target $want
+  if ($found.error) { return [ordered]@{ at = $at; error = $found.error } }
+  $e = $found.element; $c = $e.Current
+  $node = [ordered]@{ id = $c.AutomationId; name = $c.Name }
+  try {
+    $v = [string]$e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+    $node.value = if ($v.Length -gt $MAX_VALUE) { $null } else { $v }
+  } catch {}
+  try { $node.toggle = [string]$e.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
+  catch {}
+  [ordered]@{ at = $at; node = $node }
+}
+
 function Act($element, $step) {
   switch ($step.action) {
     "invoke" { $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
@@ -295,7 +311,10 @@ try {
   Enter "choose"
   $candidates = @(Candidates)
   if ($candidates.Count -ne 1) { $report.candidates = $candidates; Refuse "$($candidates.Count) candidate main windows at startup" }
-  $report.main = $candidates[0]; Save
+  $report.main = $candidates[0]
+  try { $report.launched = [int64]((Get-Process -Id $report.main.pid).StartTime - $origin).TotalMilliseconds }
+  catch { $report.launched = $null }   # unread: a control then has no start to time its wait from
+  Save
 
   # Sized to S1's window without activation or a z-order change, and read back. SetWindowPos sizes the window with
   # its invisible resize borders; the frame read back is without them.
@@ -319,11 +338,12 @@ try {
     $done = [ordered]@{ name = $step.name; action = $step.action; acted = $false; error = $null; state = $null; expect = $step.expect }
     $report.steps += $done
     if ($step.action -eq "wait") {
-      # The server's control: nothing acted on, then the state read once `after[k]` ms have passed since each
-      # anchor k (the start state's read, then each step's action), and the settle at least; `MAX_WAIT_MS` at most.
-      $done.acted = $true; Save
-      $anchors = @([int64]$report.states[0].at) + @($report.steps | Where-Object { $null -ne $_.acted_at } |
-                                                     ForEach-Object { [int64]$_.acted_at })
+      # The server's control: nothing acted on, its expect's element sampled all along, then the state read once
+      # `after[k]` ms have passed since each anchor k (the app's start, the start state's read, then each step's
+      # action), and the settle at least; `MAX_WAIT_MS` at most.
+      $done.acted = $true; $done.samples = @()   # unsaved until its state: a sample is never late for a write
+      $anchors = @([int64]$report.launched, [int64]$report.states[0].at) + @($report.steps |
+                   Where-Object { $null -ne $_.acted_at } | ForEach-Object { [int64]$_.acted_at })
       $now = $clock.ElapsedMilliseconds
       $until = $now + [int64]$ask.settle_ms
       for ($k = 0; $k -lt [Math]::Min($anchors.Count, @($step.after).Count); $k++) {
@@ -331,7 +351,7 @@ try {
       }
       $until = [Math]::Min($until, $now + $MAX_WAIT_MS)
       Enter "wait $($until - $now)"
-      while ($clock.ElapsedMilliseconds -lt $until) { Start-Sleep -Milliseconds 50 }
+      do { $done.samples += Probe $step.expect; Start-Sleep -Milliseconds 20 } while ($clock.ElapsedMilliseconds -lt $until)
       $done.state = (State "after-$($step.name)").id
       Save; continue
     }

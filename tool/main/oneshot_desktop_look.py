@@ -23,7 +23,7 @@ VIEW = "window"
 PREFIX = "feature:"
 END_SECONDS = 30
 SETTLE_MS = 1000
-PROOF = 2   # how a look proves a `look` check: a look saved with another proves none of them
+PROOF = 3   # how a look proves a `look` check: a look saved with another proves none of them
 LOOK_SECONDS = 30 * 60   # a whole look: every screen and state, the probes and the owed checks
 TRY = "try"   # the one step a `sometimes` probe takes; a probe that does not show the feature misses this one
 MISSED = f"step {TRY}: its postcondition was not read"
@@ -256,10 +256,10 @@ def checks(runs: Launches, spec: dict, build: dict) -> list[dict]:
 
 
 def anchors(report: dict, n: int) -> list[int]:
-    """When a read of `n` steps started its clock's comparable points: its start state's read, then each of its
-    lead-in steps' actions (all but the last)."""
+    """A read of `n` steps' comparable points on its clock: the app's start, its start state's read, then each of
+    its lead-in steps' actions (all but the last)."""
 
-    return [report["states"][0]["at"], *(s["acted_at"] for s in report["steps"][:n - 1])]
+    return [report["launched"], report["states"][0]["at"], *(s["acted_at"] for s in report["steps"][:n - 1])]
 
 
 def chain(report: dict, n: int) -> list[dict] | None:
@@ -270,7 +270,7 @@ def chain(report: dict, n: int) -> list[dict] | None:
     order, steps, at = [s["id"] for s in states], report.get("steps") or [], 0
     if not complete(report) or len(steps) != n or not states or not all(
             type(s.get("at")) is int and type(s.get("done")) is int for s in states) or not all(
-            type(s.get("acted_at")) is int for s in steps[:n - 1]):
+            type(s.get("acted_at")) is int for s in steps[:n - 1]) or type(report.get("launched")) is not int:
         return None
     out = [states[0]]
     for step in steps:
@@ -299,43 +299,39 @@ def proved(report: dict, wants: list[dict]) -> bool:
         and refuted(report, states[-2], wants[-1])
 
 
+GAP_MS = 400   # ponytail: a control samples its expect's element this often at least; a shorter blip can slip by
+
+
 def unmoved(control: dict, run: dict, steps: list[dict], after: list[int]) -> bool:
-    """The control of `run`'s `steps`: its lead-in left each element it acted on and read alike in both runs,
-    its last state's read began at least `after[k]` ms past each of its anchors, and the review's postcondition
-    reads false before its wait and after it."""
+    """The control of `run`'s `steps`, for an honest build: every state of its lead-in shows the app as `run`'s
+    did, its last state's read began at least `after[k]` ms past each of its anchors, and the review's
+    postcondition reads false before its wait, in every sample of its element no more than `GAP_MS` apart along
+    the wait, and after it."""
+
+    import desktop_driver
 
     states, ran = chain(control, len(steps)), chain(run, len(steps))
     if states is None or ran is None:
         return False
-    want = steps[-1]["expect"]
+    want, samples = steps[-1]["expect"], control["steps"][-1].get("samples") or []
+    ats = [states[-2]["done"], *(x.get("at") for x in samples), states[-1]["at"]]
+    if not samples or not all(type(t) is int for t in ats) or any(b - a > GAP_MS for a, b in zip(ats, ats[1:])):
+        return False
     return all(states[-1]["at"] - m >= a for m, a in zip(anchors(control, len(steps)), after)) \
-        and all(alike(control, states[k], run, ran[k], step) for k, step in enumerate(steps[:-1], 1)) \
+        and all(seen(control, states[k]) == seen(run, ran[k]) for k in range(len(steps))) \
+        and not any(x.get("node") and desktop_driver.holds({"nodes": [x["node"]]}, want) for x in samples) \
         and refuted(control, states[-2], want) and refuted(control, states[-1], want)
 
 
-def element(report: dict, state: dict, eid: str, where: str) -> dict | None:
-    """The one element of the app whose id is `eid` in the window `where` names, in `state`."""
+def seen(report: dict, state: dict) -> list[tuple]:
+    """What `state` shows of the app: each element with an id, by the window it is in (the main one, one it owns,
+    another), with its name, value and toggle state."""
 
-    import desktop_driver
-
-    window = desktop_driver.scope(report, state, where)
-    nodes = [n for n in state["nodes"] if not n.get("foreign") and n.get("window") == window and n.get("id") == eid] \
-        if window is not None else []
-    return nodes[0] if len(nodes) == 1 else None
-
-
-def alike(a: dict, at: dict, b: dict, bt: dict, step: dict) -> bool:
-    """The element `step` acted on and the one it read, as each run's state after it shows them: the read one
-    present in both, each with the same name, value and toggle state; an acted-on one gone from both is alike."""
-
-    for eid, where, needed in ((step["id"], step.get("in", "main"), False),
-                               (step["expect"]["id"], step["expect"].get("in", "main"), True)):
-        x, y = element(a, at, eid, where), element(b, bt, eid, where)
-        if (x is None or y is None) and (needed or x is not y):
-            return False
-        if x is not None and y is not None and any(x.get(k) != y.get(k) for k in ("name", "value", "toggle")):
-            return False
-    return True
+    main = report["main"]["hwnd"]
+    role = {w["hwnd"]: "main" if w["hwnd"] == main else "owned" if w.get("owner") == main else "other"
+            for w in state.get("windows") or []}
+    return sorted((role.get(n.get("window"), "other"), n["id"], *(str(n.get(k)) for k in ("name", "value", "toggle")))
+                  for n in state["nodes"] if not n.get("foreign") and n.get("id"))
 
 
 def refuted(report: dict, state: dict, want: dict) -> bool:
