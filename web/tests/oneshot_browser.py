@@ -276,12 +276,12 @@ def main():
         rail.get_by_role("button").filter(has_text="board-demo").click()
         need.get_by_role("button").filter(has_text=re.compile(r"^demo")).click()
         owed = page.get_by_role("region", name="주인이 줄 것")
-        expect(owed.get_by_text("1개가 아직 없어 승인할 수 없다.")).to_be_visible()
+        expect(owed.get_by_text("1개가 아직 없다.")).to_be_visible()
         key = owed.get_by_label("N1 번역 API 키 값")
         expect(key).to_have_attribute("type", "password")
         key.fill("synthetic-secret")
         with posting(page):
-            owed.get_by_role("button", name="넣기").click()
+            owed.get_by_role("button", name="N1 번역 API 키 넣기").click()
         assert posted[-1] == ("demo", "needs/N1", {"value": "synthetic-secret", "source": "s" * 64}), posted[-1]
         expect(key).to_have_value("")
         with posting(page):
@@ -290,6 +290,18 @@ def main():
         with posting(page):
             owed.get_by_role("button", name="OLD_KEY 지우기").click()
         assert posted[-1] == ("demo", "secrets/OLD_KEY", {}), posted[-1]
+        # A draft never outlives its sheet: a redesign that makes N1 a program, answered to another removal,
+        # shows an empty plain field, never the hidden value typed for the old N1.
+        key.fill("unsent-secret")
+        redesigned = copy.deepcopy(views["demo"])
+        redesigned["brief"]["source"] = "r" * 64
+        redesigned["needs"][0] = {"id": "N1", "what": "번역 프로그램", "kind": "tool", "calls": ["X1"], "given": False}
+        views["demo"] = redesigned
+        with posting(page):
+            owed.get_by_role("button", name="OLD_KEY 지우기").click()
+        program = owed.get_by_label("N1 번역 프로그램 프로그램 이름 또는 경로")
+        expect(program).to_have_attribute("type", "text")
+        expect(program).to_have_value("")
         del views["demo"]["needs"], views["demo"]["secrets_kept"]
         del views["demo"]["brief"]
 
@@ -605,7 +617,7 @@ def main():
     print("PASS: maintenance counts the runs that need the owner on the switch; the oneshot window groups them apart "
           "from the running; a gate sheet needs every item, folded or not, and records the folds opened; an enlarged "
           "picture closes alone; the re-shown sheet opens what needs a decision again; R1 on the brief decides each "
-          "confirmation line and sends only the sheet items touched beside them; at R1 a secret is typed hidden and each need given or taken back names that sheet, and a kept secret no need names is removed; R2 on its brief shows each screen's "
+          "confirmation line and sends only the sheet items touched beside them; at R1 a secret is typed hidden and each need given or taken back names that sheet, a draft never outlives its sheet, and a kept secret no need names is removed; R2 on its brief shows each screen's "
           "pictures with its line and still needs a palette; R3 on its brief shows the first screen before and "
           "after and each finding's shot by its line; a kind held at the board shows it without submission; the board moves by drag and by "
           "keys; a stopped run resumes, and a stopped or running stage shows its record and its worktree's turns as they "

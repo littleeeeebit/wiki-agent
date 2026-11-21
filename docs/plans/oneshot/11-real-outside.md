@@ -131,8 +131,10 @@ kinds, the `env` rule and the instruction that tests run against the real
 service. The single-kind web design gains `oneshot-outside` as its sixth
 block. Its server has no modules, so an outside call names the requirement
 it serves and the endpoint that makes it in `depends_on`, the way a test
-names both. The web sheet lists the server's outside calls under its API,
-with "주인이 줄 것" after them. A web design stored before this step has no
+names both. An edit of either reaches the other in a redesign, as a module's
+`calls` do. The R1 brief names every outside call in "알아 두실 것" on every
+kind, the web included. The web sheet lists the server's outside calls under
+its API, with "주인이 줄 것" after them. A web design stored before this step has no
 outside calls and shows none.
 
 The R1 screen shows "주인이 줄 것" above the sheet. Each need has its kind,
@@ -143,7 +145,9 @@ its `env`, the calls that use it and whether it is given:
 - a `tool` takes a program name or path;
 - a `file` takes an absolute path.
 
-Each give or take-back sends the `source` of the sheet on screen. At any
+Each give or take-back sends the `source` of the sheet on screen, and the
+panel is keyed on it, so a draft never outlives the sheet it was typed on. At
+any
 stage, the screen lists each secret Credential Manager still holds for the
 repository that no need of today's design names, and removes it on request.
 

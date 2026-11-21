@@ -267,18 +267,18 @@ def screens_checked(snap: dict, sections: list[dict], texts: list[tuple[str, str
 
 
 def design_checked(snap: dict, sections: list[dict], texts: list[tuple[str, str]]) -> None:
-    """R1: every left-out requirement named, and on Android every permission and outside call."""
+    """R1: every left-out requirement named, every call that leaves the product, and every permission."""
 
     left_out = [r["id"] for r in snap["requirements"] if r.get("status") == "not_applicable"]
     out_text = next((s["text"] for s in sections if s["name"] == "빼기로 한 것"), "")
     if unnamed := [i for i in left_out if not re.search(rf"\b{i}\b", out_text)]:
         raise ValueError(f"`빼기로 한 것` 에 빠진 요구가 있다: {', '.join(unnamed)}")
-    if "modules" in snap["design"]:   # an Android app: every permission and every call leaving the phone is named
-        risky = [r["id"] for r in snap["requirements"] if r.get("capability")]
-        risky += [x["id"] for x in snap["design"].get("outside") or []]
-        note = next((s["text"] for s in sections if s["name"] == "알아 두실 것"), "")
-        if unnamed := [i for i in risky if not re.search(rf"\b{i}\b", note)]:
-            raise ValueError(f"`알아 두실 것` 에 빠진 권한이나 폰 밖으로 나가는 호출이 있다: {', '.join(unnamed)}")
+    # A web app's requirements carry no capability, but its server's outside calls are named as a core's are.
+    risky = [r["id"] for r in snap["requirements"] if r.get("capability")]
+    risky += [x["id"] for x in snap["design"].get("outside") or []]
+    note = next((s["text"] for s in sections if s["name"] == "알아 두실 것"), "")
+    if unnamed := [i for i in risky if not re.search(rf"\b{i}\b", note)]:
+        raise ValueError(f"`알아 두실 것` 에 빠진 권한이나 밖으로 나가는 호출이 있다: {', '.join(unnamed)}")
 
 
 def shown(spec: dict, gate: str = "r1") -> dict:

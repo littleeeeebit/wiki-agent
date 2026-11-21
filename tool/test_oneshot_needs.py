@@ -91,7 +91,7 @@ def test_every_design_prompt_asks_for_needs_in_the_shape_the_server_takes(prompt
     text = (Path(__file__).parent / "prompts" / f"{prompt}.md").read_text(encoding="utf-8")
     example = json.loads(re.search(r"- `oneshot-outside`: `(\[.*?\])`\n", text)[1])
     assert needs.parsed(example[0]["needs"], "X1") == [{"id": "N1", "what": "…", "kind": "secret", "env": "SERVICE_API_KEY"}]
-    assert all(f"`{k}`" in text for k in needs.KINDS) and "never a fake" in text
+    assert all(f"`{k}`" in text for k in needs.KINDS) and "for it to run for real" in text
 
 
 WEB_CALL = {"id": "X1", "target": "환율 서비스", "does": "오늘 환율을 받아 온다", "failure": "어제 환율로 적고 그렇다고 보여 준다",
@@ -113,6 +113,11 @@ def test_a_web_server_s_outside_call_names_its_requirement_and_endpoint_and_its_
         sheet.checked(sheet.parsed({**WEB, "oneshot-outside": [WEB_CALL, second]}), WEB_REQS, WEB_GLOSSARY, PROFILE)
     with pytest.raises(ValueError, match="`oneshot-outside` 블록"):   # the web design always says whether it leaves
         sheet.parsed({k: v for k, v in WEB.items() if k != "oneshot-outside"})
+    # The server's call is named on the brief, and an edit of the call reaches the endpoint that makes it.
+    with pytest.raises(ValueError, match="밖으로 나가는 호출이 있다: X1"):
+        brief.design_checked({"requirements": WEB_REQS, "design": design}, [{"name": "알아 두실 것", "text": "없음"}], [])
+    brief.design_checked({"requirements": WEB_REQS, "design": design}, [{"name": "알아 두실 것", "text": "X1 은 환율을 받는다"}], [])
+    assert {"P1", "T1", "F1"} <= sheet.dependents(design, WEB_REQS, {"X1"}) and "X1" in sheet.dependents(design, WEB_REQS, {"P1"})
     del design["outside"]   # a web design stored before it had outside calls
     oneshot_spec.saved("budget", oneshot={"design": design})
     assert "밖으로 나가는 호출" not in sheet.sheet(specs.load("budget", oneshot.BRANCH))

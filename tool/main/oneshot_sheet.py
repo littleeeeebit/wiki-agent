@@ -442,10 +442,13 @@ def soft(design: dict, reqs: list[dict], glossary: list[dict]) -> list[str]:
 def dependents(design: dict, reqs: list[dict], start: set[str]) -> set[str]:
     """`start` and every item whose `depends_on` reaches one of them, transitively. A module's `calls`
     link it to what it calls both ways: a changed contract moves its callers, and a changed caller may
-    need its callees changed."""
+    need its callees changed. A web server's outside call and the endpoint that makes it are linked alike."""
 
     items = list(every(design, reqs).values())
     calls = [(i["id"], c) for i in items for c in i.get("calls", [])]
+    if "modules" not in design:   # a web server: the endpoint an outside call names is the one that makes it
+        api = {p["id"] for p in design.get("api", [])}
+        calls += [(d, x["id"]) for x in design.get("outside", []) for d in x["depends_on"] if d in api]
     reached = set(start)
     while True:
         more = {i["id"] for i in items if set(i.get("depends_on", [])) & reached}
@@ -544,7 +547,8 @@ def sheet(spec: dict) -> str:
               for p in design["api"][:MAX_ROWS]]
     if len(design["api"]) > MAX_ROWS:
         lines.append(f"\n그 밖의 엔드포인트 {len(design['api']) - MAX_ROWS}개는 아래 접힌 부분에 있다")
-    lines += leaving(design, "서버", mark)   # a design from before the web had outside calls has none
+    from . import oneshot_needs   # it imports this module
+    lines += oneshot_needs.leaving(design, "서버", mark)   # a design from before the web had outside calls has none
     lines += tested_scenarios(design, reqs, mark)
     lines += ["", "<details><summary>흐름, 요청·응답, 용어집</summary>", ""]
     for f in design["flows"]:
@@ -565,17 +569,6 @@ def folded_tail(design: dict, glossary: list[dict], mark) -> list[str]:
     lines += ["", *[f"- **{t['id']}**{mark(t['id'])} `{t['test_name']}`: {t['given']} / {t['when']} / {t['then']}"
                     for t in design["tests"]]]
     return lines + ["", *[f"- {g['term']}: {g['meaning']}" for g in glossary], "", "</details>", ""]
-
-
-def leaving(design: dict, place: str, mark) -> list[str]:
-    """The sheet's calls that leave `place`, and what the owner gives them."""
-
-    if not (outside := design.get("outside")):
-        return []
-    from . import oneshot_needs   # it imports this module
-    return ["", f"## {place} 밖으로 나가는 호출", "", "| id | 대상 | 하는 일 | 실패할 때 |", "| --- | --- | --- | --- |",
-            *[f"| {x['id']}{mark(x['id'])} | {_cell(x['target'])} | {_cell(x['does'])} | {_cell(x['failure'])} |"
-              for x in outside], *oneshot_needs.section(design)]
 
 
 def core_sheet(spec: dict) -> str:
@@ -624,7 +617,8 @@ def core_sheet(spec: dict) -> str:
         lines += ["", "## 서버 API", "", "| id | 메서드 | 경로 | 하는 일 |", "| --- | --- | --- | --- |"]
         lines += [f"| {p['id']}{mark(p['id'])} | {p['method']} | `{_cell(p['path'])}` | {_cell(p['does'])} |"
                   for p in design["api"]]
-    lines += leaving(design, device_out, mark)
+    from . import oneshot_needs   # it imports this module
+    lines += oneshot_needs.leaving(design, device_out, mark)
     lines += tested_scenarios(design, reqs, mark)
     lines += ["", "<details><summary>모듈의 입력·출력·상태, 테스트, 용어집</summary>", ""]
     for n, m in enumerate(design["modules"]):   # a module past the table shows its contract and calls here

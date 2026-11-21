@@ -47,8 +47,8 @@ cloud model. Its `failure` says what the app does when the call fails or is
 slow. A product that never leaves the device returns `oneshot-outside` as
 `[]`.
 
-`needs` lists what only the owner can give that call, so that its tests run
-against the real service and never a fake: `secret` for a value such as an
+`needs` lists what only the owner can give that call for it to run for real
+against the service: `secret` for a value such as an
 API key (`env` names the environment variable the tests and the product read
 it from, in capitals), `account` for an account or project that must exist,
 `tool` for a program that must be installed, `file` for a file the product

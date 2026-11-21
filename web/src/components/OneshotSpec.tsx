@@ -180,7 +180,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       {faulted}
       {(view.needs?.length || view.secrets_kept?.length) ? (
         <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
-          <Needs needs={view.needs ?? []} kept={view.secrets_kept ?? []} editable={idle && view.stage === 'r1'} busy={busy}
+          <Needs key={source} needs={view.needs ?? []} kept={view.secrets_kept ?? []} editable={idle && view.stage === 'r1'} busy={busy}
             give={(id, body) => act(() => api.give(repo, id, body, source))}
             takeBack={(id) => act(() => api.takeBack(repo, id, source))}
             forget={(env) => act(() => api.forget(repo, env))} />
