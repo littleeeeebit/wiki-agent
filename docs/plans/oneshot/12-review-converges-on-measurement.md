@@ -104,10 +104,12 @@ refused, the last one or an earlier one gone back to, the turn is refused
 and sent back to the build agent with that reason (`oneshot_answers.Again`).
 Per the owner decision it never counts against `MAX_ATTEMPTS` and never
 stops the run; only the owner's `[멈춤]` ends such a loop. The same holds
-for any turn ending on the HEAD the build check last refused
-(`refused_at`): only a turn that moved HEAD and still failed is counted. `[재개]` at the
-round cap marks the turn as sent back by the refusal (`fix`), so the same
-check holds there.
+for any backend build turn that ends on the HEAD it started on (`send`
+records it as `turn_head`, a resumed turn included). Only a build turn that
+moved HEAD and still failed is counted. The contract-test turn and the
+frontend build keep their own caps: every refusal of theirs counts, as
+steps 3 and 4 require. `[재개]` at the round cap marks the turn as sent
+back by the refusal (`fix`), so the same check holds there.
 
 ### A conflict goes to the owner
 

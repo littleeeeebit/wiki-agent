@@ -370,7 +370,8 @@ def test_a_restart_between_a_refusal_and_its_resend_leaves_the_stage_resumable(b
 
 def test_the_third_refusal_stops_the_stage(built_world):
     tree, sent = built_world
-    oneshot_spec.saved("budget", oneshot={"attempts": 2})
+    # The contract-test turn is counted on the HEAD it started on too: only the backend build is exempt.
+    oneshot_spec.saved("budget", oneshot={"attempts": 2, "turn_head": git(tree, "rev-parse", "HEAD")})
     write(tree, "app.py", APP)
     assert check(tree) is None and not sent
     assert o()["stopped"]["reason"] == "tests" and o()["working"] is None
@@ -430,7 +431,9 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
     assert "test_missing(돌지 않음)" in sent[-1][2]   # its file was committed; the test run has no such case
     assert o()["attempts"] == 1   # HEAD moved, and the gate still refused it: counted
-    for _ in range(oneshot_build.MAX_ATTEMPTS):   # the HEAD the gate last refused, again without a commit
+    # Turns that start on this HEAD (`send` records it), a resumed one included, and end on it without a commit.
+    oneshot_spec.saved("budget", oneshot={"turn_head": git(tree, "rev-parse", "HEAD")})
+    for _ in range(oneshot_build.MAX_ATTEMPTS):
         check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
     assert o()["attempts"] == 1 and not o().get("stopped")
     oneshot_spec.saved("budget", oneshot={"attempts": 0})   # under the attempt cap for the cases below
@@ -611,7 +614,7 @@ def test_a_build_without_its_report_or_with_a_red_gate_is_refused(built_world):
     to_build(tree, sent)
     assert check(tree, "다 했다.")() is None and "완료 보고" in sent[-1][2]
     check(tree, "만들었다.\n" + report())()
-    assert "게이트 실패" in sent[-1][2] and o()["attempts"] == 1   # the same HEAD, no commit since: not counted
+    assert "게이트 실패" in sent[-1][2] and o()["attempts"] == 2
 
 
 # -- Turns, the hand-over and resuming -----------------------------------------------
@@ -679,6 +682,7 @@ def test_a_work_turn_runs_on_the_build_model_the_run_fixed(built_world):
          patch("main.query.config", lambda *a: {"model": "window", "effort": "e"}):
         SEND("budget", "tests", "x")
     assert opened == [("sonnet", "medium")]
+    assert o()["turn_head"] == git(tree, "rev-parse", "HEAD")   # the HEAD the turn started on, which `checked` reads
 
 
 def test_a_resume_waits_while_a_stopped_turn_is_still_being_charged(built_world):

@@ -232,7 +232,7 @@ def send(repo: str, stage: str, text: str) -> None:
         cfg = oneshot.role_config("build", store)
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
-        store.put(working=stage, stopped=None,
+        store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
                   inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token})
         if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
             oneshot_spec.saved(repo, adapter=True)
@@ -638,13 +638,13 @@ def checked(path: Path, run, spec: dict, final: str):
             return None
         return unless_stopped(run, repo, lambda: after(repo))
     specs.note(run, why)
-    was, store, now = spec["oneshot"], oneshot_spec.store(repo), head(path)   # no commit, no count (owner decision):
-    attempts = int(was.get("attempts") or 0) + (type(why) is str and was.get("refused_at") != now)   # `Again` or same HEAD
+    was, store = spec["oneshot"], oneshot_spec.store(repo)   # a backend build turn without a commit is not counted
+    attempts = int(was.get("attempts") or 0) + (type(why) is str and (stage != "build" or was.get("turn_head") != head(path)))
     if attempts >= MAX_ATTEMPTS or run.halt.is_set():
-        store.put(attempts=attempts, refused_at=now)
+        store.put(attempts=attempts)
         store.stop(stop, why)
         return None
-    store.put(attempts=attempts, refused_at=now)   # `working` stays until the turn goes: a restart is recovered
+    store.put(attempts=attempts)   # `working` stays until the turn goes: a restart in between is recovered
     return unless_stopped(run, repo, lambda: send(
         repo, stage, f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
                      + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else ".")))
