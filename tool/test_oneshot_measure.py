@@ -216,6 +216,15 @@ def test_the_end_of_a_startup_log_is_cut_only_after_its_secrets_are_masked(tmp_p
     assert "uote" not in measure.tail(log, {'sk-"q\\uote': "[K]"}) and "[K]" in measure.tail(log, {'sk-"q\\uote': "[K]"})
 
 
+def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(at_measure):
+    given()
+    seen = []
+    with patch.object(measure, "spelled", lambda hide: {**hide, "escaped-form": "[E]"}), \
+            patch.object(measure.specs, "gate", lambda *a, **k: seen.append(k["hide"]) or (1, "", "")):
+        measure.measure("budget")
+    assert seen and seen[0].get("escaped-form") == "[E]" and KEY in seen[0]
+
+
 def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_never_text(at_measure):
     tree, _ = at_measure
     head = o()["built_head"]

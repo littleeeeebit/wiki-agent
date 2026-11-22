@@ -195,7 +195,7 @@ with that HEAD and the input's `env` and kind as the screen showed them; a
 plan rebuilt since answers 409. A result waiting for the owner's verdict is
 set aside (`stale`) when an input changes. [실측 시작] holds the worktree,
 starts `serve`, runs the script with the inputs in its environment and every
-secret masked from its output, and keeps only the clips it accepts, the
+secret masked from its output (JSON-escaped spellings included), and keeps only the clips it accepts, the
 report and the backend's log, masked (`oneshot_kept`). The script and the
 backend write into a folder of their own (`m<n>-<head>.raw`). `kept_from`
 copies out of it into the kept folder only those three:

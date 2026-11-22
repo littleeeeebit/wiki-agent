@@ -13,6 +13,7 @@ import math
 import os
 import shutil
 import stat
+import sys
 from pathlib import Path
 
 from common import masked
@@ -104,9 +105,9 @@ def removed(folder: Path) -> str:
     followed; inside, `shutil.rmtree` removes links without following them, and a read-only entry it failed to
     remove is made writable and removed once more. Success is read from the disk: nothing is left at `folder`."""
 
-    def again(func, path, exc):
+    def again(func, path, exc):   # `exc` is an exception (3.12 `onexc`) or an `exc_info` tuple (3.11 `onerror`)
         if func not in (os.unlink, os.remove, os.rmdir) or os.path.islink(path):
-            raise exc   # only a removal is retried, and never through a link
+            raise exc[1] if isinstance(exc, tuple) else exc   # only a removal is retried, never through a link
         os.chmod(path, stat.S_IWRITE)
         func(path)
 
@@ -126,7 +127,8 @@ def removed(folder: Path) -> str:
             except OSError:
                 os.rmdir(folder)
         elif there():
-            shutil.rmtree(folder, onexc=again) if os.path.isdir(folder) else os.unlink(folder)
+            shutil.rmtree(folder, **{"onexc" if sys.version_info >= (3, 12) else "onerror": again}) \
+                if os.path.isdir(folder) else os.unlink(folder)
     except OSError:
         pass   # what is left says it below
     if there():

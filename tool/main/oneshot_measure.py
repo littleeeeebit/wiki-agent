@@ -427,7 +427,7 @@ def measure(repo: str) -> None:
                 limit = plan["measure"]["minutes"] * 60 + 300
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
                     "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
-                    idle=limit, hide=hide)
+                    idle=limit, hide=spelled(hide))   # the script may log JSON too
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
         except Exception as exc:   # unforeseen: raised again once the folder is dealt with
