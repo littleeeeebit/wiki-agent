@@ -151,9 +151,6 @@ class Veil:
     # The tags the screen and the record dispatch on, kept only as the `tool` string at the top of an event's meta or
     # of a saved step: constants of this code. A provider's own tool name, which is none of them, and any field of a
     # tool's arguments, whatever its name, are masked like any text.
-    # The fields of a question's input the screen reads by name: a protocol's own, never the provider's data.
-    FIELDS = frozenset({"questions", "question", "header", "options", "label", "description", "preview", "multiSelect",
-                        "id"})
     TAGS = frozenset({"AskUserQuestion", "requestUserInput", "commandExecution", "command_execution", "tool_result"})
 
     def __init__(self, hide: dict[str, str] | None):
@@ -166,22 +163,50 @@ class Veil:
             return value
         if isinstance(value, str):
             return masked(value, self.hide)
-        if isinstance(value, dict):   # a name is masked too, but a question's own fields, and no two entries merge
-            out = {}
-            for k, v in value.items():
-                shown = k if not isinstance(k, str) or k in self.FIELDS else self.deep(k)
-                while shown in out:
-                    shown += "#"
-                out[shown] = self.deep(v)
-            return out
+        if isinstance(value, dict):
+            # A name is masked too. Masking can make two names one, so a mapping a value's name is in becomes its
+            # `[name, value]` pairs: every entry kept, and no text added the mask has not seen.
+            if any(isinstance(k, str) and masked(k, self.hide) != k for k in value):
+                return [[self.deep(k), self.deep(v)] for k, v in value.items()]
+            return {k: self.deep(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [self.deep(v) for v in value]
         return value
 
     def meta(self, meta: dict) -> dict:
         """An event's meta, every string in it masked but the server's own handles at its top."""
-        return {k: v if isinstance(v, str) and (k in self.IDS or (k == "tool" and v in self.TAGS)) else self.deep(v)
+        if not self.hide:
+            return meta
+        return {k: v if isinstance(v, str) and (k in self.IDS or (k == "tool" and v in self.TAGS))
+                else self.asked(v) if k == "input" and self.question(meta) else self.deep(v)
                 for k, v in meta.items()}
+
+    # The two hosts' question tools: their input is read by the screen in a schema of its own.
+    QUESTIONS = frozenset({"AskUserQuestion", "requestUserInput"})
+
+    @classmethod
+    def question(cls, meta: dict) -> bool:
+        """Whether an event is a question tool's: its `tool` a string, and one of `QUESTIONS`."""
+        return isinstance(tool := meta.get("tool"), str) and tool in cls.QUESTIONS
+
+    @staticmethod
+    def questions(given) -> list[dict]:
+        """A question tool's questions in their schema's shape and nothing else: each one's `id`, `header`, `question`
+        and `multiSelect`, and its options' `label`, `description` and `preview`. Any other shape is left out."""
+
+        listed = given.get("questions") if isinstance(given, dict) else None
+        return [{**{k: q[k] for k in ("id", "header", "question") if isinstance(q.get(k), str)},
+                 **({"multiSelect": q["multiSelect"]} if isinstance(q.get("multiSelect"), bool) else {}),
+                 "options": [{k: o[k] for k in ("label", "description", "preview") if isinstance(o.get(k), str)}
+                             for o in (q["options"] if isinstance(q.get("options"), list) else []) if isinstance(o, dict)]}
+                for q in (listed if isinstance(listed, list) else []) if isinstance(q, dict)]
+
+    def asked(self, given) -> dict:
+        """A question tool's input as the screen reads it (`questions`): its fields by their schema's names, every
+        value masked. A name the provider added is left out with its value."""
+        return {"questions": [{k: v if isinstance(v, bool) else [{f: masked(t, self.hide) for f, t in o.items()} for o in v]
+                               if k == "options" else masked(v, self.hide) for k, v in q.items()}
+                              for q in self.questions(given)]}
 
     def row(self, fields: dict) -> dict:
         """A work-record row's fields: as `meta`, and each saved step as an event's meta."""
@@ -191,9 +216,8 @@ class Veil:
 
     @staticmethod
     def options(meta: dict) -> list[list]:
-        """An asked question's option labels as asked, one list per question."""
-        return [[o.get("label") if isinstance(o, dict) else None for o in q.get("options") or []]
-                if isinstance(q, dict) else [] for q in (meta.get("input") or {}).get("questions") or []]
+        """An asked question's option labels as asked, one list per question (`questions`)."""
+        return [[o.get("label") for o in q["options"]] for q in Veil.questions(meta.get("input"))]
 
     @staticmethod
     def chosen(answers: list[str], picks: list | None, options: list[list]) -> list[str]:

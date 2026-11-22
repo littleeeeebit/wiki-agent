@@ -195,6 +195,9 @@ def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     assert hide["n1"].need == "N1"   # a refusal still names the need, whatever its label spells
     why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 n1 이다")   # `N1` would show the value: its variable
     assert f"비밀 값 {ENV} 이(가) 답 에" in why and masked(why, hide) == why
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: "N1 이(가)"})   # `N1` is safe alone, not in the sentence
+    why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 N1 이(가) 다")
+    assert "비밀 값 [N1] 이(가) 답 에" in why and masked(why, hide) == why
 
 
 def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
@@ -607,20 +610,36 @@ def test_every_event_a_turn_puts_is_masked_but_the_tags_the_screen_dispatches_on
 
 def test_only_a_tool_field_keeps_its_tag_and_label_shaped_text_is_still_masked():
     veil = Veil({"AskUserQuestion": "[N1]", "N2": "[N2]"})
-    meta = {"tool": "AskUserQuestion", "session_id": "N2-1", "answers": ["AskUserQuestion"],
+    meta = {"tool": "Bash", "session_id": "N2-1", "answers": ["AskUserQuestion"],
             "input": {"tool": "AskUserQuestion", "steps": [{"tool": "mcp__AskUserQuestion", "text": "AskUserQuestion"}]}}
     shown = veil.meta(meta)
-    assert shown["tool"] == "AskUserQuestion" and shown["session_id"] == "N2-1"
+    assert shown["tool"] == "Bash" and shown["session_id"] == "N2-1"
     assert shown["answers"] == ["[N1]"] and shown["input"]["tool"] == "[N1]"   # a tool's arguments are text
     assert shown["input"]["steps"] == [{"tool": "mcp__[N1]", "text": "[N1]"}]
     assert veil.meta({"tool": {"a": "AskUserQuestion"}, "input": {"tool": ["AskUserQuestion"]}}) == {
         "tool": {"a": "[N1]"}, "input": {"tool": ["[N1]"]}}   # structured, never a tag
-    row = veil.row({"steps": [{"kind": "approval", "tool": "AskUserQuestion", "input": {"tool": "AskUserQuestion"}}]})
-    assert row["steps"] == [{"kind": "approval", "tool": "AskUserQuestion", "input": {"tool": "[N1]"}}]
-    assert veil.meta({"input": {"AskUserQuestion": {"N2x": 1}}}) == {"input": {"[N1]": {"[N2]x": 1}}}   # names too
-    assert Veil({"options": "[N3]", "a": "[N4]", "b": "[N4]"}).meta({"input": {"options": 1, "a": 2, "b": 3}}) == {
-        "input": {"options": 1, "[N4]": 2, "[N4]#": 3}}   # a question's fields stay; two names never merge
+    row = veil.row({"steps": [{"kind": "approval", "tool": "AskUserQuestion", "input": {"questions": "AskUserQuestion"}}]})
+    assert row["steps"] == [{"kind": "approval", "tool": "AskUserQuestion", "input": {"questions": []}}]
+    # A name a value is in: the mapping becomes its pairs, so nothing merges and no unchecked text is added.
+    assert veil.meta({"input": {"AskUserQuestion": {"N2x": 1}}}) == {"input": [["[N1]", [["[N2]x", 1]]]]}
+    assert Veil({"a": "[N4]", "b": "[N4]"}).meta({"input": {"a": 2, "b": 3}}) == {"input": [["[N4]", 2], ["[N4]", 3]]}
     assert masked("see [N2]", veil.hide) == "see [[N2]]"   # what the text spells never stands for the masker's own
+
+
+def test_a_question_keeps_its_schema_and_drops_what_the_provider_added(monkeypatch):
+    monkeypatch.setattr(work, "feed", work.Feed())
+    monkeypatch.setattr(work, "notice", lambda *a: None)
+    veil = Veil({"options": "[N3]", "secret": "[N4]"})
+    given = {"questions": [{"question": "options?", "header": 7, "multiSelect": True, "secret": "secret",
+                            "options": [{"label": "a secret", "extra": "secret"}, "not an option"]}, "nor a question"],
+             "secret": {"options": "secret"}}
+    shown = veil.meta({"kind": "approval", "tool": "AskUserQuestion", "input": given})
+    assert shown["input"] == {"questions": [{"question": "[N3]?", "multiSelect": True, "options": [{"label": "a [N4]"}]}]}
+    assert Veil.options({"input": given}) == [["a secret"]]   # the options as asked
+    assert Veil.options({"input": {"questions": 1}}) == [] and Veil.options({"input": {"questions": [{"options": 1}]}}) == [[]]
+    run = work.Run(SimpleNamespace(id="w", parent_id=None, hide={"x": "[N1]"}))
+    run.put({"kind": "approval", "text": "실행할까?", "meta": {"id": "b", "tool": "Bash", "input": {"questions": 1}}})
+    assert run.events[-1]["meta"]["input"] == {"questions": 1} and "b" not in run.asked   # an ordinary tool is not asked
 
 
 def test_overlaps_finds_a_value_that_can_meet_a_label_and_any_other_is_masked_once():

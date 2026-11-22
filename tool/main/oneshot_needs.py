@@ -256,7 +256,7 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         flat = folded(text)
         for value, label in hide.items():
             if value in text or folded(value) in flat:
-                found.setdefault(where, set()).add(named(label))
+                found.setdefault(where, set()).add(label)
     if not found:
         return refused
     if "커밋" in found and base:   # the commits that hold it stay refused until the history no longer has them
@@ -265,10 +265,15 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         except (OSError, subprocess.SubprocessError) as exc:
             return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
         saved(spec["repo"], oneshot={"tainted": sorted({*(spec_of(spec["repo"])["oneshot"].get("tainted") or []), *hit})})
-    ids = sorted(set().union(*found.values()))
-    return " / ".join(filter(None, [refused, (
-        f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 적지 "
-        "않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")]))
+    def said(refs: list[str]) -> str:
+        return " / ".join(filter(None, [refused, (
+            f"비밀 값 {', '.join(sorted(refs))} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 "
+            "적지 않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")]))
+
+    # Read as it is published: a reference a value meets across its neighbours becomes the labels, which none meets.
+    labels = set().union(*found.values())
+    why = said([named(lab) for lab in labels])
+    return why if masked(why, hide) == why else said([str(lab) for lab in labels])
 
 
 # A commit's names, message and patch; a merge's against its first parent, so a resolution's own text is read.

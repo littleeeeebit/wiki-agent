@@ -662,8 +662,8 @@ class Run:
 
     def put(self, payload: dict) -> None:
         if hide := getattr(self.chat, "hide", None):   # every event the screen and the record get, the server's too
-            if payload.get("kind") == "approval":
-                self.asked[str((payload.get("meta") or {}).get("id"))] = Veil.options(payload.get("meta") or {})
+            if payload.get("kind") == "approval" and Veil.question(payload.get("meta") or {}):
+                self.asked[str(payload["meta"].get("id"))] = Veil.options(payload["meta"])
             payload = {**payload, "text": masked(payload.get("text") or "", hide), "meta": Veil(hide).meta(payload.get("meta") or {})}
         if payload.get("kind") == "error" or (payload.get("meta") or {}).get("error"):
             errorlog.record("agent", payload.get("text", "Failed turn"), turn=self.turn, session=self.session_id)
