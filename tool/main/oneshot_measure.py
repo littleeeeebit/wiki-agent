@@ -615,6 +615,12 @@ def start(repo: str, body: Start) -> dict:
             text = (f"The committed `{PLAN}` no longer holds: {broken}\n\nFix it and end this turn on a new commit; "
                     "the measurement runs before any review.\n\n" + oneshot_build.build_text(spec))
             then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
+        elif (last := (o.get("measures") or [None])[-1]) and last["head"] == o["built_head"] \
+                and last["status"] == "failed":   # the capped failure goes to the build agent, never measured again
+            spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "fix": "measure", "attempts": 0, "measure_fails": 0,
+                                                     "working": "build", "stopped": None})
+            text = fixing(spec)
+            then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
         else:
             then = None
     if then:

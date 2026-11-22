@@ -136,6 +136,21 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
     assert "자연스럽다" in oneshot_review.measured_text(o(), run["head"])
 
 
+def test_a_failure_at_the_round_cap_goes_to_the_build_agent_when_the_owner_starts_again(at_measure):
+    tree, sent = at_measure
+    given(url="https://example.test/other")
+    from main import oneshot_review
+    oneshot_spec.saved("budget", oneshot={"measure_fails": oneshot_review.cap() - 1})
+    measure.measure("budget")
+    assert o()["stage"] == "measure" and o()["stopped"] and o()["measures"][-1]["status"] == "failed"
+    runs = len(o()["measures"])
+    with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
+        measure.start("budget", measure.Start(head=o()["built_head"]))
+    assert len(o()["measures"]) == runs, "the failed HEAD is never measured again as it is"
+    assert o()["stage"] == "build" and o()["fix"] == "measure" and o()["measure_fails"] == 0 and not o()["stopped"]
+    assert sent[-1][1] == "build" and "total_ok=False" in sent[-1][2]
+
+
 def test_a_failed_measurement_or_a_refusal_goes_back_to_the_build_agent_which_must_commit(at_measure):
     tree, sent = at_measure
     given(url="https://example.test/other")

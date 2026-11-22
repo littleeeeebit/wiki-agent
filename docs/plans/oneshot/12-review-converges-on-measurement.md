@@ -41,7 +41,7 @@ gets the standing refusal and its areas' history (`build_turn`, `recurring`).
 | Question | Decision |
 | --- | --- |
 | The builder's answers | Each answer "with evidence instead of a change" goes into the next review's prompt. The reviewer leaves the finding out, or raises it again with a `rebuttal` saying why the evidence does not hold |
-| A build turn that answers a finding without a change | It commits a pinning test of the behaviour it defends, and names it in its answer. A build turn that ends without a commit is a bug of the turn: it goes back to the builder to commit, never to the owner and never to a stop |
+| A build turn that answers a finding without a change | It commits a pinning test of the behaviour it defends, and names it in its answer. A build turn that ends without a commit is a bug of the turn: it goes back to the builder to commit, never to the owner and never to a stop. "A commit" means one since the refusal: a turn resumed on a commit an interrupted turn made after the refusal passes, and only a HEAD already refused goes back |
 | An unchanged HEAD | It is never reviewed again |
 | A conflict the builder and the review cannot settle | It goes to the owner. This applies when the builder answered an area in two rounds, naming a requirement a change would break, or when an area is refused again after its one mechanism replacement. The owner keeps the review's side, the builder's side, or writes their own decision |
 | Findings that belong to a later stage | They are not blocking findings of the backend. Each goes to that kind's own build turn |
@@ -213,7 +213,10 @@ measure again. The health check goes through no proxy.
 Its stop is made before the worker starts and also
 holds while the server shuts down. A plan that no longer holds sends the run
 back to the build agent from the same button. A failed metric, a missing report or a backend
-that does not come up sends the result back to the build agent. An input the
+that does not come up sends the result back to the build agent. At the
+review's round cap it stops for the owner instead; their [실측 시작] then
+sends that failure to the build agent with a fresh budget, and never
+measures the failed HEAD again as it is. An input the
 script calls wrong stops for the owner, who fixes it and presses
 [실측 시작] again. A run of passed metrics waits for the owner. They listen to
 the clips, then approve, which comments the record on the pull request and
