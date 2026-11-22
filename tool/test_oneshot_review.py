@@ -486,6 +486,7 @@ def test_an_answered_area_is_rebutted_or_left_out_and_two_answered_rounds_go_to_
         oneshot_review.review("budget")
     assert "음수는 환불이다" in heard[0][1] and "rebuttal" in heard[1][1]   # read, and asked again without one
     assert o()["stage"] == "conflict" and not sent and not o().get("stopped")
+    assert not o().get("refused")   # a refusal sent to the owner uses up no round of the cap
     (c,) = o()["conflicts"]
     assert c["why"] == "answered" and len(c["answers"]) == 2
     with pytest.raises(HTTPException, match="직접 정하려면"):
@@ -612,7 +613,7 @@ def test_a_head_refused_in_an_earlier_round_is_never_built_on_again(reviewed):
     assert "failed" in oneshot_answers.ran(two, [{"test": "test_budget.py::TestA::test_pin"}])
 
 
-def test_an_answer_names_a_test_its_turn_added_or_changed_never_one_beside_a_comment(reviewed):
+def test_an_answer_names_a_test_its_turn_added_never_an_old_one_edited(reviewed):
     tree, head, _ = reviewed
     from main import oneshot_answers
     (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\n\nclass TestRefund:\n"
@@ -623,17 +624,19 @@ def test_an_answer_names_a_test_its_turn_added_or_changed_never_one_beside_a_com
     oneshot_spec.saved("budget", oneshot={"fix": "review", "reviews": [{"verdict": "refuse", "head": refused,
                                                                          "findings": [P1]}]})
     (tree / "test_pin.py").write_text("# a note\ndef test_old():\n    assert True\n\n\nclass TestRefund:\n"
-                                      "    def test_value(self):\n        assert 1 == 1\n", encoding="utf-8")
-    git(tree, "commit", "-am", "note and a changed pin")
+                                      "    def test_value(self):\n        assert 1 == 1\n\n"
+                                      "    def test_refund(self):\n        assert True\n", encoding="utf-8")
+    git(tree, "commit", "-am", "note, an old pin edited and a new one")
 
     def answer(test):
         return "```oneshot-answers\n" + __import__("json").dumps([{
             "area": "amount validation", "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
             "test": test}]) + "\n```\n"
     s = specs.load("budget", oneshot.BRANCH)
-    with pytest.raises(ValueError, match="더하거나 고친"):   # only a comment above it changed
-        oneshot_answers.answered(tree, s, answer("test_pin.py::test_old"))
-    assert oneshot_answers.answered(tree, s, answer("test_pin.py::TestRefund::test_value"))[0]["test"].endswith("test_value")
+    for old in ("test_pin.py::test_old", "test_pin.py::TestRefund::test_value"):   # a note above, a body edited
+        with pytest.raises(ValueError, match="새로 더한"):
+            oneshot_answers.answered(tree, s, answer(old))
+    assert oneshot_answers.answered(tree, s, answer("test_pin.py::TestRefund::test_refund"))[0]["test"].endswith("test_refund")
 
 
 def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_did_not_answer(reviewed):
@@ -665,17 +668,40 @@ def test_a_test_span_is_the_definition_and_its_whole_body():
     inherited = "class TestTarget(Base):\n    pass\n\nclass TestOther:\n    def test_value(self):\n        pass\n"
     assert test_span(inherited, ["TestTarget", "test_value"]) is None   # found only inside the class named
     assert test_span("// test('value', () => {\n  run()\n", ["value"]) is None   # a comment defines nothing
-    assert test_span("test('value', () => {\n  --count;\n  check()\n})\n", ["value"]) == (1, 4)
+    assert test_span("test('value', () => {\n  --count;\n  check()\n})\n", ["value"], "a.test.ts") == (1, 4)
+    nested = "class TestSub(Base):\n    def helper(self):\n        def test_value():\n            pass\n"
+    assert test_span(nested, ["TestSub", "test_value"]) is None   # a local function is no member test
+    from main.oneshot_answers import stripped
+    assert stripped("x = a // b  # half", ("#",)) == "x = a // b"   # Python's `//` is division
+    assert stripped('url = "http://a#b"  // note', ("//",)) == 'url = "http://a#b"'
 
 
-def test_an_answers_test_must_change_its_own_code_and_a_runner_root_names_it(reviewed):
-    from main.oneshot_answers import body_of, ran
-    before = "# about it\ndef test_old():\n    assert True\n"
-    assert body_of(before, ["test_old"]) == body_of(before.replace("# about it\n", ""), ["test_old"])
-    assert body_of(before, ["test_old"]) != body_of(before.replace("True", "1 == 1"), ["test_old"])
+def test_an_answers_test_is_new_since_the_refusal_and_runs_as_the_runner_names_it(reviewed):
+    tree, _, _ = reviewed
+    from main import oneshot_answers
+    from main.oneshot_answers import ran, runner_root
+    write = lambda text: (tree / "test_pin.py").write_text(text, encoding="utf-8")   # noqa: E731
+    write("def test_old():\n    if True:\n        pass\n    assert 1  # first\n")
+    git(tree, "add", "test_pin.py")
+    git(tree, "commit", "-m", "an old test")
+    refused = git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={"fix": "review", "reviews": [
+        {"verdict": "refuse", "head": refused, "findings": [P1]}]})
+    answer = lambda name: fenced("oneshot-answers", [{   # noqa: E731
+        "area": P1["area"], "location": P1["location"], "evidence": "x", "breaks": ["R1"], "test": name}])
+    write("def test_old():\n    if True:\n        assert 1  # moved, a new note\n\ndef test_new():\n    assert 2\n")
+    git(tree, "commit", "-am", "an old test edited, a new one added")
+    run = specs.load("budget", oneshot.BRANCH)
+    with pytest.raises(ValueError, match="새로 더한"):   # an old test edited is still the old test
+        oneshot_answers.answered(tree, run, answer("test_pin.py::test_old"))
+    assert oneshot_answers.answered(tree, run, answer("test_pin.py::test_new"))[0]["test"] == "test_pin.py::test_new"
     case = [("test_budget", "test_x", "test_budget.py", "passed")]   # the runner reports from `web`
     assert ran(case, [{"test": "web/test_budget.py::test_x"}], "web") == ""
     assert "돌지 않음" in ran(case, [{"test": "web/test_budget.py::test_x"}])
+    old_run = {"contract": ["web/test_budget.py"], "cases": [["test_budget", "test_y", "test_budget.py"]]}
+    assert runner_root(old_run) == "web" and runner_root({**old_run, "runner_root": ""}) == ""
+    by_class = [("test_pin.TestRules", "test_new", "test_pin.py", "passed")]   # a class's same-named case
+    assert "돌지 않음" in ran(by_class, [{"test": "test_pin.py::test_new"}])
 
 
 def test_a_removed_comment_or_an_insertion_elsewhere_replaces_no_mechanism(reviewed):
@@ -691,6 +717,9 @@ def test_a_removed_comment_or_an_insertion_elsewhere_replaces_no_mechanism(revie
     assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
     (tree / "budget_app.py").write_text("LIMIT = 1\ndef add(amount):\n    return amount\n", encoding="utf-8")
     git(tree, "commit", "-am", "code above it")
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
+    (tree / "budget_app.py").write_text("LIMIT = 1\ndef add(amount):\n    return amount  # renamed note\n", encoding="utf-8")
+    git(tree, "commit", "-am", "an inline comment only")
     assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
     (tree / "budget_app.py").write_text("LIMIT = 1\ndef add(amount):\n    return max(amount, 0)\n", encoding="utf-8")
     git(tree, "commit", "-am", "the refused line replaced")

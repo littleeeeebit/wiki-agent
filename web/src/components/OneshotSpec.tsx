@@ -66,9 +66,8 @@ export function Decide({ children }: { children: ReactNode }) {
   return <div className="sticky bottom-0 -mx-7 mt-auto flex flex-col gap-2 border-t border-border bg-card px-7 py-4 max-[560px]:-mx-4 max-[560px]:px-4">{children}</div>
 }
 
-export function Fault({ text }: { text: string }) {
-  return text ? <p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{text}</p> : null
-}
+export const Fault = ({ text }: { text: string }) =>
+  text ? <p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{text}</p> : null
 
 /** A run that stopped: the reason first, and `[재개]`. */
 export function Halt({ title, detail, children }: { title: string; detail: string; children: ReactNode }) {
@@ -124,9 +123,10 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
   const resume = !['kind', 'rekind'].includes(view.stopped?.reason ?? '') && (
     <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
-  const faulted = (fault || !!view.phone_owned?.length) && (
+  const unposted = view.stage !== 'measure' && view.measure?.runs.at(-1)?.comment_error   // told past the measure screen
+  const faulted = (fault || !!view.phone_owned?.length || !!unposted) && (
     <div className="flex flex-col gap-2 px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
-      <Fault text={fault} />
+      <Fault text={fault || (unposted ? `${unposted} — 실측 기록은 원샷 화면에 남아 있다` : '')} />
       {/* Shown on the run, whatever its stage, until the phone is listed again and the cleanup finishes. */}
       {view.phone_owned?.map((r) => r.state === 'unsure' ? (
         <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">

@@ -67,25 +67,55 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
             raise ValueError(f"{where}: `breaks` 는 고치면 깨지는 설계 항목·요구 번호의 목록이다")
         file, _, name = a["test"].partition("::")
         file = posixpath.normpath(file.replace("\\", "/"))
-        # The test's code as committed now against the refused HEAD: an uncommitted change never counts, and a
-        # comment, a blank line or a neighbour's change leaves its body as it was.
-        now = body_of(committed(path, "HEAD", file), name.split("::")) if name else None
-        if not now or now == body_of(committed(path, last["head"], file), name.split("::")):
-            raise ValueError(f"{where}: `test` 는 이번 턴에 커밋으로 더하거나 고친 테스트다 (`경로::이름`, 클래스 안이면 "
+        # A test committed since the refusal that the refused HEAD did not define: an uncommitted file never
+        # counts, and no edit of comments, spacing or nesting of an old test makes it new.
+        parts = name.split("::")
+        if not name or not test_span(committed(path, "HEAD", file), parts, file) \
+                or test_span(committed(path, last["head"], file), parts, file):
+            raise ValueError(f"{where}: `test` 는 이번 턴에 커밋으로 새로 더한 테스트다 (`경로::이름`, 클래스 안이면 "
                              f"`경로::클래스::이름`) — {a['test']}")
         out.append({"round": len(o["reviews"]), "head": last["head"], "area": " ".join(a["area"].split()),
                     **{k: a[k].strip() for k in ("location", "evidence", "test")}, "breaks": a["breaks"]})
     return out
 
 
-COMMENT = ("#", "//", "/*", "*")
+HASH = {".py", ".pyi", ".rb", ".sh", ".ps1", ".pl", ".r", ".yaml", ".yml", ".toml"}
+SLASH = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".swift", ".c", ".cc", ".cpp",
+         ".h", ".hpp", ".cs", ".dart", ".scala", ".php"}
 
 
-def code(line: str) -> bool:
-    """A line that holds code: not blank, not a line comment.
-    ponytail: a docstring or a block comment's inner line still counts; a parser per language if that matters."""
+def marks_of(file: str) -> tuple[str, ...]:
+    """The line comment marks of `file`'s language: Python's `//` is floor division, never a comment."""
 
-    return bool(s := line.strip()) and not s.startswith(COMMENT)
+    suffix = posixpath.splitext(file)[1].lower()
+    return ("#",) if suffix in HASH else ("//",) if suffix in SLASH else ("#", "//")
+
+
+def stripped(line: str, marks: tuple[str, ...] = ("#", "//")) -> str:
+    """`line` without its trailing line comment (a mark outside a string), right-stripped; empty for a line that is
+    only a comment. ponytail: a block comment's inner line or a docstring still counts as code."""
+
+    quote, i = "", 0
+    while i < len(line):
+        c = line[i]
+        if quote:
+            quote = "" if c == quote else quote
+            i += 2 if c == "\\" else 1
+            continue
+        if c in "\"'`":
+            quote = c
+        elif any(line.startswith(m, i) for m in marks):
+            line = line[:i]
+            break
+        i += 1
+    block = ("/*", "*") if "//" in marks else ()
+    return "" if line.lstrip().startswith(block) else line.rstrip()
+
+
+def code(line: str, marks: tuple[str, ...] = ("#", "//")) -> bool:
+    """A line that holds code: not blank, not only a comment."""
+
+    return bool(stripped(line, marks).strip())
 
 
 def committed(path: Path, rev: str, file: str) -> str:
@@ -97,46 +127,42 @@ def committed(path: Path, rev: str, file: str) -> str:
     return "" if done.returncode else done.stdout
 
 
-def body_of(text: str, parts: list[str]) -> str | None:
-    """The code lines of the test `parts` names, stripped, or `None` when it is not defined there."""
-
-    if not (span := test_span(text, parts)):
-        return None
-    return "\n".join(line.strip() for line in text.splitlines()[span[0] - 1:span[1]] if code(line))
-
-
-def end_of(lines: list[str], start: int) -> int:
+def end_of(lines: list[str], start: int, marks: tuple[str, ...]) -> int:
     """The 0-based end (exclusive) of the definition at `start`: the next code line no deeper, a closing bracket
     included."""
 
     depth = len(lines[start]) - len(lines[start].lstrip())
-    end = next((j for j in range(start + 1, len(lines)) if code(lines[j])   # a comment does not end the body
+    end = next((j for j in range(start + 1, len(lines)) if code(lines[j], marks)   # a comment does not end it
                 and len(lines[j]) - len(lines[j].lstrip()) <= depth), len(lines))
     return end + 1 if end < len(lines) and lines[end].lstrip()[:1] in "})]" else end
 
 
-def test_span(text: str, parts: list[str]) -> tuple[int, int] | None:
+def test_span(text: str, parts: list[str], file: str = "") -> tuple[int, int] | None:
     """The 1-based lines of the test `parts` names (`[Class, …,] name`) in `text`: its definition (`def`, `class`,
     `func`, `fn`, `function`, or a `test`/`it`/`describe` call titled with it, on a code line) and its body, each
-    part found inside the one before it. `None` when a part is not defined there: a mention, or a test a class
-    only inherits, is none."""
+    part defined directly in the body of the one before it. `None` when a part is not defined there: a mention,
+    a test a class only inherits, or a same-named function nested deeper, is none."""
 
-    lines, lo, hi, start = text.splitlines(), 0, len(text.splitlines()), None
+    lines, lo, hi, start, depth = text.splitlines(), 0, len(text.splitlines()), None, None
+    marks = marks_of(file)
     for part in parts:
         name = re.escape(part.split('[')[0])
         defined = re.compile(rf"^\s*(?:async\s+)?(?:def|class|func|fn|function)\s+{name}\b"
                              rf"|\b(?:test|it|describe)\s*\(\s*[\"'`]{name}[\"'`]")
-        start = next((i for i in range(lo, hi) if code(lines[i]) and defined.search(lines[i])), None)
+        start = next((i for i in range(lo, hi) if defined.search(stripped(lines[i], marks))
+                      and (depth is None or len(lines[i]) - len(lines[i].lstrip()) == depth)), None)
         if start is None:
             return None
-        lo, hi = start + 1, end_of(lines, start)
+        lo, hi = start + 1, end_of(lines, start, marks)
+        body = next((lines[i] for i in range(lo, hi) if code(lines[i], marks)), "")
+        depth = len(body) - len(body.lstrip())   # the next part is a direct member, at the body's own indent
     return start + 1, hi
 
 
 def refused_lines(path: Path, since: str) -> dict[str, list[tuple[int, int]]]:
     """The lines of commit `since` that the commits to HEAD changed with code, on `since`'s side, where a finding's
-    location points: a hunk only of comments and blank lines is none, and a pure insertion marks the lines on
-    both sides of it."""
+    location points: a hunk whose lines are the same once comments and blank lines are left out (an inline
+    comment edited, a comment removed) is none, and a pure insertion marks the lines on both sides of it."""
 
     from . import oneshot_review, specs
 
@@ -145,7 +171,7 @@ def refused_lines(path: Path, since: str) -> dict[str, list[tuple[int, int]]]:
     out, file, hunk = {}, None, None
 
     def close():
-        if file and hunk and hunk[2]:
+        if file and hunk and sorted(hunk[2]) != sorted(hunk[3]):   # its code, indentation included, differs
             a, b = hunk[0], hunk[1]
             out.setdefault(file, []).append((a, a + b - 1) if b else (a, a + 1))
     for line in done.stdout.splitlines() if not done.returncode else ():
@@ -157,11 +183,25 @@ def refused_lines(path: Path, since: str) -> dict[str, list[tuple[int, int]]]:
             file = oneshot_review.canonical(name[2:]) if name.startswith("a/") else None   # `/dev/null`: new file
         elif m := re.match(r"@@ -(\d+)(?:,(\d+))? \+\S+ @@", line):
             close()
-            hunk = [int(m[1]), int(m[2] if m[2] is not None else 1), False]
-        elif hunk and line[:1] in "+-" and code(line[1:]):
-            hunk[2] = True   # the hunk changes code, on one side or the other
+            hunk = [int(m[1]), int(m[2] if m[2] is not None else 1), [], []]
+        elif hunk and line[:1] in "+-" and (kept := stripped(line[1:], marks_of(file or ""))).strip():
+            hunk[2 if line[0] == "-" else 3].append(kept)
     close()
     return out
+
+
+def runner_root(o: dict) -> str:
+    """The folder the test runner names files from: saved at the contract commit (`runner_root`), or, for a run
+    committed before it was saved, read off a pinned case's file against the contract file it is."""
+
+    if (root := o.get("runner_root")) is not None:
+        return root
+    for _, _, at in o.get("cases") or []:
+        at = posixpath.normpath((at or "").replace("\\", "/"))
+        for c in o.get("contract") or []:
+            if at != "." and c != at and c.endswith("/" + at):
+                return c[:-len(at) - 1]
+    return ""
 
 
 def ran(found: list[tuple[str, str, str, str]], answers: list[dict], root: str = "") -> str:
@@ -182,8 +222,9 @@ def ran(found: list[tuple[str, str, str, str]], answers: list[dict], root: str =
         kinds = [kind for cls, case, at, kind in found
                  if (case == name or case.startswith(name + "["))
                  and (cls == owner or classes and cls.endswith("." + ".".join(classes)) and same(at)
-                      or not classes and (same(at) or cls.startswith(module + ".")
-                                          or posixpath.normpath(posixpath.join(root, cls.replace("\\", "/"))) == file))]
+                      # no class named: the module-level case, never a class's same-named one in that file
+                      or not classes and not cls.startswith(module + ".") and (
+                          same(at) or posixpath.normpath(posixpath.join(root, cls.replace("\\", "/"))) == file))]
         if not kinds or any(k != "passed" for k in kinds):
             bad.append(f"{a['test']}({'돌지 않음' if not kinds else ', '.join(sorted(set(kinds)))})")
     return "답에 적은 고정 테스트가 통과하지 못했다: " + ", ".join(bad) if bad else ""

@@ -733,13 +733,13 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     try:
         answers = sent.answered(path, spec, final)
         gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
-        oneshot_measure.planned(path, spec)   # a turn without a measurement plan never reaches the gate
+        oneshot_measure.planned(path, spec, "HEAD")   # committed, as the screen reads it: never an ignored file
     except ValueError as e:
         return str(e)
     verdict = judged(path, run, spec, [gate], toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    if why := held(path, run, spec, verdict, lambda found: sent.ran(found, answers, o.get("runner_root") or "")) \
+    if why := held(path, run, spec, verdict, lambda found: sent.ran(found, answers, sent.runner_root(o))) \
             or oneshot_measure.serve_check(path, run, spec):
         return why
     # `working` names PR #1's push before its worker starts: a server that dies in between leaves it for `recover`.

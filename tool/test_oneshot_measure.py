@@ -224,6 +224,13 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
         measure.measure("budget")
     assert o()["measures"][-1]["status"] == "stale"
     given()
+    runs = len(o()["measures"])
+    oneshot_spec.saved("budget", oneshot={"pr1": {**o()["pr1"], "head": "old"}})   # PR #1 is published first
+    with patch.object(measure.oneshot_publish, "published", lambda repo: oneshot_needs.forget("budget", ENV)):
+        measure.measure("budget")   # the value taken back meanwhile: a stop for the owner, no failed run
+    assert len(o()["measures"]) == runs and not o().get("measure_fails") and "M2" in o()["stopped"]["detail"]
+    oneshot_spec.saved("budget", oneshot={"pr1": {**o()["pr1"], "head": o()["built_head"]}})
+    given()
     measure.measure("budget")
     run = o()["measures"][-1]
     write(tree, "stray.txt", "x")   # the tree moved since it was measured
@@ -265,6 +272,12 @@ def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):
     measure.scrubbed(out, hide)
     kept = json.loads((out / "report.json").read_text(encoding="utf-8"))
     assert kept == {"metrics": {"rate": "[PIN]"}, "notes": "a[P]b"}
+    (out / "report.json").write_text(json.dumps({"metrics": {"rate": 424242.0}}), encoding="utf-8")
+    assert measure.report_of(out, plan, hide)["metrics"][0]["value"] is None   # the same number, spelled as a float
+    measure.scrubbed(out, hide)
+    assert json.loads((out / "report.json").read_text(encoding="utf-8")) == {"metrics": {"rate": "[PIN]"}}
+    (out / "report.json").write_text('{"metrics": {}, "notes": "\\ud800"}', encoding="utf-8")   # a lone surrogate
+    assert "error" in measure.report_of(out, plan, hide)
 
 
 def test_a_number_that_is_not_finite_is_refused_in_a_report_and_a_plan(tmp_path):
@@ -322,6 +335,10 @@ def test_only_the_started_backend_vouches_for_the_health_address():
             assert not measure.owned(me, "http://127.0.0.1:12345/health")
         with patch.object(psutil, "net_connections", lambda kind: listening((11, "::1"), (99, "10.0.0.5"))):
             assert measure.owned(me, "http://localhost:12345/health")
+        with patch.object(psutil, "net_connections", lambda kind: listening((11, "::"),)):   # dual-stack, ours
+            assert measure.owned(me, "http://127.0.0.1:12345/health")
+        with patch.object(psutil, "net_connections", lambda kind: listening((11, "127.0.0.1"), (99, "::"))):
+            assert not measure.owned(me, "http://127.0.0.1:12345/health")
 
 
 def test_the_app_starts_without_psutil_which_the_install_declares():

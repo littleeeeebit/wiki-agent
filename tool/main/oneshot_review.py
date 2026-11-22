@@ -541,8 +541,8 @@ def decided(repo: str, store, spec: dict, found: dict):
                                           "later": later_of(o, found), "working": "split"})
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
     refused = int(o.get("refused") or 0) + 1
-    if conflicts := conflicted(o, found):   # a decision only the owner can make: no build turn, no cap stop
-        oneshot_spec.saved(repo, oneshot={"stage": "conflict", "reviews": reviews, "refused": refused,
+    if conflicts := conflicted(o, found):   # a decision only the owner can make: no build turn, no round counted
+        oneshot_spec.saved(repo, oneshot={"stage": "conflict", "reviews": reviews, "refused": refused - 1,
                                           "conflicts": conflicts, "attempts": 0, "working": None,
                                           "later": later_of(o, found)})
         return None

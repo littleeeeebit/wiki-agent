@@ -64,13 +64,16 @@ in one `oneshot-answers` block. Each entry names the finding's `area`, the
 and the test that pins the defended behaviour, as `path::name`. The build
 check (`oneshot_answers.answered`) refuses an entry whose area the refusal
 did not name, whose `breaks` are not design items or requirements, or whose
-test's code is the same at HEAD as at the refused HEAD (`path::name`, or
-`path::Class::name` inside a class). The test is its definition and body,
-each part found inside the one before it, and compared by its code lines
-only: a mention, a comment, a blank line or a neighbour's change leaves it
-as it was. After the gate, that test must have run and passed in the
-build's own test run (`oneshot_answers.ran`), its path read from the
-runner's `root` as the contract tests are (`runner_root`). It saves the entries on the spec under `answers`,
+test is not one HEAD defines and the refused HEAD did not (`path::name`, or
+`path::Class::name` inside a class): the pinning test is new, so no edit of
+an old test's comments, spacing or nesting stands in for one. A definition
+is found on a code line, each part a direct member of the one before it; a
+mention, an inherited test or a nested function of the same name is none.
+Line comments are read per language (`#` in Python, whose `//` divides).
+After the gate, that test must have run and passed in the build's own test
+run (`oneshot_answers.ran`), as the exact case the selector names, its path
+read from the runner's `root` as the contract tests are (`runner_root`,
+recovered from the pinned cases for a run committed before it was saved). It saves the entries on the spec under `answers`,
 with the round they answer.
 
 `review_text` shows the next reviewer every answer (`answers_text`). In an
@@ -94,7 +97,8 @@ broken requirement, or when its mechanism was already replaced once
 (`replaced`). The build turn told to replace it saves it as `replacing`. It
 counts as replaced only once a build passes whose commits changed code (not
 a comment or a blank line) at the refused lines of that area, read on the
-refused commit's side where the finding points (`refused_lines`), and did
+refused commit's side where the finding points (`refused_lines`; a hunk
+whose lines are the same once comments are left out is none), and did
 not answer it instead; a turn that never ran, or
 left the area as it was, is told again. A refusal with a conflict
 does not go to the build or count towards the cap: the run waits at the
@@ -146,7 +150,10 @@ its own, waits for its health address to answer 200, and stops it with
 everything it started. A health port something already answers before the
 start is refused, and so is one where any listener its host reaches (both
 loopback addresses for `localhost`) is outside the backend's process tree.
-A redirect is the health address's own status, never followed. A tree the backend wrote into is refused.
+A dual-stack `::` listener counts for `127.0.0.1` as well. A redirect is
+the health address's own status, never followed. The build reads the plan
+committed at HEAD, as the screen does, never an ignored file. A tree the
+backend wrote into is refused.
 
 After the check passes, the run is at `measure`. The server pushes the HEAD
 and opens pull request #1 as a draft, or finds and updates it
@@ -162,8 +169,11 @@ secret masked from its output, and keeps only the clips it accepts, the
 report and the backend's log, masked (`oneshot_kept`). The report is
 decoded, each field masked (a number that is a secret's value included), and
 written once; one that is not JSON is removed. The plan and the report are
-read strictly: `NaN`, `Infinity` or an overflowing float is refused. A
-metric that is a secret's value never counts as a measurement. The folder
+read strictly: `NaN`, `Infinity`, an overflowing float or a lone surrogate
+escape is refused. A metric equal to a secret's value, in any numeric
+spelling, never counts as a measurement. The inputs are checked again under
+that lock right before the run, so one taken back meanwhile stops for the
+owner without a failed run. The folder
 is cleaned on every exit, a failed read of the report included. A stored
 value changed at any moment of the run sets that result aside: the values
 and the change count are read together, and compared and saved together,

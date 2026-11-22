@@ -291,7 +291,9 @@ class Unfollowed(urllib.request.HTTPRedirectHandler):
 
 
 NO_REDIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), Unfollowed)   # loopback: never a proxy
-LOOPBACK = {"127.0.0.1": {"127.0.0.1", "0.0.0.0"}, "localhost": {"127.0.0.1", "0.0.0.0", "::1", "::"}}
+# Every listener a host name reaches: a dual-stack `::` socket answers IPv4 too, so it vouches, or refuses, there.
+LOOPBACK = {"127.0.0.1": {"127.0.0.1", "0.0.0.0", "::", "::ffff:127.0.0.1"},
+            "localhost": {"127.0.0.1", "0.0.0.0", "::1", "::", "::ffff:127.0.0.1"}}
 
 
 def owned(proc: subprocess.Popen, health: str) -> bool:
@@ -324,7 +326,7 @@ def serve_check(path: Path, run, spec: dict) -> str:
     """At the build's gate: the plan holds and the backend starts and answers its health address, or why not."""
 
     try:
-        plan = planned(path, spec)
+        plan = planned(path, spec, "HEAD")   # the plan the commit holds, as the measurement reads it
         env, hide = env_of(spec, plan)
         log = Path(tempfile.mkdtemp(prefix="oneshot-serve-")) / "serve.log"
         try:
@@ -388,7 +390,11 @@ def measure(repo: str) -> None:
         shutil.rmtree(out, ignore_errors=True)
         out.mkdir(parents=True)
         with oneshot._lock:   # every stored-value change counts under this lock: the values and the count agree
-            env, hide = env_of(spec, plan)
+            now = oneshot_spec.spec_of(repo)   # what the owner gave by now, a value taken back since included
+            if missing := [x["id"] for x in plan["inputs"] if not has(now, x)]:
+                store.stop("measure", f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")   # no failure counted
+                return None
+            env, hide = env_of(now, plan)
             since = CHANGES.get(repo, 0)
         record = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}
         try:

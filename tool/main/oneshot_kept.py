@@ -28,23 +28,40 @@ def strict(text: str):
         if not math.isfinite(v := float(s)):
             raise ValueError(f"유한한 수가 아니다 — {s[:20]}")
         return v
-    return json.loads(text, parse_constant=number, parse_float=number)
+    value = json.loads(text, parse_constant=number, parse_float=number)
+    json.dumps(value, ensure_ascii=False).encode("utf-8")   # a lone surrogate escape is `UnicodeEncodeError`
+    return value
+
+
+def numeric(text: str) -> float | None:
+    try:
+        return v if math.isfinite(v := float(text)) else None
+    except (ValueError, OverflowError):
+        return None
 
 
 def label_of(v, hide: dict[str, str]) -> str | None:
-    """The mask of a number that is, whole, a secret's value, or `None`."""
+    """The mask of a number that is, whole, a secret's value, in any spelling (`1234`, `1234.0`), or `None`."""
 
-    return None if isinstance(v, bool) else next((label for value, label in hide.items()
-                                                 if value in (str(v), json.dumps(v))), None)
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return next((label for value, label in hide.items() if (n := numeric(value)) is not None and n == v), None)
 
 
 def cleaned(value, hide: dict[str, str]):
-    """`value` decoded from JSON with every string masked and every number that is a secret replaced by its mask."""
+    """`value` decoded from JSON with every string masked and every number that is a secret replaced by its mask.
+    A key that shows a secret is masked too, numbered where two would collide."""
 
     if isinstance(value, str):
         return masked(value, hide)
     if isinstance(value, dict):
-        return {masked(k, hide): cleaned(v, hide) for k, v in value.items()}
+        out = {}
+        for k, v in value.items():
+            key = masked(k, hide)
+            while key in out:
+                key += "·"
+            out[key] = cleaned(v, hide)
+        return out
     if isinstance(value, list):
         return [cleaned(v, hide) for v in value]
     return (label_of(value, hide) or value) if isinstance(value, (int, float)) else value

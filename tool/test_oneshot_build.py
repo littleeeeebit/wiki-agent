@@ -426,11 +426,11 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     git(tree, "add", "test_refund.py")
     git(tree, "commit", "-m", "pin the refund")
     check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
-    assert "더하거나 고친 테스트" in sent[-1][2]
+    assert "새로 더한 테스트" in sent[-1][2]
     oneshot_spec.saved("budget", oneshot={"attempts": 0})   # under the attempt cap for the cases below
     write(tree, "ghost.py", "def test_ghost():\n    pass\n")   # a definition the test command never collects
     check(tree, said.replace("test_refund.py::test_a_refund_is_negative", "ghost.py::test_ghost"))()
-    assert "더하거나 고친 테스트" in sent[-1][2]   # an uncommitted file never counts
+    assert "새로 더한 테스트" in sent[-1][2]   # an uncommitted file never counts
     git(tree, "add", "ghost.py")
     git(tree, "commit", "-m", "ghost")
     check(tree, said.replace("test_refund.py::test_a_refund_is_negative", "ghost.py::test_ghost"))()
