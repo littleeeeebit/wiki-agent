@@ -281,7 +281,7 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
                       f"상위 모델 왕복이 실패했다 — {error}")
     from . import oneshot_needs
 
-    if hide and oneshot_needs.held_in(oneshot_needs.decoded(answer), hide):   # nothing of it is used, nor named
+    if hide and oneshot_needs.held_in(answer, hide):   # nothing of it is used, nor named
         return person(spec, run, [*past, {**entry, "answer": {"kind": "refused"}}],
                       "상위 모델의 답에 이 세션의 비밀 값이 있어 쓰지 않는다")
     if run.halt.is_set():   # a Stop pressed while the author answered: nothing of the answer takes effect

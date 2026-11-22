@@ -270,8 +270,8 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str, last: bool = F
         # ponytail: text diffs and untracked text only; a secret inside a committed binary is not seen
         untracked = [path / f for f in git("ls-files", "--others", "--exclude-standard", "-z").split("\0") if f]
         log = git("log", *HISTORY, f"{base}..HEAD") if base else ""
-        places = {"답": decoded(final), "커밋": log + git("diff", "HEAD"),
-                  "커밋하지 않은 파일": "\n".join(map(read, untracked))}
+        places = {"답": decoded(final), "커밋": decoded(log + git("diff", "HEAD")),
+                  "커밋하지 않은 파일": decoded("\n".join(map(read, untracked)))}
     except (OSError, subprocess.SubprocessError) as exc:
         return unscanned(path, spec, hide, f"{step} 이(가) 실패했다 ({type(exc).__name__})")
     found: dict[str, set[str]] = {}
@@ -332,7 +332,8 @@ def decoded(text: str) -> str:
 
 
 def held_in(text: str, hide: dict) -> list[str]:
-    """The needs whose value `text` holds, in any casing, by id."""
+    """The needs whose value `text` holds, in any casing, as spelled or as its JSON decodes (`decoded`), by id."""
+    text = decoded(text)
     flat = folded(text)
     return sorted(need_ids(label for value, label in hide.items() if value in text or folded(value) in flat))
 

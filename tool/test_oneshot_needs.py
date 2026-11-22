@@ -392,6 +392,19 @@ def test_a_secret_spelled_with_json_escapes_is_masked_where_it_stands_and_scanne
     # The scan reads every fence the same way, the test runner's included, whichever parser takes it later.
     runner = '```oneshot-runner\n{"command": ["run", "--key", "\\u0074ok-31415926"]}\n```\n'
     assert "tok-31415926" not in runner and needs.held_in(needs.decoded(runner), hide) == ["N1"]
+    # A character outside the Basic Multilingual Plane, written as a surrogate pair, is read as JSON parsers read it.
+    pair = {"k\U0001F511y-1": "[N3]"}
+    written = '{"q": "k\\ud83d\\udd11y-1"}'
+    assert json.loads(masked(written, pair)) == {"q": "[N3]"} and needs.held_in(written, pair) == ["N3"]
+    # A value meeting part of an escape never leaves half of it: the label covers the whole escape, JSON stays JSON.
+    part = {"u0074o": "[N4]", "tok-31415926": "[N1]"}
+    assert json.loads(masked('{"q": "\\u0074ok-31415926"}', part)) == {"q": "[N1]"}
+    assert json.loads(masked('{"q": "a\\u0074ob"}', {"u0074": "[N5]"})) == {"q": "a[N5]ob"}
+
+
+def test_the_publication_scan_reads_a_json_file_as_it_decodes(tmp_path):
+    hide = {"tok-31415926": "[N1]"}
+    assert needs.held_in('+{"key": "\\u0074ok-31415926"}', hide) == ["N1"]   # a diff line of a JSON file
 
 
 def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
