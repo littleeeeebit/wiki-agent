@@ -479,6 +479,24 @@ def test_a_survey_pin_lets_go_to_a_checked_pick_and_only_once_written(tmp_path):
             return models
         with patch.object(chat_channels, "codex_models", side_effect=listed):
             web.post("/api/config/next", json={"repo": "a", "model": "codex:test", "effort": "low"}).raise_for_status()
+            # A cold switch resolves the destination's saved Codex pick with the lock free too.
+            web.post("/api/config/next", json={"repo": "b"}).raise_for_status()
+            chat._config.clear()
+            web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
+        # A pick another window saved while a release looked up the old one is looked up again.
+        pinned({"model": "opus", "effort": "high"})
+        real = chat.picked
+
+        def superseded(name, cid):
+            if not superseded.done:
+                superseded.done = True
+                chat.chosen(name, cid, {"model": "haiku", "effort": "low"})
+                return {"model": "opus", "effort": "high"}
+            return real(name, cid)
+        superseded.done = False
+        with patch.object(chat, "picked", side_effect=superseded):
+            web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == "haiku"
 
 
 def test_project_shared_sessions_and_records_isolated(tmp_path):

@@ -663,28 +663,49 @@ def focuses() -> list[dict]:
     ]
 
 
+class _Moved(Exception):
+    """Another request changed what a settings request's lookups were made for."""
+
+
 @router.post("/api/config/{cid}")
 def configure(cid: str, body: Config) -> dict:
     """A new `repo` moves this window, and is the project the next new window opens on; the model and
     effort apply to this focus of the window's project."""
-    global _project
 
     known(cid)
     if channels.repo_for(body.repo) is None:
         raise HTTPException(400, f"그런 저장소가 없다: {body.repo}")
-    # A Codex lookup waits on the CLI: it runs before the lock that also admits work turns, for what the
-    # request looks like now, and the lock checks the request again before anything is applied.
-    asked_for = requested(body.model, body.effort or "") if body.model is not None and body.repo == project() else None
-    hint = _config.get((body.repo, cid)) or {}
-    released_to = picked(body.repo, cid) if body.model is None and body.refactor_mode is not None \
-        and hint.get("refactor_pinned") and body.refactor_mode != hint.get("refactor_mode") else None
+    for _ in range(3):   # ponytail: three tries; a race past that is the person's to retry
+        try:
+            return _configure(cid, body)
+        except _Moved:
+            continue
+    raise HTTPException(409, "다른 창이 설정을 계속 바꾸고 있다 — 다시 시도해 주세요")
+
+
+def _configure(cid: str, body: Config) -> dict:
+    global _project
+
+    def basis(cfg: dict) -> tuple:   # what the lookups below are made for
+        return (project(), chosen(body.repo).get(cid), cfg.get("model"), cfg.get("effort"),
+                cfg.get("refactor_mode", "preserve"), cfg.get("refactor_generation"), bool(cfg.get("refactor_pinned")))
+
+    # Whatever waits on the Codex CLI — a cold configuration, a requested model, the pick a released pin goes
+    # back to — runs before the lock that also admits work turns. The lock applies it only if nothing it was
+    # looked up for moved meanwhile; otherwise `configure` looks it up again.
+    seen = basis(config(cid, body.repo))   # a first read fills only an empty key, locked or not
+    asked_for = requested(body.model, body.effort or "") if body.model is not None and body.repo == seen[0] else None
+    released_to = picked(body.repo, cid) if asked_for is None and cid == "refactor" and seen[6] \
+        and body.refactor_mode not in (None, seen[4]) else None
 
     with _lock:
+        cfg = config(cid, body.repo)   # the destination's on a switch, which moves only after what can fail
+        if basis(cfg) != seen:
+            raise _Moved
         switched = body.repo != project()
         # A switch changes nothing others read; a setting, or a mode a switch carries, waits for that answer.
         if (not switched or body.refactor_mode is not None) and (str(channels.repo_for(body.repo)), cid) in _busy:
             raise HTTPException(409, "답변 생성이 끝난 뒤 설정을 바꿔 주세요")
-        cfg = config(cid, body.repo)   # the destination's on a switch, which moves only after what can fail
         # A survey fixed the conversation's model for its mode; only another mode lets it go.
         mode = body.refactor_mode if cid == "refactor" else None
         renewed = mode is not None and mode != cfg.get("refactor_mode", "preserve")
@@ -696,11 +717,9 @@ def configure(cid: str, body: Config) -> dict:
             if (body.model, body.effort or "") != (cfg["model"], cfg["effort"]):
                 raise HTTPException(409, f"리팩터링 대화는 조사 모델 `{cfg['model']}` 로 고정됐다 — 모드를 바꾸거나 새로 조사해라")
             given = False
-        if given and asked_for is None:   # another window switched the project since this request was checked
-            raise HTTPException(409, "다른 창이 프로젝트를 바꿨다 — 다시 골라 주세요")
         want = asked_for if given else None
         if want is None and pinned and renewed:   # the pin lets go: the person's own pick, checked as a cold read
-            want = released_to or picked(cfg["repo"], cid)
+            want = released_to
         # Everything is written before anything is published, and a failed write takes back the ones before it:
         # the focus, its session, the default project and a retry's view of the pin stay as they were.
         generation = cfg.get("refactor_generation", 0) + renewed
