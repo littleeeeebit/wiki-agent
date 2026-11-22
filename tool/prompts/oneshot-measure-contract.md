@@ -87,15 +87,17 @@ the first time:
 
 A finding you change: fix it where it points. A finding you do not change,
 because the fix would break another requirement or the finding is wrong:
-commit a test that pins the behaviour you defend, and answer it in exactly one
-fenced block:
+commit a new test that pins the behaviour you defend, and answer it in exactly
+one fenced block:
 
 ```oneshot-answers
 [{"area": "<the finding's area, word for word>", "location": "<file:line>", "evidence": "<Korean: why the code is right, naming the lines and any measured value>", "breaks": ["R12"], "test": "worker/tests/test_ingest.py::test_close_delimited_body_is_failed"}]
 ```
 
 `breaks` names the requirements a change would break, and `test` names the
-file and test you committed in this turn. Either way the turn ends on a new
+file and test you added in this turn (`path::name`, or `path::Class::name`
+inside a class). It must be a test the refused HEAD did not define: editing
+an existing test does not count, and the build's own test run must pass it. Either way the turn ends on a new
 commit: a HEAD already refused is never reviewed again, and a turn that adds
 no commit is sent back. The review reads your answers. When you and the review
 still disagree in an area, the owner decides between you.
