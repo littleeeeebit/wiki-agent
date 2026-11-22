@@ -27,7 +27,7 @@ from xml.etree import ElementTree
 from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
-from . import connect, oneshot, oneshot_android, oneshot_spec, refactor_run, runtime, specs, work
+from . import connect, oneshot, oneshot_android, oneshot_needs, oneshot_spec, refactor_run, runtime, specs, work
 from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled
 from .query import _lock as work_lock, hold
 
@@ -261,16 +261,18 @@ TOOLCHAIN = ("JAVA_HOME", "ANDROID_HOME", "ANDROID_USER_HOME", "GRADLE_USER_HOME
 
 
 def toolchain(spec: dict) -> dict | None:
-    """The environment an Android run's tests and gate run in, or `None` for the server's own."""
+    """The environment an Android run's tests and gate run in, or `None` for the server's own; either with the
+    owner's secrets for the outside calls."""
 
-    return oneshot_android.build_env() if shape(spec["oneshot"]) == "android" else None
+    return oneshot_needs.gate_env(spec, oneshot_android.build_env() if shape(spec["oneshot"]) == "android" else None)
 
 
 def built_env(spec: dict) -> dict | None:
     """The environment a gate that builds the app runs in (S7, S8): an Android app's, alone or among several
-    kinds, since several kinds' gate builds the Android app on the core; else the server's own."""
+    kinds, since several kinds' gate builds the Android app on the core; else the server's own. Either has the
+    owner's secrets for the outside calls."""
 
-    return oneshot_android.build_env() if "android" in kinds_of(spec["oneshot"]) else None
+    return oneshot_needs.gate_env(spec, oneshot_android.build_env() if "android" in kinds_of(spec["oneshot"]) else None)
 
 
 def toolchain_text(spec: dict) -> str:
@@ -299,7 +301,8 @@ def tools_text(o: dict) -> str:
 def tests_text(spec: dict) -> str:
     kind = shape(spec["oneshot"])
     text = oneshot.prompt("tests", kind).replace("{tests}", json.dumps(planned(spec), ensure_ascii=False, indent=2)) \
-        .replace("{profile}", environment(spec["oneshot"])).replace("{tools}", tools_text(spec["oneshot"]))
+        .replace("{profile}", environment(spec["oneshot"])).replace("{tools}", tools_text(spec["oneshot"])) \
+        .replace("{needs}", oneshot_needs.told(spec))
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 
@@ -307,7 +310,8 @@ def build_text(spec: dict) -> str:
     o = spec["oneshot"]
     kind = shape(o)
     text = oneshot.prompt("build", kind).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
-        .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o))
+        .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o)) \
+        .replace("{needs}", oneshot_needs.told(spec))
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 
@@ -384,19 +388,26 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
 
     folder = oneshot_spec.store(spec["repo"]).folder / "junit"
     folder.mkdir(parents=True, exist_ok=True)
-    report = folder / f"run-{time.time_ns()}.xml"
-    _, text, cut = specs.gate(run_as(command.replace("{report}", literal(report.as_posix())), spec["oneshot"], path), path, run.halt,
-                              env=toolchain(spec), timeout=RUN_SECONDS)
-    if cut:
-        raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
-    try:
-        root = ElementTree.parse(report).getroot()
-    except (OSError, ElementTree.ParseError):
-        raise ValueError(f"테스트 명령이 `{{report}}` 에 JUnit 보고서를 쓰지 않았다 — {text.strip()[-800:]}") from None
-    return [(case.get("classname") or "", case.get("name") or "", case.get("file") or "",
-             # A skip anywhere, a cleanup's included, outranks the rest: nothing skipped counts either way.
-             next((k for k in ("skipped", "error", "failure") if case.find(k) is not None), "passed"))
-            for case in root.iter("testcase")]
+    report, env = folder / f"run-{time.time_ns()}.xml", toolchain(spec)
+    hide = oneshot_needs.hidden(spec, env)
+    try:   # the report may quote a secret in a failure: read once and never kept
+        _, text, cut = specs.gate(run_as(command.replace("{report}", literal(report.as_posix())), spec["oneshot"], path),
+                                  path, run.halt, env=env, timeout=RUN_SECONDS, hide=hide)
+        if cut:
+            raise ValueError(f"계약 테스트 실행이 끊겼다 ({cut}) — {text.strip()[-800:]}")
+        try:
+            root = ElementTree.parse(report).getroot()
+        except (OSError, ElementTree.ParseError):
+            raise ValueError(f"테스트 명령이 `{{report}}` 에 JUnit 보고서를 쓰지 않았다 — {text.strip()[-800:]}") from None
+    finally:
+        report.unlink(missing_ok=True)
+    found = [(case.get("classname") or "", case.get("name") or "", case.get("file") or "",
+              # A skip anywhere, a cleanup's included, outranks the rest: nothing skipped counts either way.
+              next((k for k in ("skipped", "error", "failure") if case.find(k) is not None), "passed"))
+             for case in root.iter("testcase")]
+    if leaked := sorted({label for c in found for v, label in hide.items() if any(v in f for f in c[:3])}):
+        raise ValueError(f"테스트 사례 이름에 비밀 값이 들어 있다 — {', '.join(leaked)}: 값을 사례 이름에 넣지 말라")
+    return found
 
 
 QUOTES = "'‘’‚‛"   # every character PowerShell reads as a single quote
@@ -718,7 +729,7 @@ def built(path: Path, run, spec: dict, final: str) -> str:
         gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
     except ValueError as e:
         return str(e)
-    verdict = specs.judge(path, [gate], run.halt, lambda text: specs.note(run, text), env=toolchain(spec))
+    verdict = judged(path, run, spec, [gate], toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := held(path, run, spec, verdict):
@@ -728,6 +739,19 @@ def built(path: Path, run, spec: dict, final: str) -> str:
                                               "working": "review"})
     specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}")
     return ""
+
+
+def judged(path: Path, run, spec: dict, commands: list[str], env: dict | None, **kw) -> dict:
+    """`specs.judge` of `commands` in `env` as the server runs a gate: the output shows no secret `env` carries, and
+    the adapter's JUnit report, which may quote one, is written outside the tree and deleted after."""
+
+    report = oneshot_spec.store(spec["repo"]).folder / "junit" / f"gate-{time.time_ns()}.xml"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        return specs.judge(path, [c.replace(REPORT, literal(report.as_posix())) for c in commands], run.halt,
+                           lambda text: specs.note(run, text), env=env, hide=oneshot_needs.hidden(spec, env), **kw)
+    finally:
+        report.unlink(missing_ok=True)
 
 
 def held(path: Path, run, spec: dict, verdict: dict) -> str:

@@ -1201,9 +1201,10 @@ def kill(proc: subprocess.Popen) -> None:
 
 
 def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None, *, timeout: float | None = None,
-         owned_jobs: list | None = None, argv: list[str] | None = None, idle: float | None = None) -> tuple[int | None, str, str]:
+         owned_jobs: list | None = None, argv: list[str] | None = None, idle: float | None = None,
+         hide: dict[str, str] | None = None) -> tuple[int | None, str, str]:
     """Run the adapter's shell command as `(code, output, cut reason)`; `idle` replaces runtime's quiet limit.
-    Check cancellation and the deadline during execution and after completion."""
+    Check cancellation and the deadline during execution and after completion. The output shows no `hide` value."""
 
     env = python_environment(env)
     if os.name == "nt":
@@ -1213,12 +1214,13 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None, *,
         scratch = Path(env.get("TEMP") or tempfile.gettempdir()) / "wiki-agent-gate"
         scratch.mkdir(exist_ok=True)
         env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(scratch)
-    direct = {k: v for k, v in (("argv", argv), ("idle", idle)) if v is not None}
+    direct = {k: v for k, v in (("argv", argv), ("idle", idle), ("hide", hide)) if v is not None}
     return runtime.gate(cmd, cwd, halt, env, GATE_SECONDS if timeout is None else timeout, owned_jobs, kill, **direct)
 
 
 def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None,
-          *, timeout: float | None = None, argv: list[str] | None = None, expect: str | None = None) -> dict:
+          *, timeout: float | None = None, argv: list[str] | None = None, expect: str | None = None,
+          hide: dict[str, str] | None = None) -> dict:
     """Check a clean HEAD, `expect`'s commit when named, with one shared command deadline, stopping on failure.
     HEAD and status are read before and after: commands that change either fail. Reports and rounds pass here."""
 
@@ -1238,7 +1240,7 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     for one in cmds:
         noted(f"게이트 · {one}")
         direct = {"argv": argv} if argv is not None else {}
-        code, out, cut = gate(one, path, halt, env=env, timeout=deadline - time.monotonic(), **direct)
+        code, out, cut = gate(one, path, halt, env=env, timeout=deadline - time.monotonic(), hide=hide, **direct)
         if code != 0:
             break
     moved = "게이트가 HEAD 를 바꿨다" if sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head else \

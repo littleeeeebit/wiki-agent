@@ -39,7 +39,7 @@ import agent
 from common import errorlog
 from common import settings as settings_file
 
-from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_needs, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, release_api, runtime, specs, suite, survey, update, verification, wiring, work
+from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_needs, oneshot_pc, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, release_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
 from . import onboarding
 
@@ -161,6 +161,7 @@ app.include_router(oneshot_needs.router)
 app.include_router(oneshot_front.router)
 app.include_router(oneshot_critique.router)
 app.include_router(oneshot_phone.router)
+app.include_router(oneshot_pc.router)
 app.include_router(refactor_api.router)
 app.include_router(release_api.router)
 app.include_router(improvements.router)
@@ -582,8 +583,13 @@ def demo() -> None:
             if ev.kind == "done":
                 first = ev.meta
 
-        answer = query.configure(cid, query.Config(repo=query.config(cid)["repo"], effort="max"))
-        assert answer["kept"], answer
+        now = query.config(cid)   # a request without a model sets none: the effort goes with the current model
+        others = sorted(query.channels.efforts_of(now["model"]) - {now["effort"], ""})
+        if not others:
+            raise SystemExit(f"`{now['model']}` 에는 바꿀 effort 가 없다 — effort 가 여럿인 모델을 골라 다시 확인하라")
+        effort = others[0]
+        answer = query.configure(cid, query.Config(repo=now["repo"], model=now["model"], effort=effort))
+        assert answer["kept"] and query.config(cid)["effort"] == effort, answer
 
         text = ""
         for ev in query.session(cid).say("아까 기억하라고 한 표를 그대로 적어라. 그것만."):

@@ -19,11 +19,14 @@ from pathlib import Path
 from wiki import slots_for
 
 from . import oneshot, oneshot_build, oneshot_desktop, oneshot_desktop_look, oneshot_device, oneshot_look, \
-    oneshot_screens as screens, oneshot_spec, runtime, specs
+    oneshot_needs, oneshot_screens as screens, oneshot_spec, runtime, specs
 from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape
 from .oneshot_sheet import KIND_NAMES
 
 STAGE = "build-front"
+# By repository, the round of the last look and what its web app's secrets show as (`oneshot_needs.hidden`). Kept
+# in memory only, never with the values written down: a server started since has none, and that look is taken again.
+MASKS: dict[str, tuple[int, dict[str, str]]] = {}
 # The several-kinds prompt keeps a kind's parts only when the owner picked it, and takes the PC app's conventions,
 # block and freeze from the PC app's own prompt, so the two never drift apart.
 SECTION = re.compile(r"<!-- kind:(\w+) -->\n(.*?)<!-- /kind -->\n", re.S)
@@ -103,7 +106,11 @@ def build_front_text(spec: dict) -> str:
     # The review's checks go in last, as written: no later substitution may rewrite what the builder copies.
     pc_owed = "\n".join(f"- `{x['id']}` ({x['requirement']}, `{x['location']}`): {x['check']} — {x['reason']} · act "
                         f"`{json.dumps(x['act'], ensure_ascii=False)}` · expect `{json.dumps(x['expect'], ensure_ascii=False)}`"
-                        for x in oneshot_desktop.looked_for(o)) or "- (none)"
+                        for x in oneshot_desktop.looked_for(o))
+    pc_owed = "\n".join(filter(None, [pc_owed, *(
+        f"- `{x['id']}` ({x['requirement']}, `{x['location']}`, the owner's desktop round): {x['check']} — {x['reason']}"
+        f" · act `{json.dumps(x['act'], ensure_ascii=False)}` · observe `{json.dumps(x['observe'], ensure_ascii=False)}`"
+        for x in oneshot_desktop.owner_scripted(o))])) or "- (none)"
     if "android" not in kinds_of(o):
         return text.replace("{desktop_owed}", pc_owed)
     if shape(o) == "kinds":   # the Android parts read only what applies to the Android app
@@ -161,7 +168,7 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
         commands = [oneshot_build.run_as(c, o, path) for c in ([backend, gate] if gate != backend else [gate])]
     except ValueError as exc:
         return str(exc)
-    verdict = specs.judge(path, commands, run.halt, lambda text: specs.note(run, text), env=oneshot_build.built_env(spec))
+    verdict = oneshot_build.judged(path, run, spec, commands, oneshot_build.built_env(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
@@ -179,13 +186,16 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     shots = store.folder / "build" / f"r{n}"
     shutil.rmtree(shots, ignore_errors=True)
     findings, apks, proven = [], {}, []
+    # The web app's environment, read once: the critic's words about these shots are masked with what it carried.
+    env = oneshot_needs.gate_env(spec, None)
+    MASKS[spec["repo"]] = (n, oneshot_needs.hidden(spec, env))
     for k in kinds:   # in the owner's order; a kind that fails sends the build back before the next is looked at
         one = as_kind(spec, k) if several else spec
         specs.note(run, f"{'에뮬레이터에 앱을 설치해' if k == 'android' else '앱을 띄워'} 화면을 찍는다 · {n}회차"
                    + (f" · {KIND_NAMES[k]}" if several else ""))
         try:
             found = looked(path, k, one, live, device if k == "android" else None, shots / k if several else shots,
-                           stopped, apks, build)
+                           stopped, apks, build, env=env)
         except OSError as exc:
             if k != "android":
                 raise
@@ -218,8 +228,10 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
     # The fixes this turn was sent with are built now: a resumed build no longer carries them. A run this version
     # holds at the critique is saved stopped in the same write, so no poll sees it resumable.
-    passed = {"stage": "critique", "front_built_head": verdict["head"], "looks": looks, "attempts": 0,
-              "working": "critique", "fix": None, **({"device": device, "apks": apks} if android else {})}
+    # `front_build` names this accepted build: a device round's pass counts only for the build it ran, so a rebuild
+    # clears every earlier one, even of the same HEAD and the same APK digests.
+    passed = {"stage": "critique", "front_built_head": verdict["head"], "front_build": uuid.uuid4().hex, "looks": looks,
+              "attempts": 0, "working": "critique", "fix": None, **({"device": device, "apks": apks} if android else {})}
     if oneshot_spec.held({**o, "stage": "critique"}):
         passed.update(working=None, stopped=oneshot_spec.kind_stop("critique"))
     oneshot_spec.saved(spec["repo"], oneshot=passed)
@@ -263,7 +275,7 @@ def froze(path: Path, spec: dict, desktop: dict, head: str, run) -> tuple[dict |
 
 
 def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, shots: Path, stopped,
-           apks: dict, build: dict | None = None) -> list[dict]:
+           apks: dict, build: dict | None = None, *, env: dict | None = None) -> list[dict]:
     """One kind's look at the HEAD the gate passed, shot into `shots`: the web app served and shot in a browser,
     the Android app's APKs copied and installed on the run's emulator (`apks` gets the copies' digests), or the
     PC app's frozen `build` started on a desktop the run owns."""
@@ -272,8 +284,9 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
     if kind == "desktop":
         return oneshot_desktop_look.look(spec, build, shots, stopped)
     if kind != "android":
+        # The web app runs with the owner's secrets (`env`, a `gate_env`), and its text the look keeps shows `[N1]`.
         return oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]), shots,
-                                 stopped)
+                                 stopped, env=env, hide=oneshot_needs.hidden(spec, env))
     # The emulator installs copies, and their digests are what the phone round must install again.
     copies = store.folder / "apks" / f"look-{time.time_ns()}"
     try:
@@ -286,3 +299,15 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
 oneshot_build.STAGES[STAGE] = (built_front, "gate", build_front_text, lambda repo: None)   # the critic follows (4c)
 oneshot_build.GRANTS[STAGE] = lambda spec: True
 oneshot_spec.TURNS.add(STAGE)
+
+
+def generation(repo: str, o: dict) -> None:
+    """A build an earlier version accepted, saved without a `front_build`, gets one at start-up, before the device
+    rounds' own repairs read it: no earlier pass names it, so each due device round runs again, and its pass names
+    this build."""
+
+    if o.get("front_built_head") and not o.get("front_build"):
+        oneshot_spec.saved(repo, oneshot={"front_build": uuid.uuid4().hex})
+
+
+oneshot_spec.RECOVERS.insert(0, generation)   # first, whichever device module loaded before this one

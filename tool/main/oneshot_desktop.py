@@ -42,6 +42,9 @@ STEP_NAME = re.compile(r"[A-Za-z0-9_-]{1,40}")   # a check's step: it names the 
 MAX_STEPS = 20
 WINDOWS = ("main", "owned")   # where a step acts and its postcondition reads: the main window or the one it owns
 ACT = ("action", "id", "value", "in")   # what a step does, apart from its name and postcondition
+OBSERVES = ("report", "window", "composition")   # what an `owner` check observes (plan 9e5)
+REPORTS_FROM = ("fixture", "screen")   # what the app captures for an `owner` check: the fixture's window, or a surface
+MAX_SHOWS = 500   # characters in the sentence the critic judges a capture against
 # A setting the look passes is one of two things, so a path to another place on this PC has no spelling left to
 # take, however Windows, a C runtime, a web view or the app's own expansion would read it:
 # - a whole remote URL with a host, an optional `name=` before it, in printable ASCII but `,` and `;`, so no list
@@ -247,6 +250,39 @@ def postcondition(expect, read: bool = True) -> str:
     return ""
 
 
+def observed(seen) -> str:
+    """Why `seen` is not what an `owner` check observes: exactly one of `report`, the app's own report of what it
+    captured (an element's value by its `id`, with `in: owned` in the window the main window owns, or a UTF-8
+    `file` under `{data}`), `window`, the round's capture of the main window or with `in: owned` the one it owns,
+    or `composition`, its capture of the fixture's region; each of the last two with the `shows` sentence the
+    critic judges it against. Each names `from`, what the app itself captures however the round observes it: the
+    fixture's window, or the screen the fixture covers. Empty when it is one."""
+
+    if not isinstance(seen, dict) or len(seen) != 1 or next(iter(seen)) not in OBSERVES \
+            or not isinstance(v := next(iter(seen.values())), dict):
+        return "observe 는 report, window, composition 중 하나만 담은 객체다"
+    what = next(iter(seen))
+    if v.get("from") not in REPORTS_FROM:
+        return f"observe.{what} 의 from 은 앱이 캡처하는 곳, fixture(고정 창) 나 screen(고정 창이 덮은 화면) 이다"
+    v = {k: x for k, x in v.items() if k != "from"}
+    if what == "report":
+        if set(v) == {"file"}:
+            try:
+                _relative(v["file"], "observe.report.file")
+            except ValueError:
+                return f"observe.report.file 은 앱 데이터 폴더(`{DATA}`) 안의 상대 경로다"
+            return ""
+        if set(v) - {"id", "in"} or not isinstance(v.get("id"), str) or not v["id"].strip() \
+                or v.get("in", "main") not in WINDOWS:
+            return "observe.report 는 앱이 캡처한 것을 내놓는 요소의 id(in 은 main 이나 owned) 나 file 이다"
+        return ""
+    if set(v) - {"shows", "in"} or (what == "composition" and "in" in v) or v.get("in", "main") not in WINDOWS \
+            or not isinstance(v.get("shows"), str) or not v["shows"].strip() or len(v["shows"]) > MAX_SHOWS:
+        return (f"observe.{what} 는 캡처에 보여야 할 것 shows({MAX_SHOWS}자 이하)"
+                + (" 와 창(in 은 main 이나 owned)" if what == "window" else "") + " 를 적는다")
+    return ""
+
+
 def same(a: dict, b: dict) -> bool:
     """Two steps' or postconditions' fields alike, `in: main` being the default."""
 
@@ -271,14 +307,22 @@ def owner_owed(o: dict) -> list[dict]:
     return [x for x in o.get("owed") or [] if x["kind"] == "desktop" and x["id"] not in ran]
 
 
+def owner_scripted(o: dict) -> list[dict]:
+    """The `owner` checks the round can run: those whose review named the step (`act`) and what it observes."""
+
+    return [x for x in owner_owed(o) if x.get("source") == "owner" and not action(x.get("act"))
+            and not observed(x.get("observe"))]
+
+
 def scripted(checks: dict, spec: dict) -> str:
-    """Why the block's `checks` do not script exactly the PC app's `look` owed checks, each from one of its
-    screens in one of its states; empty when they do."""
+    """Why the block's `checks` do not script exactly the PC app's `look` owed checks and the `owner` ones the
+    round can run, each from one of its screens in one of its states; empty when they do."""
 
     from .oneshot_device import STATES
 
     looks = {x["id"]: x for x in looked_for(spec["oneshot"])}
-    owed = list(looks)
+    owners = {x["id"]: x for x in owner_scripted(spec["oneshot"])}
+    owed = [*looks, *owners]
     if missing := [i for i in owed if i not in checks]:
         return (f"`{BLOCK}` 의 checks 에 PC 앱에서 확인할 {', '.join(missing)} 의 시나리오가 없다 — 미룬 검사마다 "
                 "screen, state, steps 를 적는다")
@@ -288,12 +332,12 @@ def scripted(checks: dict, spec: dict) -> str:
     for cid, c in checks.items():
         if c["screen"] not in ids or c["state"] not in STATES:
             return f"`{BLOCK}` 의 checks.{cid} 는 PC 앱의 화면({', '.join(sorted(ids))})과 상태({', '.join(STATES)})에서 시작한다"
-        last, x = c["steps"][-1], looks[cid]   # the review's step and postcondition, never the builder's
-        if not same({k: last[k] for k in ACT if k in last}, x["act"]) or not same(last["expect"], x["expect"]):
+        last, x = c["steps"][-1], looks.get(cid) or owners[cid]   # the review's step and postcondition, never the builder's
+        if not same({k: last[k] for k in ACT if k in last}, x["act"]) or cid in looks and not same(last["expect"], x["expect"]):
             got = {k: last[k] for k in (*ACT, "expect") if k in last}
+            result = f" 과 결과 {json.dumps(x['expect'], ensure_ascii=False)}" if cid in looks else ""
             return (f"`{BLOCK}` 의 checks.{cid} 의 마지막 step 은 리뷰가 정한 동작 {json.dumps(x['act'], ensure_ascii=False)}"
-                    f" 과 결과 {json.dumps(x['expect'], ensure_ascii=False)} 그대로다 — 받은 값 "
-                    f"{json.dumps(got, ensure_ascii=False)}")
+                    f"{result} 그대로다 — 받은 값 {json.dumps(got, ensure_ascii=False)}")
     return ""
 
 

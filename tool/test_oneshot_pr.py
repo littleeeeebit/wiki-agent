@@ -320,7 +320,10 @@ def made(fake):
 
 def test_an_android_apps_readme_turn_names_the_apk_and_its_install_and_a_public_workflow_its_sdk(android):
     _, sent = android
-    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "r3": {"round": 1, "decisions": {}}})
+    # R3 opens only after the phone round passed on this build, which R3's approval asks again.
+    phone = {"status": "passed", "head": o().get("front_built_head"), "apks": o().get("apks"), "front_build": "b1"}
+    oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "r3": {"round": 1, "decisions": {}},
+                                          "front_build": "b1", "phone": phone})
     critique.decide("budget", on_r3(decisions={s["id"]: {"approve": True} for s in FRONT["screens"]}))
     text = sent[-1][2]
     assert f"`{DEVICE['apk']}`" in text and "adb's install command" in text and "Write no CI workflow" in text

@@ -77,7 +77,7 @@ def checked(tree, block=BLOCK, found=(), looked=None):
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)), \
             patch.object(oneshot, "start_worker", lambda *a, **k: None), \
             patch.object(front_build.oneshot_desktop_look, "look", look), \
-            patch.object(front_build.oneshot_look, "look", lambda *a: looked.append("webapp") or []):
+            patch.object(front_build.oneshot_look, "look", lambda *a, **k: looked.append("webapp") or []):
         then = oneshot_build.checked(tree, Run(), spec(), report() + fenced(pc.BLOCK, block))
         if then:
             then()
@@ -394,8 +394,10 @@ def test_a_frozen_build_whose_copy_is_gone_or_whose_head_moved_is_built_again(pc
         write(pc_build, "strings.txt", "번역 끄기")
         git(pc_build, "commit", "-am", "moved on")
     oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "critique", "detail": "x"}})
+    front_build.MASKS["budget"] = (1, {"key-9f2": "[N1]"})   # the look's, kept for `[재개]` on its shots
     oneshot_spec.recover()   # held at the critique with nothing to hold: back to the build, resumable
     assert not o()["desktop_build"] and o()["stage"] == "build-front" and not oneshot_profile.held(o())
+    assert "budget" not in front_build.MASKS   # those shots are never critiqued: their secrets leave memory
     assert o()["stopped"]["reason"] == "restart" and "다시 빌드한다" in o()["stopped"]["detail"]
 
 

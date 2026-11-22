@@ -25,7 +25,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
-from common import process, shell
+from common import folded, masked, process, shell
 
 from .oneshot_screens import VIEWPORTS, api_paths
 
@@ -223,13 +223,14 @@ def owned(apps: Tree, port: int) -> bool | None:
 
 
 @contextmanager
-def served(tree: Path, cmd: str, data: Path, stopped=never):
+def served(tree: Path, cmd: str, data: Path, stopped=never, base: dict | None = None):
     """The app running from `cmd` in `tree` on a free port with its data in `data`: its URL.
     Every process it started is killed on the way out; a tree it cannot own is never started, and
-    a port another program took meanwhile is refused before a request goes to it."""
+    a port another program took meanwhile is refused before a request goes to it. `base` is the environment it
+    starts from, the server's own when `None`."""
 
     port = free_port()
-    env = {**os.environ, "PORT": str(port), "APP_DATA_DIR": str(data), "PYTHONUNBUFFERED": "1"}
+    env = {**(os.environ if base is None else base), "PORT": str(port), "APP_DATA_DIR": str(data), "PYTHONUNBUFFERED": "1"}
     argv, use_shell = shell.launch("gate", command=cmd)
     log = tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace")
     proc = subprocess.Popen(argv, shell=use_shell, cwd=tree, env=env, stdin=subprocess.DEVNULL, stdout=log,
@@ -386,10 +387,20 @@ def placement(browser, url: str, front: dict, frequency: dict, view: str, api: r
 
 
 def look(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], views: list[str],
-         folder: Path, stopped=never) -> list[dict]:
+         folder: Path, stopped=never, *, env: dict | None = None, hide: dict[str, str] | None = None) -> list[dict]:
     """Every screen at every viewport in `empty`, `full`, `loading` and `error`, shot into `folder` as
-    `<screen>-<viewport>-<state>.png`; the findings, the placement check's included."""
+    `<screen>-<viewport>-<state>.png`; the findings, the placement check's included. The app starts from `env`,
+    and neither a finding nor a refusal carries a value of `hide` (`common.masked`)."""
 
+    try:
+        found = _looked(tree, cmd, front, frequency, ops, views, folder, stopped, env, hide)
+    except ValueError as exc:
+        raise ValueError(masked(str(exc), hide)) from None
+    return [{**f, "what": masked(f["what"], hide)} for f in found]   # the rest are the run's own names
+
+
+def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], views: list[str],
+            folder: Path, stopped, env: dict | None, hide: dict[str, str] | None = None) -> list[dict]:
     from playwright.sync_api import sync_playwright
 
     shutil.rmtree(folder, ignore_errors=True)
@@ -402,14 +413,14 @@ def look(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], vie
             for data_state, states in (("empty", ["empty"]), ("full", ["full", "loading", "error"])):
                 data = Path(scratch) / data_state
                 data.mkdir()
-                with served(tree, cmd, data, stopped) as url:
+                with served(tree, cmd, data, stopped, env) as url:
                     if data_state == "full":
                         seeded(tree, url)
                     for s in front["screens"]:
                         for view in views:
                             for state in states:
                                 halted(stopped)   # a stop ends the look: the app and the browser go below
-                                findings += shot(browser, url, s, view, state, api, folder, shown)
+                                findings += shot(browser, url, s, view, state, api, folder, shown, hide)
                     if data_state == "full":
                         for view in views:
                             findings += placement(browser, url, front, frequency, view, api, stopped)
@@ -424,11 +435,164 @@ def look(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], vie
     return findings
 
 
-def shot(browser, url: str, s: dict, view: str, state: str, api: re.Pattern, folder: Path, shown: dict) -> list[dict]:
+# The text a frame carries, drawn or not, as separate streams: the text and CDATA nodes outside code of its document
+# and of each open shadow root, joined so a value split across elements reads as one; beside each, its rendered
+# text, where hidden text between two visible parts no longer splits them: the nodes `innerText`'s rule keeps (laid
+# out, their element's `visibility` visible; never the getter, which on a hidden root reads stylesheets); as
+# `values`, the value, placeholder and alt of its fields and images. Matching is a union and ignores case, so no
+# `text-transform` hides a value. A secret in hidden text has reached the browser all the same. Never markup or a
+# stylesheet, which a short secret would match on a clean page.
+SHOWN = """() => {
+  const code = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']), texts = [], values = [];
+  const outside = (n, root) => {
+    for (let p = n.parentNode; p && p !== root; p = p.parentNode)
+      if (code.has(String(p.nodeName).toUpperCase())) return false;
+    return true;
+  };
+  const drawn = n => {   // a node's text where it is drawn, else null
+    const range = document.createRange(), el = n.parentElement || n.parentNode.host;
+    range.selectNodeContents(n);
+    const shown = range.getClientRects().length && (!el || getComputedStyle(el).visibility === 'visible');
+    return shown ? n.data : null;
+  };
+  const plain = (root, read = n => n.data) => { const out = [], walk = document.createTreeWalker(root,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const text = outside(n, root) ? read(n) : null;
+      if (text !== null) out.push(text);
+    }
+    return out.join(''); };
+  const read = root => [plain(root), plain(root, drawn)];
+  texts.push(...read(document));
+  const visit = root => {
+    for (const el of root.querySelectorAll('*')) {
+      for (const a of ['value', 'placeholder', 'alt']) if (el.hasAttribute(a)) values.push(el.getAttribute(a));
+      if (typeof el.value === 'string') values.push(el.value);
+      if (el.shadowRoot) { texts.push(...read(el.shadowRoot)); visit(el.shadowRoot); }
+    }
+  };
+  visit(document);
+  return {texts, values};
+}"""
+# Each frame's document, marked on first sight: a frame showing another document since gets another mark.
+DOCUMENT = "() => document.__look ??= performance.timeOrigin + '-' + Math.random()"
+
+
+@contextmanager
+def still(page):
+    """No script of `page` or of any of its frames runs inside, so what is read there is what a screenshot taken
+    there shows. A frame in another process gets its own session; one in the page's stops with the page."""
+
+    from playwright.sync_api import Error
+
+    sessions = [page.context.new_cdp_session(page)]
+    for frame in page.frames[1:]:
+        try:
+            sessions.append(page.context.new_cdp_session(frame))
+        except Error:   # in the page's process
+            pass
+    for s in sessions:
+        s.send("Emulation.setScriptExecutionDisabled", {"value": True})
+    # An animation not started yet, held, starts later in its before phase, so the picture and the read differ:
+    # every one starts first. ponytail: a second at most, then held as it is
+    for _ in range(40):
+        try:
+            if not any(f.evaluate("() => document.getAnimations().some(a => a.pending)") for f in page.frames):
+                break
+        except Error:   # a frame gone: the read after says so
+            break
+        time.sleep(0.025)
+    for s in sessions:
+        s.send("Animation.setPlaybackRate", {"playbackRate": 0})   # a CSS animation can show or hide rendered text
+    try:
+        yield
+    finally:
+        for s in sessions:
+            try:
+                s.send("Emulation.setScriptExecutionDisabled", {"value": False})
+                s.send("Animation.setPlaybackRate", {"playbackRate": 1})
+                s.detach()
+            except Error:   # a frame gone with the page
+                pass
+
+
+def secrets_shown(page, hide: dict[str, str]) -> str:
+    """Why `page` now carries a value of `hide` in its text, naming only its label, or empty."""
+
+    from playwright.sync_api import Error
+
+    try:
+        read = [frame.evaluate(SHOWN) for frame in page.frames]
+        texts, values = [t for r in read for t in r["texts"]], [v for r in read for v in r["values"]]
+        if not all(isinstance(x, str) for x in texts + values):
+            raise TypeError
+    except (Error, TypeError, KeyError):
+        return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
+    # A value as spelled, or in any casing `text-transform` can draw (`folded`, whose fold of a character can depend
+    # on the one before); within one stream, a value broken across lines reads as one
+    def compact(text: str) -> str:
+        return "".join(text.split())
+
+    def flats(form, text: str) -> set[str]:   # whitespace gone before and after the spelling, since a fold can
+        return {form(compact(text)), compact(form(text))}   # depend on the character a line break stood next to
+
+    spellings = [(form, [form(x) for x in texts + values], [f for t in texts for f in flats(form, t)])
+                 for form in (str, folded)]
+
+    def seen(value: str) -> bool:
+        for form, whole, streams in spellings:
+            v = form(value)
+            if v and any(v in t for t in whole):
+                return True
+            if any(f and any(f in s for s in streams) for f in flats(form, value)):
+                return True
+        return False
+
+    if leaked := sorted({label for value, label in hide.items() if seen(value)}):
+        return f"화면이 담은 글자에 비밀 값 {', '.join(leaked)} 이 들어 있다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다"
+    return ""
+
+
+def documents(page) -> list[str] | None:
+    from playwright.sync_api import Error
+
+    try:
+        return [frame.evaluate(DOCUMENT) for frame in page.frames]
+    except Error:   # a frame gone while it was read
+        return None
+
+
+def same_picture(page, hide: dict[str, str], picture: str) -> str:
+    """Write the screenshot of a still `page` to `picture` when what was read is what was shot: no value of `hide`
+    shows, and every frame still holds the document read, since a refresh navigates with scripts off. Else why."""
+
+    for _ in range(3):
+        if (before := documents(page)) is None:
+            continue
+        if why := secrets_shown(page, hide):
+            return why
+        data = page.screenshot(full_page=True)
+        if documents(page) == before:
+            Path(picture).write_bytes(data)
+            return ""
+    return "찍는 동안 화면이 다른 문서로 바뀌어 비밀 값이 보이지 않는지 확인하지 못했다"
+
+
+def shot(browser, url: str, s: dict, view: str, state: str, api: re.Pattern, folder: Path, shown: dict,
+         hide: dict[str, str] | None = None) -> list[dict]:
+    """One screen shot. With `hide`, the page is still while it is read and shot, and a screen that could show
+    one of its values is a high finding and is never shot, since the critic sends its picture to a model."""
+
     errors: list[str] = []
     page = opened(browser, url, s["route"], view, state, api, errors)
     try:
-        page.screenshot(path=str(folder / f"{s['id']}-{view}-{state}.png"), full_page=True)
+        picture = str(folder / f"{s['id']}-{view}-{state}.png")
+        if not hide:
+            page.screenshot(path=picture, full_page=True)
+        else:
+            # ponytail: text only; a secret drawn into a canvas, an image or a stylesheet's `content` is not seen
+            with still(page):
+                errors += [why for why in [same_picture(page, hide, picture)] if why]
         wide = page.evaluate("document.documentElement.scrollWidth") > VIEWPORTS[view][0]
         if state == "full":
             for f in shown:

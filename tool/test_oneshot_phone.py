@@ -114,6 +114,7 @@ def handset(android_build, phone, monkeypatch):  # noqa: F811 — the imported f
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=android_build, capture_output=True, text=True).stdout.strip()
     oneshot_spec.saved("budget", oneshot={"stage": "phone", "working": None, "stopped": None, "device": DEVICE,
                                           "apks": device.digests(android_build, DEVICE), "front_built_head": head,
+                                          "front_build": "b1",   # the accepted build, as `front_build` saves it
                                           "critiques": [{"look": 1, "clean": True}, {"look": 1, "clean": True}],
                                           "phone": {"status": "waiting"}})
     return h

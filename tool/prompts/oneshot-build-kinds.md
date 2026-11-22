@@ -32,6 +32,16 @@ A refusal comes back with the reason, at most three times in all.
 
 ## In this turn
 
+- Add no fake, mock, stub or stand-in of an outside call, and no stand-in
+  beyond the device platform a thin platform module wraps. The outside calls go to
+  the real services with what the owner gave for them:
+
+{needs}
+
+  The server's gate sets each secret's environment variable. Your own shell
+  does not have them, so a test that needs one skips when you run it, and it
+  must pass in the server's gate. Never print a secret's value, and never
+  write it into a file, a commit or your answer.
 - Commit everything and leave nothing uncommitted, then end with the
   `done-report`. No `test-cleanup` block is needed in this stage.
 - Do not push, open a pull request, or ask the person anything: nobody answers
