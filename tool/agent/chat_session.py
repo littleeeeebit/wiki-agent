@@ -734,7 +734,7 @@ class ChatSession:
         request, key = key, uuid.uuid4().hex
         self._pending[key] = (self._proc, reply, rule)
         if tool in QUESTIONS:
-            self._asks[key] = len(args.get("questions") or [])
+            self._asks[key] = len(asked) if isinstance(asked := args.get("questions"), list) else 0   # none: decline
         return Event("approval", text, {"id": key, "request": request, "tool": tool, "input": args,
                                         "session": rule is not None})
 

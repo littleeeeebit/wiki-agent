@@ -193,11 +193,13 @@ def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     hide = needs.hidden(needs.spec_of("budget"), {ENV: "n1"})
     assert hide == {"n1": "■■"} and masked(masked("an1 n1", hide), hide) == masked("an1 n1", hide) == "a■■ ■■"
     assert hide["n1"].need == "N1"   # a refusal still names the need, whatever its label spells
-    why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 n1 이다")   # `N1` would show the value: its variable
-    assert f"비밀 값 {ENV} 이(가) 답 에" in why and masked(why, hide) == why
+    why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 n1 이다")   # `N1` would show the value: its label
+    assert "비밀 값 ■■ 이(가) 답 에" in why and masked(why, hide) == why
     hide = needs.hidden(needs.spec_of("budget"), {ENV: "N1 이(가)"})   # `N1` is safe alone, not in the sentence
     why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 N1 이(가) 다")
     assert "비밀 값 [N1] 이(가) 답 에" in why and masked(why, hide) == why
+    wrapped = masked(f"The server refused this build turn: {why}\n\nFix it", hide)   # as `checked` sends it
+    assert "비밀 값 [N1] 이(가) 답 에" in wrapped and "N1 이(가)" not in wrapped.replace("[N1] 이(가)", "")
 
 
 def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
@@ -525,7 +527,7 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     run = SimpleNamespace(halt=threading.Event(), put=notes.append, person=False,
                           chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
     build.checked(at_r1, run, spec(), f"키는 {value} 이다")()
-    assert "The server refused this build turn: 비밀 값 N1" in sent[0] and value.lower() not in sent[0].lower()
+    assert "The server refused this build turn: 비밀 값 [N1]" in sent[0] and value.lower() not in sent[0].lower()
 
 
 def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_answer_as_given(tmp_path, monkeypatch):
@@ -634,9 +636,16 @@ def test_a_question_keeps_its_schema_and_drops_what_the_provider_added(monkeypat
                             "options": [{"label": "a secret", "extra": "secret"}, "not an option"]}, "nor a question"],
              "secret": {"options": "secret"}}
     shown = veil.meta({"kind": "approval", "tool": "AskUserQuestion", "input": given})
-    assert shown["input"] == {"questions": [{"question": "[N3]?", "multiSelect": True, "options": [{"label": "a [N4]"}]}]}
-    assert Veil.options({"input": given}) == [["a secret"]]   # the options as asked
+    assert shown["input"] == {"questions": [
+        {"question": "[N3]?", "multiSelect": True, "options": [{"label": "a [N4]"}, {"label": "not an option"}]},
+        {"question": "nor a question", "options": []}]}
+    assert Veil.options({"input": given}) == [["a secret", "not an option"], []]   # the options as asked
     assert Veil.options({"input": {"questions": 1}}) == [] and Veil.options({"input": {"questions": [{"options": 1}]}}) == [[]]
+    # Every question and option asked keeps its entry, as text, so answers and indices line up with the provider's.
+    assert Veil.questions({"questions": [{"options": [{"label": 3}, "plain"]}, 5]}) == [
+        {"question": "", "options": [{"label": "3"}, {"label": "plain"}]}, {"question": "5", "options": []}]
+    assert veil.meta({"tokens": {"in": 3, "out": None, "secret": 1, "cache_read": "secret"}}) == {
+        "tokens": {"in": 3, "out": None, "cache_read": "[N4]"}}   # the counts by their names
     run = work.Run(SimpleNamespace(id="w", parent_id=None, hide={"x": "[N1]"}))
     run.put({"kind": "approval", "text": "실행할까?", "meta": {"id": "b", "tool": "Bash", "input": {"questions": 1}}})
     assert run.events[-1]["meta"]["input"] == {"questions": 1} and "b" not in run.asked   # an ordinary tool is not asked

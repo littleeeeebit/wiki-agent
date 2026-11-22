@@ -5,6 +5,7 @@ and the one place `agent` opens a write session. Held here so the two cannot
 drift apart: a worktree created by another tool is not ours.
 """
 
+import json
 import os
 from pathlib import Path
 import re
@@ -178,8 +179,16 @@ class Veil:
         if not self.hide:
             return meta
         return {k: v if isinstance(v, str) and (k in self.IDS or (k == "tool" and v in self.TAGS))
-                else self.asked(v) if k == "input" and self.question(meta) else self.deep(v)
+                else self.asked(v) if k == "input" and self.question(meta)
+                else self.counted(v) if k == "tokens" else self.deep(v)
                 for k, v in meta.items()}
+
+    def counted(self, tokens):
+        """A turn's token counts by the adapters' names: a number or nothing kept, any other value masked."""
+        if not isinstance(tokens, dict):
+            return self.deep(tokens)
+        return {k: tokens[k] if tokens[k] is None or type(tokens[k]) in (int, float) else self.deep(tokens[k])
+                for k in self.TOKENS if k in tokens}
 
     # The two hosts' question tools: their input is read by the screen in a schema of its own.
     QUESTIONS = frozenset({"AskUserQuestion", "requestUserInput"})
@@ -191,15 +200,20 @@ class Veil:
 
     @staticmethod
     def questions(given) -> list[dict]:
-        """A question tool's questions in their schema's shape and nothing else: each one's `id`, `header`, `question`
-        and `multiSelect`, and its options' `label`, `description` and `preview`. Any other shape is left out."""
+        """A question tool's questions in their schema's shape and nothing else: each one's `question` and `id`,
+        `header` and `multiSelect` when given, and its options' `label`, `description` and `preview`. One entry stays
+        for every question and option asked, whatever its shape, so the answers and the option indices line up with
+        the provider's; a question and a label are always text (`text`)."""
 
         listed = given.get("questions") if isinstance(given, dict) else None
-        return [{**{k: q[k] for k in ("id", "header", "question") if isinstance(q.get(k), str)},
+        return [{"question": text(q.get("question")), **{k: q[k] for k in ("id", "header") if isinstance(q.get(k), str)},
                  **({"multiSelect": q["multiSelect"]} if isinstance(q.get("multiSelect"), bool) else {}),
-                 "options": [{k: o[k] for k in ("label", "description", "preview") if isinstance(o.get(k), str)}
-                             for o in (q["options"] if isinstance(q.get("options"), list) else []) if isinstance(o, dict)]}
-                for q in (listed if isinstance(listed, list) else []) if isinstance(q, dict)]
+                 "options": [{"label": text(o.get("label")),
+                              **{k: o[k] for k in ("description", "preview") if isinstance(o.get(k), str)}}
+                             if isinstance(o, dict) else {"label": text(o)}
+                             for o in (q["options"] if isinstance(q.get("options"), list) else [])]}
+                if isinstance(q, dict) else {"question": text(q), "options": []}
+                for q in (listed if isinstance(listed, list) else [])]
 
     def asked(self, given) -> dict:
         """A question tool's input as the screen reads it (`questions`): its fields by their schema's names, every
@@ -207,6 +221,9 @@ class Veil:
         return {"questions": [{k: v if isinstance(v, bool) else [{f: masked(t, self.hide) for f, t in o.items()} for o in v]
                                if k == "options" else masked(v, self.hide) for k, v in q.items()}
                               for q in self.questions(given)]}
+
+    # The adapters' token counts: fixed names, numbers or nothing.
+    TOKENS = ("in", "out", "cache_read", "cache_write")
 
     def row(self, fields: dict) -> dict:
         """A work-record row's fields: as `meta`, and each saved step as an event's meta."""
@@ -257,6 +274,11 @@ class Veil:
         out = [(key[0], masked(text, self.hide), self.meta(meta)) for key, (text, meta) in self.held.items()]
         self.held.clear()
         return out
+
+
+def text(value) -> str:
+    """A field the screen reads as text: a string as given, nothing as empty, any other value as its JSON."""
+    return value if isinstance(value, str) else "" if value is None else json.dumps(value, ensure_ascii=False, default=str)
 
 
 def python_environment(env: dict | None = None) -> dict:

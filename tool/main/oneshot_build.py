@@ -647,9 +647,10 @@ def checked(path: Path, run, spec: dict, final: str):
         store.stop(stop, why)
         return None
     store.put(attempts=attempts)   # `working` stays until the turn goes: a restart in between is recovered
-    return unless_stopped(run, repo, lambda: send(
-        repo, stage, f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again "
-                     f"(attempt {attempts + 1} of {MAX_ATTEMPTS})."))
+    # Masked as composed, as the model gets it: a value can run across the reason and the words around it.
+    return unless_stopped(run, repo, lambda: send(repo, stage, masked(
+        f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again "
+        f"(attempt {attempts + 1} of {MAX_ATTEMPTS}).", hide)))
 
 
 def unless_stopped(run, repo: str, then):

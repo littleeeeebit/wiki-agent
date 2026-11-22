@@ -27,7 +27,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from common import folded, masked, overlaps
+from common import folded, overlaps
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
 from .oneshot_spec import VIEWS, idle, saved, spec_of, view
@@ -246,12 +246,6 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
     except (OSError, subprocess.SubprocessError) as exc:
         return refused or f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
     found: dict[str, set[str]] = {}
-    envs = dict(secret_needs(spec))
-
-    def named(label: str) -> str:   # the need's id, or its variable, unless masking would rewrite it: then the label
-        nid = getattr(label, "need", None) or label.strip("[]")
-        return next((r for r in (nid, (envs.get(nid) or {}).get("env")) if r and masked(r, hide) == r), label)
-
     for where, text in places.items():
         flat = folded(text)
         for value, label in hide.items():
@@ -265,15 +259,12 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         except (OSError, subprocess.SubprocessError) as exc:
             return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
         saved(spec["repo"], oneshot={"tainted": sorted({*(spec_of(spec["repo"])["oneshot"].get("tainted") or []), *hit})})
-    def said(refs: list[str]) -> str:
-        return " / ".join(filter(None, [refused, (
-            f"비밀 값 {', '.join(sorted(refs))} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 "
-            "적지 않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")]))
-
-    # Read as it is published: a reference a value meets across its neighbours becomes the labels, which none meets.
-    labels = set().union(*found.values())
-    why = said([named(lab) for lab in labels])
-    return why if masked(why, hide) == why else said([str(lab) for lab in labels])
+    # Each need by its label, `[N1]` whenever that spelling is safe (`label`): no value meets one, so no mask of this
+    # text or of any text around it, a retry prompt's included, ever rewrites the reference.
+    ids = sorted(str(lab) for lab in set().union(*found.values()))
+    return " / ".join(filter(None, [refused, (
+        f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 적지 "
+        "않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")]))
 
 
 # A commit's names, message and patch; a merge's against its first parent, so a resolution's own text is read.
