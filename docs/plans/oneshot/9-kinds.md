@@ -490,10 +490,10 @@ with no stop asked meanwhile, lets it sample.
   even a pixel shows a neighbour's colour or the page at some mark's edge,
   so this proves from the sampled pixels themselves that the fixture
   covered the region in that frame. A frame without them leaves the check
-  pending. A failed check of the window fails it. A region cut into the
-  fixture and taken out again between the blit and the second check would
-  escape both. The fixture never takes one out itself, so this needs an app
-  that cuts holes into the server's own window with that timing.
+  pending. A failed check of the window fails it. A window region set on
+  the fixture and cleared again between the blit and the second check
+  would escape both. The fixture never clears one itself, so this needs an
+  app that sets regions on the server's own window with that timing.
 - A report passes only when it holds the fixture's page as it reads: its
   words in order, one after another. A fixed text naming every word the
   server draws from is no capture of this round's page.

@@ -286,7 +286,7 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
         assert fx < cx and fy < cy and cx + cw < fx + fw and cy + ch < fy + fh
 
 
-ASSAULT = r'''
+CHANGES = r'''
 import ctypes, json, sys
 from ctypes import wintypes as w
 u, g = ctypes.windll.user32, ctypes.windll.gdi32
@@ -350,14 +350,14 @@ def test_the_fixture_refuses_every_change_paints_its_marks_and_the_helper_reads_
         folder = session.reserve("files")
         (folder / "words.txt").write_text(" ".join(owner_round.words()), encoding="utf-8")
         (folder / "marks.txt").write_text("\n".join(owner_round.marks(640, 360)), encoding="utf-8")
-        (folder / "assault.py").write_text(ASSAULT, encoding="utf-8")
+        (folder / "changes.py").write_text(CHANGES, encoding="utf-8")
         session.start("fixture1", [sys.executable, str(owner_round.FIXTURE_PY), "--title", owner_round.FIXTURE,
                                    "--words", str(folder / "words.txt"), "--marks", str(folder / "marks.txt"),
                                    "--rect", "40", "40", "640", "360", "--out", str(folder / "window.json")], folder)
         named = owner_round._waited(folder / "window.json", owner_round.FIXTURE_SECONDS, threading.Event())
         session.observe()
         pid = session.record["jobs"]["fixture1"]["members"][0]["pid"]
-        code, out, why = session.run("assault", [sys.executable, str(folder / "assault.py"), str(named["hwnd"]),
+        code, out, why = session.run("changes", [sys.executable, str(folder / "changes.py"), str(named["hwnd"]),
                                                  str(folder / "marks.txt")], here, 60, threading.Event())
         assert code == 0, why
         seen = json.loads(out.strip().splitlines()[-1])
@@ -377,13 +377,13 @@ def test_the_fixture_refuses_every_change_paints_its_marks_and_the_helper_reads_
             return {**owner_round._waited(out / "result.json", 30, threading.Event()),
                     "kept": (out / "surface.png").is_file()}
 
-        # Both checks of the window pass after the assault. A desktop that is not the input one gives the blit no
+        # Both checks of the window pass after those requests. A desktop that is not the input one gives the blit no
         # pixels, which leaves the check pending; nothing is kept and every resource is let go.
         assert surface("surface") == {"read": False, "unavailable": True, "why": "BitBlt failed", "kept": False}
-        # A hole cut into the fixture, which its marks along the edges would not show: never undone by the
+        # A window region set on the fixture, which its marks along the edges would not show: never undone by the
         # fixture, so the helper's check right after the blit always finds it.
-        hole = ("import ctypes; u, g = ctypes.windll.user32, ctypes.windll.gdi32; "
-                f"print(u.SetWindowRgn({named['hwnd']}, g.CreateRectRgn(0, 0, 100, 100), True))")
-        code, out, why = session.run("hole", [sys.executable, "-c", hole], here, 60, threading.Event())
+        shape = ("import ctypes; u, g = ctypes.windll.user32, ctypes.windll.gdi32; "
+                 f"print(u.SetWindowRgn({named['hwnd']}, g.CreateRectRgn(0, 0, 100, 100), True))")
+        code, out, why = session.run("shape", [sys.executable, "-c", shape], here, 60, threading.Event())
         assert code == 0 and out.strip().splitlines()[-1] != "0", why
-        assert surface("holed") == {"read": False, "why": "the fixture's shape changed", "kept": False}
+        assert surface("shaped") == {"read": False, "why": "the fixture's shape changed", "kept": False}
