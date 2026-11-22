@@ -571,17 +571,25 @@ def test_a_folder_in_the_copy_that_cannot_be_listed_is_never_taken_for_an_unchan
         pc_look.oneshot_desktop.altered(build)
 
 
-def test_a_file_changed_after_its_digest_was_read_is_altered(tmp_path, monkeypatch):
+def test_while_the_copy_is_held_neither_a_file_nor_the_manifest_can_be_changed_and_after_both_can(tmp_path):
     app, build = copy(tmp_path)
-    read = Path.read_bytes
-
-    def reading(path):   # the approved bytes are read, then the file changes before the read ends
-        got = read(path)
-        path.write_bytes(b"other")
-        return got
-
-    monkeypatch.setattr(Path, "read_bytes", reading)
+    with pc_look.oneshot_desktop.held(build) as why:
+        assert why == ""
+        for path in (app / "app.exe", tmp_path / "manifest.json"):
+            with pytest.raises(PermissionError):
+                path.write_bytes(b"other")
+            with pytest.raises(PermissionError):
+                path.rename(path.with_name("moved"))
+            with pytest.raises(PermissionError):
+                path.unlink()
+    (app / "app.exe").write_bytes(b"other")   # let go: the next read sees it
     assert "`app.exe`" in pc_look.oneshot_desktop.altered(build)
+
+
+def test_a_copy_another_holds_open_for_writing_is_never_read_as_unchanged(tmp_path):
+    app, build = copy(tmp_path)
+    with open(app / "app.exe", "r+b"), pytest.raises(PermissionError):
+        pc_look.oneshot_desktop.altered(build)
 
 
 def test_a_manifest_that_no_longer_digests_to_the_saved_identity_is_altered(tmp_path):

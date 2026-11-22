@@ -11,6 +11,7 @@ it launched.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import hashlib
 import ipaddress
@@ -547,32 +548,55 @@ def frozen(tree: Path, desktop: dict, into: Path) -> dict:
 
 
 def altered(build: dict) -> str:
-    """Why the frozen copy is no longer the build its identity names, or empty: the manifest's files and the saved
-    launch settings no longer digest to the run's saved identity, or a file the manifest records was changed or
-    removed, or one was added, or any file's size, write time or identity moved while the files were read. The
-    program runs inside its copy, so each start is checked after it. A file that cannot be read now, or a folder
-    that cannot be listed, raises OSError: it is not shown changed."""
+    """`held`'s reason, the files let go once it is read."""
 
+    with held(build) as why:
+        return why
+
+
+@contextlib.contextmanager
+def held(build: dict):
+    """Why the frozen copy is no longer the build its identity names, or empty, the manifest and every file kept
+    open for reading only until the block ends: Windows refuses anyone a write, a rename or a delete of them
+    meanwhile, so what the block decides on is what stays on disk. Changed: the manifest's files and the saved
+    launch settings no longer digest to the run's saved identity, or a file the manifest records was changed or
+    removed, or one was added, as the files are read or once they all are. The program runs inside its copy, so
+    each start is checked after it. A file that cannot be opened so (one another holds open for writing too), or a
+    folder that cannot be listed, raises OSError: it is not shown changed."""
+
+    import msvcrt
+    from ctypes import wintypes as w
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE]
+    k.CreateFileW.restype = w.HANDLE
     app = Path(build["folder"])
-    manifest = json.loads((app.parent / "manifest.json").read_text(encoding="utf-8"))
-    files = manifest.get("files") if isinstance(manifest, dict) else None   # `[]` is no manifest: damaged
-    if not isinstance(files, dict) or hashlib.sha256(json.dumps(
-            {"files": files, "launch": build.get("launch")}, sort_keys=True).encode()).hexdigest() != build.get("identity"):
-        return "얼린 PC 앱 빌드의 매니페스트가 그 빌드의 식별자와 맞지 않는다 — 다시 빌드한다"
+
     def unlisted(error: OSError):   # never `rglob`, which passes over a folder it cannot list
         raise error
 
-    def listed() -> dict[str, tuple]:   # each file's size, write time and identity, as the read starts and ends
-        return {(Path(folder) / name).relative_to(app).as_posix(): (s.st_size, s.st_mtime_ns, s.st_ino)
-                for folder, _, names in os.walk(app, onerror=unlisted) for name in names
-                for s in [os.stat(Path(folder) / name)]}
+    def listed() -> list[str]:
+        return sorted((Path(folder) / name).relative_to(app).as_posix()
+                      for folder, _, names in os.walk(app, onerror=unlisted) for name in names)
 
-    before = listed()
-    there = sorted(before)
-    changed = sorted(set(there) ^ set(files)) or [
-        n for n in there if hashlib.sha256((app / n).read_bytes()).hexdigest() != files[n]]
-    if not changed and (after := listed()) != before:   # a file changed while the others were read
-        changed = sorted(n for n in set(before) | set(after) if before.get(n) != after.get(n))
-    if changed:
-        return f"PC 앱이 얼린 사본의 `{changed[0]}` 를 바꿨다 — 실행은 사본을 읽기만 하고, 앱의 데이터는 `{DATA}` 에 쓴다"
-    return ""
+    with contextlib.ExitStack() as files_held:
+        def read(path: Path) -> bytes:   # GENERIC_READ, FILE_SHARE_READ only, an existing file
+            handle = k.CreateFileW(str(path), 0x80000000, 0x1, None, 3, 0, None)
+            if handle in (None, w.HANDLE(-1).value):
+                error = ctypes.WinError(ctypes.get_last_error())   # a sharing violation is a PermissionError
+                raise type(error)(error.errno, error.strerror, str(path), error.winerror)
+            f = files_held.enter_context(os.fdopen(msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY), "rb"))
+            return f.read()
+
+        manifest = json.loads(read(app.parent / "manifest.json").decode("utf-8"))
+        files = manifest.get("files") if isinstance(manifest, dict) else None   # `[]` is no manifest: damaged
+        if not isinstance(files, dict) or hashlib.sha256(json.dumps(
+                {"files": files, "launch": build.get("launch")}, sort_keys=True).encode()).hexdigest() != build.get("identity"):
+            yield "얼린 PC 앱 빌드의 매니페스트가 그 빌드의 식별자와 맞지 않는다 — 다시 빌드한다"
+            return
+        there = listed()
+        changed = sorted(set(there) ^ set(files)) or [
+            n for n in there if hashlib.sha256(read(app / n)).hexdigest() != files[n]] or \
+            sorted(set(listed()) ^ set(there))   # one added while the others were read
+        yield f"PC 앱이 얼린 사본의 `{changed[0]}` 를 바꿨다 — 실행은 사본을 읽기만 하고, 앱의 데이터는 `{DATA}` 에 쓴다" \
+            if changed else ""

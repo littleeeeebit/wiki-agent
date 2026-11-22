@@ -489,9 +489,13 @@ order:
    never passes. The frozen copy is read once more as a pass is taken,
    after the critic's verdicts, and HEAD after it; a copy changed since,
    or a moved HEAD, sends it back to the build. Each read of the copy
-   lists it without passing over a folder it cannot list, and compares
-   every file's size, write time and identity as the read starts and
-   ends, so a file changed while the others were read counts as changed. A second known limit, accepted by the owner: an app that changes
+   lists it without passing over a folder it cannot list, and opens the
+   manifest and every file for reading only. Windows then refuses anyone
+   a write, a rename or a delete of them until the read ends. A file
+   added meanwhile is found by listing again once all are read. At a pass
+   they stay held through the HEAD read and until the pass is saved. A
+   file another process holds open for writing cannot be opened so, and
+   that read sends the round back to the build. A second known limit, accepted by the owner: an app that changes
    its own frozen files while it runs and puts them back before the check
    after its run is not seen.
 2. The frozen app from a fresh start of the check's scenario, driven without
