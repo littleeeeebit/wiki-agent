@@ -6,6 +6,7 @@ stand-ins the test commits, started for real by the server; GitHub is not reache
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -299,6 +300,10 @@ def test_a_kept_report_and_the_clips_folder_show_no_secret_in_any_spelling(tmp_p
     assert "error" in measure.report_of(out, {"metrics": []}, hide)
     measure.scrubbed(out, hide)
     assert not (out / "report.json").exists()
+    shutil.rmtree(out / "clips")
+    (out / "clips").write_text(canary, encoding="utf-8")   # a file at the clips folder's path is no clip
+    measure.scrubbed(out, hide)
+    assert not (out / "clips").exists()
 
 
 def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):

@@ -95,7 +95,7 @@ def scrubbed(out: Path, hide: dict[str, str]) -> None:
                        for form in (json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1])}}
     clips = {out / "clips" / name for name in clips_of(out, hide)}
     for p in sorted(out.rglob("*"), reverse=True):   # files before the folders that hold them
-        if p in clips or p == out / "clips":
+        if p in clips or (p == out / "clips" and p.is_dir() and clips):   # a file at that path, or an empty one, goes
             continue
         if p.parent == out and p.name in KEPT and p.is_file():
             text = p.read_text(encoding="utf-8", errors="replace")

@@ -195,7 +195,9 @@ plan rebuilt since answers 409. A result waiting for the owner's verdict is
 set aside (`stale`) when an input changes. [실측 시작] holds the worktree,
 starts `serve`, runs the script with the inputs in its environment and every
 secret masked from its output, and keeps only the clips it accepts, the
-report and the backend's log, masked (`oneshot_kept`). The report is
+report and the backend's log, masked (`oneshot_kept`). The `clips` folder
+stays only while it holds an accepted clip; a file at that path is removed
+like any other. The report is
 decoded, each field masked (a number that is a secret's value included), and
 written once; one that is not JSON is removed. The plan and the report are
 read strictly: `NaN`, `Infinity`, an overflowing float or a lone surrogate
