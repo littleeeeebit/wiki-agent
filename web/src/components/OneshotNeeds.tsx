@@ -63,6 +63,7 @@ function Row({ n, busy, give, takeBack }: {
           {KIND[n.kind]}{n.env && <> <code>{n.env}</code></>} · {n.calls.join(', ')}
         </span>
         <span role="status" className={n.given ? 'text-st-ready' : 'text-wait'}>{n.given ? '주어짐' : '없음'}</span>
+        {n.leaked && <span role="alert" className="text-destructive">값이 결과에 들어 있다</span>}
       </div>
       <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void send() }}>
         {n.kind !== 'account' && (

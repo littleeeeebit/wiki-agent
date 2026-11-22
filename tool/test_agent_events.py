@@ -278,11 +278,12 @@ def test_codex_hooks_show_and_a_question_is_answered_by_its_id(tree):
 
 
 def test_a_batch_its_reply_cannot_key_is_only_declined(tree):
-    """Codex answers by id and Claude by question text: a batch with an entry that is no question, or a key missing or
-    shared, would lose an answer, so it asks nothing and is declined. Neither adapter fails on one."""
+    """Codex answers by id and Claude by question text: a batch with an entry that is no question, or the reply's key
+    missing or shared, would lose an answer, so it asks nothing and is only declined. Two questions alike under
+    distinct ids are answered. Neither adapter fails on any of them."""
 
     codex = CODEX_START + '''for rid, batch in ((7, [{"id": "a", "question": "Pick"}, {"question": "Plain"}]), (8, 5),
-                   (9, [{"id": "a", "question": "Pick"}, {"id": "b", "question": "Plain"}])):
+                   (9, [{"id": "a", "question": "Pick"}, {"id": "b", "question": "Pick"}])):
     say({"id": rid, "method": "item/tool/requestUserInput", "params": {"questions": batch}})
     say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": json.dumps(read()["result"])}}})
 say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
@@ -292,8 +293,9 @@ sys.stdin.read()
 
     def reply(event):
         if not event.meta["input"]["questions"]:
-            with pytest.raises(ValueError):   # nothing to answer: only declining is left
-                session.answer(event.meta["id"], True, answers=["x", "y"])
+            for answers in (["x", "y"], [], None):   # nothing to answer: only declining is left
+                with pytest.raises(ValueError):
+                    session.answer(event.meta["id"], True, answers=answers)
             assert session.answer(event.meta["id"], False)
         else:
             assert session.answer(event.meta["id"], True, answers=["A", "typed"])

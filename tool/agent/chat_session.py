@@ -627,8 +627,8 @@ class ChatSession:
             raise ValueError("이 요청은 세션 동안 허용할 수 없다")
         # A question answered is one answer per question; declining needs none.
         needed = self._asks.get(approval_id)
-        if allow and needed is not None and (len(answers or []) != needed or not all(a.strip() for a in answers)):
-            raise ValueError(f"질문 {needed}개에 답이 하나씩 있어야 한다")
+        if allow and needed is not None and (not needed or len(answers or []) != needed or not all(map(str.strip, answers))):
+            raise ValueError(f"질문 {needed}개에 답이 하나씩 있어야 한다" if needed else "답할 질문이 없다 — 거절만 할 수 있다")
         self._asks.pop(approval_id, None)
         proc, reply, rule = self._pending.pop(approval_id, (None, None, None))
         sent = proc is not None and self._send(reply(allow, answers or []), proc)
@@ -770,7 +770,7 @@ class ChatSession:
             self._send({"id": rid, "result": {"permissions": {}, "scope": "turn"}})
             return Event("tool", "리뷰 셀은 설정된 범위 밖의 추가 권한을 요청하지 않는다.")
         if method == "item/tool/requestUserInput":
-            questions = question_list(params.get("questions"), ("question", "id"))   # its reply keys them by id
+            questions = question_list(params.get("questions"), "id")   # its reply keys the answers by id
 
             def said(allow, answers=(), rid=rid):
                 # Declined, no question has an answer; the model reads that.
@@ -1238,16 +1238,16 @@ class ChatSession:
 
                 def reply(allow, answers=(), rid=rid, args=args, name=name):
                     if allow and name == "AskUserQuestion":
-                        # The CLI reads the answers off the input, by question text.
-                        args = {**args, "answers": {str(q.get("question")): a
-                                                    for q, a in zip(question_list(args.get("questions")), answers)}}
+                        args = {**args, "answers": dict(zip((q["question"] for q in args["questions"]), answers))}
                     said = ({"behavior": "allow", "updatedInput": args} if allow
                             else {"behavior": "deny", "message": DECLINED})
                     return {"type": "control_response",
                             "response": {"subtype": "success", "request_id": rid, "response": said}}
 
                 outside = self._outside(args.get(WRITES_PATH[name])) if name in WRITES_PATH else ""
-                yield self._approval(rid, reply, name, args, _tool_brief({"name": name, "input": args}), outside)
+                asked = {"questions": question_list(args.get("questions"), "question")}   # its reply keys by text
+                yield self._approval(rid, reply, name, {**args, **asked} if name in QUESTIONS else args,
+                                     _tool_brief({"name": name, "input": args}), outside)
 
             elif kind == "assistant":
                 refused = refused or (not ev.get("parent_tool_use_id")

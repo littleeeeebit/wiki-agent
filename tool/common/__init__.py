@@ -275,18 +275,18 @@ class Veil:
         return out
 
 
-def question_list(value, keys=("question",)) -> list[dict]:
-    """A question tool's batch as the adapters, their replies and the screen all read it: a list of mappings, each
-    with every reply key in `keys` a non-empty string no other entry repeats. Any other batch holds no question and
-    can only be declined, so no answer is lost to a key two entries share, and nothing is made text before masking."""
+def question_list(value, unique: str | None = None) -> list[dict]:
+    """A question tool's batch: a list of mappings, each with its `question` a non-empty string, so nothing is made
+    text before masking. Any other batch holds no question and can only be declined. An adapter names the key its
+    reply answers by (`unique`): a batch where that key is missing, empty or shared would lose an answer, so it holds
+    none either. The screen, the record and the answer count read the batch the adapter published, by shape alone,
+    so a mask that spells two questions alike never changes how many there are."""
 
-    if not isinstance(value, list) or not all(isinstance(q, dict) for q in value):
+    if not isinstance(value, list) or not all(isinstance(q, dict) and isinstance(q.get("question"), str) and q["question"]
+                                              for q in value):
         return []
-    for k in keys:
-        got = [q.get(k) for q in value]
-        if not all(isinstance(g, str) and g for g in got) or len(set(got)) != len(got):
-            return []
-    return value
+    keys = [q.get(unique) for q in value] if unique else []
+    return [] if not all(isinstance(k, str) and k for k in keys) or len(set(keys)) != len(keys) else value
 
 
 def text(value) -> str:

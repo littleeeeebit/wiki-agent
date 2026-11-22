@@ -21,7 +21,7 @@ import pytest
 from fastapi import HTTPException
 
 from agent.chat_session import Event
-from common import Veil, host, masked, overlaps
+from common import Veil, host, masked, overlaps, question_list
 
 from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
     oneshot_sheet as sheet, oneshot_spec, release, specs, work
@@ -203,6 +203,7 @@ def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     hide = needs.hidden(needs.spec_of("budget"), {ENV: f"{ENV}[n1"})   # meets both `[N1]` and the variable
     why = needs.leaked(at_r1, needs.spec_of("budget"), hide, f"키는 {ENV}[n1 이다")
     assert "비밀 값 시트의 1번째 항목 이(가) 답 에" in why and masked(why, hide) == why   # its row on the sheet
+    assert needs.shown(needs.spec_of("budget"))[0]["leaked"]   # and the sheet marks it, whatever the text names
 
 
 def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
@@ -648,8 +649,13 @@ def test_a_question_keeps_its_schema_and_drops_what_the_provider_added(monkeypat
     assert Veil.questions({"questions": [{"question": "q", "options": [{"label": 3}, "plain"]}]}) == [
         {"question": "q", "options": [{"label": "3"}, {"label": "plain"}]}]
     # A batch its reply cannot key one answer per entry holds no question: it is only declined.
-    for batch in (1, [{"question": "q"}, "plain"], [{"question": "q"}, {"question": "q"}], [{"question": {"q": 1}}]):
+    for batch in (1, [{"question": "q"}, "plain"], [{"question": ""}], [{"question": {"q": 1}}]):
         assert Veil.questions({"questions": batch}) == [] and Veil.options({"input": {"questions": batch}}) == []
+    alike = [{"question": "q", "id": "a"}, {"question": "q", "id": "b"}]
+    assert question_list(alike, "id") == alike and question_list(alike, "question") == []   # by the reply's key
+    # Questions a mask spells alike stay two in the record, as the screen showed them.
+    two = veil.meta({"tool": "AskUserQuestion", "input": {"questions": [{"question": "Choose SECRET"}, {"question": "Choose secret"}]}})
+    assert len(veil.row({"steps": [two]})["steps"][0]["input"]["questions"]) == 2
     assert veil.meta({"tokens": {"in": 3, "out": None, "reasoning": 2, "secret": 1, "cache_read": "secret"}}) == {
         "tokens": {"in": 3, "out": None, "cache_read": "[N4]", "reasoning": 2}}   # the counts by their names
     structured = {"questions": [{"question": "q", "options": [{"label": ['a"secret']}, {"label": {"k": 'say "secret"'}}]}]}

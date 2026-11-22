@@ -124,7 +124,8 @@ def shown(spec: dict) -> list[dict]:
 
     o = spec["oneshot"]
     kept = o.get("given") or {}
-    return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid))}
+    return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid)),
+             "leaked": nid in (o.get("leaked") or [])}
             for nid, (n, calls) in owed(o.get("design") or {}).items()]
 
 
@@ -251,6 +252,9 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         for value, label in hide.items():
             if value in text or folded(value) in flat:
                 found.setdefault(where, set()).add(label)
+    marked = sorted({getattr(lab, "need", None) or str(lab).strip("[]") for labs in found.values() for lab in labs})
+    if marked != (spec_of(spec["repo"])["oneshot"].get("leaked") or []):   # the sheet marks each need found
+        saved(spec["repo"], oneshot={"leaked": marked})
     if not found:
         return refused
     if "커밋" in found and base:   # the commits that hold it stay refused until the history no longer has them
@@ -264,8 +268,8 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
     def ref(label: str) -> str:
         """The need as the sheet names it, each one unique there: the first of `[id]`, its variable and its row
         (`시트의 k번째 항목`, the sheet's order) that no value meets (`overlaps` reads across whatever text is around
-        it), so no mask of this text or of a prompt around it rewrites the reference. Its label only when a value
-        meets all three, which takes a value spelling part of that row's words."""
+        it), so no mask of this text or of a prompt around it rewrites the reference. Its label when a value meets
+        all three; the sheet marks every need found (`leaked`), so even that one is found there."""
         nid = getattr(label, "need", None) or str(label).strip("[]")
         k, n = next(((k, n) for k, (i, (n, _)) in enumerate(rows, 1) if i == nid), (0, {}))
         return next((r for r in (f"[{nid}]", n.get("env"), k and f"시트의 {k}번째 항목") if isinstance(r, str) and r
@@ -273,7 +277,7 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
 
     ids = sorted(ref(lab) for lab in set().union(*found.values()))
     return " / ".join(filter(None, [refused, (
-        f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 적지 "
+        f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 (시트에 표시) — 값은 환경 변수로만 읽고 어디에도 적지 "
         "않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")]))
 
 
