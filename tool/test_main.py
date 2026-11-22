@@ -377,6 +377,42 @@ def test_focus_model_survives_restart_per_project(tmp_path):
             assert chat.config("next", "a")["model"] == ""
 
 
+def test_focus_pick_is_the_persons_and_lands_whole(tmp_path):
+    from fastapi import HTTPException
+
+    models = [{"id": "codex:test", "default_effort": "low", "efforts": [{"id": "low"}]}]
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect={"a": tmp_path / "a"}.get), \
+         patch.object(chat_channels, "codex_models", return_value=models):
+        web.post("/api/config/refactor", json={"repo": "a"}).raise_for_status()
+        web.post("/api/config/refactor", json={"repo": "a", "model": "opus", "effort": "high"}).raise_for_status()
+        # Another mode releases a survey's pin to the person's own pick; the survey model is never saved as one.
+        chat.refactor_mode("a", "preserve", 0, {"model": "sonnet", "effort": "low"})
+        chat._config.clear()
+        assert chat.config("refactor", "a")["model"] == "sonnet"
+        web.post("/api/config/refactor", json={"repo": "a", "model": "sonnet", "effort": "low",
+                                               "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == chat.chosen("a")["refactor"]["model"] == "opus"
+        # A Codex list that cannot be read keeps nothing, so the pick is read again once it can.
+        chat.chosen("a", "next", {"model": "codex:test", "effort": "low"})
+        with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("down")), \
+             pytest.raises(HTTPException):
+            chat.config("next", "a")
+        assert chat.config("next", "a")["model"] == "codex:test"
+        # A pick that cannot be saved changes nothing, so a retry still sees the provider change.
+        with patch.object(chat, "chosen", side_effect=OSError("disk")), pytest.raises(OSError):
+            web.post("/api/config/next", json={"repo": "a", "model": "opus", "effort": "high"})
+        assert chat.config("next", "a")["model"] == "codex:test"
+        # A setting written while a first read waited on the Codex list is not overwritten by that read.
+        chat._config.clear()
+
+        def racing():
+            chat._config[("a", "next")] = {"repo": "a", "model": "haiku", "effort": "low"}
+            return models
+        with patch.object(chat_channels, "codex_models", side_effect=racing):
+            assert chat.config("next", "a")["model"] == "haiku"
+
+
 def test_project_shared_sessions_and_records_isolated(tmp_path):
     repos = {name: tmp_path / name for name in ("a", "b")}
     for repo in repos.values():
