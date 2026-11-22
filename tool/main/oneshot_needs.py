@@ -27,7 +27,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from common import errorlog, folded, masked, overlaps
+from common import errorlog, folded, masked, overlaps, unescaped
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
 from .oneshot_spec import VIEWS, idle, saved, spec_of, view
@@ -326,22 +326,9 @@ def need_ids(labels) -> set[str]:
 
 
 def decoded(text: str) -> str:
-    """`text`, then every string its blocks decode to, keys included: what is sent or saved is the decoded value,
-    which a JSON escape (`\\u0041`, `\\/`) spells differently in the text."""
-
-    from . import specs   # it imports this module
-
-    def leaves(v):
-        if isinstance(v, str):
-            yield v
-        elif isinstance(v, dict):
-            for k, x in v.items():
-                yield k
-                yield from leaves(x)
-        elif isinstance(v, list):
-            for x in v:
-                yield from leaves(x)
-    return "\n".join([text, *(s for b in specs.blocks(text)[1] for s in leaves(b.get("value")))])
+    """`text`, then the same text as a reader of its JSON gets it (`common.unescaped`): what any block, fence or
+    parser sends or saves is the decoded value, which a JSON escape (`\\u0041`, `\\/`) spells differently."""
+    return f"{text}\n{unescaped(text)}"
 
 
 def held_in(text: str, hide: dict) -> list[str]:

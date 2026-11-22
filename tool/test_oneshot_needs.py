@@ -381,6 +381,19 @@ def test_a_secret_not_given_never_falls_back_to_a_variable_the_server_has(at_r1,
     assert needs.gate_env({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}, None) is None
 
 
+def test_a_secret_spelled_with_json_escapes_is_masked_where_it_stands_and_scanned_in_any_fence():
+    hide = {"tok-31415926": "[N1]"}
+    choices = '```choices\n{"questions": [{"q": "use \\u0074ok-31415926?", "o": ["\\u0054OK\\u002d31415926"]}]}\n```\n'
+    out = masked(choices, hide)
+    assert "31415926" not in out and json.loads(out.split("\n")[1]) == {"questions": [{"q": "use [N1]?", "o": ["[N1]"]}]}
+    # An escaped backslash is a backslash: what follows it is plain text, as JSON reads it.
+    assert masked('"\\\\u0074ok-31415926"', hide) == '"\\\\u0074ok-31415926"'
+    assert masked('a\\/b', {"a/b": "[N2]"}) == "[N2]"
+    # The scan reads every fence the same way, the test runner's included, whichever parser takes it later.
+    runner = '```oneshot-runner\n{"command": ["run", "--key", "\\u0074ok-31415926"]}\n```\n'
+    assert "tok-31415926" not in runner and needs.held_in(needs.decoded(runner), hide) == ["N1"]
+
+
 def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
     from common import masked
 

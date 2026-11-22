@@ -95,6 +95,31 @@ def folded(text: str) -> str:
     return "".join(_folds(text))
 
 
+# A JSON escape: what a reader of the JSON gets differs from how the text spells it.
+_ESCAPE = re.compile(r'\\u[0-9a-fA-F]{4}|\\["\\/bfnrt]')
+
+
+def _unescape(text: str) -> tuple[str, list[tuple[int, int]]]:
+    """`text` with every JSON escape decoded, wherever it stands, and each character's `(start, end)` in `text`.
+    ponytail: each `\\u` escape alone; a value outside the Basic Multilingual Plane written as a surrogate pair
+    is not matched decoded."""
+    chars, where, last = [], [], 0
+    for m in _ESCAPE.finditer(text):
+        chars += text[last:m.start()]
+        where += [(i, i + 1) for i in range(last, m.start())]
+        chars.append(json.loads(f'"{m.group()}"'))
+        where.append(m.span())
+        last = m.end()
+    chars += text[last:]
+    where += [(i, i + 1) for i in range(last, len(text))]
+    return "".join(chars), where
+
+
+def unescaped(text: str) -> str:
+    """`text` as a reader of its JSON gets it: every escape decoded, wherever it stands."""
+    return _unescape(text)[0]
+
+
 def masked(text: str, hide: dict[str, str] | None) -> str:
     """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced by its label as
     spelled and in every casing `folded` treats as the same, the longest first; a match inside one character covers
@@ -129,7 +154,8 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
             taken[start:end] = b"\x01" * (end - start)
             chosen.append((start, end, label))
 
-    for value in sorted(hide, key=lambda v: max(len(v), len(folded(v))), reverse=True):
+    order = sorted(hide, key=lambda v: max(len(v), len(folded(v))), reverse=True)
+    for value in order:
         at = 0
         while value and (at := text.find(value, at)) >= 0:   # as spelled: a fold can depend on what is around it
             claim(at, at + len(value), hide[value])
@@ -138,6 +164,17 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
         while needle and (at := flat.find(needle, at)) >= 0:
             claim(owner[at], owner[at + len(needle) - 1] + 1, hide[value])
             at += 1
+    if "\\" in text:   # then as its JSON decodes: each match covers the escapes it was written with
+        plain, where = _unescape(text)
+        pfolds = _folds(plain)
+        pflat, powner = "".join(pfolds), [i for i, f in enumerate(pfolds) for _ in f]
+        for value in order if plain != text else ():
+            for hay, own, needle in ((plain, None, value), (pflat, powner, folded(value))):
+                at = 0
+                while needle and (at := hay.find(needle, at)) >= 0:
+                    first, end = (at, at + len(needle) - 1) if own is None else (own[at], own[at + len(needle) - 1])
+                    claim(where[first][0], where[end][1], hide[value])
+                    at += 1
     return sorted(chosen)
 
 
