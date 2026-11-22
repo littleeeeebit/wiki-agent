@@ -141,7 +141,8 @@ function Baseline([string]$path) {   # a report file just before a step acts: it
         $got += $n
       }
     } finally { $s.Dispose() }
-    return [ordered]@{ text = [System.Text.Encoding]::UTF8.GetString($bytes) }   # as the server decodes it
+    # Strict: bytes that are not UTF-8 throw, and an unread text is unknown, never a text with replacements.
+    return [ordered]@{ text = (New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes) }
   } catch {
     $x = $_.Exception
     if ($x -is [System.Management.Automation.MethodInvocationException]) { $x = $x.InnerException }
@@ -355,13 +356,13 @@ try {
     $found = Target $step
     if ($found.error) { $done.error = $found.error; Save; continue }
     # What the step's report is weighed against, read with its target found, just before it acts.
-    if ($step.before) {
-      $done.before = (State "before-$($step.name)").id
-      Enter "find $($step.name) again"   # what the read found may have moved meanwhile: the target as it is now
+    if ($step.before) { $done.before = (State "before-$($step.name)").id }
+    if ($step.baseline) { Enter "baseline $($step.name)"; $done.baseline = Baseline ([string]$step.baseline) }
+    if ($step.before -or $step.baseline) {
+      Enter "find $($step.name) again"   # what the reads found may have moved meanwhile: the target as it is now
       $found = Target $step
       if ($found.error) { $done.error = $found.error; Save; continue }
     }
-    if ($step.baseline) { Enter "baseline $($step.name)"; $done.baseline = Baseline ([string]$step.baseline) }
     Enter "act $($step.name)"
     try { Act $found.element $step; $done.acted = $true } catch { $done.error = "$($_.Exception.Message)"; Save; continue }
     Save

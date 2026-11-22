@@ -340,8 +340,10 @@ source, and the server assigns it:
     The report must be the capture step's own, measured against what was
     proven just before that step. The driver reads it with the step's target
     found, just before the step acts: a whole state for an element, and the
-    file's text for a file. It then finds the target again, so the step acts
-    on the control as it is after that read.
+    file's text for a file. After both reads it finds the target again, so
+    the step acts on the control as it is then. A file read as text must be
+    valid UTF-8, before the step and after it. Bytes that are not UTF-8
+    leave the text unknown, and the report counts for nothing.
     - An element counts only when its window was read whole, without any
       unread items, both in the state after the step and in the one read
       just before it. There must be exactly one element by its id, offering

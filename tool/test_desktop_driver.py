@@ -322,6 +322,28 @@ def test_a_steps_baseline_and_before_state_are_read_with_its_target_found_just_b
     assert report["steps"][1]["acted"] and [n.get("value") for n in after["nodes"] if n.get("id") == "source"] == ["b"]
 
 
+def test_a_step_with_either_read_finds_its_target_again_after_both_and_before_it_acts():
+    loop = desktop_driver.SCRIPT.read_text(encoding="utf-8").split("foreach ($step in $ask.steps) {", 1)[1]
+    loop = loop.split('Enter "done"', 1)[0]
+    at = [loop.index(s) for s in ('$done.before = (State', '$done.baseline = Baseline',
+                                  'if ($step.before -or $step.baseline) {', '$found = Target $step', 'Act $found.element')]
+    again = loop.index("$found = Target $step", loop.index("if ($step.before -or $step.baseline) {"))
+    assert at[0] < at[1] < at[2] < again < at[4], at
+
+
+def test_a_report_file_that_is_not_utf8_has_no_baseline_text(tmp_path):
+    script, bad = tmp_path / "form.ps1", tmp_path / "bad.txt"
+    script.write_text(WPF_FORM, encoding="utf-8")
+    bad.write_bytes(b"\xffapple river garden")
+    with desktop_session.look(tmp_path, "badtext") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [
+            {"name": "one", "action": "set_value", "id": "source", "value": "a", "baseline": str(bad)}],
+            wait=30, settle_ms=300)
+    assert set(report["steps"][0]["baseline"]) == {"error"}, report
+
+
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
     state = {"nodes": [{"id": "a", "name": "번역", "value": "", "toggle": "On"}, {"id": "b", "value": "x"},
                        {"id": "c", "toggle": "On", "foreign": True}]}
