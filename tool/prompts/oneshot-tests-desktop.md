@@ -20,9 +20,20 @@ the contracts of the modules it depends on, as `core.json` describes them.
 The tests run on this PC in the stack's own host-side runner, with no window
 of their own and no Windows session: `cargo test` for a Rust core,
 `dotnet test` for .NET, `vitest` or `jest` for TypeScript. Reach the module
-inside each test body, so the tests run while it does not exist yet. A call
-that leaves the computer, and every Windows API a platform module wraps, is
-replaced by a fake in the tests; none goes to the network or the screen.
+inside each test body, so the tests run while it does not exist yet.
+
+No outside call in the tests is a fake, mock, stub or stand-in. A call
+that leaves the computer is made for real, against the service itself, with what
+the owner gave for it:
+
+{needs}
+
+A test reads a secret from its environment variable, which the server sets
+whenever it runs the tests on this PC. When the variable is absent, as in CI,
+the test skips with the need's id in its reason, such as `N1`; when the
+server runs the tests, nothing may skip. The one stand-in a test may use is for the Windows API a thin platform module wraps: the module's contract is
+tested on this PC against it, and the stage that runs the app on this PC's screen checks the real one. Never print a secret's
+value, and never write it into a file, a test name or a message.
 
 ```json
 {tests}
@@ -48,7 +59,7 @@ End the turn with one fenced block:
 - `root`: the folder, from the repository root, that the report's relative
   `file` paths start from. Leave it `""` when they start at the root.
 - `contract`: every file that holds a planned test, or code a planned test
-  runs from its own test code (a shared helper, a fake, a base class).
+  runs from its own test code (a shared helper, a platform stand-in, a base class).
 - `config`: the files that only configure the test runner. Keep the runner's
   configuration out of the program's build file where the tool allows it,
   since the build will still change that file.

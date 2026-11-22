@@ -54,14 +54,21 @@ def spec_of(repo: str) -> dict:
 
 
 def saved(repo: str, **fields) -> dict:
-    """Top-level spec fields and `oneshot` fields (`oneshot={...}` merges) written in one save."""
+    """Top-level spec fields and `oneshot` fields (`oneshot={...}` merges) written in one save. Going back from the
+    critique or past it, or dropping the frozen PC build, retires the look: no critique reads its shots again, so
+    their secrets leave memory (`oneshot_front_build.MASKS`)."""
 
     with oneshot._lock:
         spec = spec_of(repo)
-        merged = {**spec["oneshot"], **fields.pop("oneshot", {})}
+        before, changes = spec["oneshot"].get("stage"), fields.pop("oneshot", {})
+        merged = {**spec["oneshot"], **changes}
         spec.update(fields, oneshot=merged)
         specs.save(spec)
-        return spec
+    at = [STAGE_ORDER.index(s) if s in STAGE_ORDER else -1 for s in (before, merged.get("stage"))]
+    if 0 <= at[1] < STAGE_ORDER.index("critique") <= at[0] or changes.get("desktop_build", ()) is None:
+        from . import oneshot_front_build   # it imports this module
+        oneshot_front_build.MASKS.pop(repo, None)
+    return spec
 
 
 # -- S2 the spec conversation --------------------------------------------------------
@@ -537,18 +544,15 @@ def standing(repo: str, build: dict) -> bool:
 
 
 def kind_stop(stage: str, o: dict | None = None) -> dict:
-    """The `kind` stop at `stage`, where this version's run ends. At the owner's desktop round, a PC app's run names
-    the checks it owes and whether the owner approved it: the round itself runs in the next version."""
+    """The `kind` stop at `stage`, where this version's run ends; at `pc`, the owed checks and the approval."""
 
     if stage == "pc" and o is not None:
         from . import oneshot_desktop
         owner = ", ".join(x["id"] for x in oneshot_desktop.owner_owed(o))
-        return {"reason": "kind", "state": stage, "detail": f"주인 화면에서 확인할 {owner} 의 회차를 "
-                + ("승인했다" if (o.get("pc") or {}).get("approval") else "승인하면 기록한다")
-                + " — 회차는 다음 버전에서 돈다"}
-    if stage == "r3":
-        return {"reason": "kind", "state": stage, "detail": "화면 비평과 기기 회차를 마쳤다 — R3 는 다음 버전에서 이어진다"}
-    return {"reason": "kind", "state": stage, "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}
+        given = "승인했다" if (o.get("pc") or {}).get("approval") else "승인하면 기록한다"
+        return {"reason": "kind", "state": stage, "detail": f"주인 화면에서 확인할 {owner} 의 회차를 {given} — 회차는 다음 버전에서 돈다"}
+    return {"reason": "kind", "state": stage, "detail": {"r3": "화면 비평과 기기 회차를 마쳤다 — R3 는 다음 버전에서 이어진다"}.get(
+        stage, "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다")}
 
 
 def handed(o: dict) -> bool:

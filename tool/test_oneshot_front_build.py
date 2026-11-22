@@ -166,7 +166,7 @@ def test_the_published_gate_runs_the_contracts_command_first_and_swallows_nothin
 def test_a_stop_during_the_look_passes_nothing_and_leaves_the_build_resumable(staged):
     built(staged)
     run = Run()
-    with patch.object(front_build.oneshot_look, "look", lambda *a: (run.halt.set(), [])[1]):
+    with patch.object(front_build.oneshot_look, "look", lambda *a, **k: (run.halt.set(), [])[1]):
         oneshot_build.checked(staged, run, spec(), report())
     assert o()["stage"] == "build-front" and o()["stopped"]["reason"] == "gate" and "멈췄다" in o()["stopped"]["detail"]
     sent = []
@@ -178,7 +178,7 @@ def test_a_stop_during_the_look_passes_nothing_and_leaves_the_build_resumable(st
 def test_a_tree_changed_while_the_app_ran_is_not_recorded_as_passed(staged):
     built(staged)
 
-    def look(*a):
+    def look(*a, **k):
         write(staged, "app/built.js", "x")   # what a `live_cmd` that builds into the tree leaves
         git(staged, "add", "-A")
         git(staged, "commit", "-m", "built")

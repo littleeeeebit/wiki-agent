@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 
-from common import process, shell
+from common import masked, process, shell
 from common.budget import Budget
 
 
@@ -81,9 +81,15 @@ def prepare(repo, path, settings):
         destination.chmod(0o600)
 
 
-def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, *, argv=None, idle=None):
-    """`idle` replaces `IDLE_SECONDS` for a child that is quiet while it works, such as an installer."""
+def gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, *, argv=None, idle=None, hide=None):
+    """`idle` replaces `IDLE_SECONDS` for a child that is quiet while it works, such as an installer. The output
+    and the cut reason show no value of `hide`, such as a secret in `env` (`common.masked`)."""
 
+    code, out, cut = _gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, argv=argv, idle=idle)
+    return code, masked(out, hide), masked(cut, hide)
+
+
+def _gate(cmd, cwd, halt, env, timeout, owned_jobs, kill, *, argv=None, idle=None):
     budget = verification_budget.get()
     timeout = min(timeout, budget.left()) if budget else timeout
     if halt.is_set() or timeout <= 0:

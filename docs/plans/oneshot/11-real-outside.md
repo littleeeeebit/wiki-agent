@@ -154,16 +154,89 @@ repository that no need of today's design names, and removes it on request.
 ### Tests and builds use the real thing
 
 `oneshot-tests*.md` and `oneshot-build*.md` lose the fake rule and gain its
-opposite: no fake, mock, stub or stand-in of anything, an outside call made
-for real with the environment the server sets, and a check that needs a
-device or a screen left to that kind's device stage. The server sets every
+opposite: no fake, mock, stub or stand-in of an outside call, which is made
+for real with the environment the server sets. The one stand-in a test may
+use is for the device platform a thin platform module wraps (the Android
+framework, a Windows API), decided with the owner on 2026-11-21: that
+module's contract is tested on this PC against it, and the kind's device or
+screen stage checks the real one. A web app's tests have no stand-in at all. The server sets every
 `secret` need's `env` in the environment of the gate it runs
 (`oneshot_build.built_env`). The gate already fails a run with a skipped
 contract case, so a test that skipped for want of a key fails locally.
 
+The tests and the build are told every need: a secret by its variable, a
+program or a file by the path it was given at, an account by what it is,
+never a value (`oneshot_needs.told`). Every gate the server runs for the run
+has each given secret, read from Credential Manager for that gate
+(`oneshot_needs.gate_env`, through `toolchain` and `built_env`). That covers
+the tests stage, the build's gate, the front build's gate and the pull
+request's gate, and the web app the front build starts for its screenshots.
+Each gate's output shows `[N1]` where a secret's value or its URL-quoted form
+would stand (`common.masked`, `oneshot_needs.hidden`). The mask is read off
+the environment the gate starts with, never from the store a second time, so
+the value launched is always the value masked. Every JUnit report, the
+pinned cases' and the one the adapter's gate writes, goes outside the tree,
+is read once and is deleted (`oneshot_build.judged`), and a case whose name
+holds a secret is refused. A secret the design names but the store does not
+hold is removed from the environment, so a variable of that name the server
+has never stands in.
+
+The web look masks only each finding's text, so a secret as short as a JSON
+delimiter never changes its shape. Each screen is read and shot while no
+script or animation of it or of its frames runs (`oneshot_look.still`), and
+the picture is kept only if every frame still holds the document read, since
+a refresh navigates with scripts off. An animation not started yet is let
+start before it is held, since one held while pending starts later in its
+before phase.
+
+What is read is the text the page carries, drawn or not, each stream matched
+on its own: the text and CDATA nodes outside code of every frame's document
+and of each open shadow root, joined so a value split across elements reads
+as one. Beside each is its rendered text, so hidden text between two
+visible parts never splits a value the screen joins: the nodes `innerText`'s
+rule keeps (laid out, their element's `visibility` visible), read node by
+node, since the getter on a hidden root falls back to text that includes
+stylesheets. The value, placeholder and alt of fields and images are read
+too; never markup or a stylesheet. Matching is a union over the streams and
+ignores case, decided with the owner on 2026-11-22: `text-transform` can
+draw any casing of a value, and a casing of a secret counts as the secret.
+One fold serves matching and masking (`common.folded`): case folding plus
+the Turkish dotted and dotless i a page's `lang` can draw, a dot above
+folding away only after an `i`. Masking finds each folded secret in the
+folded text and replaces the original characters it came from, so the
+critic's findings and stop reasons are masked in every casing the look
+matches, one that changes length included. A secret is matched and masked
+as spelled too, since a character's fold can depend on the one before it,
+and a secret that folds to nothing matches only as spelled. Masking claims
+each character once and joins the result in one pass, so a short secret
+in long gate output costs time in proportion to its matches. Within one stream a value broken across lines still matches, as spelled
+and folded alike, with whitespace removed both before and after the fold,
+since a fold can depend on the character a line break stood next to. A secret in hidden text has reached the browser all the same, so it
+is the app's leak to fix, and whether the browser draws it is never asked. A
+screen whose text carries a secret, or has a frame that cannot be read, is a
+high finding and is never shot. The critic sends its pictures to a model,
+and a high finding sends the build back before the critic runs.
+
+The guard stops at text, decided with the owner on 2026-11-21. A secret
+drawn as pixels, into a canvas, an image or a stylesheet's `content`, can
+reach the critic, the same trust the build agent gets in 11b2. What the
+critic writes, its findings and the reason it stopped, is kept with `[N1]`
+in each secret's place, from the first write on (`oneshot.turned` takes
+`hide`). The mask is the one the look's web app was started with
+(`oneshot_front_build.MASKS`), held in memory only. It is released once no
+critique reads those shots again: R3 opens, the run saves itself back to a
+stage before the critique, or it drops its frozen PC build. A server started
+since has none, and a run with a secret takes
+those shots again before any critique.
+
+11b1 stops there. The build agent's own shell does not have the secrets yet,
+so a test that needs one skips when the agent runs it and must pass in the
+server's gate. The PC app's screen check and the Android device stages
+start the product without them; they gain them in 11b2.
+
 In CI the variables are absent. Each test that needs one skips with the need's
 id in its reason, and the run's CI summary lists those skips as owed to the
-local gate. A public repository never receives a secret.
+local gate (11b2). A public repository never receives a secret.
 
 ### The review reads fakes as weakened contracts
 
@@ -207,7 +280,8 @@ knows the values, at commit time, rather than in the reviewer's reading.
 | # | Step | Status |
 | --- | --- | --- |
 | 11a1 | A design's outside calls may carry `needs`; the owner gives each (secrets to Credential Manager), the sheet lists them, and R1 approval waits for all of them | Done — #416 |
-| 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | In progress |
-| 11b | Tests and build prompts without fakes; the gate's environment carries the secrets; CI skips name the need | Not started |
+| 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | Done — #417 |
+| 11b1 | Tests and build prompts without fakes, told every need; every gate the server runs carries the given secrets | In progress |
+| 11b2 | The build agent's own turns carry the secrets under the server's leak check; the PC app's screen check and the Android device stages get them; the CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Not started |
 | 11c | The review refuses a fake inside a test file | Not started |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |

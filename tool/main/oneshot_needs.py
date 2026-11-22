@@ -1,18 +1,24 @@
 """What the owner gives an outside call: checked on the design, kept where each kind belongs, and every one given
 before R1 may be approved.
 
-`docs/plans/oneshot/11-real-outside.md` ("11a1") is the design. A `secret` lives in Windows Credential Manager under
+`docs/plans/oneshot/11-real-outside.md` ("11a1", "11b1") is the design. A `secret` lives in Windows Credential Manager under
 `wiki-agent/oneshot/<repo>/<env>`, never in the spec, the record, an answer or an error; it stays there for the
 repository's next run until the owner removes it, which they can at any stage, since the store itself lists what
 it holds (`kept`). The other kinds are kept in the spec's `oneshot.given` with the `what` they were given for, so a
 redesign that changes what a need is asks for it again. Giving or removing a need names the sheet it was made on.
+
+The tests and the build are told every need (`told`), and every gate the server runs for the run has each given
+secret in its environment under its `env` (`gate_env`); the value is read from the store for that gate only, and
+the gate's output shows `[N1]` where it would stand (`hidden`).
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -118,6 +124,68 @@ def shown(spec: dict) -> list[dict]:
 
 def missing(spec: dict) -> list[dict]:
     return [n for n in shown(spec) if not n["given"]]
+
+
+def secret_needs(spec: dict) -> list[tuple[str, dict]]:
+    return [(nid, n) for nid, (n, _) in owed(spec["oneshot"].get("design") or {}).items() if n["kind"] == "secret"]
+
+
+def _given(spec: dict) -> list[tuple[str, str, str]]:
+    """`(id, env, value)` for each given secret, read from the store for one use; a need not given is absent."""
+
+    out = []
+    for nid, n in secret_needs(spec):
+        try:
+            value = release.secret_read(name(spec["repo"], n["env"]))
+        except (OSError, ValueError):   # no store on this host, or one that cannot be read: it is not given
+            value = None
+        if value:
+            out.append((nid, n["env"], value))
+    return out
+
+
+def secrets(spec: dict) -> dict[str, str]:
+    """Each given secret's value by its `env`."""
+
+    return {env: value for _, env, value in _given(spec)}
+
+
+def hidden(spec: dict, env: dict | None) -> dict[str, str]:
+    """What a gate's output shows instead of each secret `env`, a `gate_env` result, carries: `[N1]` for its value
+    and its URL-quoted form. Read off the environment the child gets, never the store again, so a secret changed or
+    removed in between can never be the one launched and left unmasked."""
+
+    have = {k.upper(): v for k, v in (env or {}).items()}
+    # ponytail: the raw and URL-quoted forms only; another encoding of a value (base64, JSON-escaped) still shows
+    return {form: f"[{nid}]" for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))
+            for form in {value, quote(value, safe="")}}
+
+
+def gate_env(spec: dict, env: dict | None) -> dict | None:
+    """`env`, the server's own when `None`, with every given secret set. A secret the design names but the store
+    does not hold is removed, so a variable of that name the server happens to have never stands in for it."""
+
+    if not (declared := {n["env"].upper() for _, n in secret_needs(spec)}):
+        return env
+    base = {k: v for k, v in (os.environ if env is None else env).items() if k.upper() not in declared}
+    return {**base, **secrets(spec)}
+
+
+def told(spec: dict) -> str:
+    """The needs as the tests and the build read them: a secret by its variable, a program or a file by the path
+    it was given at, an account by what it is. Never a secret's value."""
+
+    given = spec["oneshot"].get("given") or {}
+    lines = []
+    for nid, (n, calls) in owed(spec["oneshot"].get("design") or {}).items():
+        uses = ", ".join(x["id"] for x in calls)
+        if n["kind"] == "secret":
+            lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret ({uses})")
+        elif n["kind"] in ("tool", "file") and (path := (given.get(nid) or {}).get("path")):
+            lines.append(f"- {nid} {n['what']}, a {'program' if n['kind'] == 'tool' else 'file'} at `{path}` ({uses})")
+        else:
+            lines.append(f"- {nid} {n['what']}, an account the owner has ({uses})")
+    return "\n".join(lines) or "- none: no outside call needs anything from the owner"
 
 
 def kept(repo: str) -> list[str]:

@@ -6,15 +6,19 @@ a name no run uses, removed afterwards; the files and programs are real ones.
 """
 
 import json
+import os
 import re
 import sys
+import threading
+import time
 import uuid
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_brief as brief, oneshot_needs as needs, oneshot_sheet as sheet, oneshot_spec, release, specs
+from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
+    oneshot_sheet as sheet, oneshot_spec, release, specs
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, STACK, android  # noqa: F401 — `android` is the fixture
 from test_oneshot_spec import DESIGN as WEB, GLOSSARY as WEB_GLOSSARY, PROFILE, REQS as WEB_REQS, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -261,3 +265,112 @@ def test_what_was_given_can_be_taken_back(at_r1, tmp_path):
     give("N4", value=str(sample))
     sample.unlink()   # a file that is gone is not given
     assert not next(n for n in oneshot_spec.status("budget")["needs"] if n["id"] == "N4")["given"]
+
+
+def test_every_gate_the_run_runs_has_each_given_secret_and_the_prompts_name_only_its_variable(at_r1, tmp_path, monkeypatch):
+    spec = lambda: specs.load("budget", oneshot.BRANCH)  # noqa: E731
+    base = {k: "set" for k in build.TOOLCHAIN}   # the Android toolchain, as this host would have it
+    monkeypatch.setattr(oneshot_android, "build_env", lambda: dict(base))
+    assert ENV not in needs.gate_env(spec(), None) and build.toolchain(spec()) == base   # not given: none
+    sample = tmp_path / "page.png"
+    sample.write_bytes(b"x")
+    value = f"key-{uuid.uuid4().hex}"
+    give("N1", value=value)
+    give("N3", value=sys.executable)
+    give("N4", value=str(sample))
+    assert build.toolchain(spec()) == {**base, ENV: value} == build.built_env(spec())
+    server = needs.gate_env(spec(), None)   # the server's own environment, with the secret on top
+    assert server[ENV] == value and server.get("PATH") == os.environ.get("PATH")
+    oneshot_spec.saved("budget", oneshot={"tests_head": "a" * 40, "gate": "pytest", "contract": ["tests/test_x.py"]})
+    for text in (build.tests_text(spec()), build.build_text(spec())):
+        assert "{needs}" not in text and value not in text and "fake, mock, stub or stand-in" in text
+        assert f"- `{ENV}`: N1 번역 API 키, a secret (X1)" in text and f"a file at `{sample.resolve()}`" in text
+        assert "N2 번역 서비스 계정, an account the owner has (X1)" in text
+    take = needs.take_back("budget", "N1", src())
+    assert take and needs.gate_env(spec(), {"BASE": "server"}) == {"BASE": "server"}   # removed: no gate gets it
+
+
+def test_a_run_whose_calls_need_nothing_is_told_so():
+    assert needs.told({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}) == \
+        "- none: no outside call needs anything from the owner"
+
+
+REPORTER = """import os, sys
+value = os.environ["{env}"]
+print("calling the service with", value)
+name = value if sys.argv[2] == "named" else "test_translates"
+open(sys.argv[1], "w", encoding="utf-8").write(
+    f'<testsuite><testcase classname="c" name="{{name}}"><failure message="{{value}}">{{value}}</failure></testcase></testsuite>')
+sys.exit(int(sys.argv[3]))
+"""
+
+
+def test_a_gate_never_shows_a_secret_and_its_report_is_read_once_and_removed(at_r1, tmp_path, monkeypatch):
+    monkeypatch.setattr(oneshot_android, "build_env", lambda: dict(os.environ))
+    value = f"key-{uuid.uuid4().hex}"
+    give("N1", value=value)
+    script = tmp_path / "reporter.py"
+    script.write_text(REPORTER.format(env=ENV), encoding="utf-8")
+    notes = []
+    chat = type("Chat", (), {"id": "c", "parent_id": None})
+    spec = specs.load("budget", oneshot.BRANCH)
+    run = type("Run", (), {"halt": threading.Event(), "put": staticmethod(notes.append), "chat": chat})()
+    reports = oneshot_spec.store("budget").folder / "junit"
+    command = f'"{sys.executable}" "{script}" {{report}}'
+    assert build.junit(at_r1, run, spec, command + " plain 0") == [("c", "test_translates", "", "failure")]
+    for args, said in ((" named 0", "사례 이름에 비밀 값이 들어 있다 — \\[N1\\]"),):
+        with pytest.raises(ValueError, match=said) as e:
+            build.junit(at_r1, run, spec, command + args)
+        assert value not in str(e.value)
+    real, reads = release.secret_read, []
+    # The store answers once: the gate is launched and masked from that one read, whatever the store says after.
+    monkeypatch.setattr(release, "secret_read", lambda key: reads.append(key) or (None if len(reads) > 1 else real(key)))
+    verdict = build.judged(at_r1, run, spec, [f'"{sys.executable}" "{script}" {build.REPORT} plain 1'], build.toolchain(spec))
+    assert not verdict["ok"] and len(reads) == 1 and "calling the service with [N1]" in verdict["tail"]
+    assert value not in json.dumps([verdict, notes], ensure_ascii=False, default=str)
+    assert not (at_r1 / build.REPORT).exists() and not list(reports.glob("*.xml"))   # no report outlives its read
+
+
+def test_a_secret_not_given_never_falls_back_to_a_variable_the_server_has(at_r1, monkeypatch):
+    monkeypatch.setenv(ENV, "the server's own key")
+    monkeypatch.setattr(oneshot_android, "build_env", lambda: {**os.environ, "JAVA_HOME": "set"})
+    spec = specs.load("budget", oneshot.BRANCH)
+    assert ENV not in needs.gate_env(spec, None) and ENV not in build.toolchain(spec)
+    assert build.toolchain(spec)["JAVA_HOME"] == "set"
+    assert needs.gate_env({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}, None) is None
+
+
+def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
+    from common import masked
+
+    hide = {"key-in": "[N1]", "key-in-long": "[N2]"}
+    assert masked("KEY-IN, Key-In-Long, key-ın, KEY-İN, key-out", hide) == "[N1], [N2], [N1], [N1], key-out"
+    assert masked("text", {}) == "text" and masked("a+b", {"A+B": "[N1]"}) == "[N1]"   # literal, never a pattern
+    assert masked("ΚΛΕΙΔΙ ς σ Σ", {"κλειδι": "[N1]", "σ": "[N2]"}) \
+        == "[N1] [N2] [N2] [N2]"   # every sigma
+    assert masked("STRASSE, straße", {"strasse": "[N1]"}) == "[N1], [N1]"   # a casing that changes length
+    assert masked("İd, mark ̇ here", {"i̇d": "[N1]", "̇": "[N2]"}) == "[N1], mark [N2] here"
+    assert masked("ab", {"İ": "[N1]", "": "[N2]"}) == "ab"   # nothing folds to nothing
+    assert masked("İ", {"̇": "[N1]"}) == "I[N1]"   # as spelled, though the fold here drops it
+    many = "k " * 20000
+    started = time.monotonic()
+    assert masked(many, {"k": "[N1]"}) == "[N1] " * 20000 and time.monotonic() - started < 2   # linear in matches
+
+
+def test_a_secret_that_folds_to_nothing_shows_on_no_page():
+    from main.oneshot_look import secrets_shown
+
+    class Frame:
+        def evaluate(self, _):
+            return {"texts": ["an unrelated page ̇"], "values": []}
+
+    page = type("Page", (), {"frames": [Frame()]})()
+    assert secrets_shown(page, {"̇": "[N1]"}) and not secrets_shown(page, {"̇̇x": "[N1]"})
+    Frame.evaluate = lambda self, _: {"texts": ["İ"], "values": []}
+    assert secrets_shown(page, {"̇": "[N1]"})   # as spelled, though the fold here drops it
+    Frame.evaluate = lambda self, _: {"texts": ["key-I\ṅx"], "values": ["key-I", "̇x"]}
+    assert secrets_shown(page, {"key-İx": "[N1]"})   # as spelled, broken across lines
+    Frame.evaluate = lambda self, _: {"texts": ["key-I", "̇x"], "values": []}
+    assert not secrets_shown(page, {"key-İx": "[N1]"})   # never across two streams
+    Frame.evaluate = lambda self, _: {"texts": ["KEY-I\n" + chr(0x307) + "X"], "values": []}
+    assert secrets_shown(page, {"key-" + chr(0x130) + "x": "[N1]"})   # a casing broken where its fold depends

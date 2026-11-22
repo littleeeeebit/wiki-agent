@@ -29,7 +29,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agent import ChatSession
-from common import swap, worktree_home
+from common import masked, swap, worktree_home
 from common.paths import DATA, RAW, RESOURCES
 from workspace import TASK, create
 
@@ -263,9 +263,9 @@ def block(final: str, name: str):
 
 
 def turned(rid: str | Store, role: str, system: str, text: str, name: str, check,
-           where: Path | None = None, images: tuple = ()) -> object | None:
-    """A turn whose answer passes `check`, asked again once with the reason; `None` after stopping.
-    With one block `name`, `check` gets that block's value; with several (`"a,b"`), the whole answer."""
+           where: Path | None = None, images: tuple = (), hide: dict[str, str] | None = None) -> object | None:
+    """A turn whose answer passes `check`, asked again once with the reason; `None` after stopping, its reason showing
+    no `hide` value. With one block `name`, `check` gets that block's value; with several (`"a,b"`), the whole answer."""
 
     store = rid if isinstance(rid, Store) else run_store(rid)
     reason = ""
@@ -289,7 +289,7 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
             if runtime.stopping.is_set():
                 store.stop("restart", "서버가 꺼지는 중이라 멈췄다")
             else:
-                store.stop("block", f"모델 턴이 실패했다 — {exc}")
+                store.stop("block", masked(f"모델 턴이 실패했다 — {exc}", hide))
             return None
         with _lock:
             store.put(inflight=None, spend=charged(store.get().get("spend"), role, codex, meta.get("cost_usd"),
@@ -298,7 +298,7 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
             return check(final, attempt) if "," in name else check(block(final, name))
         except (ValueError, TypeError, KeyError, AttributeError) as exc:   # the answer's shape, refused
             reason = str(exc)
-    store.stop("block", f"`{name}` 블록이 두 번 거부됐다 — {reason}")
+    store.stop("block", masked(f"`{name}` 블록이 두 번 거부됐다 — {reason}", hide))
     return None
 
 

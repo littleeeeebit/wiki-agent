@@ -76,6 +76,52 @@ def swap(temporary: Path, file: Path) -> None:
             time.sleep(0.025)
 
 
+def _folds(text: str) -> list[str]:
+    """Each character of `text` folded: case folded away, and the Turkish dotted and dotless i, which
+    `text-transform` can draw under a page's `lang`, made a plain `i` (a dot above folds away after an `i` only)."""
+    out: list[str] = []
+    for c in text:
+        f = c.casefold().replace("ı", "i").replace("i̇", "i")
+        out.append("" if f == "̇" and out and out[-1].endswith("i") else f)
+    return out
+
+
+def folded(text: str) -> str:
+    """`text` with case folded away, as `_folds` does: any casing of a secret is that secret."""
+    return "".join(_folds(text))
+
+
+def masked(text: str, hide: dict[str, str] | None) -> str:
+    """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced by its label as
+    spelled and in every casing `folded` treats as the same, the longest first; a match inside one character covers
+    all of it. Each character is claimed once, so the work grows with the matches, never with their square."""
+    if not hide:
+        return text
+    folds = _folds(text)
+    flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
+    taken, chosen = bytearray(len(text)), []
+
+    def claim(start: int, end: int, label: str) -> None:
+        if not any(taken[start:end]):
+            taken[start:end] = b"\x01" * (end - start)
+            chosen.append((start, end, label))
+
+    for value in sorted(hide, key=lambda v: max(len(v), len(folded(v))), reverse=True):
+        at = 0
+        while value and (at := text.find(value, at)) >= 0:   # as spelled: a fold can depend on what is around it
+            claim(at, at + len(value), hide[value])
+            at += 1
+        needle, at = folded(value), 0
+        while needle and (at := flat.find(needle, at)) >= 0:
+            claim(owner[at], owner[at + len(needle) - 1] + 1, hide[value])
+            at += 1
+    out, last = [], 0
+    for start, end, label in sorted(chosen):
+        out += [text[last:start], label]
+        last = end
+    return "".join(out + [text[last:]])
+
+
 def python_environment(env: dict | None = None) -> dict:
     """Child commands use the running interpreter without shell activation."""
     env = dict(os.environ if env is None else env)

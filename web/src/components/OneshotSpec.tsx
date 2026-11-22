@@ -9,6 +9,7 @@ import { Track } from '@/components/OneshotTrack'
 import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PcPlan, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName, toolText,
 } from '@/lib/oneshot'
+import { InLink } from '@/lib/picture'
 import { cn } from '@/lib/utils'
 
 /** Which model each part of the run uses, fixed at its start. */
@@ -501,11 +502,15 @@ function Mermaid({ code }: { code: string }) {
 function Md({ text, zoom }: { text: string; zoom: (src: string) => void }) {
   // Made once: a new `img` each render is a new component, which replaces the thumbnail holding the focus.
   const components = useMemo<Components>(() => ({
-        img: ({ src, alt }) => (
-          <button type="button" className="inline-block" onClick={() => zoom(String(src))} title="크게 본다">
-            <img src={String(src)} alt={alt ?? ''} loading="lazy" className="max-h-64 rounded border border-border" />
-          </button>
-        ),
+        img: function Thumb({ src, alt }) {
+          const image = <img src={String(src)} alt={alt ?? ''} loading="lazy" className="max-h-64 rounded border border-border" />
+          // Inside a link it is the link's content: a zoom button there would be a second control in the anchor.
+          return useContext(InLink) ? image : (
+            <button type="button" className="inline-block" onClick={() => zoom(String(src))} title="크게 본다">{image}</button>
+          )
+        },
+        // Every attribute the default anchor had (a footnote's id and label too), with `InLink` around its text.
+        a: ({ node: _node, children, ...attributes }) => <a {...attributes}><InLink.Provider value>{children}</InLink.Provider></a>,
         table: ({ children }) => <div className="overflow-x-auto"><table>{children}</table></div>,
         code: ({ className, children }) => className === 'language-mermaid'
           ? <Mermaid code={String(children ?? '').replace(/\n$/, '')} /> : <code className={className}>{children}</code>,
