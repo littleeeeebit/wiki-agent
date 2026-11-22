@@ -132,34 +132,42 @@ def config(cid: str, name: str | None = None) -> dict:
     name = name or project()
     key = (name, cid)
     if key not in _config:
-        channel = channels.get(cid)
-        default = channels.LOCAL.get("model", channel.model)
-        # A pick made earlier in this project outlives a restart; without one, the machine's or the CLI's default.
-        picked = chosen(name).get(cid) or {}
-        model, effort = picked.get("model", default), picked.get("effort", channel.effort)
-        if model.startswith("codex:"):
-            try:
-                listed = channels.codex_models()
-            except Exception as exc:   # nothing is kept: the next read asks again
-                raise HTTPException(503, "Codex 모델 목록을 확인할 수 없습니다. 설치 명령을 다시 실행하세요.") from exc
-            selected = next((m for m in listed if m["id"] == model), None)
-            if selected is None and picked:   # a list that answered without the pick: it is gone, not unreachable
-                model, effort = default, channel.effort
-                selected = next((m for m in listed if m["id"] == model), None) if model.startswith("codex:") else {}
-            if selected is None:
-                raise HTTPException(503, "기본 Codex 모델을 확인할 수 없습니다. 설치 명령을 다시 실행하세요.")
-            if selected and effort not in {e["id"] for e in selected["efforts"]}:
-                effort = selected["default_effort"]
-        made = {"repo": name, "model": model, "effort": effort}
-        if cid == "refactor":
-            # A survey's cards are startable only under the mode and generation they were made in; a restart keeps both.
-            saved = refactor_mode(name)
+        made = {"repo": name}
+        saved = refactor_mode(name) if cid == "refactor" else {}
+        if saved:   # a survey's cards are startable only under the mode and generation they were made in
             made.update(refactor_mode=saved["mode"], refactor_generation=saved["generation"])
-            if saved.get("survey"):   # the conversation that refines its cards runs on the survey model
-                made.update(model=saved["survey"]["model"], effort=saved["survey"]["effort"], refactor_pinned=True)
+        if saved.get("survey"):   # the conversation that refines its cards runs on the survey model, not the pick
+            made.update(model=saved["survey"]["model"], effort=saved["survey"]["effort"], refactor_pinned=True)
+        else:
+            made.update(picked(name, cid))
         # A setting written while this read waited on the Codex list wins: only an empty key is filled.
         return _config.setdefault(key, made)
     return _config[key]
+
+
+def picked(name: str, cid: str) -> dict:
+    """The model and effort focus `cid` of project `name` runs on when nothing pins it: the pick saved there,
+    else the machine's or the CLI's default. A saved Codex model the list no longer has is dropped; a list
+    that cannot be read raises 503, so the next read asks again."""
+
+    channel = channels.get(cid)
+    default = channels.LOCAL.get("model", channel.model)
+    pick = chosen(name).get(cid) or {}
+    model, effort = pick.get("model", default), pick.get("effort", channel.effort)
+    if model.startswith("codex:"):
+        try:
+            listed = channels.codex_models()
+        except Exception as exc:
+            raise HTTPException(503, "Codex 모델 목록을 확인할 수 없습니다. 설치 명령을 다시 실행하세요.") from exc
+        selected = next((m for m in listed if m["id"] == model), None)
+        if selected is None and pick:   # a list that answered without the pick: it is gone, not unreachable
+            model, effort = default, channel.effort
+            selected = next((m for m in listed if m["id"] == model), None) if model.startswith("codex:") else {}
+        if selected is None:
+            raise HTTPException(503, "기본 Codex 모델을 확인할 수 없습니다. 설치 명령을 다시 실행하세요.")
+        if selected and effort not in {e["id"] for e in selected["efforts"]}:
+            effort = selected["default_effort"]
+    return {"model": model, "effort": effort}
 
 
 def chosen(name: str, cid: str = "", pick: dict | None = None) -> dict:
@@ -187,8 +195,10 @@ def refactor_mode(name: str, mode: str = "", generation: int = 0, survey: dict |
     file = LOGS / "refactor-mode" / f"{name}.json"
     if mode:
         file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(json.dumps({"mode": mode, "generation": generation, **({"survey": survey} if survey else {})}),
-                        encoding="utf-8")
+        temporary = file.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"mode": mode, "generation": generation, **({"survey": survey} if survey
+                                                                                    else {})}), encoding="utf-8")
+        temporary.replace(file)
     try:
         return json.loads(file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -673,28 +683,34 @@ def configure(cid: str, body: Config) -> dict:
             claimed.set(body.repo)
         else:
             cfg = config(cid)
-            # A survey fixed the conversation's model for its mode; only another mode lets it go.
-            held = cfg.get("refactor_pinned") and body.refactor_mode in (None, cfg.get("refactor_mode"))
-            if held and (body.model, body.effort) != (cfg["model"], cfg["effort"]):
-                raise HTTPException(409, f"리팩터링 대화는 조사 모델 `{cfg['model']}` 로 고정됐다 — 모드를 바꾸거나 새로 조사해라")
-        want = {"model": body.model, "effort": body.effort or selected.get("default_effort", "")}
-        released = not switched and not held and cfg.get("refactor_pinned")
-        if released:
-            # Another mode lets the survey's pin go: the person's own pick comes back. The screen sent the
-            # pinned survey model, which was never the person's choice and is not saved as one.
-            want = chosen(cfg["repo"]).get(cid) or want
-        moved = not switched and deepseek.provider(want["model"]) != deepseek.provider(cfg["model"])
-        if not switched and not held:   # a pinned one keeps its survey's effort, an empty one too
-            if not released:   # saved first: a failed write leaves the focus and its session as they were
-                chosen(cfg["repo"], cid, want)
-            cfg.update(model=want["model"], effort=want["effort"])
-        if cid == "refactor" and body.refactor_mode is not None:
-            if cfg.get("refactor_mode", "preserve") != body.refactor_mode:
-                cfg["refactor_generation"] = cfg.get("refactor_generation", 0) + 1
+        # A survey fixed the conversation's model for its mode; only another mode lets it go.
+        mode = body.refactor_mode if cid == "refactor" else None
+        renewed = mode is not None and mode != cfg.get("refactor_mode", "preserve")
+        pinned = bool(cfg.get("refactor_pinned"))
+        if pinned and not renewed and not switched and (body.model, body.effort) != (cfg["model"], cfg["effort"]):
+            raise HTTPException(409, f"리팩터링 대화는 조사 모델 `{cfg['model']}` 로 고정됐다 — 모드를 바꾸거나 새로 조사해라")
+        want, save = None, False   # a switch carries no model of its own, and a pin keeps its survey's
+        if pinned and renewed and (switched or (body.model, body.effort) == (cfg["model"], cfg["effort"])):
+            # The pin lets go and the screen only echoed the survey model: the person's own pick comes back,
+            # checked as a cold read checks it.
+            want = picked(cfg["repo"], cid)
+        elif not switched and not (pinned and not renewed):
+            want, save = {"model": body.model, "effort": body.effort or selected.get("default_effort", "")}, True
+        # Everything is written before anything is published: a failed write leaves the focus, its session
+        # and a retry's view of the pin as they were.
+        if save:
+            chosen(cfg["repo"], cid, want)
+        generation = cfg.get("refactor_generation", 0) + renewed
+        if mode is not None:
+            refactor_mode(cfg["repo"], mode, generation, refactor_mode(cfg["repo"]).get("survey") if pinned and not renewed
+                          else None)
+        moved = want is not None and deepseek.provider(want["model"]) != deepseek.provider(cfg["model"])
+        if want is not None:
+            cfg.update(want)
+        if mode is not None:
+            cfg.update(refactor_mode=mode, refactor_generation=generation)
+            if renewed:
                 cfg.pop("refactor_pinned", None)
-            cfg["refactor_mode"] = body.refactor_mode
-            refactor_mode(cfg["repo"], body.refactor_mode, cfg["refactor_generation"],
-                          refactor_mode(cfg["repo"]).get("survey") if cfg.get("refactor_pinned") else None)
         key = session_key(cid)
         if moved:
             remember(cid, "context", "CLI 변경")

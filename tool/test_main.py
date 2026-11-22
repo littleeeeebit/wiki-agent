@@ -413,6 +413,45 @@ def test_focus_pick_is_the_persons_and_lands_whole(tmp_path):
             assert chat.config("next", "a")["model"] == "haiku"
 
 
+def test_a_survey_pin_lets_go_to_a_checked_pick_and_only_once_written(tmp_path):
+    models = [{"id": "codex:test", "default_effort": "low", "efforts": [{"id": "low"}]}]
+    sonnet = {"repo": "a", "model": "sonnet", "effort": "low"}
+    web = client()
+
+    def pinned(pick):
+        chat._config.clear()
+        chat.chosen("a", "refactor", pick)
+        chat.refactor_mode("a", "preserve", 0, {"model": "sonnet", "effort": "low"})
+    with patch.object(chat_channels, "repo_for", side_effect={"a": tmp_path / "a", "b": tmp_path / "b"}.get):
+        web.post("/api/config/refactor", json={"repo": "a"}).raise_for_status()
+        # The pin overrides an unused Codex pick, so an unreadable Codex list does not hold up the read.
+        pinned({"model": "codex:test", "effort": "low"})
+        with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("down")):
+            assert chat.config("refactor", "a")["model"] == "sonnet"
+        # Released, a saved Codex model the list no longer has falls back, as a cold read does.
+        with patch.object(chat_channels, "codex_models", return_value=[{**models[0], "id": "codex:other"}]):
+            web.post("/api/config/refactor", json={**sonnet, "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] != "codex:test"
+        # A model the person chose with the new mode is theirs: applied and saved.
+        pinned({"model": "opus", "effort": "high"})
+        web.post("/api/config/refactor", json={**sonnet, "model": "haiku", "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == chat.chosen("a")["refactor"]["model"] == "haiku"
+        # A failed mode write publishes nothing, so a retry still sees the pin and saves no survey model.
+        pinned({"model": "opus", "effort": "high"})
+        with patch.object(chat, "refactor_mode", side_effect=[chat.refactor_mode("a"), OSError("disk")]), \
+             pytest.raises(OSError):
+            web.post("/api/config/refactor", json={**sonnet, "refactor_mode": "simplify"})
+        assert chat.config("refactor", "a").get("refactor_pinned")
+        web.post("/api/config/refactor", json={**sonnet, "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == chat.chosen("a")["refactor"]["model"] == "opus"
+        # A switch that carries a new mode releases the destination's pin to the destination's own pick.
+        web.post("/api/config/refactor", json={"repo": "b"}).raise_for_status()
+        chat._config.clear()
+        pinned({"model": "opus", "effort": "high"})
+        web.post("/api/config/refactor", json={**sonnet, "refactor_mode": "rework"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == "opus"
+
+
 def test_project_shared_sessions_and_records_isolated(tmp_path):
     repos = {name: tmp_path / name for name in ("a", "b")}
     for repo in repos.values():
