@@ -656,14 +656,14 @@ def made(repo: Path, survey: str, base: str, s: dict, depends: list[str]) -> dic
 
     block = {"goal": f"{s['title']}. {s['change']}", "out": [*s["keep"], "Changes owned by the other refactoring modes"],
              "done": [f"{v['method']}: {v['criterion']}" for v in s["verify"]],
-             "grounds": {"files": sorted({e["path"] for e in s["evidence"]})},
+             "grounds": {"files": sorted({e["path"] for e in s["evidence"]})}, **handoff.surveyed(s),
              # `preserve` is reviewed against its frozen characterization tests.
              **({"review": {"criteria": ["refactor"], "evidence": ["differential"]}} if s["mode"] == "preserve" else {})}
     # The roles fixed at the survey's start: the card's work cell and review cell run on them, never on
     # whatever the screen has chosen then.
     roles = refactor.load(repo.name, survey)["roles"]
-    return {**specs.fields(repo, block, specs.gate_of(repo)),
-            "cell": {**roles["worker"], "fast": False}, "reviewer": roles["reviewer"],
+    return {**specs.fields(repo, block, specs.gate_of(repo), strict=False),   # paths checked in the survey's checkout
+            "cell": {**roles["worker"], "fast": False}, "reviewer": roles["reviewer"], "author": roles["survey"],
             "refactor": {"mode": s["mode"], "survey": survey, "base": base, "pipeline": s["pipeline"],
                          "files": s["files"], "evidence": sorted({e["path"] for e in s["evidence"]}),
                          "depends": depends, "detail": s, "roles": roles}}
@@ -797,4 +797,4 @@ def rechecked(w, run: dict) -> dict:
 PHASES = {"baseline": baselined, "map": mapped, "pipelines": explained, "integrate": integrated, "recheck": rechecked}
 
 # Last: `refactor` builds its phase table from `PHASES` at import, and `specs` leads back to `refactor`.
-from . import refactor, specs, work  # noqa: E402
+from . import handoff, refactor, specs, work  # noqa: E402

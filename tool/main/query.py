@@ -860,7 +860,8 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                     found = asked_first(cid, specs.blocks(out["rest"])[1], cfg["model"] or "")
                     cited = {c["evidence_id"]: c for c in verification["citations"]}
                     accepted = {e: cited[c] for e, c in out["evidence_ids"].items() if c in cited}
-                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", ""),
+                              "author": {"model": cfg["model"], "effort": cfg["effort"]}}   # who answers escalations
                     if cid == "refactor":
                         source["refactor_mode"] = cfg.get("refactor_mode", "preserve")
                         source["refactor_generation"] = cfg.get("refactor_generation", 0)
@@ -900,7 +901,8 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                     # translates JSON; they go to the screen apart.
                     reply[0], found = specs.blocks(reply[0])
                     found = asked_first(cid, found, cfg["model"] or "")
-                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", ""),
+                              "author": {"model": cfg["model"], "effort": cfg["effort"]}}   # who answers escalations
                     if cid == "refactor":
                         source["refactor_mode"] = cfg.get("refactor_mode", "preserve")
                         source["refactor_generation"] = cfg.get("refactor_generation", 0)

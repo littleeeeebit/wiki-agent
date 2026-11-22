@@ -7,13 +7,14 @@ stand-ins; Git runs in a temporary worktree.
 import json
 import os
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
-from main import oneshot, oneshot_profile, oneshot_sheet as sheet, oneshot_spec, specs
+from main import handoff, oneshot, oneshot_profile, oneshot_sheet as sheet, oneshot_spec, specs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 
 PROFILE = {"auth": "none", "visibility": "private", "docs_language": "ko"}
@@ -484,6 +485,11 @@ def test_approving_every_item_writes_and_commits_the_design_and_moves_to_tests(w
     assert (world / "docs/design/backend.md").read_text(encoding="utf-8").startswith("# 백엔드 설계")
     shown = subprocess.run(["git", "show", "--stat", "HEAD"], cwd=world, capture_output=True, text=True).stdout
     assert "docs/design/api.yaml" in shown and "docs/design/backend.md" in shown
+    # The build reads the committed design first, as the task's contract.
+    spec = oneshot_spec.spec_of("budget")
+    assert spec["task"]["kind"] == "feature" and [p["ref"] for p in spec["precedence"]] == \
+        ["docs/design/backend.md", "docs/design/api.yaml"]
+    assert handoff.text(Path(spec["worktree"]), spec).startswith("## Read this first")
 
 
 @pytest.mark.parametrize("edited, reached", [

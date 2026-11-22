@@ -377,7 +377,12 @@ def approved(repo: str) -> None:
     head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
                                      f"(R1 round {o['r1']['round']})")
     if head:
-        saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
+        # What the build reads first (`handoff`): the design just committed governs, and the spec model that
+        # wrote it answers the builder's escalations.
+        saved(repo, task={"kind": "feature", "what": spec["goal"]},
+              precedence=[{"ref": f, "role": "current", "why": "the approved design"} for f in files], escalate=[],
+              author=(o.get("models") or {}).get("spec") or {},
+              oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 
 def within(base: Path, *parts: str) -> Path | None:

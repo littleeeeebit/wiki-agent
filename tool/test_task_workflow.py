@@ -17,7 +17,7 @@ from test_main import client, no_machine_settings, settled  # noqa: F401
 from test_specs import PASS, SWEPT, Remote, Worker, made, repo as repository_fixture, spec_block, started
 from workspace import create, worktrees
 
-repo = repository_fixture
+repo, GOAL = repository_fixture, spec_block()["goal"]   # a server-sent `spec-update` keeps the author's goal
 
 
 def git(repo, *args):
@@ -172,7 +172,7 @@ def test_active_spec_revision_records_old_requirements_and_refreshes_agent(repo)
 def test_agent_spec_update_and_completion_open_or_reuse_pr(repo):
     web, remote = client(), Remote()
     change = {"rev": 1, "reason": "The discovered edge case needs a different check",
-              "goal": "Handle an edge case", "out": [], "done": ["Edge case passes"]}
+              "goal": GOAL, "out": [], "done": ["Edge case passes"]}
     report = [{"item": PASS, "pass": True}, {"item": "Edge case passes", "pass": True}]
     Worker.replies = ["```spec-update\n" + json.dumps(change) + "\n```\n\n" + SWEPT + "```done-report\n"
                       + json.dumps(report) + "\n```"]
@@ -182,8 +182,8 @@ def test_agent_spec_update_and_completion_open_or_reuse_pr(repo):
         saved = until(lambda: (s := specs.load(repo.name, sid)).get("pr") and s)
         assert saved["rev"] == 2 and saved["pr"]["number"] == 7
         assert remote.pushes() == 1 and remote.created()
-        # The revised goal is the worker's plan; the PR says what the worker's summary says.
-        assert "Handle an edge case" not in remote.body and "- 로그인 뒤 원래 열려던 페이지로 돌려보낸다.\n\n" in remote.body
+        # A server-sent turn rewords `done` only (`handoff.narrowed`); the PR says what the worker's summary says.
+        assert "- 로그인 뒤 원래 열려던 페이지로 돌려보낸다.\n\n" in remote.body
         run = work._runs[str(repo)]
         with patch.object(specs, "existing_pr", return_value=(7, "https://github.com/o/proj/pull/7")):
             remote.calls.clear()
@@ -191,7 +191,7 @@ def test_agent_spec_update_and_completion_open_or_reuse_pr(repo):
             assert remote.pushes() == 1 and not remote.created()
             edit = next(call for call in remote.calls if call[:3] == ["gh", "pr", "edit"])
             assert edit[edit.index("--title") + 1] == "로그인 뒤 원래 페이지로 돌아간다"
-            assert "Handle an edge case" not in remote.body and "Edge case passes" in remote.body, "the record stays"
+            assert "Edge case passes" in remote.body, "the record stays"
     work.close_all()
 
 
@@ -238,7 +238,7 @@ def test_spec_update_without_done_report_asks_for_one_then_stops_with_a_fault(re
     # rfg_rag #76: a turn ended with only a `spec-update`; the task sat in `작업 중`
     # with nothing running. The server now asks once, and a second miss is a fault.
     web, remote = client(), Remote()
-    change = {"rev": 1, "reason": "Explicit roles", "goal": "Handle an edge case", "out": [], "done": ["Edge case passes"]}
+    change = {"rev": 1, "reason": "Explicit roles", "goal": GOAL, "out": [], "done": ["Edge case passes"]}
     report = [{"item": PASS, "pass": True}, {"item": "Edge case passes", "pass": True}]
     Worker.replies = ["```spec-update\n" + json.dumps(change) + "\n```", SWEPT + "```done-report\n" + json.dumps(report) + "\n```"]
     with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):

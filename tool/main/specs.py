@@ -39,7 +39,7 @@ from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
-from . import channels, gate_eta, pr_text, prerequisite_review, query, review_contract, runtime, sweep, work
+from . import channels, gate_eta, handoff, pr_text, prerequisite_review, query, review_contract, runtime, sweep, work
 from .pr_text import body_of
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
@@ -65,7 +65,7 @@ STATE = re.compile(r"정리됨|작업 중|PR #\d+|리뷰 대기|리뷰 R\d+|고�
 
 # A named block at the end of an answer: a fenced block whose info string is
 # its name. A block cut off before its closing fence is not one.
-BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report|test-cleanup|pr-summary)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
+BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report|test-cleanup|pr-summary|escalation|guidance|split)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 
 REPORT_AGAIN = ("The specification is now revision {rev}, and your last answer had no `done-report`. "
                 "Do not claim completion while an independent prerequisite review or another dependency is pending. "
@@ -416,7 +416,8 @@ def profiled(repo: Path, block: dict) -> dict:
     return review_contract.profile_fields(repo, block)
 
 
-def fields(repo: Path, block, gate: str, accepted: dict | None = None, retired: frozenset = frozenset()) -> dict:
+def fields(repo: Path, block, gate: str, accepted: dict | None = None, retired: frozenset = frozenset(),
+           strict: bool = True) -> dict:
     """Validate settled fields, raising `ValueError`; always put the gate first, once, dropping `retired` gates.
     `accepted` maps cited draft IDs to stage-7 verified evidence and revisions.
     Grounds contain only accepted claims; goals and decisions remain proposals
@@ -455,6 +456,7 @@ def fields(repo: Path, block, gate: str, accepted: dict | None = None, retired: 
         "grounds": listed,
         "decisions": decided,
         **profiled(repo, block),
+        **(handoff.checked(repo, block, strict) if handoff.given(block) else {}),
     }
 
 
@@ -624,7 +626,9 @@ def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = Non
     if source.get("focus") == "refactor":
         from . import refactor_survey
         return refactor_survey.refined(repo, block, source)
-    made = fields(repo, block, gate, accepted)
+    if not isinstance(block, dict) or not handoff.given(block):
+        raise ValueError("명세에 `task`·`precedence` 가 없다 — 구현 모델이 먼저 읽을 작업과 문서 우선순위를 적어라")
+    made = {**fields(repo, block, gate, accepted), **({"author": source["author"]} if source.get("author") else {})}
     base = slugged(block.get("slug"))
     if not base:
         raise ValueError("`slug` 가 비었거나 쓸 수 있는 글자가 없다")
@@ -945,12 +949,13 @@ def edit(sid: str, body: Edit) -> dict:
 REVISABLE = frozenset({"rev", "reason", "goal", "out", "done", "slug", "review", "prerequisite_review"})
 
 
-def revise(repo: Path, spec: dict, change: dict) -> None:
-    """Persist a full spec revision; approval of earlier requirements expires."""
+def revise(repo: Path, spec: dict, change: dict, author: bool = False) -> None:
+    """Persist a full spec revision; approval of earlier requirements expires. Only the spec's `author`,
+    answering an escalation, moves the handoff fields (`handoff`)."""
     if not isinstance(change, dict) or change.get("rev") != spec["rev"]:
         raise ValueError("명세 판이 바뀌었다. 현재 명세를 읽고 수정해라")
     # A key dropped quietly reads as applied: the agent would report a change that never took effect.
-    if unknown := sorted(set(change) - REVISABLE):
+    if unknown := sorted(set(change) - REVISABLE - (handoff.FIELDS if author else frozenset())):
         raise ValueError(f"명세 변경이 모르는 키를 담았다: {', '.join(unknown)} — {', '.join(sorted(REVISABLE))} 만 받는다"
                          + (". 테스트 계약은 명세 변경으로 고치지 못한다 — 바뀐 정의를 답에 적으면 사람이 "
                             "[테스트 계약 변경 승인] 으로 선언한다" if "tests" in unknown else ""))
@@ -967,10 +972,13 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     # revision put in (`revision_gates`) retire: read off position, its first screen went with them (#378).
     retired = frozenset([*spec.get("revision_gates", []), *([] if spec.get("oneshot") else (
         r["done"][0] for r in [spec, *(spec.get("revisions") or [])] if r.get("done")))])
-    made = fields(repo, {**spec, **{k: change[k] for k in (
-        "goal", "out", "done", "review", "prerequisite_review") if k in change}}, gate, retired=retired)
+    # The handoff fields are checked again only when the author moves them: a document that changed under
+    # a standing range never blocks a reworded done item.
+    moving = handoff.given(change)
+    made = fields(repo, {**{k: v for k, v in spec.items() if moving or k not in handoff.FIELDS}, **{k: change[k] for k in (
+        "goal", "out", "done", "review", "prerequisite_review", *handoff.FIELDS) if k in change}}, gate, retired=retired)
     spec.setdefault("revisions", []).append({"rev": spec["rev"], "ts": time.time(), "reason": reason.strip(),
-                                            **{k: spec[k] for k in ("goal", "out", "done") if k in spec}})
+                                            **{k: spec[k] for k in ("goal", "out", "done", *handoff.FIELDS) if k in spec}})
     for round_ in spec.get("rounds") or []:
         round_["stale"] = True
         round_["stale_reason"] = "Specification revised"
@@ -1157,14 +1165,15 @@ def system(path: Path) -> str:
     spec = owner(path)
     if spec is None:
         return ""
-    return SPEC_PROMPT.rstrip() + "\n\n" + brief(spec) + refactor_run.prompt(spec)
+    # The task, the documents' order and the stop conditions come before every rule (`handoff`).
+    return handoff.text(path, spec) + SPEC_PROMPT.rstrip() + "\n\n" + brief(spec) + refactor_run.prompt(spec)
 
 
 def brief(spec: dict) -> str:
     """The spec's fields as the agents read them: the implementer and the reviewer."""
 
     shown = {**{k: spec.get(k) for k in ("id", "rev", "goal", "out", "done", "grounds", "decisions")},
-             **profile_of(spec), **({"review": spec["review"]} if spec.get("review") else {}),
+             **handoff.brief(spec), **profile_of(spec), **({"review": spec["review"]} if spec.get("review") else {}),
              **({"prerequisite_review": spec["prerequisite_review"]} if spec.get("prerequisite_review") else {})}
     return "```json\n" + json.dumps(shown, ensure_ascii=False, indent=2) + "\n```\n"
 
@@ -1664,12 +1673,16 @@ def _check(path: Path, run, final: str):
         # A plan goes up through `planning` only; a done report here publishes nothing.
         return None
     from . import oneshot_build, refactor_run   # they import this module
+    if handoff.found(blocks(final)[1]):   # a stop condition: the spec's author decides, not the implementer
+        return handoff.escalated(repo, path, run, spec, final)
     if oneshot_build.owns(spec):   # its own checks, and nothing general: no revision, no gate, no pull request
         return oneshot_build.checked(path, run, spec, final)
     changes = [b for b in blocks(final)[1] if b["name"] == "spec-update"]
     if changes:
         if len(changes) != 1 or "error" in changes[0]:
             return failed(run, spec, "명세 변경 블록은 올바른 JSON 객체 하나여야 한다")
+        if (held := handoff.held_back(path, run, spec, changes[0].get("value"))) is not None:
+            return held
         try:
             with _files:
                 spec = load(spec["repo"], spec["id"])
