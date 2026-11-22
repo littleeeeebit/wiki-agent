@@ -27,7 +27,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from common import folded, overlaps
+from common import folded, masked, overlaps
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
 from .oneshot_spec import VIEWS, idle, saved, spec_of, view
@@ -246,11 +246,17 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
     except (OSError, subprocess.SubprocessError) as exc:
         return refused or f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
     found: dict[str, set[str]] = {}
+    envs = dict(secret_needs(spec))
+
+    def named(label: str) -> str:   # the need's id, or its variable, unless masking would rewrite it: then the label
+        nid = getattr(label, "need", None) or label.strip("[]")
+        return next((r for r in (nid, (envs.get(nid) or {}).get("env")) if r and masked(r, hide) == r), label)
+
     for where, text in places.items():
         flat = folded(text)
         for value, label in hide.items():
             if value in text or folded(value) in flat:
-                found.setdefault(where, set()).add(getattr(label, "need", None) or label.strip("[]"))   # the need's id
+                found.setdefault(where, set()).add(named(label))
     if not found:
         return refused
     if "커밋" in found and base:   # the commits that hold it stay refused until the history no longer has them

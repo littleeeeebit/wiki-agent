@@ -193,7 +193,8 @@ def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     hide = needs.hidden(needs.spec_of("budget"), {ENV: "n1"})
     assert hide == {"n1": "■■"} and masked(masked("an1 n1", hide), hide) == masked("an1 n1", hide) == "a■■ ■■"
     assert hide["n1"].need == "N1"   # a refusal still names the need, whatever its label spells
-    assert "비밀 값 N1 이(가) 답 에" in needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 n1 이다")
+    why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 n1 이다")   # `N1` would show the value: its variable
+    assert f"비밀 값 {ENV} 이(가) 답 에" in why and masked(why, hide) == why
 
 
 def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
@@ -617,6 +618,8 @@ def test_only_a_tool_field_keeps_its_tag_and_label_shaped_text_is_still_masked()
     row = veil.row({"steps": [{"kind": "approval", "tool": "AskUserQuestion", "input": {"tool": "AskUserQuestion"}}]})
     assert row["steps"] == [{"kind": "approval", "tool": "AskUserQuestion", "input": {"tool": "[N1]"}}]
     assert veil.meta({"input": {"AskUserQuestion": {"N2x": 1}}}) == {"input": {"[N1]": {"[N2]x": 1}}}   # names too
+    assert Veil({"options": "[N3]", "a": "[N4]", "b": "[N4]"}).meta({"input": {"options": 1, "a": 2, "b": 3}}) == {
+        "input": {"options": 1, "[N4]": 2, "[N4]#": 3}}   # a question's fields stay; two names never merge
     assert masked("see [N2]", veil.hide) == "see [[N2]]"   # what the text spells never stands for the masker's own
 
 

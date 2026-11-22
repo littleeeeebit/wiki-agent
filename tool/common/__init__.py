@@ -151,6 +151,9 @@ class Veil:
     # The tags the screen and the record dispatch on, kept only as the `tool` string at the top of an event's meta or
     # of a saved step: constants of this code. A provider's own tool name, which is none of them, and any field of a
     # tool's arguments, whatever its name, are masked like any text.
+    # The fields of a question's input the screen reads by name: a protocol's own, never the provider's data.
+    FIELDS = frozenset({"questions", "question", "header", "options", "label", "description", "preview", "multiSelect",
+                        "id"})
     TAGS = frozenset({"AskUserQuestion", "requestUserInput", "commandExecution", "command_execution", "tool_result"})
 
     def __init__(self, hide: dict[str, str] | None):
@@ -163,8 +166,14 @@ class Veil:
             return value
         if isinstance(value, str):
             return masked(value, self.hide)
-        if isinstance(value, dict):
-            return {self.deep(k) if isinstance(k, str) else k: self.deep(v) for k, v in value.items()}   # a name too
+        if isinstance(value, dict):   # a name is masked too, but a question's own fields, and no two entries merge
+            out = {}
+            for k, v in value.items():
+                shown = k if not isinstance(k, str) or k in self.FIELDS else self.deep(k)
+                while shown in out:
+                    shown += "#"
+                out[shown] = self.deep(v)
+            return out
         if isinstance(value, (list, tuple)):
             return [self.deep(v) for v in value]
         return value
