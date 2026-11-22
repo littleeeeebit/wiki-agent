@@ -79,6 +79,33 @@ export type PcPlan = {
 export type PcApproval = PcPlan & { surface: boolean; ts: number }
 /** The owner's desktop round before R3 (`oneshot_pc`): `waiting` for the owner's approval, then `approved`. */
 export type PcRound = { status: string; detail?: string; approval?: PcApproval }
+/** One step the owner takes, in one window (`oneshot_measure.step_problem`); the build agent writes them. */
+export type Step = { window: string; do: string; see: string; url?: string; copy?: string }
+export type MeasureInput = { id: string; what: string; kind: 'secret' | 'text'; env: string; guide: Step[]; given: boolean }
+export type Metric = {
+  id: string; what: string; unit: string; requirements: string[]; calls: string[]
+  pass: { op: string; value: number | boolean }
+}
+/** One real measurement (`oneshot_measure.measure`): `owner` waits for the owner's verdict, recorded in `owner`. */
+export type MeasureRun = {
+  n: number; head: string; ts: number; status: 'owner' | 'failed' | 'input'; code?: number | null
+  metrics?: (Metric & { value: number | boolean | null; ok: boolean })[]; notes?: string; error?: string
+  input_error?: { input: string; why: string }; clips?: string[]; tail?: string
+  owner?: { approve: boolean; note: string; ts: number }
+}
+/** The measurement stage (`oneshot_measure.shown`): the plan the build agent committed, or why it does not hold. */
+export type MeasureView = {
+  plan: { serve: { command: string; health: string }; measure: { command: string; minutes: number }; inputs: MeasureInput[]
+          during: Step[]; metrics: Metric[]; clips: boolean } | null
+  error: string; runs: MeasureRun[]; pr: { number: number; url: string } | null; head: string
+}
+/** An area the builder and the review could not both meet (`oneshot_review.conflicted`). */
+export type Conflict = {
+  key: string; area: string; why: 'replaced' | 'answered'
+  findings: { location: string; severity: string; reason: string; evidence?: string; breaks?: string[] }[]
+  answers: { round: number; location: string; evidence: string; test: string; breaks: string[] }[]
+}
+export type Keep = 'review' | 'build' | 'owner'
 /** The turn running now (`oneshot.turned`, `oneshot_build.send`): a work turn carries `turn`. */
 export type Inflight = { role: string; codex: boolean; sent: number; seen?: number; turn?: string }
 export type SpecView = SpecSummary & {
@@ -99,7 +126,9 @@ export type SpecView = SpecSummary & {
     r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }; phone?: PhoneRound; pc?: PcRound
     owed?: { id: string; kind: string; source?: string; requirement: string; check: string }[]
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
+    conflicts?: Conflict[] | null; rulings?: Record<string, { area: string; keep: Keep; note: string; round: number }>
   }
+  measure?: MeasureView
   requirements?: { id: string; text: string; status: string; kinds?: string[] }[]
   sheet?: string; items?: string[]; brief?: Brief
   /** The design's needs, and every `env` Credential Manager holds a secret of this repository under. */
@@ -115,6 +144,13 @@ export type SpecView = SpecSummary & {
   /** At `pc`: what the owner approves, the approval while it stands, and the checks that stay pending. */
   pc_plan?: PcPlan; pc_approved?: PcApproval | null; pc_unrun?: string[]
 }
+
+/** Whether the stage's own screen shows (`OneshotMeasure` `Owner`), its stop included: a stop at the measurement (a
+ *  wrong input, the owner's stop, a restart) shows above its steps, and [실측 시작] starts it again with no [재개]
+ *  first. Any other stop shows as every stage's does. */
+export const owns = (v: SpecView) => v.stage === 'measure' && !!v.measure
+  && (!v.stopped || ['measure', 'measure-input', 'restart'].includes(v.stopped.reason))
+  || v.stage === 'conflict' && !v.working && !v.stopped
 
 export const base = (repo: string) => `/api/oneshot/spec/${repo}`
 const answer = (r: Response) => json<SpecView>(r, '원샷 명세')
@@ -142,13 +178,24 @@ export const api = {
   // The owner's one-time approval of the round exactly as `plan` showed it, whole (`oneshot_pc.approve`).
   approvePc: (repo: string, plan: PcPlan, surface: boolean) =>
     post(`${base(repo)}/pc/approve`, { plan, surface }).then(answer),
+  // The real measurement (`oneshot_measure`): an input the owner got by following its steps, then the run.
+  measureGive: (repo: string, id: string, value: string) => post(`${base(repo)}/measure/inputs/${id}`, { value }).then(answer),
+  measureTakeBack: (repo: string, id: string) => post(`${base(repo)}/measure/inputs/${id}`, undefined, 'DELETE').then(answer),
+  measureStart: (repo: string, head: string) => post(`${base(repo)}/measure/start`, { head }).then(answer),
+  measureStop: (repo: string) => post(`${base(repo)}/measure/stop`, {}).then(answer),
+  measureDecide: (repo: string, head: string, approve: boolean, note: string) =>
+    post(`${base(repo)}/measure/decide`, { head, approve, note }).then(answer),
+  clip: (repo: string, n: number, name: string) => `${base(repo)}/measure/${n}/clips/${encodeURIComponent(name)}`,
+  rule: (repo: string, head: string, rulings: Record<string, { keep: Keep; note: string }>) =>
+    post(`${base(repo)}/conflict`, { head, rulings }).then(answer),
 }
 
 // The stages in order. `talk` and `gate` wait for the owner; the rest run on their own.
 export const STAGES: { id: string; label: string; kind: 'talk' | 'gate' | 'auto' }[] = [
   { id: 'spec', label: '요구 대화', kind: 'talk' }, { id: 'design', label: '백엔드 설계', kind: 'auto' },
   { id: 'r1', label: 'R1 백엔드 설계', kind: 'gate' }, { id: 'tests', label: '계약 테스트', kind: 'auto' },
-  { id: 'build', label: '백엔드 빌드', kind: 'auto' }, { id: 'review', label: '백엔드 리뷰', kind: 'auto' },
+  { id: 'build', label: '백엔드 빌드', kind: 'auto' }, { id: 'measure', label: '진짜 환경 실측', kind: 'gate' },
+  { id: 'review', label: '백엔드 리뷰', kind: 'auto' }, { id: 'conflict', label: '주인 결정', kind: 'gate' },
   { id: 'split', label: '기능 나누기', kind: 'auto' }, { id: 'board', label: '기능 보드', kind: 'talk' },
   { id: 'frontend', label: '화면 설계', kind: 'auto' }, { id: 'r2', label: 'R2 화면 설계', kind: 'gate' },
   { id: 'build-front', label: '프런트엔드 빌드', kind: 'auto' }, { id: 'critique', label: '화면 비평', kind: 'auto' },
@@ -174,6 +221,7 @@ export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',
   kind: '이 종류는 여기까지', rekind: '고른 종류로는 만들 수 없는 요구', toolchain: '쓰기로 한 도구가 이 PC 에 없다',
+  measure: '실측이 멈췄다', 'measure-input': '실측에 넣은 값이 틀렸다',
 }
 /** The kinds the owner picks on the start screen (`tool/main/oneshot.py` `Start.kinds`); `soon` ones are shown off,
  *  and a `host` one only once the server says this host builds it (`oneshot_profile.HOST_ONLY`). */

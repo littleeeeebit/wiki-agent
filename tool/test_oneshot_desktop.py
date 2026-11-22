@@ -167,13 +167,13 @@ def test_an_approved_pc_app_core_is_written_and_goes_on_to_s4(desktop, kinds):
 
 
 @pytest.mark.parametrize("kinds", [["desktop"], ["android", "desktop"]])
-def test_a_built_pc_app_core_is_reviewed(desktop, kinds):
+def test_a_built_pc_app_core_goes_to_pull_request_1_and_the_real_measurement(desktop, kinds):
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": kinds[0], "kinds": kinds},
-                                          "stage": "review", "working": "review", "built_head": "abc"})
+                                          "stage": "measure", "working": "publish", "built_head": "abc"})
     started = []
     with patch.object(oneshot, "start_worker", lambda store, work, *a, **k: started.append(work)):
         oneshot_build.reviewed("budget")   # what follows the build's pass
-    assert started == ["review"] and not o().get("stopped")
+    assert started == ["publish"] and not o().get("stopped")
 
 
 # -- 9e2c: the backend review's `desktop` deferral, and the split ------------------------------

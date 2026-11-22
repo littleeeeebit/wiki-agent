@@ -793,7 +793,7 @@ def resume(repo: str) -> dict:
                 oneshot_review.resume(repo)
                 return view(spec_of(repo))
             # The cap stopped it on a refused HEAD: the findings go to the build, the refusals counted afresh.
-            o = saved(repo, oneshot={"stage": "build", "refused": 0})["oneshot"]
+            o = saved(repo, oneshot={"stage": "build", "refused": 0, "fix": "review"})["oneshot"]
         saved(repo, oneshot={"working": o["stage"], "stopped": None})   # a second resume meanwhile is refused
     from . import oneshot_build   # it imports this module
     oneshot_build.resume(repo)   # outside the lock, as after the approval

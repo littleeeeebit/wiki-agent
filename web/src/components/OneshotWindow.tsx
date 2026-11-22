@@ -20,7 +20,7 @@ const ALL = [
 ] as const satisfies readonly { id: string; label: string; kind: 'talk' | 'gate' | 'auto' }[]
 const PHASES: { name: string; ids: string[] }[] = [
   { name: '시작', ids: ['intake', 'environment', 'bootstrap'] }, { name: '요구', ids: ['spec'] },
-  { name: '백엔드', ids: ['design', 'r1', 'tests', 'build', 'review'] },
+  { name: '백엔드', ids: ['design', 'r1', 'tests', 'build', 'measure', 'review', 'conflict'] },
   { name: '화면', ids: ['split', 'board', 'frontend', 'r2', 'build-front', 'critique', 'phone', 'pc', 'r3'] },
   { name: '마무리', ids: ['pr', 'done'] },
 ]
@@ -33,7 +33,9 @@ const HINT: Record<string, string> = {
   r1: '설계를 항목마다 승인하거나 고친다.',
   tests: '설계로 계약 테스트를 쓴다. 혼자 돈다.',
   build: '계약 테스트를 통과하는 코드를 만든다. 리뷰가 거절하면 그 지적을 고친다. 혼자 돈다.',
-  review: '독립 리뷰가 그 코드를 본다. 거절하면 빌드가 고치고 다시 본다. 리뷰 루프의 라운드 상한에 닿으면 멈춘다.',
+  measure: 'PR #1 초안이 올라간다. 화면의 안내를 따라 진짜 계정과 주소를 넣고 [실측 시작]을 누른 뒤, 결과와 클립을 듣고 승인하거나 거절한다.',
+  review: '독립 리뷰가 그 코드와 승인한 실측을 본다. 거절하면 빌드가 고치고 다시 실측한다. 리뷰 루프의 라운드 상한에 닿으면 멈춘다.',
+  conflict: '빌더와 리뷰가 같은 곳에서 계속 맞설 때만 온다. 양쪽 근거를 보고 누구 쪽인지, 아니면 어떻게 할지 정한다.',
   split: '기능을 화면에 놓을 단위로 나눈다. 혼자 돈다.',
   board: '기능을 얼마나 자주 쓰는지 칸으로 옮기고, 첫 화면에서 하는 일을 한 줄로 적는다.',
   frontend: '기능 보드로 화면을 설계한다. 혼자 돈다.',

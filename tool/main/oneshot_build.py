@@ -29,7 +29,7 @@ from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_needs, oneshot_spec, refactor_run, runtime, specs, work
 from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled
-from .query import _lock as work_lock, hold
+from .query import ROOT, _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
 # A stage whose turn may write the worktree's adapter, only while it runs, by whether its spec's turn may.
@@ -306,13 +306,17 @@ def tests_text(spec: dict) -> str:
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 
+# Every build turn ends on the real measurement it must be ready for (`oneshot_measure`).
+MEASURE_CONTRACT = (ROOT / "tool/prompts/oneshot-measure-contract.md").read_text(encoding="utf-8")
+
+
 def build_text(spec: dict) -> str:
     o = spec["oneshot"]
     kind = shape(o)
     text = oneshot.prompt("build", kind).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o)) \
         .replace("{needs}", oneshot_needs.told(spec))
-    return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
+    return (text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text) + "\n" + MEASURE_CONTRACT
 
 
 def begin(repo: str) -> None:
@@ -723,21 +727,25 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     every node id pinned at the tests commit passing: then the run moves to the backend review."""
 
     o = spec["oneshot"]
-    if why := reported(spec, final) or pinned(path, o):
+    from . import oneshot_measure   # it imports this module
+    if why := oneshot_measure.unchanged(path, o) or reported(spec, final) or pinned(path, o):
         return why
     try:
+        answers = oneshot_measure.answered(path, spec, final)
         gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
+        oneshot_measure.planned(path, spec)   # a turn without a measurement plan never reaches the gate
     except ValueError as e:
         return str(e)
     verdict = judged(path, run, spec, [gate], toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    if why := held(path, run, spec, verdict):
+    if why := held(path, run, spec, verdict) or oneshot_measure.serve_check(path, run, spec):
         return why
-    # `working` names the review before its worker starts: a server that dies in between leaves it for `recover`.
-    oneshot_spec.saved(spec["repo"], oneshot={"stage": "review", "built_head": verdict["head"], "attempts": 0,
-                                              "working": "review"})
-    specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}")
+    # `working` names PR #1's push before its worker starts: a server that dies in between leaves it for `recover`.
+    oneshot_spec.saved(spec["repo"], oneshot={"stage": "measure", "built_head": verdict["head"], "attempts": 0,
+                                              "working": "publish", "fix": None,
+                                              "answers": [*(o.get("answers") or []), *answers]})
+    specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}" + (f" · 답한 발견 {len(answers)}개" if answers else ""))
     return ""
 
 
@@ -782,7 +790,8 @@ def review_module():
 
 
 def reviewed(repo: str) -> None:
-    review_module().begin(repo)
+    from . import oneshot_measure   # PR #1, the real measurement, then the review; it imports this module
+    oneshot_measure.begin(repo)
 
 
 # A stage's turn: `(check, stop reason after the last refusal, the turn's text, what follows a pass)`.

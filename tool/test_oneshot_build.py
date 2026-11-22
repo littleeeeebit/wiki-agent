@@ -63,10 +63,48 @@ def git(tree, *args):
     return subprocess.run(["git", *args], cwd=tree, check=True, capture_output=True, text=True).stdout.strip()
 
 
+SERVE = '''import http.server, sys
+
+
+class Health(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200 if self.path == "/health" else 404)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), Health).serve_forever()
+'''
+
+
+def free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def measure_plan(port: int) -> dict:
+    """The product's `.wiki/measure.json`: its own small server, and a script that reports one metric."""
+
+    step = {"window": "브라우저", "do": "「키 만들기」를 누른다", "see": "키가 보인다"}
+    return {"serve": {"command": f'"{sys.executable}" serve.py {port}', "health": f"http://127.0.0.1:{port}/health",
+                      "seconds": 20},
+            "measure": {"command": f'"{sys.executable}" measure.py {{out}}', "minutes": 1},
+            "inputs": [{"id": "M1", "what": "합계를 받을 주소", "kind": "text", "env": "BUDGET_URL",
+                        "guide": [step, step, {**step, "copy": "주소"}]}],
+            "metrics": [{"id": "total_ok", "what": "합계가 맞다", "requirements": ["R1"], "pass": {"op": "==", "value": True}}]}
+
+
 @pytest.fixture
 def built_world(world):  # noqa: F811 — the imported fixture, requested by name
     (world / ".gitignore").write_text("__pycache__/\nartifacts/\n", encoding="utf-8")
-    git(world, "add", ".gitignore")
+    write(world, "serve.py", SERVE)
+    write(world, ".wiki/measure.json", json.dumps(measure_plan(free_port())))
+    git(world, "add", ".gitignore", "serve.py", ".wiki/measure.json")
     git(world, "commit", "-m", "design")
     oneshot_spec.saved("budget", requirements=REQS, oneshot={
         "glossary": GLOSSARY, "stage": "tests", "design": sheet.parsed(DESIGN), "design_head": git(world, "rev-parse", "HEAD"),
@@ -318,7 +356,7 @@ def test_each_case_is_pinned_by_its_class_through_inheritance_and_any_parameter_
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
-    assert check(tree, "만들었다.\n" + report()) is not None and o()["stage"] == "review"
+    assert check(tree, "만들었다.\n" + report()) is not None and o()["stage"] == "measure"
 
 
 def test_a_restart_between_a_refusal_and_its_resend_leaves_the_stage_resumable(built_world):
@@ -340,34 +378,74 @@ def test_the_third_refusal_stops_the_stage(built_world):
 
 # -- The build ----------------------------------------------------------------------
 
-def test_a_build_with_a_full_report_a_green_gate_and_every_planned_test_passing_moves_to_review(built_world):
+def test_a_build_with_a_full_report_a_green_gate_and_every_planned_test_passing_moves_to_the_measurement(built_world):
     tree, sent = built_world
     to_build(tree, sent)
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
     then = check(tree, "만들었다.\n" + report())
-    assert o()["stage"] == "review" and o()["built_head"] == git(tree, "rev-parse", "HEAD")
+    assert o()["stage"] == "measure" and o()["built_head"] == git(tree, "rev-parse", "HEAD")
+    assert o()["working"] == "publish"   # pull request #1 goes up first
     begun = []
-    with patch("main.oneshot_review.begin", begun.append):
+    with patch("main.oneshot_measure.begin", begun.append):
         then()
-    assert begun == ["budget"]   # the backend review follows
+    assert begun == ["budget"]   # the real measurement follows, then the review
 
 
-def test_a_server_that_dies_between_the_passed_build_and_its_review_resumes_the_review(built_world):
+def test_a_server_that_dies_before_pull_request_1_waits_at_the_measurement(built_world):
     tree, sent = built_world
     to_build(tree, sent)
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
-    check(tree, "만들었다.\n" + report())   # its review never started: the server went down
-    assert o()["working"] == "review"
+    check(tree, "만들었다.\n" + report())   # its push never started: the server went down
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "restart"
-    begun = []
-    with patch("main.oneshot_review.begin", begun.append):
-        oneshot_spec.resume("budget")
-    assert begun == ["budget"]
+    oneshot_spec.resume("budget")   # the owner's start button pushes it again before measuring
+    assert o()["stage"] == "measure" and not o()["stopped"] and not o()["working"]
+
+
+def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_committed(built_world):
+    tree, sent = built_world
+    to_build(tree, sent)
+    write(tree, "app.py", APP)
+    git(tree, "add", "app.py")
+    git(tree, "commit", "-m", "build")
+    refused = git(tree, "rev-parse", "HEAD")
+    finding = {"location": "app.py:2", "severity": "P1", "reason": "음수를 받는다", "evidence": "add(-1)",
+               "area": "amount validation", "breaks": ["R1"]}
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "attempts": 0,
+                                          "reviews": [{"verdict": "refuse", "head": refused, "findings": [finding]}]})
+    answer = {"area": "Amount validation", "location": "app.py:2", "evidence": "음수는 환불이다", "breaks": ["R1"],
+              "test": "test_refund.py::test_a_refund_is_negative"}
+    said = "답했다.\n" + report() + fenced("oneshot-answers", [answer])
+    check(tree, said)()
+    assert "커밋이 하나도 늘지 않았다" in sent[-1][2]   # the refused HEAD itself
+    write(tree, "test_refund.py", "def test_a_refund_is_negative():\n    from app import add\n    assert add(-1) == -1\n")
+    git(tree, "add", "test_refund.py")
+    git(tree, "commit", "-m", "pin the refund")
+    check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
+    assert "이번 턴에 커밋한 테스트" in sent[-1][2]
+    check(tree, said)
+    assert o()["stage"] == "measure" and o()["answers"][0]["round"] == 1 and o()["answers"][0]["head"] == refused
+
+
+def test_a_build_without_a_measurement_plan_or_whose_backend_never_answers_is_refused(built_world):
+    tree, sent = built_world
+    to_build(tree, sent)
+    write(tree, "app.py", APP)
+    plan = json.loads((tree / ".wiki/measure.json").read_text(encoding="utf-8"))
+    write(tree, ".wiki/measure.json", json.dumps({**plan, "serve": {**plan["serve"], "command": f'"{sys.executable}" -c "pass"'}}))
+    git(tree, "add", "-A")
+    git(tree, "commit", "-m", "build")
+    check(tree, "만들었다.\n" + report())()
+    assert o()["stage"] == "build" and o()["attempts"] == 1
+    assert sent[-1][2].startswith("The server refused") and "떠 있지 않고 끝났다" in sent[-1][2]
+    (tree / ".wiki/measure.json").unlink()
+    git(tree, "commit", "-am", "no plan")
+    check(tree, "만들었다.\n" + report())()
+    assert o()["attempts"] == 2 and "measure.json` 가 없다" in sent[-1][2]
 
 
 @pytest.mark.parametrize("weaken, said", [
@@ -469,7 +547,7 @@ def test_async_unittest_and_data_reading_contracts_go_from_red_to_green(built_wo
     write(tree, "app.py", APP)
     git(tree, "add", "app.py")
     git(tree, "commit", "-m", "build")
-    assert check(tree, "만들었다.\n" + report()) is not None and o()["stage"] == "review"
+    assert check(tree, "만들었다.\n" + report()) is not None and o()["stage"] == "measure"
 
 
 CLEANUP = '''import pytest

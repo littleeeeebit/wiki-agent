@@ -460,3 +460,66 @@ def test_a_line_count_git_cannot_make_is_left_unknown(reviewed):
              patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
             oneshot_review.review("budget")
         assert "added" not in o()["reviews"][-1] and o()["stage"] == "build"   # read, refused, never stopped
+
+
+ANSWER = {"area": "amount validation", "location": "budget_app.py:2", "evidence": "음수는 환불이다 — R1",
+          "test": "test_budget.py::test_a_refund_is_negative", "breaks": ["R1"]}
+
+
+def test_an_answered_area_is_rebutted_or_left_out_and_two_answered_rounds_go_to_the_owner(reviewed):
+    _, head, sent = reviewed
+    past = [{"verdict": "refuse", "head": f"old{n}", "findings": [P1]} for n in (1, 2)]
+    oneshot_spec.saved("budget", oneshot={"reviews": past, "answers": [
+        {**ANSWER, "round": n, "head": f"old{n}"} for n in (1, 2)]})
+    rebutted = {**P1, "rebuttal": "환불 경로는 R1 의 지출이 아니다 — budget_app.py:2 가 둘을 섞는다"}
+    heard, asking = answers(verdict(head, "refuse", P1), verdict(head, "refuse", rebutted))
+    with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        oneshot_review.review("budget")
+    assert "음수는 환불이다" in heard[0][1] and "rebuttal" in heard[1][1]   # read, and asked again without one
+    assert o()["stage"] == "conflict" and not sent and not o().get("stopped")
+    (c,) = o()["conflicts"]
+    assert c["why"] == "answered" and len(c["answers"]) == 2
+    with pytest.raises(HTTPException, match="직접 정하려면"):
+        oneshot_review.rule("budget", oneshot_review.Rulings(head=head, rulings={c["key"]: {"keep": "owner"}}))
+    begun = []
+    with patch.object(oneshot_review, "begin", begun.append):
+        oneshot_review.rule("budget", oneshot_review.Rulings(head=head, rulings={c["key"]: {"keep": "build"}}))
+    assert begun == ["budget"] and o()["stage"] == "review" and o()["rulings"][c["key"]]["keep"] == "build"
+    heard, asking = answers(verdict(head, "refuse", rebutted), verdict(head, "approve", {**P1, "severity": "P2"}))
+    with asking:
+        oneshot_review.review("budget")
+    assert "빌더 쪽" in heard[0][1] and "P2" in heard[1][1] and o()["stage"] == "split"
+
+
+def test_a_build_resumed_at_the_cap_replaces_a_stuck_mechanism_once_and_remembers_it(reviewed):
+    _, head, _ = reviewed
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "reviews": [
+        {"verdict": "refuse", "head": h, "findings": [P1]} for h in ("old1", "old2", head)]})
+    assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
+    assert o()["replaced"] == ["amount validation"]
+    assert "replace the mechanism" not in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
+
+
+def test_an_owner_ruling_for_the_review_goes_to_the_build_with_their_words(reviewed):
+    _, head, sent = reviewed
+    oneshot_spec.saved("budget", oneshot={"stage": "conflict", "working": None, "reviews": [
+        {"verdict": "refuse", "head": head, "findings": [P1]}], "conflicts": [
+        {"key": "amount validation", "area": "amount validation", "why": "replaced", "findings": [P1], "answers": []}]})
+    oneshot_review.rule("budget", oneshot_review.Rulings(head=head, rulings={
+        "amount validation": {"keep": "owner", "note": "음수는 따로 환불 버튼으로 받는다"}}))
+    assert o()["stage"] == "build" and o()["fix"] == "review"
+    assert "음수는 따로 환불 버튼으로 받는다" in sent[-1][2] and "음수 금액을 받는다" in sent[-1][2]
+
+
+def test_a_finding_for_a_later_kind_build_does_not_block_and_reaches_that_build(reviewed):
+    _, head, sent = reviewed
+    later = {**P1, "area": "overlay", "reason": "자막 창이 없다", "later": {"kind": "desktop", "what": "자막 창을 만든다"}}
+    with pytest.raises(ValueError, match="later"):   # a kind this run never builds
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [P1, {**later, "later": {
+            "kind": "android", "what": "x"}}]}, head, rules={"kinds": {"webapp"}})
+    _, asking = answers(verdict(head, "refuse", P1, {**later, "later": {"kind": "webapp", "what": "자막 창을 만든다"}}))
+    with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        oneshot_review.review("budget")
+    assert "자막 창이 없다" not in sent[-1][2].split("```json")[1].split("```")[0]
+    assert o()["later"][0]["kind"] == "webapp"
+    assert "자막 창을 만든다" in oneshot_review.later_text(o(), ["webapp"]) and not oneshot_review.later_text(o(), ["android"])

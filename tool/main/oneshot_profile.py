@@ -28,8 +28,8 @@ HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # desktop round; it waits there until the round lands (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
 KIND_STOPS: dict[str, str] = {"desktop": "pc"}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
-STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "review", "split", "board", "frontend", "r2", "build-front",
-               "critique", "phone", "pc", "r3", "pr", "done")
+STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "measure", "review", "conflict", "split", "board", "frontend",
+               "r2", "build-front", "critique", "phone", "pc", "r3", "pr", "done")
 # The sizes S7 sets a PC app's main window to: its frame in physical pixels, as the driver reads it back.
 WINDOWS = ("1280x800", "1024x768", "1440x900", "1920x1080")
 # The reference phone S7 shoots (`device` replaces `responsive` for `android`): emulator hardware profiles.

@@ -4,9 +4,10 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn, Zoom } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
+import { Owner } from '@/components/OneshotMeasure'
 import { Needs } from '@/components/OneshotNeeds'
 import { Track } from '@/components/OneshotTrack'
-import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
+import { api, owns, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PcPlan, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName, toolText,
 } from '@/lib/oneshot'
 import { InLink } from '@/lib/picture'
@@ -166,6 +167,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       </>
     )
   }
+  if (owns(view)) return <>{faulted}<Owner repo={repo} view={view} busy={busy} act={act} /></>
   if (view.stopped) {
     return (
       <Track view={view} halt={<>

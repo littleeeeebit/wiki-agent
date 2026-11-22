@@ -191,7 +191,7 @@ def main():
 
         # R1: the stages, per-item decisions, the folded section and its "approve all".
         need.get_by_role("button").filter(has_text=re.compile(r"^demo")).click()
-        strip = page.get_by_role("list", name="원샷 단계 6/18")
+        strip = page.get_by_role("list", name="원샷 단계 6/20")
         expect(strip.locator("[aria-current=step]")).to_contain_text("R1 백엔드 설계")
         # the start's three, the conversation, the backend design
         expect(strip.locator("li li").filter(has_text="— 지남")).to_have_count(5)
@@ -551,7 +551,7 @@ def main():
         new_row.click()
         models = page.locator(".oneshot-shell main > header dd")
         expect(models).to_have_text(["opus · high", "Claude 기본", "codex:gpt-6.1-sol · high", "opus · high (고정)"])
-        expect(page.get_by_role("list", name="원샷 단계 1/18").locator("[aria-current=step]")).to_contain_text("하고 싶은 것")
+        expect(page.get_by_role("list", name="원샷 단계 1/20").locator("[aria-current=step]")).to_contain_text("하고 싶은 것")
         assert page.url.endswith("#oneshot/run%3A0123456789abcdef"), page.url
         assert posted[-1][2]["models"] == {"spec": {"model": "opus", "effort": "high"}, "build": {"model": "", "effort": ""},
                                            "review": {"model": "codex:gpt-6.1-sol", "effort": "high"}}, posted[-1]
@@ -851,7 +851,7 @@ def phone_round():
         return fixture(path, request.method)
 
     with oneshot_window(fake) as page:
-        strip = page.get_by_role("list", name="원샷 단계 16/19")
+        strip = page.get_by_role("list", name="원샷 단계 18/21")
         expect(strip.locator("[aria-current=step]")).to_contain_text("휴대폰 회차")
         expect(page.get_by_role("status").filter(has_text="OLD1")).to_contain_text("com.example.app.oneshot01")
         expect(page.get_by_role("status").filter(has_text="OLD2")).to_contain_text("직접 지우고")
@@ -1002,9 +1002,112 @@ def build_confirmation():
           "exactly that offer, and while a question waits the button gives way to a note to answer first")
 
 
+STEP = {"window": "브라우저 — Google Cloud 콘솔", "url": "https://console.cloud.google.com/auth/overview/personal",
+        "do": "「새 프로젝트」를 누르고 「만들기」를 누른다", "see": "위쪽에 새 프로젝트 이름이 보인다"}
+PLAN = {"serve": {"command": "uv run serve", "health": "http://127.0.0.1:8100/health"},
+        "measure": {"command": "uv run measure {out}", "minutes": 15}, "clips": True,
+        "inputs": [{"id": "M1", "what": "Google 데스크톱 클라이언트 ID", "kind": "secret", "env": "GOOGLE_CLIENT_ID", "given": False,
+                    "guide": [STEP, {**STEP, "do": "「클라이언트 만들기」를 누른다"}, {**STEP, "do": "대화상자를 본다", "copy": "클라이언트 ID"}]},
+                   {"id": "M2", "what": "지금 하는 일본 버튜버 생방송 주소", "kind": "text", "env": "LIVE_URL", "given": True,
+                    "guide": [STEP, STEP, {**STEP, "copy": "주소"}]}],
+        "during": [{"window": "브라우저 — Google 로그인", "do": "계정을 고르고 「허용」을 누른다", "see": "‘인증 완료’ 가 보인다"}],
+        "metrics": [{"id": "live_delay_s", "what": "방송보다 늦은 시간", "unit": "초", "requirements": ["R8"], "calls": ["X2"],
+                     "pass": {"op": "<=", "value": 65}}]}
+
+
+def measurement():
+    """The real measurement: each input's steps window by window with what to copy, a secret's box masked, the start
+    held until every input is given, the running steps with a stop, the result with its clip, and the owner's
+    verdict sent with the HEAD; a refusal needs words. Then the owner's ruling between the builder and the review."""
+    head = "a" * 40
+    view = run("measure-demo", "measure", waits=True)
+    view["measure"] = {"plan": PLAN, "error": "", "runs": [], "pr": {"number": 1, "url": "https://github.com/o/r/pull/1"}, "head": head}
+    views = {"measure-demo": view}
+    posted: list = []
+    fake = FastAPI()
+
+    @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+    async def api(path: str, request: Request):
+        if path == "oneshot-specs":
+            return {"specs": [{k: v.get(k) for k in ("repo", "stage", "working", "stopped", "waits")} for v in views.values()]}
+        if path.startswith("oneshot/spec/measure-demo/measure/1/clips/"):
+            return Response(b"RIFF", media_type="audio/wav")
+        if path.startswith("oneshot/spec/measure-demo"):
+            v = views["measure-demo"]
+            if request.method in ("POST", "DELETE"):
+                act = path.removeprefix("oneshot/spec/measure-demo/")
+                posted.append((act, await request.json() if request.method == "POST" else None))
+                if act == "measure/inputs/M1":
+                    v["measure"]["plan"]["inputs"][0]["given"] = True
+                if act == "measure/start":
+                    v["working"] = "measure"
+                if act == "measure/stop":
+                    v["working"] = None
+                    v["measure"]["runs"] = [{"n": 1, "head": head, "ts": 0, "status": "owner", "clips": ["s1.wav"],
+                                             "notes": "18분 동안 끊김 없이 받았다", "metrics": [
+                                                 {**PLAN["metrics"][0], "value": 41, "ok": True}]}]
+                if act == "measure/decide":
+                    views["measure-demo"] = v = {**v, "stage": "conflict", "measure": None, "oneshot": {**v["oneshot"],
+                        "reviews": [{"verdict": "refuse", "head": head, "findings": []}], "conflicts": [
+                        {"key": "chunking", "area": "chunking", "why": "answered",
+                         "findings": [{"location": "ingest.py:40", "severity": "P1", "reason": "조각이 겹친다"}],
+                         "answers": [{"round": 2, "location": "ingest.py:40", "evidence": "겹침은 R8 지연 때문이다",
+                                      "test": "tests/test_ingest.py::test_overlap", "breaks": ["R8"]}]}]}}
+            return v
+        return {"local": True} if path == "mobile/status" else {
+            "rows": [], "session_id": "", "busy": False, "running": None, "rules": [], "queued": None,
+        } if path == "work/log" else fixture(path, request.method)
+
+    with oneshot_window(fake) as page:
+        page.get_by_role("button").filter(has_text="measure-demo").first.click()
+        expect(page.get_by_role("list", name="원샷 단계 9/20").locator("[aria-current=step]")).to_contain_text("진짜 환경 실측")
+        expect(page.get_by_role("link", name="PR #1")).to_have_attribute("href", "https://github.com/o/r/pull/1")
+        inputs = page.get_by_role("region", name="넣을 값")
+        expect(inputs).to_contain_text("창: 브라우저 — Google Cloud 콘솔")
+        expect(inputs).to_contain_text("그러면: 위쪽에 새 프로젝트 이름이 보인다")
+        expect(inputs).to_contain_text("이 화면의 「클라이언트 ID」를 복사해 아래 칸에 붙여 넣는다.")
+        start = page.get_by_role("button", name="실측 시작")
+        expect(start).to_be_disabled()
+        box = page.get_by_label("M1 Google 데스크톱 클라이언트 ID 값")
+        expect(box).to_have_attribute("type", "password")
+        box.fill("123.apps.googleusercontent.com")
+        with posting(page):
+            page.get_by_role("button", name="M1 Google 데스크톱 클라이언트 ID 넣기").click()
+        assert posted[-1] == ("measure/inputs/M1", {"value": "123.apps.googleusercontent.com"}), posted
+        expect(box).to_have_value("")
+        with posting(page):
+            start.click()
+        assert posted[-1] == ("measure/start", {"head": head}), posted
+        running = page.get_by_role("region", name="실측 중")
+        expect(running).to_contain_text("「허용」")
+        with posting(page):
+            running.get_by_role("button", name="멈춤").click()
+        result = page.get_by_role("region", name="실측 결과")
+        expect(result).to_contain_text("18분 동안 끊김 없이 받았다")
+        expect(result.locator("audio")).to_have_count(1)
+        expect(page.get_by_role("button", name="거절 — 빌드가 고친다")).to_be_disabled()
+        result.get_by_role("textbox").fill("목소리가 자연스럽다")
+        with posting(page):
+            page.get_by_role("button", name="승인 — 리뷰로").click()
+        assert posted[-1] == ("measure/decide", {"head": head, "approve": True, "note": "목소리가 자연스럽다"}), posted
+        send = page.get_by_role("button", name="결정 보내기")
+        expect(page.get_by_text("겹침은 R8 지연 때문이다")).to_be_visible()
+        expect(send).to_be_disabled()
+        page.get_by_role("radio", name=re.compile("직접 정함")).check()
+        expect(send).to_be_disabled()   # the owner's own ruling needs words
+        page.get_by_label("chunking 메모").fill("겹침을 반으로 줄인다")
+        with posting(page):
+            send.click()
+        assert posted[-1] == ("conflict", {"head": head, "rulings": {"chunking": {"keep": "owner", "note": "겹침을 반으로 줄인다"}}}), posted
+    print("PASS: the measurement shows each input's steps window by window and what to copy, masks a secret, holds the "
+          "start until every input is given, keeps the owner's steps in view while it runs, plays the clip, and sends "
+          "the verdict with its HEAD; the owner's ruling shows both sides and needs words for their own")
+
+
 if __name__ == "__main__":
     main()
     tracking()
     phone_round()
     host_kinds()
     build_confirmation()
+    measurement()
