@@ -135,8 +135,8 @@ class Veil:
     deltas, one command's output) masked as a whole. The tail a value could still be starting in is held until the
     next part of that text, or `rest`, so a value split across parts is never shown in pieces."""
 
-    # The server's own handles: an approval is answered by its `id` exactly as the screen got it.
-    IDS = frozenset({"id", "request", "item_id", "session_id", "parent_id"})
+    # The server's own handles at an event's top level: an approval is answered by its `id` as the screen got it.
+    IDS = frozenset({"id", "request", "item_id"})
 
     def __init__(self, hide: dict[str, str] | None):
         self.hide, self.held = hide or {}, {}
@@ -149,24 +149,28 @@ class Veil:
         if isinstance(value, str):
             return masked(value, self.hide)
         if isinstance(value, dict):
-            return {k: v if k in self.IDS else self.deep(v) for k, v in value.items()}
+            return {k: self.deep(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [self.deep(v) for v in value]
         return value
+
+    def meta(self, meta: dict) -> dict:
+        """An event's meta, every string in it masked but the server's own handles at its top."""
+        return {k: v if k in self.IDS and isinstance(v, str) else self.deep(v) for k, v in meta.items()}
 
     def stream(self, key, chunk: str, meta: dict) -> str:
         """What of `key`'s text can be shown now, `chunk` added: all but a tail some value starts with."""
         if not self.hide:
             return chunk
         text = self.held.pop(key, ("", meta))[0] + chunk
-        # Where a value could still start: within its spelled width, or as many characters back as its folded
-        # width takes, since a character can fold to nothing (a dot above after an `i`).
-        folds, start, need = _folds(text), len(text), self.flat
-        while start > 0 and need > 0:
-            start -= 1
-            need -= len(folds[start])
-        start = min(start, max(0, len(text) - self.raw))
-        cut = next((i for i in range(start, len(text)) if self._starts(text[i:])), len(text))
+        # Where a value could still start, read as the complete match reads: at any folded position, even inside
+        # one character's expansion (a ligature), mapped back to the character that holds it; or as spelled.
+        folds = _folds(text)
+        flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
+        cut = next((owner[j] for j in range(max(0, len(flat) - self.flat), len(flat))
+                    if any(n.startswith(flat[j:]) for _, n in self.needles)), len(text))
+        cut = next((i for i in range(max(0, len(text) - self.raw), cut)
+                    if any(v.startswith(text[i:]) for v, _ in self.needles)), cut)
         for start, end, _ in _spans(text, self.hide):
             if start < cut < end:   # spans never overlap: one at most holds the cut
                 cut = start
@@ -174,13 +178,9 @@ class Veil:
             self.held[key] = (text[cut:], meta)
         return masked(text[:cut], self.hide)
 
-    def _starts(self, tail: str) -> bool:
-        flat = folded(tail)
-        return any(v.startswith(tail) or n.startswith(flat) for v, n in self.needles)
-
     def rest(self) -> list[tuple[str, str, dict]]:
         """Every held tail as `(kind, text, meta)`, masked: the stream ended, so no value completes it."""
-        out = [(key[0], masked(text, self.hide), self.deep(meta)) for key, (text, meta) in self.held.items()]
+        out = [(key[0], masked(text, self.hide), self.meta(meta)) for key, (text, meta) in self.held.items()]
         self.held.clear()
         return out
 

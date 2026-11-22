@@ -33,7 +33,7 @@ from pydantic import BaseModel
 
 import verify
 import debt
-from common import errorlog, indexes, process, python_environment, shell, swap, worktree_home
+from common import errorlog, indexes, masked, process, python_environment, shell, swap, worktree_home
 from common.paths import RAW
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
@@ -1651,9 +1651,11 @@ def check(path: Path, run, final: str):
 
     try:
         return _check(path, run, final)
-    except Exception as exc:
-        errorlog.record("task-check", exc, turn=getattr(run, "turn", None), path=str(path))
-        note(run, f"명세 확인이 깨졌다 — {type(exc).__name__}: {exc}")
+    except Exception as exc:   # a oneshot's secrets never reach the log or the turn: every hand-over ends here
+        hide = getattr(getattr(run, "chat", None), "hide", None)
+        errorlog.record("task-check", masked(f"{type(exc).__name__}: {exc}", hide) if hide else exc,
+                        turn=getattr(run, "turn", None), path=str(path))
+        note(run, f"명세 확인이 깨졌다 — {masked(f'{type(exc).__name__}: {exc}', hide)}")
         return None
 
 

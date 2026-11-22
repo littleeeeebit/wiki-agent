@@ -257,11 +257,13 @@ def still_tainted(path: Path, spec: dict) -> str:
     tainted = spec["oneshot"].get("tainted") or []
     left = []
     for c in tainted:
+        # Gone only when Git says so: not an ancestor (1), or no such commit (1 from `--verify --quiet`). Any other
+        # answer, a read that failed included, keeps it.
         done = subprocess.run(["git", "merge-base", "--is-ancestor", c, "HEAD"], cwd=path, capture_output=True,
                               timeout=60)
-        if done.returncode == 0 or done.returncode != 1 and not subprocess.run(
-                ["git", "cat-file", "-e", f"{c}^{{commit}}"], cwd=path, capture_output=True, timeout=60).returncode:
-            left.append(c)   # an ancestor, or a commit Git has but could not place: never taken as gone
+        if done.returncode != 1 and subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{c}^{{commit}}"],
+                                                   cwd=path, capture_output=True, timeout=60).returncode != 1:
+            left.append(c)
     if left:
         return (f"비밀 값이 들어 있던 커밋 {', '.join(c[:12] for c in left)} 이(가) 아직 기록에 있다 — 설계 커밋 뒤의 "
                 "그 커밋들을 다시 써서 기록에서 지운다")
@@ -270,17 +272,18 @@ def still_tainted(path: Path, spec: dict) -> str:
     return ""
 
 
-def rotated(spec: dict | None, env: dict) -> bool:
-    """Whether the secrets a oneshot session carries changed since its conversation last ran: that conversation
-    held the old values, so it starts again rather than resuming. Kept as a slow salted digest, never a value."""
+def rotated(spec: dict | None, env: dict, rows: list[dict]) -> str | None:
+    """Whether the secrets a oneshot session carries differ from those the worktree's conversation last ran with:
+    it held those values, so it must not resume. The answer is written as a `context` row by the caller, which
+    `resumable` never resumes past, so a restart before the next turn still starts afresh. The new digest is
+    returned when it differs, else `None`: a slow salted digest, never a value. Nothing is saved here, so the
+    session lock never waits on the spec's."""
 
     if not (spec or {}).get("oneshot"):
-        return False
+        return None
     data = json.dumps(sorted(env.items())).encode()
     digest = hashlib.pbkdf2_hmac("sha256", data, str(spec["oneshot"].get("run")).encode(), 200_000).hex() if env else ""
-    if digest != (before := spec["oneshot"].get("secret_digest", "")):
-        saved(spec["repo"], oneshot={"secret_digest": digest})
-    return bool(before) and digest != before
+    return None if digest == next((r["secrets"] for r in reversed(rows) if "secrets" in r), "") else digest
 
 
 def told(spec: dict) -> str:

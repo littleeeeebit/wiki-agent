@@ -542,7 +542,9 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
                                bypass=bypass, **({"env": env} if env else {}))
             chat._spec_system, chat._spec_env, chat.hide = prompt, env, hide
             chat.settled = SETTLING.search
-            chat.session_id = None if oneshot_needs.rotated(spec, secrets) else resumable(recall(path), deepseek.provider(model))
+            if (digest := oneshot_needs.rotated(spec, secrets, recall(path, 0))) is not None:   # ends the old one
+                remember(path, "context", "비밀 값이 바뀌었다 — 새 대화로 시작한다", secrets=digest)
+            chat.session_id = resumable(recall(path), deepseek.provider(model))
             _sessions[key] = chat
         else:
             if chat.bypass != bypass:
@@ -832,7 +834,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
             for kind, held, m in veil.rest() if ev.kind in ("done", "error") else ():   # the texts ended: held tails first
                 run.put({"kind": kind, "text": held, "meta": m, "session_id": ev.session_id, "parent_id": ev.parent_id})
             if (said := veil.stream(key, ev.text, ev.meta) if key else masked(ev.text, hide)) or not key or not hide:
-                run.put({"kind": ev.kind, "text": said, "meta": veil.deep(ev.meta),
+                run.put({"kind": ev.kind, "text": said, "meta": veil.meta(ev.meta),
                          "session_id": ev.session_id, "parent_id": ev.parent_id})
         if not failed and not final.strip():
             failed = "완료된 답이 없다"
@@ -859,7 +861,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
             remember(path, "assistant", masked(final, hide), error=masked(failed, hide), steps=made,
                      turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
-                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **veil.deep(meta))
+                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **veil.meta(meta))
             if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
                          handoff=handoff(recall(path), deepseek.of(chat)), provider=deepseek.of(chat))

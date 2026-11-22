@@ -22,6 +22,7 @@ from pathlib import Path
 import yaml
 
 import android_owned
+from common import masked
 from wiki import slots_for
 
 from . import github_release, oneshot_build, oneshot_device, oneshot_spec, pr_text, release, specs
@@ -370,7 +371,8 @@ def handed(path: Path, run, spec: dict, final: str):
     try:
         then = specs.written(specs.channels.repo_for(repo), path, run, spec, final, ask)
     except Exception as exc:   # a push that timed out: stopped with its reason, resumed from the README turn
-        oneshot_spec.store(repo).stop(STAGE, f"PR 을 만들지 못했다 — {type(exc).__name__}: {exc}")
+        oneshot_spec.store(repo).stop(STAGE, masked(f"PR 을 만들지 못했다 — {type(exc).__name__}: {exc}",
+                                                    getattr(run.chat, "hide", None)))
         raise
     fresh = specs.load(repo, spec["id"])
     if fresh.get("pr"):

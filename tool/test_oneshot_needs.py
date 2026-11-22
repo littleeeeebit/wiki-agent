@@ -21,7 +21,7 @@ import pytest
 from fastapi import HTTPException
 
 from agent.chat_session import Event
-from common import Veil, host
+from common import Veil, host, masked
 
 from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
     oneshot_sheet as sheet, oneshot_spec, release, specs, work
@@ -402,27 +402,33 @@ def test_a_build_session_carries_each_given_secret_and_starts_again_when_it_chan
         def close(self):
             self.closed = True
 
-    monkeypatch.setattr(work, "resumable", lambda *_: "the conversation before")
+    turned = lambda sid: work.remember(at_r1, "assistant", "끝냈다", session_id=sid, model="claude-opus-5-5")  # noqa: E731
+    turned("the conversation before")
     with patch.object(work, "ChatSession", Chat), patch.dict(work._sessions, clear=True):
         first = work.session(at_r1, "opus", "low")
         assert made == [{ENV: None}] and first.hide == {}   # not given: the server's own variable is dropped
-        assert first.session_id == "the conversation before"
         value = f"key-{uuid.uuid4().hex}"
         give("N1", value=value)
         second = work.session(at_r1, "opus", "low")
         assert first.closed and made[-1] == {ENV: value} and second.hide == {value: "[N1]"}
         assert second.session_id is None   # a conversation that held other values never resumes
-        assert value not in json.dumps(specs.load("budget", oneshot.BRANCH))   # only a digest is kept
+        work._sessions.clear()   # a restart before the new conversation's first turn: still not resumed
+        assert work.session(at_r1, "opus", "low").session_id is None
+        turned("the new conversation")
+        work._sessions.clear()   # the same values since its turn: it resumes
+        second = work.session(at_r1, "opus", "low")
+        assert second.session_id == "the new conversation"
         assert work.session(at_r1, "opus", "low") is second   # nothing changed: the same session goes on
         assert needs.take_back("budget", "N1", src())
         third = work.session(at_r1, "opus", "low")
         assert third is not second and second.closed and made[-1] == {ENV: None} and third.session_id is None
-        work._sessions.clear()
-        assert work.session(at_r1, "opus", "low").session_id == "the conversation before"   # same values: resumes
+    kept = json.dumps([specs.load("budget", oneshot.BRANCH), work.recall(at_r1, 0)], ensure_ascii=False)
+    assert value not in kept and "비밀 값이 바뀌었다" in kept   # only a digest is kept
     assert ENV not in host.environment({ENV: None})   # `None` drops the variable from the child
 
 
-def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_only_the_need(at_r1, monkeypatch):
+def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_only_the_need(at_r1, monkeypatch,
+                                                                                             tmp_path_factory):
     value = f"Key-{uuid.uuid4().hex}"
     give("N1", value=value)
     spec = lambda: specs.load("budget", oneshot.BRANCH)  # noqa: E731
@@ -448,6 +454,8 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     assert spec()["oneshot"]["tainted"] == sorted([added, git("rev-parse", "HEAD")])
     # Taken back or replaced, the value is no longer in the mask, but its commit stays refused.
     assert added[:12] in needs.leaked(at_r1, spec(), {}, "끝냈다")
+    nowhere = tmp_path_factory.mktemp("no-repository")   # Git cannot read it: the record is kept, never cleared
+    assert "아직 기록에 있다" in needs.still_tainted(nowhere, spec()) and spec()["oneshot"]["tainted"]
     git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])   # the history rewritten
     assert needs.leaked(at_r1, spec(), hide, "끝냈다") == "" and spec()["oneshot"]["tainted"] == []
     assert needs.leaked(at_r1, spec(), {}, value) == ""   # a session that carried no secret is never checked
@@ -515,8 +523,8 @@ def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_
               # A value split across parts of one text, and inside an approval's structured input.
               Event("delta", f"키는 {value[:6]}", {}, "w"), Event("delta", value[6:], {}, "w"),
               Event("tool", f"out {value[:9]}", command, "w"), Event("tool", f"{value[9:]} end", command, "w"),
-              Event("approval", "묻는다", {"id": f"q-{value}", "tool": "AskUserQuestion",
-                                          "input": {"questions": [{"question": f"{value} 를 쓸까?"}]}}, "w"),
+              Event("approval", "묻는다", {"id": f"q-{value}", "tool": "AskUserQuestion",   # nested ids are the agent's
+                                          "input": {"questions": [{"id": value, "question": f"{value} 를 쓸까?"}]}}, "w"),
               Event("delta", f" 이고 {value[:3]}", {}, "w"),   # a tail that could start the value, then the end
               Event("done", f"끝냈다 — {value}", {"error": False}, "w")]
     chat = SimpleNamespace(id="w", parent_id=None, is_codex=False, model="opus", path=tmp_path,
@@ -545,3 +553,27 @@ def test_a_streamed_value_in_a_spelling_that_folds_shorter_is_held_until_it_is_w
         veil = Veil({value: "[N1]"})
         shown = veil.stream("d", f"x {spelled[:at]}", {}) + veil.stream("d", f"{spelled[at:]} y", {})
         assert shown + "".join(t for _, t, _ in veil.rest()) == "x [N1] y", at
+
+
+def test_a_streamed_value_starting_inside_a_ligature_is_held_until_it_is_whole():
+    value = f"fi{uuid.uuid4().hex}"
+    text = f"x \ufb03{value[2:]} y"   # the ligature folds to `ffi`: the value starts inside it
+    whole = masked(text, {value: "[N1]"})
+    for at in range(1, len(text)):
+        veil = Veil({value: "[N1]"})
+        shown = veil.stream("d", text[:at], {}) + veil.stream("d", text[at:], {})
+        assert shown + "".join(t for _, t, _ in veil.rest()) == whole and value[2:] not in whole, at
+
+
+def test_a_broken_check_is_logged_and_noted_masked(monkeypatch):
+    value, logged, notes = f"key-{uuid.uuid4().hex}", [], []
+
+    def broke(*a):
+        raise RuntimeError(f"push failed for {value}")
+
+    monkeypatch.setattr(specs, "_check", broke)
+    monkeypatch.setattr(specs.errorlog, "record", lambda source, error, **k: logged.append(str(error)))
+    run = SimpleNamespace(turn="t", put=notes.append, chat=SimpleNamespace(hide={value: "[N1]"}, id="c", parent_id=None))
+    assert specs.check(Path("."), run, "끝냈다") is None
+    said = json.dumps([logged, notes], ensure_ascii=False)
+    assert value not in said and "push failed for [N1]" in said
