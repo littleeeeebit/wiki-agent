@@ -470,7 +470,7 @@ order:
    repository's look records are read through the looks' own recovery,
    whichever run of the server wrote them, under the lock a stage
    folder's move takes, so no record moves past the read. A held one, or
-   a folder that cannot be listed, keeps every round off the desktop
+   a folder or record that cannot be listed or read, keeps every round off the desktop
    until that recovery settles it, which takes a completed proof, a new
    boot or the end of its logon session. Before each fixture
    starts, no top-level window on the desktop may have the fixture's
@@ -487,8 +487,11 @@ order:
    check after the app's run finds a changed freeze and sends it back to
    the build, and the worktree check finds a moved HEAD, so such a round
    never passes. The frozen copy is read once more as a pass is taken,
-   after the critic's verdicts; a copy changed since sends it back to the
-   build. A second known limit, accepted by the owner: an app that changes
+   after the critic's verdicts, and HEAD after it; a copy changed since,
+   or a moved HEAD, sends it back to the build. Each read of the copy
+   lists it without passing over a folder it cannot list, and compares
+   every file's size, write time and identity as the read starts and
+   ends, so a file changed while the others were read counts as changed. A second known limit, accepted by the owner: an app that changes
    its own frozen files while it runs and puts them back before the check
    after its run is not seen.
 2. The frozen app from a fresh start of the check's scenario, driven without

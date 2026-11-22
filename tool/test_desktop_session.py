@@ -681,6 +681,23 @@ def test_a_linked_look_folder_is_never_recovered(tmp_path):
     assert desktop_session.recover_all(root) == [f"linked: not a plain folder inside {root}; left in place"]
 
 
+def test_a_record_that_cannot_be_read_is_never_taken_for_none(tmp_path, monkeypatch):
+    root = tmp_path / "looks"
+    (root / "held").mkdir(parents=True)
+    (root / "held" / desktop_session.RECORD).write_text("{}", encoding="utf-8")
+    real = os.stat
+
+    def denied(path, *a, **k):   # the record is there; Windows refuses to describe it
+        if Path(path).name == desktop_session.RECORD:
+            raise PermissionError(13, "denied", str(path))
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(desktop_session.os, "stat", denied)
+    with pytest.raises(PermissionError):
+        desktop_session.recover_all(root)
+    assert desktop_session.recover_all(tmp_path / "missing") == []
+
+
 def test_a_folder_that_cannot_be_removed_holds_the_look_and_the_next_one(tmp_path, monkeypatch):
     monkeypatch.setattr(desktop_session, "_removed", lambda folder, entries, seconds=30: [
         f"folder {entry['name']} could not be removed: in use" for entry in entries])

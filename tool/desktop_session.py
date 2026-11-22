@@ -5,6 +5,7 @@ earlier look's record before the next one starts (docs/research/oneshot-desktop-
 import ctypes
 import os
 import shutil
+import stat
 import time
 import uuid
 from contextlib import contextmanager
@@ -596,9 +597,17 @@ def recover(folder: Path) -> list[str]:
 
 
 def recover_all(root: Path) -> list[str]:
-    """Settle every earlier look's record under `root`; why any is still held."""
+    """Settle every earlier look's record under `root`; why any is still held. Only a missing folder or record is
+    passed over: one that cannot be listed or read raises OSError, never taken for none."""
 
-    root = Path(root)
-    if not root.is_dir():
+    def recorded(child: Path) -> bool:
+        try:
+            return stat.S_ISREG(os.stat(child / RECORD).st_mode)
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+
+    try:
+        children = sorted(Path(entry.path) for entry in os.scandir(root))
+    except FileNotFoundError:
         return []
-    return [reason for child in sorted(root.iterdir()) if (child / RECORD).is_file() for reason in recover(child)]
+    return [reason for child in children if recorded(child) for reason in recover(child)]

@@ -549,8 +549,9 @@ def frozen(tree: Path, desktop: dict, into: Path) -> dict:
 def altered(build: dict) -> str:
     """Why the frozen copy is no longer the build its identity names, or empty: the manifest's files and the saved
     launch settings no longer digest to the run's saved identity, or a file the manifest records was changed or
-    removed, or one was added. The program runs inside its copy, so each start is checked after it. A file that
-    cannot be read now raises OSError: it is not shown changed."""
+    removed, or one was added, or any file's size, write time or identity moved while the files were read. The
+    program runs inside its copy, so each start is checked after it. A file that cannot be read now, or a folder
+    that cannot be listed, raises OSError: it is not shown changed."""
 
     app = Path(build["folder"])
     manifest = json.loads((app.parent / "manifest.json").read_text(encoding="utf-8"))
@@ -558,9 +559,20 @@ def altered(build: dict) -> str:
     if not isinstance(files, dict) or hashlib.sha256(json.dumps(
             {"files": files, "launch": build.get("launch")}, sort_keys=True).encode()).hexdigest() != build.get("identity"):
         return "얼린 PC 앱 빌드의 매니페스트가 그 빌드의 식별자와 맞지 않는다 — 다시 빌드한다"
-    there = sorted(p.relative_to(app).as_posix() for p in app.rglob("*") if p.is_file())
+    def unlisted(error: OSError):   # never `rglob`, which passes over a folder it cannot list
+        raise error
+
+    def listed() -> dict[str, tuple]:   # each file's size, write time and identity, as the read starts and ends
+        return {(Path(folder) / name).relative_to(app).as_posix(): (s.st_size, s.st_mtime_ns, s.st_ino)
+                for folder, _, names in os.walk(app, onerror=unlisted) for name in names
+                for s in [os.stat(Path(folder) / name)]}
+
+    before = listed()
+    there = sorted(before)
     changed = sorted(set(there) ^ set(files)) or [
         n for n in there if hashlib.sha256((app / n).read_bytes()).hexdigest() != files[n]]
+    if not changed and (after := listed()) != before:   # a file changed while the others were read
+        changed = sorted(n for n in set(before) | set(after) if before.get(n) != after.get(n))
     if changed:
         return f"PC 앱이 얼린 사본의 `{changed[0]}` 를 바꿨다 — 실행은 사본을 읽기만 하고, 앱의 데이터는 `{DATA}` 에 쓴다"
     return ""

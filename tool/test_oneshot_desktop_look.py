@@ -553,6 +553,37 @@ def test_a_control_scrolled_past_its_window_is_reachable_not_outside_it():
     assert desktop_driver.findings(got) == ["start: ListItem 'row' lies outside its window"]
 
 
+def test_a_folder_in_the_copy_that_cannot_be_listed_is_never_taken_for_an_unchanged_copy(tmp_path, monkeypatch):
+    app, build = copy(tmp_path)
+    (app / "extra").mkdir()
+    (app / "extra" / "added.dll").write_bytes(b"x")
+    walk = pc_look.oneshot_desktop.os.walk
+
+    def denied(top, onerror=None):   # `extra` cannot be listed: what is in it is unknown
+        for folder, dirs, names in walk(top, onerror=onerror):
+            if Path(folder).name == "extra":
+                onerror(PermissionError(13, "denied", folder))
+                continue
+            yield folder, dirs, names
+
+    monkeypatch.setattr(pc_look.oneshot_desktop.os, "walk", denied)
+    with pytest.raises(PermissionError):
+        pc_look.oneshot_desktop.altered(build)
+
+
+def test_a_file_changed_after_its_digest_was_read_is_altered(tmp_path, monkeypatch):
+    app, build = copy(tmp_path)
+    read = Path.read_bytes
+
+    def reading(path):   # the approved bytes are read, then the file changes before the read ends
+        got = read(path)
+        path.write_bytes(b"other")
+        return got
+
+    monkeypatch.setattr(Path, "read_bytes", reading)
+    assert "`app.exe`" in pc_look.oneshot_desktop.altered(build)
+
+
 def test_a_manifest_that_no_longer_digests_to_the_saved_identity_is_altered(tmp_path):
     _, build = copy(tmp_path)
     assert pc_look.oneshot_desktop.altered(build) == ""

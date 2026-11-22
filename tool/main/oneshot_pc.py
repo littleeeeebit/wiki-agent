@@ -451,11 +451,13 @@ def settled(repo: str, result: dict, store=None):
         if _halts.setdefault(repo, threading.Event()).is_set() or runtime.stopping.is_set():
             result = {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"}
         o = oneshot_spec.spec_of(repo)["oneshot"]
-        if result["status"] == "passed":   # the frozen copy read once more as the pass is taken: changed, rebuilt
+        if result["status"] == "passed":   # the frozen copy, then HEAD, read once more as the pass is taken
             try:
                 why = oneshot_desktop.altered(o["desktop_build"])
             except (OSError, ValueError) as exc:
                 why = f"얼린 PC 앱 빌드를 다시 읽지 못했다 — {exc}"
+            if not why and not at_head(repo, o["desktop_build"].get("head")):   # read after the copy: it held
+                why = "작업 트리의 HEAD 가 승인한 빌드에서 옮겨 갔다"
             if not why:
                 return onward(repo, {"pc": {**(o.get("pc") or {}), **result}})
             result = {"status": "rebuild", "detail": f"주인 화면 회차 — {why}"}

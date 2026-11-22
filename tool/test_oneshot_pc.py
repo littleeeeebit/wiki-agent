@@ -454,6 +454,13 @@ def test_a_pass_whose_frozen_copy_changed_since_the_run_goes_back_to_the_build_n
     assert after["stage"] == pc.front_build.STAGE and not pc.passed(after) and after["pc"].get("status") != "passed"
 
 
+def test_a_pass_whose_head_moved_while_its_copy_was_read_goes_back_to_the_build(held, monkeypatch):
+    moved = []
+    monkeypatch.setattr(pc, "at_head", lambda repo, head: not moved)
+    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "passed"}}, during=lambda: moved.append(1))
+    assert after["stage"] == pc.front_build.STAGE and not pc.passed(after)
+
+
 def test_a_failed_check_goes_to_the_build_as_a_finding(held, monkeypatch):
     sent = []
     monkeypatch.setattr(oneshot_build, "send", lambda *a: sent.append(a))
