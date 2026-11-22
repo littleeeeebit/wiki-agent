@@ -145,14 +145,14 @@ def config(cid: str, name: str | None = None) -> dict:
     return _config[key]
 
 
-def picked(name: str, cid: str) -> dict:
-    """The model and effort focus `cid` of project `name` runs on when nothing pins it: the pick saved there,
-    else the machine's or the CLI's default. A saved Codex model the list no longer has is dropped; a list
-    that cannot be read raises 503, so the next read asks again."""
+def picked(name: str, cid: str, pick: dict | None = None) -> dict:
+    """The model and effort focus `cid` of project `name` runs on when nothing pins it: the pick saved there
+    (or `pick`, one already read), else the machine's or the CLI's default. A saved Codex model the list no
+    longer has is dropped; a list that cannot be read raises 503, so the next read asks again."""
 
     channel = channels.get(cid)
     default = channels.LOCAL.get("model", channel.model)
-    pick = chosen(name).get(cid) or {}
+    pick = (chosen(name).get(cid) or {}) if pick is None else pick
     model, effort = pick.get("model", default), pick.get("effort", channel.effort)
     if model.startswith("codex:"):
         try:
@@ -690,12 +690,12 @@ def _configure(cid: str, body: Config) -> dict:
         return (project(), chosen(body.repo).get(cid), cfg.get("model"), cfg.get("effort"),
                 cfg.get("refactor_mode", "preserve"), cfg.get("refactor_generation"), bool(cfg.get("refactor_pinned")))
 
-    # Whatever waits on the Codex CLI — a cold configuration, a requested model, the pick a released pin goes
-    # back to — runs before the lock that also admits work turns. The lock applies it only if nothing it was
+    # Whatever waits on the Codex CLI (a cold configuration, a requested model, a released pin's pick: the one
+    # `seen` holds) runs before the lock that also admits work turns, which applies it only if nothing it was
     # looked up for moved meanwhile; otherwise `configure` looks it up again.
     seen = basis(config(cid, body.repo))   # a first read fills only an empty key, locked or not
     asked_for = requested(body.model, body.effort or "") if body.model is not None and body.repo == seen[0] else None
-    released_to = picked(body.repo, cid) if asked_for is None and cid == "refactor" and seen[6] \
+    released_to = picked(body.repo, cid, seen[1] or {}) if asked_for is None and cid == "refactor" and seen[6] \
         and body.refactor_mode not in (None, seen[4]) else None
 
     with _lock:

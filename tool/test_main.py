@@ -487,16 +487,28 @@ def test_a_survey_pin_lets_go_to_a_checked_pick_and_only_once_written(tmp_path):
         pinned({"model": "opus", "effort": "high"})
         real = chat.picked
 
-        def superseded(name, cid):
+        def superseded(name, cid, pick=None):
             if not superseded.done:
                 superseded.done = True
                 chat.chosen(name, cid, {"model": "haiku", "effort": "low"})
                 return {"model": "opus", "effort": "high"}
-            return real(name, cid)
+            return real(name, cid, pick)
         superseded.done = False
         with patch.object(chat, "picked", side_effect=superseded):
             web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "simplify"}).raise_for_status()
         assert chat.config("refactor", "a")["model"] == "haiku"
+        # A pick a failing request wrote and then took back never reaches the release that saw it meanwhile.
+        pinned({"model": "opus", "effort": "high"})
+
+        def undone(name, cid, pick=None):
+            chat.chosen(name, cid, {"model": "haiku", "effort": "low"})
+            try:
+                return real(name, cid, pick)
+            finally:
+                chat.chosen(name, cid, {"model": "opus", "effort": "high"})
+        with patch.object(chat, "picked", side_effect=undone):
+            web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == "opus"
 
 
 def test_project_shared_sessions_and_records_isolated(tmp_path):
