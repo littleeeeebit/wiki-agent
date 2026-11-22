@@ -164,7 +164,7 @@ class Veil:
         if isinstance(value, str):
             return masked(value, self.hide)
         if isinstance(value, dict):
-            return {k: self.deep(v) for k, v in value.items()}
+            return {self.deep(k) if isinstance(k, str) else k: self.deep(v) for k, v in value.items()}   # a name too
         if isinstance(value, (list, tuple)):
             return [self.deep(v) for v in value]
         return value

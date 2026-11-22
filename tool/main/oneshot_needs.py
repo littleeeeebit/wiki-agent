@@ -168,6 +168,15 @@ def hidden(spec: dict, env: dict | None) -> dict[str, str]:
     return {form: label(nid, every, i) for i, (nid, kept) in enumerate(forms.items()) for form in kept}
 
 
+class Label(str):
+    """A need's mask as shown, carrying the need's id: the label need not spell it (`label`)."""
+
+    def __new__(cls, shown: str, need: str):
+        made = super().__new__(cls, shown)
+        made.need = need
+        return made
+
+
 def label(nid: str, values: list[str], n: int) -> str:
     """`[N1]` for need `N1`, or the first other spelling none of `values` meets (`common.overlaps`), so no value
     shows through a label and masking twice is masking once, for a value given now or kept from before. At last, a
@@ -175,8 +184,9 @@ def label(nid: str, values: list[str], n: int) -> str:
 
     for left, right in ("[]", "⟦⟧", "‹›", "«»"):
         if not any(overlaps(v, [shown := f"{left}{nid}{right}"]) for v in values):
-            return shown
-    return next(c for c in map(chr, itertools.count(0x25A0)) if not any(folded(c) in folded(v) for v in values)) * (n + 2)
+            return Label(shown, nid)
+    run = next(c for c in map(chr, itertools.count(0x25A0)) if not any(folded(c) in folded(v) for v in values))
+    return Label(run * (n + 2), nid)
 
 
 def gate_env(spec: dict, env: dict | None) -> dict | None:
@@ -240,7 +250,7 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         flat = folded(text)
         for value, label in hide.items():
             if value in text or folded(value) in flat:
-                found.setdefault(where, set()).add(label.strip("[]"))
+                found.setdefault(where, set()).add(getattr(label, "need", None) or label.strip("[]"))   # the need's id
     if not found:
         return refused
     if "커밋" in found and base:   # the commits that hold it stay refused until the history no longer has them
