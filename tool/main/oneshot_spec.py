@@ -544,15 +544,15 @@ def standing(repo: str, build: dict) -> bool:
 
 
 def kind_stop(stage: str, o: dict | None = None) -> dict:
-    """The `kind` stop at `stage`, where this version's run ends. Before R3, a PC app's run names the checks the
-    owner's desktop round still owes: they stay pending through the owned rounds."""
+    """The `kind` stop at `stage`, where this version's run ends; at `pc`, the owed checks and the approval."""
 
-    if stage == "r3" and o is not None:
+    if stage == "pc" and o is not None:
         from . import oneshot_desktop
-        owner = [x["id"] for x in oneshot_desktop.owner_owed(o)]
-        return {"reason": "kind", "state": stage, "detail": "PC 앱 화면 비평을 두 번 깨끗하게 마쳤다 — "
-                + (f"주인 화면에서 확인할 {', '.join(owner)} 와 " if owner else "") + "R3 는 다음 버전에서 이어진다"}
-    return {"reason": "kind", "state": stage, "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}
+        owner = ", ".join(x["id"] for x in oneshot_desktop.owner_owed(o))
+        given = "승인했다" if (o.get("pc") or {}).get("approval") else "승인하면 기록한다"
+        return {"reason": "kind", "state": stage, "detail": f"주인 화면에서 확인할 {owner} 의 회차를 {given} — 회차는 다음 버전에서 돈다"}
+    return {"reason": "kind", "state": stage, "detail": {"r3": "화면 비평과 기기 회차를 마쳤다 — R3 는 다음 버전에서 이어진다"}.get(
+        stage, "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다")}
 
 
 def handed(o: dict) -> bool:

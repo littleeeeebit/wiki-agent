@@ -118,7 +118,8 @@ End the turn with exactly one fenced block whose info string is
   final gate builds it, not this turn's `gate_cmd`; this turn only names it,
   and it is never the program `run` starts.
 - `checks` scripts, by its id, each check the backend review left for the
-  look of the PC app, and nothing else; `{}` when there is none:
+  look of the PC app or for the owner's desktop round, and nothing else;
+  `{}` when there is none:
 
 {desktop_owed}
 
@@ -136,7 +137,12 @@ End the turn with exactly one fenced block whose info string is
   the check's `act` with the check's `expect` above, exactly as written;
   the steps before it lead there, and the look fails the check when its
   `expect` already holds before the last step. A value is at most 1000
-  UTF-16 characters.
+  UTF-16 characters. A check marked for the owner's desktop round ends on
+  its `act`, with an `expect` of your own that reads a name, value or
+  toggle as any last step's does; the round runs it on the owner's
+  desktop beside the server's fixture, a window titled `oneshot-fixture`
+  showing a page of English words no one knows beforehand, and reads what
+  its `observe` names.
 
 `run.folder` and `installer` are relative to the repository root;
 `run.program` and `run.cwd` are relative to `run.folder`. Every path uses

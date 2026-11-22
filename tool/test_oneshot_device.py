@@ -456,9 +456,9 @@ def test_a_run_an_earlier_version_stopped_before_r3_waits_for_the_phone(android_
     assert o()["stage"] == "phone" and not o().get("stopped") and o()["phone"]["status"] == "waiting"
 
 
-def test_a_run_an_earlier_version_stopped_after_its_phone_round_passed_opens_r3(android_build):
+def test_a_run_an_earlier_version_stopped_after_its_phone_round_passed_runs_the_phone_again(android_build):
+    # 7f2's pass names no HEAD, APKs or accepted build: it never vouches for the build there now (plan 9e5a).
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "phone": {"status": "passed", "round": 1},
                                           "stopped": {"reason": "kind", "state": "r3", "detail": "7f2"}})
     oneshot_spec.recover()
-    assert o()["stage"] == "r3" and not o().get("stopped") and o()["r3"] == {"round": 1, "decisions": {}, "marks": {}}
-    assert o()["phone"]["status"] == "passed"
+    assert o()["stage"] == "phone" and o()["phone"]["status"] == "waiting" and not o().get("r3")
