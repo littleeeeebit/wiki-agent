@@ -26,12 +26,13 @@ import runpy
 import sys
 from pathlib import Path
 
+# Before anything that touches the disk, this file's own path included: imported, it arms a PreToolUse wrapper's
+# credential-session deny (`hook_deadline.PRETOOL`). Run as a script, this folder is already first on the path.
+# The project lookup and the data paths load inside `main`, after it.
+import hook_deadline
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-
-# Before anything that touches the disk: imported, it arms a PreToolUse wrapper's credential-session deny
-# (`hook_deadline.PRETOOL`). The project lookup and the data paths load inside `main`, after it.
-import hook_deadline  # noqa: E402
 
 # The scripts that read a target repository and need to be told which one.
 PROJECT = {"inject.py", "session_state.py", "sync.py"}

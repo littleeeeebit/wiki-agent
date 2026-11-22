@@ -979,12 +979,17 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
     done = subprocess.run([sys.executable, "-c", probe], cwd=Path(guard.__file__).parent, capture_output=True,
                           text=True, encoding="utf-8", env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
     assert done.stdout.split() == ["True", "True"], done.stderr
-    # Through the dispatcher, its very first import arms it, before the dispatcher loads anything that reads the disk.
-    probe = ("import sys; sys.argv = ['hook.py', 'codex', 'codex_pretool.py']; import hook_deadline as d; "
-             "import hook; print(d._armed, d.best is not None, 'common.paths' in sys.modules)")
+    # Through the dispatcher, its first import arms it: armed when the dispatcher first resolves a path, and before
+    # it loads anything that reads the disk.
+    probe = ("import sys, pathlib; sys.argv = ['hook.py', 'codex', 'codex_pretool.py']; seen = []; "
+             "real = pathlib.Path.resolve\n"
+             "def resolve(self, *a, **k):\n"
+             "    d = sys.modules.get('hook_deadline'); seen.append(bool(d and d._armed and d.best)); "
+             "return real(self, *a, **k)\n"
+             "pathlib.Path.resolve = resolve; import hook; print(seen[0], 'common.paths' in sys.modules)")
     done = subprocess.run([sys.executable, "-c", probe], cwd=Path(guard.__file__).parent, capture_output=True,
                           text=True, encoding="utf-8", env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
-    assert done.stdout.split() == ["True", "True", "False"], done.stderr
+    assert done.stdout.split() == ["True", "False"], done.stderr
     import secrets_held
 
     captured = sys.stdout
