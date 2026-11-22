@@ -26,7 +26,7 @@ GWL_EXSTYLE, GWLP_WNDPROC, WS_EX_NOACTIVATE = -20, -4, 0x08000000
 WM_SETTEXT, WM_CLOSE, WM_WINDOWPOSCHANGING, WM_STYLECHANGING, WM_SYSCOMMAND = 0x000C, 0x0010, 0x0046, 0x007C, 0x0112
 WM_WINDOWPOSCHANGED, SW_SHOWNOACTIVATE, HWND_TOPMOST, WS_EX_TOPMOST = 0x0047, 4, -1, 0x8
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_SHOWWINDOW, SWP_HIDEWINDOW = 0x1, 0x2, 0x4, 0x10, 0x40, 0x80
-SWP_NOSENDCHANGING = 0x400
+SWP_NOSENDCHANGING, SIMPLEREGION = 0x400, 2
 SC_SIZE, SC_MOVE, SC_MINIMIZE, SC_MAXIMIZE, SC_CLOSE = 0xF000, 0xF010, 0xF020, 0xF030, 0xF060
 WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM)
 
@@ -127,15 +127,21 @@ def main(argv: list[str] | None = None) -> None:
     root.update()
     keep = []   # the guard's callback lives as long as the window
 
-    def named() -> None:
-        box, origin, placed = wintypes.RECT(), wintypes.POINT(), wintypes.RECT()   # the client area, all of it
-        # painted, never the frame's borders, which DWM draws partly invisible. A read that fails ends the fixture
-        # before it says it is ready, as a region it cannot make does: the round stops on its own setup.
+    def where() -> tuple:
+        """Its client area (all of it painted, never the frame's borders, which DWM draws partly invisible), that
+        area's origin on screen and its frame. A read that fails, or a fixture not on screen, ends it before it says
+        it is ready, as a region it cannot make does: the round stops on its own setup."""
+
+        box, origin, placed = wintypes.RECT(), wintypes.POINT(), wintypes.RECT()
         if not (user32.GetClientRect(frame, ctypes.byref(box)) and user32.ClientToScreen(frame, ctypes.byref(origin))
                 and user32.GetWindowRect(frame, ctypes.byref(placed))):
             raise SystemExit("the fixture could not read where it is")
         if not user32.IsWindowVisible(frame) or user32.IsIconic(frame):
             raise SystemExit("the fixture is not on screen")
+        return box, origin, placed
+
+    def named() -> None:
+        box, origin, placed = where()
         # The window's region is exactly its client area, in window coordinates: a shape Windows reports as one
         # rectangle with those bounds, which the helper requires at each check.
         left, top = origin.x - placed.left, origin.y - placed.top
@@ -151,6 +157,15 @@ def main(argv: list[str] | None = None) -> None:
             gdi32.DeleteObject(shape)
             raise SystemExit("the fixture could not take its shape")
         keep.append(guarded(user32, frame))   # placed, shaped, styled and titled: from here on it refuses changes
+        # What it says is read again once the guard holds it: a change before then, setting the region included,
+        # ends it before it is ready.
+        def at(box, origin, placed) -> tuple:
+            return box.right, box.bottom, origin.x, origin.y, placed.left, placed.top, placed.right, placed.bottom
+
+        shown = wintypes.RECT()
+        if at(*where()) != at(box, origin, placed) or user32.GetWindowRgnBox(frame, ctypes.byref(shown)) != SIMPLEREGION \
+                or (shown.left, shown.top, shown.right, shown.bottom) != (left, top, left + box.right, top + box.bottom):
+            raise SystemExit("the fixture changed while it took its shape")
         part = args.out.with_suffix(".part")
         part.write_text(json.dumps({"hwnd": frame, "rect": [origin.x, origin.y, box.right, box.bottom]}),
                         encoding="utf-8")

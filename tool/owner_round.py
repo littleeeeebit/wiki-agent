@@ -99,15 +99,17 @@ def _user32():
     u.GetWindowRect.argtypes = [w.HWND, ctypes.POINTER(w.RECT)]
     u.FindWindowExW.argtypes = [w.HWND, w.HWND, w.LPCWSTR, w.LPCWSTR]
     u.FindWindowExW.restype = w.HWND
+    u.GetDesktopWindow.restype = w.HWND
     return u
 
 
 def fixtures() -> list[int]:
-    """Every top-level window on this desktop titled as the fixture, by `FindWindowExW` on that exact title: no
-    other window's title is read."""
+    """Every top-level window on this desktop titled as the fixture, shown or not, by `FindWindowExW` on that exact
+    title among the desktop window's children: never a message-only window, and no other window's title is read."""
 
     u, found = _user32(), []
-    while hwnd := u.FindWindowExW(None, found[-1] if found else None, None, FIXTURE):
+    desktop = u.GetDesktopWindow()
+    while hwnd := u.FindWindowExW(desktop, found[-1] if found else None, None, FIXTURE):
         found.append(int(hwnd))
     return found
 

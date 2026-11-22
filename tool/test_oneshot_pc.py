@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -269,7 +270,7 @@ class Runs:
     """`Launches` on the owner's desktop as a stand-in: each start drives `report`, then calls `then` with it."""
 
     def __init__(self, report: dict, data: Path):
-        self.report, self.data, self.halt, self.drove, self.build = report, str(data), threading.Event(), [], {}
+        self.report, self.data, self.halt, self.drove = report, str(data), threading.Event(), []
 
     def drive(self, sid, state, steps, then):
         self.drove.append((sid, state, steps))
@@ -301,7 +302,6 @@ def desk(monkeypatch, tmp_path):
     monkeypatch.setattr(owner_round, "window_read", lambda *a: reads["window"].append(a) or {"read": True, "file": str(capture)})
     monkeypatch.setattr(owner_round, "surface_read", lambda *a: reads["surface"].append(a) or {"read": True, "file": str(capture)})
     monkeypatch.setattr(owner_round, "ended", lambda session, key, what="": reads["ended"].append(key))
-    monkeypatch.setattr(pc.oneshot_desktop, "altered", lambda build: "")   # the frozen build stands
     (tmp_path / "keep").mkdir()
     (tmp_path / "data").mkdir()
     return reads, tmp_path
@@ -309,7 +309,8 @@ def desk(monkeypatch, tmp_path):
 
 def checked(desk, x: dict, report: dict, exe="helper.exe") -> dict:
     reads, root = desk
-    return pc.one(Session(), Runs(report, root / "data"), 1, x, SCENARIO, exe, "도우미가 없다", root / "keep")
+    return pc.one(Session(), Runs(report, root / "data"), 1, x, SCENARIO, exe, "도우미가 없다", root / "keep",
+                  lambda: None)
 
 
 @pytest.mark.parametrize("value", [None, "", "capture active", "apple river"])
@@ -352,7 +353,8 @@ def test_each_checks_fixture_is_ended_before_the_check_returns_whatever_its_outc
             raise RuntimeError("the app's look could not be cleaned")
 
     with pytest.raises(RuntimeError):
-        pc.one(Session(), Broken(driven(), root / "data"), 2, REPORT, SCENARIO, "helper.exe", "", root / "keep")
+        pc.one(Session(), Broken(driven(), root / "data"), 2, REPORT, SCENARIO, "helper.exe", "", root / "keep",
+               lambda: None)
     assert reads["ended"][-1] == "fixture2"   # so the next check never finds two windows by the fixture's title
 
 
@@ -487,14 +489,14 @@ def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_throug
     def look(folder, key, owned):
         order.append("enter")
         try:
-            yield object()
+            yield SimpleNamespace(record={"jobs": {}})
             if not release.is_set():   # the first round's look stays up until the test lets it end
                 release.wait(10)
         finally:
             order.append("cleaned")
 
     record = empty_rounds(monkeypatch, tmp_path, look, lambda: True)
-    first =threading.Thread(target=pc.observe, args=("a", record, lambda: False))
+    first = threading.Thread(target=pc.observe, args=("a", record, lambda: False))
     first.start()
     while order != ["enter"]:
         threading.Event().wait(0.01)
@@ -513,40 +515,58 @@ def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_throug
     assert order == ["enter", "cleaned", "enter", "cleaned"] and not pc._desk.locked()
 
 
-def test_every_exit_frees_the_desktop_and_a_build_changed_while_waiting_starts_nothing(monkeypatch, tmp_path):
+def test_a_process_an_earlier_round_left_running_keeps_every_round_off_the_desktop_until_it_is_gone(
+        monkeypatch, tmp_path):
     import contextlib
 
     import desktop_session
+    import native_process
 
-    order, unclean, standing = [], [True], [True]
+    order, unclean, standing, alive = [], [True], [True], {7}
+    app = {"pid": 7, "created": 11, "exe": "c:/build/app.exe"}
 
     @contextlib.contextmanager
     def look(folder, key, owned):
         order.append(folder.parent.name)
-        yield object()
+        yield SimpleNamespace(record={"jobs": {"app1": {"members": [dict(app)]}}})
         if unclean[0]:
             raise desktop_session.Refused("pid 7 is still running")
 
     record = empty_rounds(monkeypatch, tmp_path, look, lambda: standing[0])
-    # An unproven cleanup is the round's error; a fixture it left is found by its title before the next check
-    # starts one (`test_a_fixture_already_titled_on_the_desktop_starts_no_other`), so the lock goes.
+    monkeypatch.setattr(pc, "_left", [])
+    monkeypatch.setattr(native_process, "identity", lambda pid: dict(app) if pid in alive else None)
     with pytest.raises(RuntimeError, match="정리하지 못했다 — pid 7 is still running"):
         pc.observe("a", record, lambda: False)
-    assert not pc._desk.locked()
+    assert not pc._desk.locked() and pc._left == [app]
+    # Another repository's round stops at once, its look never opened, while that process runs.
+    with pytest.raises(RuntimeError, match="프로세스가 아직 남아 있다 — pid 7"):
+        pc.observe("b", record, lambda: False)
+    assert order == ["a"] and not pc._desk.locked()
+    alive.clear()   # it exited: the next round runs, whatever the earlier cleanup reported
     unclean[0] = False
-    assert pc.observe("b", record, lambda: False) == {} and not pc._desk.locked()
+    assert pc.observe("b", record, lambda: False) == {} and pc._left == [] and order == ["a", "b"]
+    alive.add(7)   # a cleanup reported proven with its process still running holds the desktop too
+    pc.observe("b", record, lambda: False)
+    assert pc._left == [app]
+    alive.clear()
     standing[0] = False   # changed while the round waited: no look opens, and the desktop is free again
     with pytest.raises(pc.Stale):
         pc.observe("a", record, lambda: False)
-    assert order == ["a", "b"] and not pc._desk.locked()
+    assert order == ["a", "b", "b"] and not pc._desk.locked()
 
 
-def test_a_build_changed_while_the_fixture_came_up_never_starts_the_app(held, desk, monkeypatch):
+def test_a_build_changed_while_the_fixture_came_up_never_starts_the_app(held, desk):
     reads, root = desk
-    monkeypatch.setattr(pc.oneshot_desktop, "altered", lambda build: "PC 앱이 얼린 사본의 `app.exe` 를 바꿨다")
+    calls = []
+
+    def standing():   # stands for the fixture's start, no longer for the app's
+        calls.append(len(calls))
+        if len(calls) > 1:
+            raise pc.Stale("승인한 회차가 지금 빌드와 다르다 — 다시 승인한다")
+
     runs = Runs(driven(), root / "data")
     with pytest.raises(pc.Stale, match="다시 승인한다"):
-        pc.one(Session(), runs, 1, REPORT, SCENARIO, "helper.exe", "", root / "keep")
+        pc.one(Session(), runs, 1, REPORT, SCENARIO, "helper.exe", "", root / "keep", standing)
     assert runs.drove == [] and reads["ended"] == ["fixture1"]   # the fixture still ended, its exit proven
 
 
