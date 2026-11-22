@@ -63,9 +63,12 @@ def layout(cwd: Path) -> tuple | None:
 
 
 def swap(temporary: Path, file: Path) -> None:
-    """`temporary` replaces `file` whole. A Windows reader holding `file`
-    open refuses the swap for a moment, so it is tried again."""
+    """`temporary` replaces `file` whole. Its bytes reach the disk first: a power loss after an unflushed rename
+    left a spec of NUL bytes, and the run vanished from the list. A Windows reader holding `file` open refuses
+    the swap for a moment, so it is tried again."""
 
+    with open(temporary, "rb+") as written:
+        os.fsync(written.fileno())
     for attempt in range(40):
         try:
             Path(temporary).replace(file)

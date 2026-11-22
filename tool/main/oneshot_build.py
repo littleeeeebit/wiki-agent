@@ -618,12 +618,13 @@ def checked(path: Path, run, spec: dict, final: str):
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
     if getattr(run, "person", False) or stage not in STAGES:
         return None
-    if (hand := HANDOVERS.get(stage)) and hand[0](spec):
+    why = oneshot_needs.leaked(path, spec, getattr(run.chat, "hide", None), final)   # before any check reads it
+    if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
     run.checked = True
     check, stop, _, after = STAGES[stage]
     try:
-        why = check(path, run, spec, final)
+        why = why or check(path, run, spec, final)
     except (ValueError, OSError) as exc:
         why = str(exc)
     except Exception as exc:   # an unforeseen failure still stops with a reason, never leaves the stage running

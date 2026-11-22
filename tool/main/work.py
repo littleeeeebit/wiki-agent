@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, deepseek, output_of
 from common.process import background_options
 from common.paths import RAW
-from common import errorlog
+from common import errorlog, masked
 from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
@@ -513,9 +513,12 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
     owns gets the spec as its system prompt, every time a session is made.
     """
 
-    from . import release_repair, specs  # both import this module
+    from . import oneshot_needs, release_repair, specs  # they import this module
 
     spec = specs.owner(path)
+    # A oneshot's session carries the owner's secrets, and starts again when they change (`oneshot_needs.agent`).
+    secrets, hide = oneshot_needs.agent(spec)
+    env = {**release_repair.unshared(spec).get("env", {}), **secrets}
     # A refactoring card's work cell was fixed at its survey's start, a oneshot's at its run's: nothing moves it.
     if any(((spec or {}).get(k) or {}).get(f) for k, f in (("refactor", "roles"), ("oneshot", "models"))):
         model, effort, fast = spec["cell"]["model"], spec["cell"]["effort"], spec["cell"].get("fast", False)
@@ -530,14 +533,14 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
             chat.close()
             remember(path, "context", "CLI 변경")
             chat = None
-        if chat is not None and getattr(chat, "_spec_system", prompt) != prompt:
+        if chat is not None and (getattr(chat, "_spec_system", prompt), getattr(chat, "_spec_env", env)) != (prompt, env):
             chat.close()
             _sessions.pop(key)
             chat = None
         if chat is None:
             chat = ChatSession(path, model=model, effort=effort, write=True, system=prompt,
-                               bypass=bypass, **release_repair.unshared(spec))
-            chat._spec_system = prompt
+                               bypass=bypass, **({"env": env} if env else {}))
+            chat._spec_system, chat._spec_env, chat.hide = prompt, env, hide
             chat.settled = SETTLING.search
             chat.session_id = resumable(recall(path), deepseek.provider(model))
             _sessions[key] = chat
@@ -792,6 +795,8 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
     to the CLI; `text` is the server's line this turn shows and keeps."""
 
     chat, final, failed, meta, then = run.chat, "", "", {}, None
+    hide = getattr(chat, "hide", None) or {}   # a oneshot's secrets: shown and kept as `[N1]`, checked as given
+    veiled = lambda d: {k: masked(v, hide) if isinstance(v, str) else v for k, v in d.items()} if hide and d else d  # noqa: E731
     try:
         events = None
         if replay is not None:
@@ -823,7 +828,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                     failed = final or "완료된 답이 없다"
             elif ev.kind == "error":
                 failed = ev.text = "사람이 멈춤" if run.halt.is_set() else ev.text
-            run.put({"kind": ev.kind, "text": ev.text, "meta": ev.meta,
+            run.put({"kind": ev.kind, "text": masked(ev.text, hide), "meta": veiled(ev.meta),
                      "session_id": ev.session_id, "parent_id": ev.parent_id})
         if not failed and not final.strip():
             failed = "완료된 답이 없다"
@@ -847,9 +852,9 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 # the gate — is shown after it, in the record too.
                 at = next((i for i, e in enumerate(run.events) if e["kind"] == "done"), None)
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
-            remember(path, "assistant", final, error=failed, steps=made,
+            remember(path, "assistant", masked(final, hide), error=masked(failed, hide), steps=made,
                      turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
-                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **meta)
+                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **veiled(meta))
             if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
                          handoff=handoff(recall(path), deepseek.of(chat)), provider=deepseek.of(chat))

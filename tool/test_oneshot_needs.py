@@ -8,17 +8,23 @@ a name no run uses, removed afterwards; the files and programs are real ones.
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 
+from agent.chat_session import Event
+from common import host
+
 from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
-    oneshot_sheet as sheet, oneshot_spec, release, specs
+    oneshot_sheet as sheet, oneshot_spec, release, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, STACK, android  # noqa: F401 — `android` is the fixture
 from test_oneshot_spec import DESIGN as WEB, GLOSSARY as WEB_GLOSSARY, PROFILE, REQS as WEB_REQS, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -374,3 +380,93 @@ def test_a_secret_that_folds_to_nothing_shows_on_no_page():
     assert not secrets_shown(page, {"key-İx": "[N1]"})   # never across two streams
     Frame.evaluate = lambda self, _: {"texts": ["KEY-I\n" + chr(0x307) + "X"], "values": []}
     assert secrets_shown(page, {"key-" + chr(0x130) + "x": "[N1]"})   # a casing broken where its fold depends
+
+
+# -- 11b2a: the build agent's own turns --------------------------------------------------
+
+def test_a_build_session_carries_each_given_secret_and_starts_again_when_it_changes(at_r1, monkeypatch):
+    monkeypatch.setenv(ENV, "the server's own key")
+    monkeypatch.setattr(specs, "owner", lambda path: specs.load("budget", oneshot.BRANCH))   # the fixture's tree
+    made = []
+
+    class Chat:
+        is_codex, fast = False, False
+
+        def __init__(self, path, env=None, bypass=False, **k):
+            made.append(env)
+            self.bypass, self.closed = bypass, False
+
+        def reconfigure(self, model, effort):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    with patch.object(work, "ChatSession", Chat), patch.dict(work._sessions, clear=True):
+        first = work.session(at_r1, "opus", "low")
+        assert made == [{ENV: None}] and first.hide == {}   # not given: the server's own variable is dropped
+        value = f"key-{uuid.uuid4().hex}"
+        give("N1", value=value)
+        second = work.session(at_r1, "opus", "low")
+        assert first.closed and made[-1] == {ENV: value} and second.hide == {value: "[N1]"}
+        assert work.session(at_r1, "opus", "low") is second   # nothing changed: the same session goes on
+        assert needs.take_back("budget", "N1", src())
+        assert work.session(at_r1, "opus", "low") is not second and second.closed and made[-1] == {ENV: None}
+    assert ENV not in host.environment({ENV: None})   # `None` drops the variable from the child
+
+
+def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_only_the_need(at_r1, monkeypatch):
+    value = f"Key-{uuid.uuid4().hex}"
+    give("N1", value=value)
+    spec = lambda: specs.load("budget", oneshot.BRANCH)  # noqa: E731
+    _, hide = needs.agent(spec())
+
+    def git(*args):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=at_r1, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    oneshot_spec.saved("budget", oneshot={"design_head": git("rev-parse", "HEAD")})
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == ""
+    why = needs.leaked(at_r1, spec(), hide, f"키는 {value.lower()} 이다")   # any casing
+    assert "N1" in why and "답" in why and value.lower() not in why.lower()
+    (at_r1 / "config.txt").write_text(f"key = {value.upper()}\n", encoding="utf-8")
+    assert "커밋하지 않은 파일" in needs.leaked(at_r1, spec(), hide, "끝냈다")
+    git("add", "config.txt")
+    git("commit", "-m", "Add the key")
+    git("rm", "-q", "config.txt")
+    git("commit", "-m", "Remove the key")
+    why = needs.leaked(at_r1, spec(), hide, "끝냈다")   # gone from the tree, still in the history the PR pushes
+    assert "커밋" in why and "다시 써서" in why and value.lower() not in why.lower()
+    assert needs.leaked(at_r1, spec(), {}, value) == ""   # a session that carried no secret is never checked
+    head = spec()["oneshot"]["design_head"]
+    oneshot_spec.saved("budget", oneshot={"design_head": "f" * 40})   # a history git cannot read is never clean
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다").startswith("비밀 값이 남았는지 확인하지 못했다 — git log")
+    oneshot_spec.saved("budget", oneshot={"design_head": head})
+    # The stage's own check never reads a refused answer: the turn goes back with the need named.
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "attempts": 0})
+    sent, notes = [], []
+    monkeypatch.setattr(build, "send", lambda repo, stage, text: sent.append(text))
+    monkeypatch.setitem(build.STAGES, "build", (lambda *a: pytest.fail("the check read a leaking answer"),
+                                                *build.STAGES["build"][1:]))
+    run = SimpleNamespace(halt=threading.Event(), put=notes.append, person=False,
+                          chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
+    build.checked(at_r1, run, spec(), "끝냈다")()
+    assert "The server refused this build turn: 비밀 값 N1" in sent[0] and value.lower() not in sent[0].lower()
+
+
+def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_answer_as_given(tmp_path, monkeypatch):
+    value = f"key-{uuid.uuid4().hex}"
+    events = [Event("tool", f"curl -H 'x-key: {value}'", {"tool": "Bash", "diff": f"+KEY={value}"}, "w"),
+              Event("done", f"끝냈다 — {value}", {"error": False}, "w")]
+    chat = SimpleNamespace(id="w", parent_id=None, is_codex=False, model="opus", path=tmp_path,
+                           hide={value: "[N1]"}, say=lambda *_: iter(events))
+    recorded, checked = [], []
+    monkeypatch.setattr(work, "feed", work.Feed())
+    monkeypatch.setattr(work, "remember", lambda *args, **kwargs: recorded.append((args, kwargs)))
+    monkeypatch.setattr(work, "dispatch", lambda *_: None)
+    monkeypatch.setattr(specs, "check", lambda path, run, final: checked.append(final))
+    run = work.Run(chat)
+    work.run_turn(tmp_path, run, "Build it", lambda: None)
+    assert checked == [f"끝냈다 — {value}"]   # the leak check sees the value, to refuse it
+    kept = json.dumps([run.events, recorded], ensure_ascii=False, default=str)
+    assert value not in kept and "x-key: [N1]" in kept and "+KEY=[N1]" in kept and "끝냈다 — [N1]" in kept

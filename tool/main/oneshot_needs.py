@@ -17,11 +17,14 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from common import folded
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
 from .oneshot_spec import VIEWS, idle, saved, spec_of, view
@@ -169,6 +172,55 @@ def gate_env(spec: dict, env: dict | None) -> dict | None:
         return env
     base = {k: v for k, v in (os.environ if env is None else env).items() if k.upper() not in declared}
     return {**base, **secrets(spec)}
+
+
+def agent(spec: dict | None) -> tuple[dict, dict]:
+    """A oneshot build session's environment over the server's, and what it shows instead of each value: every
+    given secret by its `env`, and `None` (dropped) for one the design names but the store does not hold."""
+
+    if not (spec or {}).get("oneshot") or not (needs := secret_needs(spec)):
+        return {}, {}
+    given = secrets(spec)
+    env = {n["env"]: given.get(n["env"]) for _, n in needs}
+    return env, hidden(spec, env)
+
+
+def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
+    """Why a build turn is refused when what it leaves holds a secret its session carried (`hide`, from `agent`):
+    its answer, every commit since the design commit (the history the pull request pushes), or what it has not
+    committed. Matched in any casing; the refusal names the need, never the value."""
+
+    if not hide:
+        return ""
+
+    def git(*args: str) -> str:
+        done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120)
+        if done.returncode:
+            raise OSError(f"git {args[0]}: {(done.stderr or done.stdout).strip()[-200:]}")
+        return done.stdout
+
+    base = spec["oneshot"].get("design_head")
+    try:   # a tree that cannot be read is refused, never taken as clean
+        # ponytail: text diffs and untracked text only; a secret inside a committed binary is not seen
+        untracked = [path / f for f in git("ls-files", "--others", "--exclude-standard", "-z").split("\0") if f]
+        places = {"답": final,
+                  "커밋": (git("log", "-p", "--format=", f"{base}..HEAD") if base else "") + git("diff", "HEAD"),
+                  "커밋하지 않은 파일": "\n".join(f.read_bytes().decode("utf-8", "ignore") for f in untracked
+                                         if f.is_file())}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"비밀 값이 남았는지 확인하지 못했다 — {exc}"
+    found: dict[str, set[str]] = {}
+    for where, text in places.items():
+        flat = folded(text)
+        for value, label in hide.items():
+            if value in text or folded(value) in flat:
+                found.setdefault(where, set()).add(label.strip("[]"))
+    if not found:
+        return ""
+    ids = sorted(set().union(*found.values()))
+    return (f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 적지 "
+            "않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")
 
 
 def told(spec: dict) -> str:

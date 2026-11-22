@@ -326,6 +326,22 @@ def test_the_persons_words_hold_every_turn_of_a_conversation_past_the_replay_lim
     assert original.count("turn ") == (chat.MAX_REPLAY + 10 + 1) // 2
 
 
+def test_a_saved_spec_reaches_the_disk_before_it_replaces_the_old_one(repo):
+    sid = made(repo, spec_block())[0]["id"]
+    spec, order, real_replace = specs.load("proj", sid), [], Path.replace
+
+    def fsync(fd):
+        order.append("fsync")
+
+    def replace(self, target):
+        order.append("replace")
+        return real_replace(self, target)
+
+    with patch("common.os.fsync", fsync), patch.object(Path, "replace", replace):
+        specs.save({**spec, "goal": "디스크에 먼저"})
+    assert order == ["fsync", "replace"] and specs.load("proj", sid)["goal"] == "디스크에 먼저"
+
+
 def test_a_save_from_a_stale_card_is_refused(repo):
     web = client()
     sid = made(repo, spec_block())[0]["id"]
