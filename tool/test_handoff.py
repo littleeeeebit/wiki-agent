@@ -1,6 +1,7 @@
 """The implementer's first read, and the conflicts it hands back to the spec's author (`main.handoff`)."""
 
 import json
+import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -22,8 +23,9 @@ ESCALATION = {"condition": "architecture change", "conflict": "The queue cannot 
 
 
 class Run:
-    def __init__(self):
-        self.events, self.chat, self.turn, self.person = [], SimpleNamespace(id="c", parent_id=None), "t", False
+    def __init__(self, person=False):
+        self.events, self.chat, self.turn, self.person = [], SimpleNamespace(id="c", parent_id=None), "t", person
+        self.halt = threading.Event()
 
     def put(self, event):
         self.events.append(event)
@@ -95,7 +97,7 @@ def test_a_server_turn_moving_the_goal_is_told_to_escalate_then_stopped(task):
 def test_guidance_keeps_the_spec_and_resumes_the_implementer(task):
     repo, sid = task
     asked, sent = [], []
-    with patch.object(handoff, "ask", side_effect=lambda path, author, system, text: asked.append((author, text))
+    with patch.object(handoff, "ask", side_effect=lambda path, author, system, text, run: asked.append((author, text))
                       or block("guidance", {"text": "Commit inside CacheStore.write."})), \
          patch.object(specs, "again", side_effect=lambda path, chat, text, spec: sent.append(text) or True):
         then = specs._check(repo, Run(), block("escalation", ESCALATION))
@@ -143,7 +145,7 @@ def test_the_person_decides_past_the_rounds_or_without_an_author(task):
     assert ask.call_count == handoff.ROUNDS
     spec = specs.load("proj", sid)
     assert "상위 판단 필요" in spec["fault"] and spec["escalations"][-1]["answer"]["kind"] == "person"
-    specs.update("proj", sid, author={"model": "", "effort": ""}, escalations=[], fault=None)
+    specs.update("proj", sid, author={}, source={}, escalations=[], fault=None)
     with patch.object(handoff, "ask") as ask:
         assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
     assert not ask.called and "기록돼 있지 않다" in specs.load("proj", sid)["fault"]
@@ -154,3 +156,59 @@ def test_an_answer_outside_the_three_goes_to_the_person(task):
     with patch.object(handoff, "ask", return_value="I think it is fine."):
         assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
     assert "하나로 답하지 않았다" in specs.load("proj", sid)["fault"]
+
+
+def test_a_stop_while_the_author_answers_applies_nothing_and_sends_nothing(task):
+    repo, sid = task
+    run = Run()
+    with patch.object(handoff, "ask", side_effect=lambda *a: run.halt.set() or block("guidance", {"text": "Go."})), \
+         patch.object(specs, "again") as again:
+        assert specs._check(repo, run, block("escalation", ESCALATION)) is None
+    assert not again.called and "사람이 멈춤" in specs.load("proj", sid)["fault"]
+    assert specs.load("proj", sid)["escalations"][-1]["answer"]["kind"] == "stopped"
+
+
+def test_a_review_loop_halts_before_any_answer_or_refusal_takes_effect(task):
+    repo, sid = task
+    specs.update("proj", sid, state="고치는 중 R1")
+    update = {"rev": 1, "reason": "r", "goal": "Another goal", "out": [], "done": ["x"]}
+    with patch.object(handoff, "ask", return_value=block("spec-update", update)), \
+         patch("main.loop.asked") as asked, patch.object(specs, "again") as again:
+        assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
+        assert specs.load("proj", sid)["rev"] == 1 and asked.call_count == 1
+        # The repair's own refused revision: the loop keeps its retries, nothing else sends one.
+        assert specs._check(repo, Run(), block("spec-update", update))() is None
+    assert asked.call_count == 2 and not again.called and specs.load("proj", sid)["rev"] == 1
+
+
+def test_a_persons_turn_moves_the_task_with_the_goal(task):
+    repo, sid = task
+    change = {"rev": 1, "reason": "owner", "goal": "Another goal", "out": [], "done": ["x"],
+              "task": {"kind": "change", "what": "Do the other thing"}}
+    with patch.object(specs, "again", return_value=True):
+        specs._check(repo, Run(person=True), block("spec-update", change))
+    spec = specs.load("proj", sid)
+    assert (spec["rev"], spec["goal"], spec["task"]["what"]) == (2, "Another goal", "Do the other thing")
+
+
+def test_moved_entries_are_checked_in_the_authors_tree_and_standing_ones_never_again(task, tmp_path):
+    repo, sid = task
+    (tmp_path / "a.txt").write_text("one\ntwo\n", encoding="utf-8")
+    spec = specs.load("proj", sid)
+    specs.revise(repo, spec, {"rev": 1, "reason": "r", "goal": spec["goal"], "out": [], "done": ["x"],
+                              "precedence": [{"ref": "a.txt:1-2", "role": "current"}]}, author=True, checkout=tmp_path)
+    (tmp_path / "a.txt").write_text("", encoding="utf-8")   # the standing range no longer fits
+    spec = specs.load("proj", sid)
+    specs.revise(repo, spec, {"rev": 2, "reason": "r", "goal": spec["goal"], "out": [], "done": ["y"],
+                              "task": {"kind": "fix", "what": "Reworded"}}, author=True, checkout=tmp_path)
+    assert specs.load("proj", sid)["precedence"] == [{"ref": "a.txt:1-2", "role": "current"}]
+
+
+def test_a_role_that_is_no_word_is_a_validation_error(repo):
+    with pytest.raises(ValueError, match="`role`"):
+        handoff.checked(repo, {"task": {"kind": "fix", "what": "x"}, "precedence": [{"ref": "a.txt", "role": []}]})
+
+
+def test_a_card_on_the_cli_default_names_the_model_it_ran_on():
+    from main import query
+    assert query.author({"model": "", "effort": ""}, {"model": "claude-sonnet-4-6"})["model"] == "claude-sonnet-4-6"

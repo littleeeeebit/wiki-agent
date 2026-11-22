@@ -927,8 +927,10 @@ def edit(sid: str, body: Edit) -> dict:
                 raise HTTPException(400, str(exc)) from exc
             return view(repo, spec)
         try:
-            made = fields(repo, {**spec, "goal": body.goal, "out": body.out, "done": body.done}, gate,
-                          retired=frozenset(spec["done"][:1]))
+            # The handoff fields stay as they are: the editor does not show them, so a range a document
+            # outgrew since never blocks an edit of something else.
+            made = fields(repo, {**{k: v for k, v in spec.items() if k not in handoff.FIELDS}, "goal": body.goal,
+                                 "out": body.out, "done": body.done}, gate, retired=frozenset(spec["done"][:1]))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         new = sid
@@ -949,9 +951,10 @@ def edit(sid: str, body: Edit) -> dict:
 REVISABLE = frozenset({"rev", "reason", "goal", "out", "done", "slug", "review", "prerequisite_review"})
 
 
-def revise(repo: Path, spec: dict, change: dict, author: bool = False) -> None:
-    """Persist a full spec revision; approval of earlier requirements expires. Only the spec's `author`,
-    answering an escalation, moves the handoff fields (`handoff`)."""
+def revise(repo: Path, spec: dict, change: dict, author: bool = False, checkout: Path | None = None) -> None:
+    """Persist a full spec revision; approval of earlier requirements expires. Only the spec's `author`
+    answering an escalation, or the person's own turn, moves the handoff fields (`handoff`); their paths are
+    checked in `checkout`, the tree that revision was written in."""
     if not isinstance(change, dict) or change.get("rev") != spec["rev"]:
         raise ValueError("명세 판이 바뀌었다. 현재 명세를 읽고 수정해라")
     # A key dropped quietly reads as applied: the agent would report a change that never took effect.
@@ -972,11 +975,13 @@ def revise(repo: Path, spec: dict, change: dict, author: bool = False) -> None:
     # revision put in (`revision_gates`) retire: read off position, its first screen went with them (#378).
     retired = frozenset([*spec.get("revision_gates", []), *([] if spec.get("oneshot") else (
         r["done"][0] for r in [spec, *(spec.get("revisions") or [])] if r.get("done")))])
-    # The handoff fields are checked again only when the author moves them: a document that changed under
-    # a standing range never blocks a reworded done item.
-    moving = handoff.given(change)
-    made = fields(repo, {**{k: v for k, v in spec.items() if moving or k not in handoff.FIELDS}, **{k: change[k] for k in (
-        "goal", "out", "done", "review", "prerequisite_review", *handoff.FIELDS) if k in change}}, gate, retired=retired)
+    # The handoff fields are checked again only when they move, and a standing entry never again: a document
+    # that changed under a standing range never blocks a reworded done item.
+    made = fields(repo, {**{k: v for k, v in spec.items() if k not in handoff.FIELDS}, **{k: change[k] for k in (
+        "goal", "out", "done", "review", "prerequisite_review") if k in change}}, gate, retired=retired)
+    if handoff.given(change):
+        made.update(handoff.checked(checkout or repo, {**{k: spec.get(k) for k in handoff.FIELDS}, **{
+            k: change[k] for k in handoff.FIELDS if k in change}}, kept=spec.get("precedence") or []))
     spec.setdefault("revisions", []).append({"rev": spec["rev"], "ts": time.time(), "reason": reason.strip(),
                                             **{k: spec[k] for k in ("goal", "out", "done", *handoff.FIELDS) if k in spec}})
     for round_ in spec.get("rounds") or []:
@@ -1686,7 +1691,8 @@ def _check(path: Path, run, final: str):
         try:
             with _files:
                 spec = load(spec["repo"], spec["id"])
-                revise(repo, spec, changes[0].get("value"))
+                # A person's own turn may move the task with the goal, checked in the task's tree.
+                revise(repo, spec, changes[0].get("value"), author=getattr(run, "person", False), checkout=path)
         except ValueError as exc:
             return failed(run, spec, f"명세 변경을 반영하지 못했다 — {exc}")
         note(run, f"명세 판 {spec['rev']} 반영 · 이전 리뷰 승인은 다시 확인한다")

@@ -50,10 +50,12 @@ def lines(path: Path) -> int:
         return sum(1 for _ in f)
 
 
-def checked(repo: Path, block: dict, strict: bool = True) -> dict:
+def checked(repo: Path, block: dict, strict: bool = True, kept: list | tuple = ()) -> dict:
     """`task`, `precedence` and `escalate` of a spec block, validated against `repo`; `ValueError` names
     what is wrong. A reference names an existing file or folder inside the repository, a range lines that
-    file has; not `strict`, only a reference inside the repository (one checked in another checkout)."""
+    file has; not `strict`, only a reference inside the repository (one checked in another checkout). An
+    entry of `kept`, the spec's standing ones, was checked when it came in: a file that changed under it
+    since never blocks a revision of something else."""
 
     task = block.get("task")
     if not isinstance(task, dict) or task.get("kind") not in KINDS or not isinstance(task.get("what"), str) \
@@ -62,18 +64,19 @@ def checked(repo: Path, block: dict, strict: bool = True) -> dict:
     given = block.get("precedence")
     if not isinstance(given, list) or not given:
         raise ValueError("`precedence` 는 이 작업에 적용할 문서를 우선순위대로 담은 비지 않은 목록이어야 한다")
-    root, ranked = repo.resolve(), []
+    root, ranked, standing = repo.resolve(), [], {p.get("ref") for p in kept if isinstance(p, dict)}
     for p in given:
-        if not isinstance(p, dict) or not isinstance(p.get("ref"), str) or p.get("role") not in ROLES:
+        if not isinstance(p, dict) or not isinstance(p.get("ref"), str) or not isinstance(p.get("role"), str) \
+                or p["role"] not in ROLES:
             raise ValueError(f"`precedence` 항목마다 `ref` 와 `role`({'|'.join(ROLES)}) 이 있어야 한다")
         ref = p["ref"].strip()
         m = RANGE.match(ref)
         target = (root / (m.group(1) if m else ref)).resolve()
         if target != root and root not in target.parents:
             raise ValueError(f"`precedence` 의 `{ref}` 는 저장소 밖이다")
-        if strict and not target.exists():
+        if strict and ref not in standing and not target.exists():
             raise ValueError(f"`precedence` 의 `{ref}` 가 저장소에 없다")
-        if strict and m:
+        if strict and ref not in standing and m:
             first, last = int(m.group(2)), int(m.group(3))
             if not target.is_file() or not 1 <= first <= last <= lines(target):
                 raise ValueError(f"`precedence` 의 `{ref}` 줄 범위가 파일에 없다")
@@ -152,9 +155,14 @@ def held_back(path: Path, run, spec: dict, change):
     """`specs._check`'s step for a `spec-update` `narrowed` refuses: `None` when it may be applied; else
     the turn telling the implementer to escalate instead, once, and after a second try a stop."""
 
-    from . import specs
+    from . import loop, specs
     if not (why := narrowed(spec, change, getattr(run, "person", False))):
         return None
+    if loop.LOOPING.fullmatch(spec["state"]):
+        # The review loop sends this repair's retries: a second sender would race it for the worktree.
+        loop.asked(spec["repo"], spec["id"])
+        specs.failed(run, spec, "리뷰 수정 턴이 목표·작업 지시를 바꾸려 했다 — 반영하지 않았다. 사람이 판단한다")
+        return lambda: None
     if spec.get("narrow_asked"):
         specs.update(spec["repo"], spec["id"], narrow_asked=False)
         specs.failed(run, spec, "구현 모델이 목표·작업 지시를 다시 바꾸려 했다 — 상위 판단이 필요하다")
@@ -191,22 +199,24 @@ def question(spec: dict, escalation: dict) -> str:
             f"{', '.join(f'`{a}`' for a in ANSWERS)} as your instructions describe.")
 
 
-def ask(path: Path, author: dict, system: str, text_: str) -> str:
-    """One read-only turn of `author` in `path`; its final answer. Patched in tests."""
+def ask(path: Path, author: dict, system: str, text_: str, run) -> str:
+    """One read-only turn of `author` in `path`; its final answer. The work turn's Stop ends it too
+    (`work.stop` reads `run.aside`). Patched in tests."""
 
     from agent import ChatSession
-    from . import runtime
-    chat = ChatSession(path, tools=TOOLS, system=system, model=author["model"], effort=author.get("effort", ""),
-                       isolated=not str(author["model"]).startswith("codex:"))
+    chat = ChatSession(path, tools=TOOLS, system=system, model=author.get("model") or "",
+                       effort=author.get("effort", ""), isolated=not str(author.get("model")).startswith("codex:"))
+    run.aside = chat
     final, failed = "", ""
     try:
-        for ev in chat.say(text_, runtime.stopping):
+        for ev in chat.say(text_, run.halt):
             if ev.kind == "done":
                 final = ev.text
                 failed = (final or "완료된 답이 없다") if (ev.meta or {}).get("error") else ""
             elif ev.kind == "error":
                 failed = ev.text
     finally:
+        run.aside = None
         chat.close()
     if failed:
         raise RuntimeError(failed)
@@ -217,29 +227,42 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     """`specs._check`'s step for an answer ending in an `escalation` block: `None` when there is none (the
     check goes on), otherwise what `_check` returns — the next turn to send, or nothing after a stop."""
 
-    from . import specs
+    from . import oneshot_build, specs
     blocks = found(specs.blocks(final)[1])
     if not blocks:
         return None
+    if oneshot_build.owns(spec):   # handled here: the stage's finalizer records no unchecked turn
+        run.checked = True
     value = blocks[0].get("value")
     if len(blocks) != 1 or "error" in blocks[0] or not shaped(value):
         return specs.failed(run, spec, "`escalation` 블록은 conflict·where·question 을 담은 JSON 객체 하나여야 한다")
     author, past = author_of(spec), spec.get("escalations") or []
     entry = {"ts": time.time(), "rev": spec["rev"], "escalation": value}
-    if not author.get("model") or len(past) >= ROUNDS:
-        why = "명세를 쓴 모델이 기록돼 있지 않다" if not author.get("model") else f"상위 모델 판단이 {ROUNDS}번 넘었다"
+    # A record with an empty model is the CLI's default the spec was written on; no record is an older card.
+    if not author or len(past) >= ROUNDS:
+        why = "명세를 쓴 모델이 기록돼 있지 않다" if not author else f"상위 모델 판단이 {ROUNDS}번 넘었다"
         return person(spec, run, [*past, {**entry, "answer": {"kind": "person"}}],
                       f"상위 판단 필요 — {why}. 구현 모델의 충돌: {value['conflict']} / 질문: {value['question']}")
 
     # Run here, still holding the worktree as the gate does: the author reads the tree the implementer left,
     # and its lines land in this turn's record.
-    specs.note(run, f"충돌을 명세를 쓴 모델 `{author['model']}` 에게 넘긴다 ({len(past) + 1}/{ROUNDS})")
+    specs.note(run, f"충돌을 명세를 쓴 모델 `{author.get('model') or '기본 모델'}` 에게 넘긴다 ({len(past) + 1}/{ROUNDS})")
     try:
-        answer = ask(path, author, PROMPT, question(spec, value))
+        answer = ask(path, author, PROMPT, question(spec, value), run)
     except Exception as exc:   # an unanswered round trip is the person's to settle, never a silent retry
+        if run.halt.is_set():
+            return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped"}}])
         return person(spec, run, [*past, {**entry, "answer": {"kind": "failed", "error": str(exc)[:500]}}],
                       f"상위 모델 왕복이 실패했다 — {exc}")
+    if run.halt.is_set():   # a Stop pressed while the author answered: nothing of the answer takes effect
+        return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "text": answer[-2000:]}}])
     return applied(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec, past, entry, answer)
+
+
+def stopped(spec: dict, run, history: list[dict]):
+    from . import specs
+    specs.update(spec["repo"], spec["id"], escalations=history)
+    return specs.failed(run, spec, "사람이 멈춤 — 상위 모델의 답을 적용하지 않았다")
 
 
 def person(spec: dict, run, history: list[dict], reason: str):
@@ -265,6 +288,12 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
     name, value = got[0]["name"], got[0]["value"]
     history = [*past, {**entry, "answer": {"kind": name, "value": value}}]
     oneshot = bool((spec.get("oneshot") or {}).get("stage") not in (None, "done"))
+    from . import loop
+    if loop.LOOPING.fullmatch(spec["state"]):
+        # The review loop owns this task's turns and its spec: nothing is applied before the person decides.
+        said = (value.get("text") or value.get("reason")) if isinstance(value, dict) else ""
+        return person(spec, run, history, f"상위 모델이 `{name}` 로 답했다 — 반영하지 않고 리뷰 루프를 멈췄다. 답을 보고 "
+                                          f"에이전트 칸에서 이어 가라: {str(said or json.dumps(value, ensure_ascii=False))[:500]}")
     try:
         if name == "guidance":
             if not isinstance(value, dict) or not isinstance(value.get("text"), str) or not value["text"].strip():
@@ -277,7 +306,7 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         elif name == "spec-update":
             with specs._files:
                 current = specs.load(spec["repo"], spec["id"])
-                specs.revise(repo, current, value, author=True)
+                specs.revise(repo, current, value, author=True, checkout=path)   # the tree the author read
             spec = specs.update(spec["repo"], spec["id"], escalations=history)
             # A running session keeps the system prompt it started with: the revision goes in the turn.
             told = (f"The spec's author revised it to revision {spec['rev']} in answer to your escalation. It "
@@ -296,12 +325,9 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
     except (ValueError, OSError) as exc:
         return person(spec, run, [*history[:-1], {**entry, "answer": {"kind": "refused", "error": str(exc)}}],
                       f"상위 모델의 답을 적용하지 못했다 — {exc}")
-    from . import loop
-    if loop.LOOPING.fullmatch(spec["state"]):   # the review loop sends its own turns: it halts, the person goes on
-        return person(spec, run, history, f"상위 모델이 `{name}` 로 답했다 — 에이전트 칸에서 그 답대로 이어 가라고 보내면 "
-                                          f"리뷰 루프가 이어 간다: {(value.get('text') if name == 'guidance' else value.get('reason')) or ''}")
     specs.note(run, f"상위 모델이 `{name}` 로 답했다 — 구현을 이어 간다")
-    if oneshot:
+    if oneshot:   # a Stop pressed while this turn is recorded leaves the stage resumable instead
         from . import oneshot_build
-        return lambda: oneshot_build.send(spec["repo"], spec["oneshot"]["stage"], told)
-    return lambda: specs.again(path, run.chat, told, spec)
+        return oneshot_build.unless_stopped(run, spec["repo"],
+                                            lambda: oneshot_build.send(spec["repo"], spec["oneshot"]["stage"], told))
+    return lambda: None if run.halt.is_set() else specs.again(path, run.chat, told, spec)
