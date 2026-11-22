@@ -491,16 +491,21 @@ order:
    or a moved HEAD, sends it back to the build. Each read of the copy
    lists it without passing over a folder it cannot list, and opens the
    manifest and every file for reading only. Windows then refuses anyone
-   a write, a rename or a delete of them until the read ends. A watch on
-   the whole copy, set before it is first listed, reports any name added
-   meanwhile. At a pass they stay held through the HEAD read and until the
-   pass is saved, and the watch is asked once more after that: a name
-   added since puts the run back where it was and sends it to the build.
-   A file another process holds open for writing cannot be opened so, and
+   a write, a rename or a delete of them until the read ends. A file
+   added meanwhile is found by listing again once all are read. At a pass
+   they stay held through the HEAD read and until the pass is saved. A
+   file another process holds open for writing cannot be opened so, and
    that read sends the round back to the build, after the app's run as at
    the pass. A second known limit, accepted by the owner: an app that changes
    its own frozen files while it runs and puts them back before the check
-   after its run is not seen.
+   after its run is not seen. Out of scope, by the owner's decision: another
+   process of the owner's that races the server's own files during these
+   checks, such as replacing the copy's folder, adding a file to a folder
+   already listed, or moving HEAD while a pass is saved. Such a process
+   runs as the same user and could as well write the server's records
+   directly, so closing those instants would protect nothing. The checks
+   are there for an app or a build that changed its copy, not for a local
+   process working against the server.
 2. The frozen app from a fresh start of the check's scenario, driven without
    a shot (`shoot: false`), so the driver reads and acts but never calls
    `PrintWindow`.

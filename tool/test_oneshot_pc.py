@@ -454,19 +454,6 @@ def test_a_pass_whose_frozen_copy_changed_since_the_run_goes_back_to_the_build_n
     assert after["stage"] == pc.front_build.STAGE and not pc.passed(after) and after["pc"].get("status") != "passed"
 
 
-def test_a_file_added_to_the_copy_while_the_pass_is_saved_undoes_it(held, monkeypatch):
-    saving = pc.onward
-
-    def onward(repo, fields):   # the pass saved, then a name appears in the copy before the copy is let go
-        then = saving(repo, fields)
-        (Path(o()["desktop_build"]["folder"]) / "added.dat").write_bytes(b"x")
-        return then
-
-    monkeypatch.setattr(pc, "onward", onward)
-    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "passed"}})
-    assert after["stage"] == pc.front_build.STAGE and not pc.passed(after) and after.get("working") != "brief"
-
-
 def test_a_pass_whose_head_moved_while_its_copy_was_read_goes_back_to_the_build(held, monkeypatch):
     moved = []
     monkeypatch.setattr(pc, "at_head", lambda repo, head: not moved)

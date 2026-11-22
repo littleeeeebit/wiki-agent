@@ -453,15 +453,11 @@ def settled(repo: str, result: dict, store=None):
         o = oneshot_spec.spec_of(repo)["oneshot"]
         if result["status"] == "passed":   # the frozen copy, then HEAD, read once more as the pass is taken
             try:
-                with oneshot_desktop.held(o["desktop_build"]) as (why, moved):   # held until the pass is saved
+                with oneshot_desktop.held(o["desktop_build"]) as why:   # held until the pass is saved
                     if not why and not at_head(repo, o["desktop_build"].get("head")):
                         why = "작업 트리의 HEAD 가 승인한 빌드에서 옮겨 갔다"
                     if not why:
-                        then = onward(repo, {"pc": {**(o.get("pc") or {}), **result}})
-                        if not moved():   # asked once the pass is saved: a name added meanwhile undoes it below
-                            return then
-                        oneshot_spec.saved(repo, oneshot={k: o.get(k) for k in ("stage", "working", "r3", "stopped")})
-                        why = "통과를 적는 사이 얼린 PC 앱 사본이 바뀌었다"
+                        return onward(repo, {"pc": {**(o.get("pc") or {}), **result}})
             except (OSError, ValueError) as exc:
                 why = f"얼린 PC 앱 빌드를 다시 읽지 못했다 — {exc}"
             result = {"status": "rebuild", "detail": f"주인 화면 회차 — {why}"}

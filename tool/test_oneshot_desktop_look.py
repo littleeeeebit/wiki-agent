@@ -573,8 +573,8 @@ def test_a_folder_in_the_copy_that_cannot_be_listed_is_never_taken_for_an_unchan
 
 def test_while_the_copy_is_held_neither_a_file_nor_the_manifest_can_be_changed_and_after_both_can(tmp_path):
     app, build = copy(tmp_path)
-    with pc_look.oneshot_desktop.held(build) as (why, moved):
-        assert why == "" and not moved()
+    with pc_look.oneshot_desktop.held(build) as why:
+        assert why == ""
         for path in (app / "app.exe", tmp_path / "manifest.json"):
             with pytest.raises(PermissionError):
                 path.write_bytes(b"other")
@@ -584,15 +584,6 @@ def test_while_the_copy_is_held_neither_a_file_nor_the_manifest_can_be_changed_a
                 path.unlink()
     (app / "app.exe").write_bytes(b"other")   # let go: the next read sees it
     assert "`app.exe`" in pc_look.oneshot_desktop.altered(build)
-
-
-def test_a_file_added_beside_the_held_ones_is_reported_moved(tmp_path):
-    app, build = copy(tmp_path)
-    (app / "sub").mkdir()
-    with pc_look.oneshot_desktop.held(build) as (why, moved):
-        assert why == "" and not moved()
-        (app / "sub" / "added.dat").write_bytes(b"x")   # a new name: no held file is touched
-        assert moved()
 
 
 def test_a_handle_whose_wrapping_fails_is_closed(tmp_path, monkeypatch):
