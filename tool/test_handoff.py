@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from main import handoff, specs
+from main import oneshot_needs as needs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_specs import made, repo as repository_fixture, spec_block
 
@@ -254,6 +255,27 @@ def test_a_oneshot_escalation_holding_a_secret_never_reaches_the_author_or_the_c
         specs._check(repo, run, block("escalation", ESCALATION))
     saved = specs.load("proj", sid)
     assert "tok-31415926" not in json.dumps(saved, ensure_ascii=False) and "[N1]" in saved["fault"]
+    # An author reply whose decoded value holds it is used for nothing: not saved, not sent on.
+    escaped = "Here.\n\n```guidance\n{\"text\": \"use \\u0074ok-31415926\"}\n```\n"   # JSON's \u0074 is "t"
+    assert "tok-31415926" not in escaped and "tok-31415926" in needs.decoded(escaped)
+    with patch("main.oneshot_needs.leaked", return_value=""), patch("main.oneshot_spec.store"), \
+         patch.object(handoff, "ask", return_value=escaped), patch.object(specs, "again") as again:
+        specs._check(repo, run, block("escalation", ESCALATION))
+    saved = specs.load("proj", sid)
+    assert not again.called and saved["escalations"][-1]["answer"] == {"kind": "refused"}
+    assert "tok-31415926" not in json.dumps(saved, ensure_ascii=False) and "(N1)" in saved["fault"]
+
+
+def test_a_published_oneshots_escalation_is_scanned_as_it_decodes_before_the_author_sees_it(task):
+    repo, sid = task
+    specs.update("proj", sid, oneshot={"stage": "done"})   # published: the build checks own it no longer
+    run = Run()
+    run.chat.hide = {"tok-31415926": "[N1]"}
+    seen = []
+    with patch("main.oneshot_needs.leaked", side_effect=lambda p, s, h, final: seen.append(final) or "[N1] 답"), \
+         patch.object(handoff, "ask") as ask:
+        specs._check(repo, run, block("escalation", ESCALATION))
+    assert seen and not ask.called and "[N1]" in specs.load("proj", sid)["fault"]
 
 
 def test_a_rewritten_goal_carries_the_task_and_a_promoted_range_is_checked_again(task, repo):

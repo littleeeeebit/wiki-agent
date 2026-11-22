@@ -1685,9 +1685,9 @@ def _check(path: Path, run, final: str):
         return None
     from . import oneshot_build, oneshot_needs, refactor_run   # they import this module
     if handoff.found(blocks(final)[1]):   # a stop condition: the spec's author decides, not the implementer
-        # A oneshot's turn is scanned first: one holding a secret stops at the stage's check, never sent on.
-        if oneshot_build.owns(spec) and oneshot_needs.leaked(path, spec, getattr(run.chat, "hide", None), final):
-            return oneshot_build.checked(path, run, spec, final)
+        # A turn carrying secrets is scanned first, published or not: one holding a secret is never sent on.
+        if (hide := getattr(run.chat, "hide", None)) and (why := oneshot_needs.leaked(path, spec, hide, final)):
+            return oneshot_build.checked(path, run, spec, final) if oneshot_build.owns(spec) else failed(run, spec, why)
         return handoff.escalated(repo, path, run, spec, final)
     if oneshot_build.owns(spec):   # its own checks, and nothing general: no revision, no gate, no pull request
         return oneshot_build.checked(path, run, spec, final)

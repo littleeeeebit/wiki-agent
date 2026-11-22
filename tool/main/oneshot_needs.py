@@ -270,7 +270,8 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str, last: bool = F
         # ponytail: text diffs and untracked text only; a secret inside a committed binary is not seen
         untracked = [path / f for f in git("ls-files", "--others", "--exclude-standard", "-z").split("\0") if f]
         log = git("log", *HISTORY, f"{base}..HEAD") if base else ""
-        places = {"답": final, "커밋": log + git("diff", "HEAD"), "커밋하지 않은 파일": "\n".join(map(read, untracked))}
+        places = {"답": decoded(final), "커밋": log + git("diff", "HEAD"),
+                  "커밋하지 않은 파일": "\n".join(map(read, untracked))}
     except (OSError, subprocess.SubprocessError) as exc:
         return unscanned(path, spec, hide, f"{step} 이(가) 실패했다 ({type(exc).__name__})")
     found: dict[str, set[str]] = {}
@@ -322,6 +323,25 @@ HISTORY = ("-p", "--diff-merges=first-parent", "--format=%an%n%ae%n%cn%n%ce%n%B"
 
 def need_ids(labels) -> set[str]:
     return {getattr(lab, "need", None) or str(lab).strip("[]") for lab in labels}
+
+
+def decoded(text: str) -> str:
+    """`text`, then every string its blocks decode to, keys included: what is sent or saved is the decoded value,
+    which a JSON escape (`\\u0041`, `\\/`) spells differently in the text."""
+
+    from . import specs   # it imports this module
+
+    def leaves(v):
+        if isinstance(v, str):
+            yield v
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                yield k
+                yield from leaves(x)
+        elif isinstance(v, list):
+            for x in v:
+                yield from leaves(x)
+    return "\n".join([text, *(s for b in specs.blocks(text)[1] for s in leaves(b.get("value")))])
 
 
 def held_in(text: str, hide: dict) -> list[str]:

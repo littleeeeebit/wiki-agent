@@ -272,13 +272,18 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
 
     hide = getattr(getattr(run, "chat", None), "hide", None)   # a oneshot's secrets: never saved or sent on
     try:
-        answer = masked(ask(path, author, PROMPT, question(spec, value), run), hide)
+        answer = ask(path, author, PROMPT, question(spec, value), run)
     except Exception as exc:   # an unanswered round trip is the person's to settle, never a silent retry
         if run.halt.is_set():
             return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped"}}])
         error = masked(str(exc), hide)
         return person(spec, run, [*past, {**entry, "answer": {"kind": "failed", "error": error[:500]}}],
                       f"상위 모델 왕복이 실패했다 — {error}")
+    from . import oneshot_needs
+
+    if hide and (held := oneshot_needs.held_in(oneshot_needs.decoded(answer), hide)):   # nothing of it is used
+        return person(spec, run, [*past, {**entry, "answer": {"kind": "refused"}}],
+                      f"상위 모델의 답에 이 세션의 비밀 값({', '.join(held)})이 있어 쓰지 않는다")
     if run.halt.is_set():   # a Stop pressed while the author answered: nothing of the answer takes effect
         return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "text": answer[-2000:]}}])
     return applied(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec, past, entry, answer)
