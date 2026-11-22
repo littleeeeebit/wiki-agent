@@ -647,6 +647,7 @@ class Run:
         self.events: list[dict] = []
         self.done = False
         self.halt = threading.Event()   # set by a stop; the session reads it too
+        self.saving = threading.Lock()   # a stop and a save this turn decided on (`handoff`) never interleave
         self.wake = threading.Condition()
         self.diff_base: str | None = None
         self.report_at: dict | None = None
@@ -1049,7 +1050,8 @@ def stop(body: Stop) -> dict:
     if run.turn != body.turn:
         raise HTTPException(409, "지금 도는 턴이 아니다")
     if not run.done:
-        run.halt.set()   # first: a process not started yet is stopped by this
+        with run.saving:   # a save already past its stop check lands first; one after it sees this
+            run.halt.set()   # first: a process not started yet is stopped by this
         run.chat.stop(run.halt)   # only this turn's process, not the next one's
     return {"ok": True}
 

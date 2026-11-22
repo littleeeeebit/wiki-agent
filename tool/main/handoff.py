@@ -337,9 +337,11 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         elif oneshot:   # a oneshot's contract is its committed design: only the person changes it mid-build
             return person(spec, run, history, f"상위 모델이 원샷 설계를 바꾸자고 답했다 ({name}) — 사람이 정한다")
         elif name == "spec-update":
-            with specs._files:
+            # Stop waits for a revision already past this check, validation included; a Stop before it owns
+            # the result (`work.stop` sets the halt under `run.saving`).
+            with specs._files, run.saving:
                 current = specs.load(spec["repo"], spec["id"])
-                if run.halt.is_set():   # Stop and the revision meet here: a Stop before this line owns the result
+                if run.halt.is_set():
                     return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
                 specs.revise(repo, current, value, author=True, checkout=path)   # the tree the author read
             spec = specs.update(spec["repo"], spec["id"], escalations=history)
@@ -353,10 +355,11 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
             gate = specs.gate_of(repo)
             if not gate:
                 raise ValueError("저장소의 gate_cmd 가 없어 선행 작업 카드를 만들 수 없다")
-            if run.halt.is_set():
-                return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
-            sid = specs.card(repo, value["spec"], gate, {"focus": "escalation", "turn": time.time(),
-                                                         "from": spec["id"], "author": author_of(spec)})
+            with run.saving:   # as the revision: the card is made whole before a Stop, or not at all
+                if run.halt.is_set():
+                    return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
+                sid = specs.card(repo, value["spec"], gate, {"focus": "escalation", "turn": time.time(),
+                                                             "from": spec["id"], "author": author_of(spec)})
             return person(spec, run, history, f"선행 작업 `{sid}` 을 먼저 한다 — {value.get('reason') or '상위 모델이 나눴다'}. "
                                               "그 PR 이 머지된 뒤 이 작업을 이어 간다")
     except (ValueError, OSError) as exc:

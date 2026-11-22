@@ -666,7 +666,8 @@ class Loop:
         if chat is not None:
             chat.stop(self.halt)
         if run is not None and not run.done:
-            run.halt.set()
+            with run.saving:   # as `work.stop`: a save this turn decided on is never cut halfway
+                run.halt.set()
             run.chat.stop(run.halt)
 
 

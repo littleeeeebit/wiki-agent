@@ -529,6 +529,15 @@ def test_an_edited_scenario_may_change_the_requirements_in_the_same_turn(world):
     assert o()["r1"]["marks"]["R1"] == "edited" and o()["r1"]["marks"]["T1"] == "again"
 
 
+def test_a_refused_redesign_leaves_the_accepted_designs_author(world):
+    at_r1(world)
+    accepted = {"model": "claude-sonnet-4-6", "effort": ""}
+    oneshot_spec.store("budget").put(answered={"design": accepted})
+    with patch.object(oneshot, "ask", lambda *a: ("no block here", {"model": "claude-opus-4-6"}, False)):
+        oneshot_spec.redesign("budget", {"R1": "이번 달이 아니라 오늘"}, ["R1"])
+    assert o()["stopped"] and o()["answered"]["design"] == accepted
+
+
 def test_a_stopped_edit_turn_resumes_to_the_sheet_and_a_cut_turn_is_recovered(world):
     at_r1(world)
     oneshot_spec.store("budget").stop("block", "블록이 두 번 거부됐다")

@@ -26,6 +26,7 @@ class Run:
     def __init__(self, person=False):
         self.events, self.chat, self.turn, self.person = [], SimpleNamespace(id="c", parent_id=None), "t", person
         self.halt = threading.Event()
+        self.saving = threading.Lock()
 
     def put(self, event):
         self.events.append(event)
@@ -172,6 +173,30 @@ def test_a_stop_at_the_revisions_save_owns_the_result(task):
          patch.object(specs, "load", side_effect=reloaded), patch.object(specs, "again") as again:
         assert specs._check(repo, run, block("escalation", ESCALATION)) is None
     assert specs.load("proj", sid)["rev"] == 1 and not again.called
+
+
+def test_a_stop_during_validation_returns_only_after_the_save(task):
+    repo, sid = task
+    run, order, checked = Run(), [], handoff.checked
+    update = {"rev": 1, "reason": "r", "goal": "Another goal", "out": [], "done": ["x"]}
+
+    def stop():   # as `work.stop`
+        with run.saving:
+            run.halt.set()
+        order.append(("stopped", specs.load("proj", sid)["rev"]))
+
+    def validating(*a, **k):   # the Stop is pressed while the revision is being checked
+        stopper.start()
+        stopper.join(0.3)
+        order.append("validated")
+        return checked(*a, **k)
+    stopper = threading.Thread(target=stop)
+    with patch.object(handoff, "ask", side_effect=lambda *a: block("spec-update", update)), \
+         patch.object(handoff, "checked", side_effect=validating), patch.object(specs, "again") as again:
+        specs._check(repo, run, block("escalation", ESCALATION))
+    stopper.join(5)
+    # Stop answered after the save it waited for, and the follow-up was skipped.
+    assert order == ["validated", ("stopped", 2)] and not again.called
 
 
 def test_whatever_halts_the_turn_ends_the_authors_turn(tmp_path):
