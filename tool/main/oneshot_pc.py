@@ -251,10 +251,11 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
                     binding = owner_round.bind(key, hwnd, members(key), seen=read or {})
                 except ValueError as exc:
                     return {"status": "failed", "why": f"앱의 창을 묶지 못했다 — {exc}"}
-                got = owner_round.window_read(session, f"capture{n}", exe, binding, lambda: members(key), runs.halt)
+                got = owner_round.window_read(session, f"capture{n}", exe, binding, lambda: members(key), runs.halt,
+                                              oneshot._lock)   # as `stop` takes it: a stop accepted first is a `stop`
             else:
                 got = owner_round.surface_read(session, f"capture{n}", exe, fixture, rect,
-                                               lambda: members(fixture_key), runs.halt)
+                                               lambda: members(fixture_key), runs.halt, oneshot._lock)
         except owner_round.Unavailable as exc:
             return {"status": "pending", "why": str(exc)}
         if not got.get("read"):
@@ -365,7 +366,9 @@ def owner_round(repo: str) -> None:
             return lambda: settled(repo, {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"})
         return lambda: settled(repo, outcome(o, results))
 
-    review.holding(repo, "주인 화면 회차", body, "front_built_head", front_build.STAGE)
+    # A tree moved meanwhile goes back to the build's checks as an overrun does: decided against a stop, under the lock.
+    review.holding(repo, "주인 화면 회차", body, "front_built_head", front_build.STAGE,
+                   again=lambda repo_, store, why, build: settled(repo_, {"status": "rebuild", "detail": why}, store))
 
 
 def settled(repo: str, result: dict, store=None):

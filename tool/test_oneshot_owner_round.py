@@ -28,8 +28,8 @@ class Job:
 class Helper:
     """The capture helper's protocol as a stand-in: an item, then the server's answer, then a frame only on `go`."""
 
-    def __init__(self, empty: bool = False, refused: bool = False):
-        self.empty, self.refused, self.answers = empty, refused, []
+    def __init__(self, empty: bool = False, refused: bool = False, extra: dict | None = None):
+        self.empty, self.refused, self.extra, self.answers = empty, refused, extra or {}, []
 
     def __call__(self, argv: list[str]) -> None:
         folder = Path(argv[-1])
@@ -45,7 +45,8 @@ class Helper:
         self.answers.append("go" if go else "stop")
         if go:   # the frame pool, or the blit, starts only now
             (folder / ("surface.png" if argv[1] == "surface" else "window.png")).write_bytes(b"PNG")
-        (folder / "result.json").write_text(json.dumps({"read": go, **({} if go else {"why": "the binding was not proven"})}))
+        (folder / "result.json").write_text(json.dumps({"read": go, **({} if go else {"why": "the binding was not proven"}),
+                                                        **self.extra}))
 
 
 class Session:
@@ -130,6 +131,34 @@ def test_an_item_windows_refused_leaves_the_check_pending_not_failed(desk, tmp_p
     binding = owner_round.bind("app1", 101, [PROCESS])
     with pytest.raises(owner_round.Unavailable, match="E_ACCESSDENIED"):   # only its result: no item to answer
         read(tmp_path, binding, [PROCESS], helper=Helper(refused=True))
+
+
+def test_a_stop_accepted_just_before_the_go_is_published_reaches_the_helper_as_stop(desk, tmp_path):
+    binding, halt = owner_round.bind("app1", 101, [PROCESS]), threading.Event()
+
+    class Gate:   # the stop endpoint took the lock first and set the halt; the `go` waits for it
+        def __enter__(self):
+            halt.set()
+
+        def __exit__(self, *exc):
+            return False
+
+    session = Session(tmp_path, Helper())
+    got = owner_round.window_read(session, "capture1", Path("helper.exe"), binding, lambda: [PROCESS], halt, Gate())
+    assert got == {"read": False, "why": "the round was stopped"}
+    assert list(tmp_path.rglob("stop")) and not list(tmp_path.rglob("go"))
+
+
+def test_a_read_the_helper_could_not_let_go_of_wholly_passes_nothing(desk, tmp_path):
+    binding = owner_round.bind("app1", 101, [PROCESS])
+    with pytest.raises(RuntimeError, match="the memory DC"):
+        read(tmp_path, binding, [PROCESS], helper=Helper(extra={"unreleased": ["the memory DC"]}))
+
+
+def test_a_blit_this_desktop_gives_no_pixels_leaves_the_check_pending(desk, tmp_path):
+    binding = owner_round.bind("app1", 101, [PROCESS])
+    with pytest.raises(owner_round.Unavailable, match="BitBlt failed"):
+        read(tmp_path, binding, [PROCESS], helper=Helper(extra={"read": False, "unavailable": True, "why": "BitBlt failed"}))
 
 
 def test_a_stop_asked_while_the_binding_is_proven_never_lets_the_helper_sample(desk, tmp_path):
@@ -221,3 +250,43 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
         members = session.record["jobs"]["fixture1"]["members"]
         assert code == 0 and seen["title"] == owner_round.FIXTURE and seen["rect"] == named["rect"]
         assert seen["pid"] in {m["pid"] for m in members} and named["rect"][:2] == [40, 40]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the helper and the fixture are Windows programs")
+def test_a_fixture_moved_and_put_back_while_the_helper_watches_is_never_sampled(tmp_path):
+    import desktop_session
+
+    if not (owner_round.FRAMEWORK / "csc.exe").is_file():
+        pytest.skip("no .NET Framework compiler here")
+    exe, here = owner_round.helper(tmp_path / "tools"), Path(owner_round.__file__).parent
+    with desktop_session.look(tmp_path, "watch") as session:   # a desktop the test owns, never the owner's
+        folder = session.reserve("files")
+        (folder / "words.txt").write_text(" ".join(owner_round.words()), encoding="utf-8")
+        session.start("fixture1", [sys.executable, str(owner_round.FIXTURE_PY), "--title", owner_round.FIXTURE,
+                                   "--words", str(folder / "words.txt"), "--rect", "40", "40", "640", "360",
+                                   "--out", str(folder / "window.json")], folder)
+        named = owner_round._waited(folder / "window.json", owner_round.FIXTURE_SECONDS, threading.Event())
+        session.observe()
+        pid = session.record["jobs"]["fixture1"]["members"][0]["pid"]
+
+        def surface(key: str, between=None) -> dict:
+            out = session.reserve(key)
+            session.start(key, [str(exe), "surface", str(named["hwnd"]), str(pid), *map(str, named["rect"]), str(out)],
+                          out)
+            assert owner_round._waited(out / "item.json", 30, threading.Event()) == {"empty": False}
+            if between:   # watched from here on: the move and its undo both before the `go`
+                code, _, why = session.run(f"{key}_move", [sys.executable, "-c", between], here, 60, threading.Event())
+                assert code == 0, why
+            (out / "go").write_text("", encoding="utf-8")
+            result = owner_round._waited(out / "result.json", 30, threading.Event())
+            return {**result, "kept": (out / "surface.png").is_file()}
+
+        x, y = named["rect"][:2]
+        move = ("import ctypes; u = ctypes.windll.user32; u.SetProcessDpiAwarenessContext(-4); "
+                f"[u.SetWindowPos({named['hwnd']}, 0, a, {y}, 0, 0, 0x15) for a in ({x + 300}, {x})]")
+        moved = surface("moved", between=move)
+        assert moved == {"read": False, "why": "the fixture moved or was hidden", "kept": False}
+        # Left alone, the watch sees nothing and both checks pass. A desktop that is not the input one gives the blit
+        # no pixels, which leaves the check pending; every resource is let go either way.
+        still = surface("still")
+        assert still == {"read": False, "unavailable": True, "why": "BitBlt failed", "kept": False}

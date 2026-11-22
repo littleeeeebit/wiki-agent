@@ -473,8 +473,10 @@ with no stop asked meanwhile, lets it sample.
   exactly as the driver read it. The helper keeps a frame only while the
   item stays open through the copy.
 - A composition hands it the fixture's frame with its handle and process.
-  The helper checks the fixture itself right before and after the blit, so
-  a fixture moved, hidden or replaced meanwhile keeps nothing.
+  The helper watches the fixture from before it says it is ready, and has
+  its bitmap made by then, so only the blit lies between its checks of the
+  fixture right before and after. A fixture moved, hidden or replaced
+  meanwhile keeps nothing, one moved and put back included.
 - A report passes only when it holds the fixture's page as it reads: its
   words in order, one after another. A fixed text naming every word the
   server draws from is no capture of this round's page.
@@ -482,12 +484,17 @@ with no stop asked meanwhile, lets it sample.
 Each capture is copied out before the round's look is cleaned, and the critic
 judges it against `shows` and the fixture's words only after every window the
 round started is gone. A check stays pending when its helper cannot be built,
-or when the helper cannot get ready to read: Windows refuses or empties the
-item, or the helper says nothing in time.
+or when the helper cannot read there: Windows refuses or empties the item,
+the fixture cannot be watched, the desktop gives the blit no pixels, or the
+helper says nothing in time.
 
 A failed check sends its high finding to the build, as the phone round's do.
 Pending checks send the run back to waiting with a new attempt, naming them.
-A stop, an unproven cleanup or a fixture that never showed passes nothing.
+A stop, an unproven cleanup, a helper that could not let go of what it made,
+or a fixture that never showed passes nothing. A stop is accepted under the
+lock each `go` and each outcome is decided under, the server's shutdown
+included. A stop accepted first reaches the helper as `stop` and turns any
+outcome into a stop, a tree moved meanwhile included.
 
 A restart, a cancellation, a new HEAD or a new build identity sends the run
 back to waiting for approval. An earlier approval is never applied to

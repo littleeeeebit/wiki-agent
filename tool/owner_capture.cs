@@ -10,10 +10,16 @@
 //       while the item stays open through the copy. An item Windows refuses or gives empty is reported in
 //       `item.json` as `empty`, so the check stays pending.
 //   owner_capture surface <hwnd> <pid> <x> <y> <width> <height> <dir>   A surface read of exactly that region, the
-//       fixture's frame. On `go` it checks the fixture right before and right after the blit: the window `hwnd`,
-//       visible, of process `pid`, titled `oneshot-fixture`, with exactly that frame. Either check failing keeps
-//       nothing. The blit is GDI's BitBlt with CAPTUREBLT, so layered windows over the fixture are composed in.
-//   owner_capture --check   Builds, starts and blits between two memory bitmaps with the same flags; reads no screen.
+//       fixture's frame. Before it says it is ready it watches the fixture (a WinEvent hook on its process) and
+//       makes its bitmap, so nothing but the blit lies between the checks. On `go` it checks the fixture right
+//       before and right after the blit: the window `hwnd`, visible, of process `pid`, titled `oneshot-fixture`,
+//       with exactly that frame. Either check failing, or any move, hide or destruction of the fixture seen
+//       between the watch and the end, one put back included, keeps nothing. A fixture it cannot watch is
+//       unavailable, so the check stays pending. The blit is GDI's BitBlt with CAPTUREBLT, so layered windows
+//       over the fixture are composed in.
+//   owner_capture --check   Builds, starts, watches its own process and blits between two memory bitmaps with the
+//       same flags; reads no screen.
+// Every release is tried on its own; one that fails is named in the result's `unreleased`.
 using System; using System.IO; using System.Runtime.InteropServices; using System.Text; using System.Threading;
 using System.Runtime.InteropServices.WindowsRuntime; using System.Drawing; using System.Drawing.Imaging;
 using Windows.Foundation; using Windows.Graphics.Capture; using Windows.Graphics.DirectX;
@@ -43,9 +49,34 @@ public static class Program {
   [DllImport("gdi32")] static extern bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
   [DllImport("gdi32")] static extern bool DeleteDC(IntPtr dc);
   [DllImport("gdi32")] static extern bool DeleteObject(IntPtr obj);
+  delegate void WinEvent(IntPtr hook, uint ev, IntPtr hwnd, int obj, int child, uint thread, uint time);
+  [DllImport("user32")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEvent proc, uint pid, uint thread, uint flags);
+  [DllImport("user32")] static extern bool UnhookWinEvent(IntPtr hook);
+  [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public int x, y; }
+  [DllImport("user32")] static extern bool PeekMessageW(out MSG msg, IntPtr hwnd, uint min, uint max, uint remove);
+  [DllImport("user32")] static extern IntPtr DispatchMessageW(ref MSG msg);
+  const uint EVENT_OBJECT_DESTROY = 0x8001, EVENT_OBJECT_HIDE = 0x8003, EVENT_OBJECT_LOCATIONCHANGE = 0x800B;
 
   static int closed;   // set by the item's Closed event on another thread, read with a barrier
   static bool Closed() { return Volatile.Read(ref closed) != 0; }
+  static readonly System.Collections.Generic.List<string> unreleased = new System.Collections.Generic.List<string>();
+
+  // The fixture's watch: an out-of-context hook queues each event to this thread as Windows makes the change, and
+  // `Stirred` delivers every one queued so far. Kept in a field, so the collector never takes the callback.
+  static WinEvent watcher; static IntPtr watched; static int stirred;
+  static void Seen(IntPtr hook, uint ev, IntPtr hwnd, int obj, int child, uint thread, uint time) {
+    if (hwnd == watched && obj == 0 && (ev == EVENT_OBJECT_DESTROY || ev == EVENT_OBJECT_HIDE || ev == EVENT_OBJECT_LOCATIONCHANGE))
+      Interlocked.Exchange(ref stirred, 1);
+  }
+  static IntPtr Watch(IntPtr hwnd, uint pid) {
+    watched = hwnd; watcher = Seen;
+    return SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE, IntPtr.Zero, watcher, pid, 0, 0);   // WINEVENT_OUTOFCONTEXT
+  }
+  static bool Stirred() {
+    MSG m;
+    while (PeekMessageW(out m, IntPtr.Zero, 0, 0, 1)) DispatchMessageW(ref m);   // PM_REMOVE
+    return Volatile.Read(ref stirred) != 0;
+  }
 
   static void Write(string dir, string name, string json) {   // replaced whole, so the server never reads half
     string part = Path.Combine(dir, name + ".part");
@@ -55,7 +86,11 @@ public static class Program {
   }
   static string Quote(string s) { return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", " ").Replace("\r", " ") + "\""; }
   static string Not(string why) { return "{\"read\": false, \"why\": " + Quote(why) + "}"; }
-  static void Free(Action release) { try { release(); } catch (Exception) { } }   // each release whatever the others do
+  static void Free(string what, Func<bool> release) {   // each release whatever the others do, a failed one named
+    try { if (!release()) unreleased.Add(what); }
+    catch (Exception e) { unreleased.Add(what + ": " + e.GetType().Name); }
+  }
+  static void Free(string what, Action release) { Free(what, () => { release(); return true; }); }
   static T Wait<T>(IAsyncOperation<T> op) {   // the system metadata alone: no AsTask, which needs the SDK's
     for (int i = 0; i < 2000 && op.Status == AsyncStatus.Started; i++) Thread.Sleep(5);
     if (op.Status != AsyncStatus.Completed) throw new TimeoutException("a Windows operation did not complete");
@@ -130,13 +165,15 @@ public static class Program {
       File.WriteAllBytes(Path.Combine(dir, "window.png"), bytes);
       return "{\"read\": true, \"width\": " + frame.ContentSize.Width + ", \"height\": " + frame.ContentSize.Height + "}";
     } finally {   // on every exit, the read or not, each whatever the others do
-      Free(() => { if (frame != null) frame.Dispose(); });
-      Free(() => { if (session != null) session.Dispose(); });
-      Free(() => { if (pool != null) pool.Dispose(); });
-      Free(() => { if (device != null) Marshal.ReleaseComObject(device); });
-      Free(() => { if (item != null) Marshal.FinalReleaseComObject(item); });
-      Free(() => { if (factory != null) Marshal.ReleaseComObject(factory); });
-      foreach (IntPtr p in new[] { made, raw, dxgi, ctx, dev }) { IntPtr q = p; Free(() => { if (q != IntPtr.Zero) Marshal.Release(q); }); }
+      Free("the frame", () => { if (frame != null) frame.Dispose(); });
+      Free("the capture session", () => { if (session != null) session.Dispose(); });
+      Free("the frame pool", () => { if (pool != null) pool.Dispose(); });
+      Free("the device", () => { if (device != null) Marshal.ReleaseComObject(device); });
+      Free("the item", () => { if (item != null) Marshal.FinalReleaseComObject(item); });
+      Free("the item factory", () => { if (factory != null) Marshal.ReleaseComObject(factory); });
+      string[] names = { "the item pointer", "the device pointer", "the DXGI device", "the D3D context", "the D3D device" };
+      IntPtr[] pointers = { made, raw, dxgi, ctx, dev };
+      for (int i = 0; i < pointers.Length; i++) { IntPtr q = pointers[i]; Free(names[i], () => { if (q != IntPtr.Zero) Marshal.Release(q); }); }
     }
   }
 
@@ -150,55 +187,64 @@ public static class Program {
     return "";
   }
 
-  static bool Blit(IntPtr source, int x, int y, int w, int h, Action<IntPtr> keep) {   // BitBlt into a fresh bitmap
-    IntPtr dc = IntPtr.Zero, bits = IntPtr.Zero, old = IntPtr.Zero;
+  static string Surface(IntPtr hwnd, uint pid, int x, int y, int w, int h, string dir) {
+    if (w <= 0 || h <= 0) return Not("an empty region");
+    IntPtr hook = IntPtr.Zero, screen = IntPtr.Zero, dc = IntPtr.Zero, bits = IntPtr.Zero, old = IntPtr.Zero;
+    Bitmap kept = null;
     try {
-      dc = CreateCompatibleDC(source);
-      bits = CreateCompatibleBitmap(source, w, h);
-      if (dc == IntPtr.Zero || bits == IntPtr.Zero) return false;
+      // The watch and the bitmap before the helper says it is ready: between the checks there is only the blit.
+      hook = Watch(hwnd, pid);
+      screen = GetDC(IntPtr.Zero);
+      if (screen != IntPtr.Zero) { dc = CreateCompatibleDC(screen); bits = CreateCompatibleBitmap(screen, w, h); }
+      if (hook == IntPtr.Zero || dc == IntPtr.Zero || bits == IntPtr.Zero) {   // nothing to read it with here: pending
+        string none = hook == IntPtr.Zero ? "the fixture cannot be watched" : "no bitmap to blit into";
+        Write(dir, "item.json", "{\"empty\": true, \"why\": " + Quote(none) + "}");
+        return Not(none);
+      }
       old = SelectObject(dc, bits);
-      if (!BitBlt(dc, 0, 0, w, h, source, x, y, BLIT)) return false;
+      Write(dir, "item.json", "{\"empty\": false}");
+      string answer = Answer(dir);
+      if (answer != "go") return Not(answer == "stop" ? "the binding was not proven" : "no answer from the server");
+      string why = Stirred() ? "the fixture moved or was hidden" : Fixture(hwnd, pid, x, y, w, h);
+      if (why != "") return Not(why);
+      bool blitted = BitBlt(dc, 0, 0, w, h, screen, x, y, BLIT);
+      why = Fixture(hwnd, pid, x, y, w, h);   // the fixture still that frame once sampled
+      Thread.Sleep(50);   // every event of a change made before the second check is queued by now
+      if (why == "" && Stirred()) why = "the fixture moved or was hidden while it was sampled";   // put back included
+      // No pixels from this desktop (not the input one, or locked): no fault of the app's, so the check stays pending.
+      if (!blitted) return "{\"read\": false, \"unavailable\": true, \"why\": \"BitBlt failed\"}";
+      if (why != "") return Not(why);
       SelectObject(dc, old); old = IntPtr.Zero;
-      if (keep != null) keep(bits);
-      return true;
+      kept = Image.FromHbitmap(bits);
+      kept.Save(Path.Combine(dir, "surface.png"), ImageFormat.Png);
+      return "{\"read\": true, \"width\": " + w + ", \"height\": " + h + "}";
     } finally {
-      IntPtr d = dc, b = bits, o = old;
-      Free(() => { if (o != IntPtr.Zero) SelectObject(d, o); });
-      Free(() => { if (d != IntPtr.Zero) DeleteDC(d); });
-      Free(() => { if (b != IntPtr.Zero) DeleteObject(b); });
+      IntPtr d = dc, b = bits, o = old, s = screen, k = hook;
+      Free("the saved bitmap", () => { if (kept != null) kept.Dispose(); });
+      Free("the bitmap's selection", () => o == IntPtr.Zero || SelectObject(d, o) != IntPtr.Zero);
+      Free("the memory DC", () => d == IntPtr.Zero || DeleteDC(d));
+      Free("the bitmap", () => b == IntPtr.Zero || DeleteObject(b));
+      Free("the screen DC", () => s == IntPtr.Zero || ReleaseDC(IntPtr.Zero, s) == 1);
+      Free("the fixture's watch", () => k == IntPtr.Zero || UnhookWinEvent(k));
     }
   }
 
-  static string Surface(IntPtr hwnd, uint pid, int x, int y, int w, int h, string dir) {
-    if (w <= 0 || h <= 0) return Not("an empty region");
-    Write(dir, "item.json", "{\"empty\": false}");
-    string answer = Answer(dir);
-    if (answer != "go") return Not(answer == "stop" ? "the binding was not proven" : "no answer from the server");
-    string why = Fixture(hwnd, pid, x, y, w, h);
-    if (why != "") return Not(why);
-    IntPtr screen = GetDC(IntPtr.Zero);
-    try {
-      Bitmap kept = null;
-      try {
-        if (!Blit(screen, x, y, w, h, bits => { kept = Image.FromHbitmap(bits); })) return Not("BitBlt failed");
-        why = Fixture(hwnd, pid, x, y, w, h);   // the fixture still that frame once sampled, or nothing is kept
-        if (why != "") return Not(why);
-        kept.Save(Path.Combine(dir, "surface.png"), ImageFormat.Png);
-      } finally { if (kept != null) kept.Dispose(); }
-    } finally { ReleaseDC(IntPtr.Zero, screen); }
-    return "{\"read\": true, \"width\": " + w + ", \"height\": " + h + "}";
-  }
-
-  static bool Check() {   // the blit's flags accepted, between memory bitmaps: no screen is read
-    IntPtr dc = CreateCompatibleDC(IntPtr.Zero), bits = CreateCompatibleBitmap(dc, 4, 4), old = IntPtr.Zero;
-    try { old = SelectObject(dc, bits); return Blit(dc, 0, 0, 4, 4, null); }
-    finally { SelectObject(dc, old); DeleteDC(dc); DeleteObject(bits); }
+  static bool Check() {   // the watch and the blit's flags, on its own process and between memory bitmaps: no screen
+    IntPtr hook = Watch(IntPtr.Zero, (uint)System.Diagnostics.Process.GetCurrentProcess().Id);
+    IntPtr src = CreateCompatibleDC(IntPtr.Zero), dst = CreateCompatibleDC(IntPtr.Zero);
+    IntPtr a = CreateCompatibleBitmap(src, 4, 4), b = CreateCompatibleBitmap(dst, 4, 4);
+    IntPtr oa = SelectObject(src, a), ob = SelectObject(dst, b);
+    try { return hook != IntPtr.Zero && BitBlt(dst, 0, 0, 4, 4, src, 0, 0, BLIT) && !Stirred(); }
+    finally {
+      SelectObject(src, oa); SelectObject(dst, ob); DeleteObject(a); DeleteObject(b); DeleteDC(src); DeleteDC(dst);
+      if (hook != IntPtr.Zero) UnhookWinEvent(hook);
+    }
   }
 
   public static int Main(string[] args) {
     SetProcessDpiAwarenessContext((IntPtr)(-4));   // per-monitor v2: physical pixels, as the driver reads them
     if (args.Length == 1 && args[0] == "--check") {
-      if (!Check()) { Console.Error.WriteLine("BitBlt with CAPTUREBLT failed"); return 1; }
+      if (!Check()) { Console.Error.WriteLine("the WinEvent watch or BitBlt with CAPTUREBLT failed"); return 1; }
       Console.WriteLine("owner_capture ok");
       return 0;
     }
@@ -212,7 +258,12 @@ public static class Program {
     } catch (Exception e) {
       result = Not(e.GetType().Name + ": " + e.Message);
       if (!File.Exists(Path.Combine(dir, "item.json")))   // a failure before the item phase: nothing could be made here
-        Free(() => Write(dir, "item.json", "{\"empty\": true, \"why\": " + Quote(e.GetType().Name + ": " + e.Message) + "}"));
+        Free("the item answer", () => Write(dir, "item.json", "{\"empty\": true, \"why\": " + Quote(e.GetType().Name + ": " + e.Message) + "}"));
+    }
+    if (unreleased.Count > 0) {   // the read stands as it is, and the server learns what was not let go
+      var names = new StringBuilder();
+      foreach (string what in unreleased) names.Append(names.Length > 0 ? ", " : "").Append(Quote(what));
+      result = result.Substring(0, result.LastIndexOf('}')) + ", \"unreleased\": [" + names + "]}";
     }
     Write(dir, "result.json", result);
     return 0;

@@ -7,6 +7,7 @@ made for the handle, the binding is proven again with the item open, and only th
 (`owner_capture.cs`). `PrintWindow` is never called on the owner's desktop.
 """
 
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -183,10 +184,13 @@ def _ended(session, key: str) -> None:
         raise RuntimeError(f"캡처 도우미를 끝내지 못했다 — {'; '.join(proof['reasons'])}")
 
 
-def _read(session, key: str, argv: list[str], binding: dict, members, halt, name: str) -> dict:
+def _read(session, key: str, argv: list[str], binding: dict, members, halt, name: str, gate) -> dict:
     """The helper's two phases: it says it is ready (`item.json`), the binding is proven again then, and only a
-    `go` written after that proof, with no stop asked, lets it sample. Unavailable when the helper could make
-    nothing here (an item Windows refused or gave empty, or no word from it in time): the check stays pending."""
+    `go` written after that proof, with no stop asked, lets it sample. The stop is decided and `go` written under
+    `gate`, the lock a stop is accepted under, so a stop accepted first always reaches the helper as `stop`.
+    Unavailable when the helper could make nothing here (an item Windows refused or gave empty, a fixture it
+    cannot watch, or no word from it in time): the check stays pending. RuntimeError when it let go of
+    something it made only partly: nothing passes."""
 
     folder = session.reserve(key)
     try:
@@ -204,33 +208,39 @@ def _read(session, key: str, argv: list[str], binding: dict, members, halt, name
             (folder / "stop").write_text("", encoding="utf-8")
             raise Unavailable(f"캡처 도우미가 읽을 준비를 하지 못했다 — {item.get('why') if item else '제때 답이 없다'}")
         why = proven(binding, members())   # with the item open: a window replaced since never gets its frames
-        if halt.is_set():   # a stop asked while the job was read: never a `go`
-            why = "the round was stopped"
-        (folder / ("stop" if why else "go")).write_text("", encoding="utf-8")
+        with gate:
+            if halt.is_set():   # a stop asked before this point, while the job was read included: never a `go`
+                why = "the round was stopped"
+            (folder / ("stop" if why else "go")).write_text("", encoding="utf-8")
         result = _waited(folder / "result.json", READ_SECONDS, halt) or {"read": False, "why": "no result in time"}
+        if result.get("unreleased"):
+            raise RuntimeError(f"캡처 도우미가 자원을 다 놓지 못했다 — {'; '.join(result['unreleased'])}")
         if why:
             return {"read": False, "why": why}
+        if result.get("unavailable"):
+            raise Unavailable(f"캡처 도우미가 이 자리에서 읽을 수 없다 — {result.get('why')}")
         return {**result, "file": str(folder / name)} if result.get("read") else result
     finally:
         _ended(session, key)
 
 
-def window_read(session, key: str, exe: Path, binding: dict, members, halt) -> dict:
+def window_read(session, key: str, exe: Path, binding: dict, members, halt, gate=None) -> dict:
     """A window-bound read of `binding`'s window: the helper makes the item, the binding is proven again with it
     open, and only then may the helper start the frame pool. `{"read": True, "file"}`, or why nothing was read.
     The helper's job is ended on every outcome."""
 
-    return _read(session, key, [str(exe), "window", str(binding["hwnd"])], binding, members, halt, "window.png")
+    argv = [str(exe), "window", str(binding["hwnd"])]
+    return _read(session, key, argv, binding, members, halt, "window.png", gate or contextlib.nullcontext())
 
 
-def surface_read(session, key: str, exe: Path, binding: dict, rect: list[int], members, halt) -> dict:
+def surface_read(session, key: str, exe: Path, binding: dict, rect: list[int], members, halt, gate=None) -> dict:
     """A surface read of exactly `rect`, the fixture's frame as it reports it in physical pixels, whatever is
-    composed there when sampled. The fixture's binding is proven again before the `go`, and the helper checks the
-    fixture itself right before and after the blit: its handle, process, title and exactly that frame, so a
-    fixture moved, hidden or replaced meanwhile keeps nothing. The helper's job is ended on every outcome."""
+    composed there when sampled. The fixture's binding is proven again before the `go`. The helper watches the
+    fixture from before it is ready until after the blit, and checks it right before and after: any move, hide or
+    destruction meanwhile, one put back included, keeps nothing. The helper's job is ended on every outcome."""
 
     argv = [str(exe), "surface", str(binding["hwnd"]), str(binding["pid"]), *(str(v) for v in rect)]
-    return _read(session, key, argv, binding, members, halt, "surface.png")
+    return _read(session, key, argv, binding, members, halt, "surface.png", gate or contextlib.nullcontext())
 
 
 def fixture(session, key: str, page: list[str], rect: list[int], halt) -> tuple[dict, list[int]]:

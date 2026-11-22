@@ -379,6 +379,8 @@ def test_a_window_check_reads_only_through_the_window_and_a_composition_only_the
     composed = checked(desk, SURFACE, driven())
     # Exactly the fixture's frame, with its binding, which the helper proves itself right before and after the blit.
     assert composed["status"] == "judge" and desk[0]["surface"][0][3:5] == (FIXTURE, FIXTURE["rect"])
+    # Each `go` is decided under the lock a stop is accepted under.
+    assert desk[0]["window"][0][6] is oneshot._lock and desk[0]["surface"][0][7] is oneshot._lock
 
 
 def test_no_capture_helper_leaves_a_capture_check_pending(held, desk):
@@ -479,6 +481,39 @@ def test_a_shutdown_accepted_before_the_rounds_outcome_is_saved_never_passes(hel
     pc.runtime.stopping.set()   # after the body's own last check, before `settled`
     pc.settled("budget", pc.outcome(o(), {"O2": {"status": "passed"}, "O3": {"status": "passed"}}))
     assert o()["stage"] == "pc" and o()["pc"]["last"]["status"] == "stopped" and not pc.passed(o())
+
+
+def test_a_tree_moved_during_the_round_goes_back_to_the_build_unless_a_stop_came_first(held, monkeypatch):
+    checks, stop = [], []
+
+    def moved(spec, tree, passed):   # the second check, after the round's body, finds the HEAD moved
+        checks.append(1)
+        if len(checks) % 2:
+            return ""
+        if stop:   # the owner's stop accepted during that check
+            pc.stop("budget")
+        return "HEAD changed"
+
+    monkeypatch.setattr(pc.review, "moved", moved)
+    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "passed"}})
+    assert after["stage"] == "build-front" and after["stopped"]["reason"] == "gate" and not pc.passed(after)
+    oneshot_spec.saved("budget", oneshot={"stage": "pc", "stopped": None, "pc": pc.fresh()})
+    stop.append(True)
+    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "passed"}})
+    assert after["stage"] == "pc" and after["pc"]["last"]["status"] == "stopped" and after["stopped"] is None
+
+
+def test_a_shutdown_waits_for_an_outcome_being_applied(monkeypatch):
+    from main import app
+
+    monkeypatch.setattr(app.runtime, "stopping", threading.Event())
+    going = threading.Thread(target=app.going_down)
+    with oneshot._lock:   # an outcome being applied: the shutdown is decided after it, never in the middle
+        going.start()
+        going.join(0.3)
+        assert not app.runtime.stopping.is_set()
+    going.join(15)
+    assert app.runtime.stopping.is_set()
 
 
 def test_an_app_that_overran_goes_back_to_the_builds_checks_unless_a_stop_came_first(held, monkeypatch):

@@ -95,7 +95,7 @@ async def lifespan(application: FastAPI):
         try:
             yield
         finally:
-            runtime.stopping.set()
+            going_down()
             poll_stop.set()
             poll_thread.join()
             mobile.companion.stop()
@@ -104,11 +104,24 @@ async def lifespan(application: FastAPI):
             agent.reopen()
 
 
+def going_down() -> None:
+    """`runtime.stopping` set under the oneshot lock, which a round's outcome is applied under
+    (`oneshot_pc.settled`): an outcome is applied wholly before the shutdown or as a stop. A
+    holder that does not let go in 10 s does not hold the shutdown up."""
+
+    locked = oneshot._lock.acquire(timeout=10)
+    try:
+        runtime.stopping.set()
+    finally:
+        if locked:
+            oneshot._lock.release()
+
+
 def close_turns() -> None:
     """Every running turn ended and its provider gone, and none starts: one
     no registry holds, such as a query's explanation, included. Safe to call again."""
 
-    runtime.stopping.set()
+    going_down()
     onboarding.close()
     powershell.close_install()
     oneshot_android.close_install()
