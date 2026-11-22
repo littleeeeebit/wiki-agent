@@ -271,6 +271,7 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     with patch.object(measure.oneshot_publish, "published", lambda repo: oneshot_needs.forget("budget", ENV)):
         measure.measure("budget")   # the value taken back meanwhile: a stop for the owner, no failed run
     assert len(o()["measures"]) == runs and not o().get("measure_fails") and "M2" in o()["stopped"]["detail"]
+    assert not list((oneshot_spec.store("budget").folder / "measure").glob("*.raw"))   # no folder made for it
     oneshot_spec.saved("budget", oneshot={"pr1": {**o()["pr1"], "head": o()["built_head"]}})
     given()
     measure.measure("budget")
@@ -359,9 +360,22 @@ def test_a_measurement_keeps_no_linked_file_and_one_read_only_file_never_stops_t
 def test_a_failed_copy_still_removes_the_scripts_folder_and_leaves_no_partial_report(tmp_path):
     from main import oneshot_kept
     raw = wrote(tmp_path, {"report.json": '{"metrics": {}}', "serve.log": "sk-1", "clips/ok.wav": b"RIFF"})
-    with patch.object(oneshot_kept.shutil, "copyfile", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))):
+    def partly(src, dst, **_):   # some bytes written, then the disk is full
+        Path(dst).write_bytes(b"RI")
+        raise OSError("disk full")
+
+    with patch.object(oneshot_kept.shutil, "copyfile", partly):
         why = measure.kept_from(raw, tmp_path / "m1", {"sk-1": "[K]"})
     assert "보관하지 못했다" in why and not raw.exists()   # the copy failed: the raw folder goes all the same
+    assert sorted(p.name for p in (tmp_path / "m1" / "clips").iterdir()) == []   # no partial clip, no `.part`
+    raw = wrote(tmp_path, {"report.json": '{"metrics": {}}'})
+    with patch.object(oneshot_kept.Path, "read_text", lambda *a, **k: (_ for _ in ()).throw(OSError("read fault"))):
+        why = measure.kept_from(raw, tmp_path / "m3", {})
+    assert "보관하지 못했다" in why   # a failed read is no invalid report: the run stops for the owner
+    (tmp_path / "measure").mkdir()
+    with patch.object(oneshot_kept.os, "scandir", lambda *a: (_ for _ in ()).throw(PermissionError("listing"))):
+        why = oneshot_kept.fresh(tmp_path / "measure" / "m4", tmp_path / "measure" / "m4.raw")
+    assert "읽지 못했다" in why and not (tmp_path / "measure" / "m4.raw").exists()   # never taken for no leftover
     raw = wrote(tmp_path, {"report.json": '{"metrics": {}}'})
     with patch.object(oneshot_kept.os, "replace", lambda *a: (_ for _ in ()).throw(OSError("disk full"))):
         why = measure.kept_from(raw, tmp_path / "m2", {})

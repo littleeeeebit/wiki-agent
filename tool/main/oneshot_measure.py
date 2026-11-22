@@ -410,9 +410,6 @@ def measure(repo: str) -> None:
         n = len(o.get("measures") or []) + 1
         out = store.folder / "measure" / f"m{n}-{o['built_head'][:12]}"
         raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept_from` copies leave it
-        if why := fresh(out, raw):
-            store.stop("measure", why)
-            return None
         with oneshot._lock:   # every stored-value change counts under this lock: the values and the count agree
             now = oneshot_spec.spec_of(repo)   # what the owner gave by now, a value taken back since included
             if missing := [x["id"] for x in plan["inputs"] if not has(now, x)]:
@@ -420,6 +417,9 @@ def measure(repo: str) -> None:
                 return None
             env, hide = env_of(now, plan)
             since = CHANGES.get(repo, 0)
+        if why := fresh(out, raw):   # made only once the run goes ahead: an early stop leaves no folder
+            store.stop("measure", why)
+            return None
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}, None
         try:
             with served(oneshot_build.run_as(plan["serve"]["command"], o, tree), tree, env, plan["serve"]["health"],

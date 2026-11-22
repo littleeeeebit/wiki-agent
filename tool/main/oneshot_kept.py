@@ -126,24 +126,35 @@ def removed(folder: Path) -> str:
 
 def fresh(out: Path, raw: Path) -> str:
     """Every leftover raw folder beside `out`, and `out`, removed, then `raw` made empty for the script; or why
-    not."""
+    not. A folder that cannot be listed says so: a leftover it hides is never taken for none."""
 
-    for old in [*out.parent.glob("*.raw"), out]:   # an earlier run's leftover first
+    try:
+        olds = [Path(e.path) for e in os.scandir(out.parent) if e.name.endswith(".raw")]
+    except FileNotFoundError:
+        olds = []   # the first measurement of this run
+    except OSError as exc:
+        return f"실측 폴더를 읽지 못했다 ({type(exc).__name__}) — 그 폴더를 확인하고 [실측 시작]을 누른다"
+    for old in [*olds, out]:   # an earlier run's leftover first
         if why := removed(old):
             return why
     raw.mkdir(parents=True)
     return ""
 
 
-def written(p: Path, text: str) -> None:
-    """`text` at `p` only once all of it is written: a failed write leaves no partial file there."""
+def staged(p: Path, write) -> None:
+    """`p` only once `write` has written all of it beside, under a `.part` name: a failed write leaves no
+    partial file there, and no `.part`."""
 
     part = p.with_name(p.name + ".part")
     try:
-        part.write_text(text, encoding="utf-8")
+        write(part)
         os.replace(part, p)
     finally:
         part.unlink(missing_ok=True)
+
+
+def written(p: Path, text: str) -> None:
+    staged(p, lambda part: part.write_text(text, encoding="utf-8"))
 
 
 def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
@@ -164,7 +175,7 @@ def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
                 try:
                     text = json.dumps(cleaned(strict(report.read_text(encoding="utf-8")), hide), ensure_ascii=False,
                                       indent=1)
-                except (OSError, ValueError, RecursionError):   # not UTF-8 JSON: `report_of` said so too
+                except (ValueError, RecursionError):   # not UTF-8 JSON; a failed read (`OSError`) stops the run
                     text = None
                 if text is not None:
                     written(out / "report.json", text)
@@ -173,7 +184,8 @@ def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
             if names := clips_of(raw, hide):
                 (out / "clips").mkdir()
                 for name in names:
-                    shutil.copyfile(raw / "clips" / name, out / "clips" / name, follow_symlinks=False)
+                    staged(out / "clips" / name, lambda part, name=name: shutil.copyfile(
+                        raw / "clips" / name, part, follow_symlinks=False))
     except OSError as exc:
         why = f"실측 결과를 보관하지 못했다 ({type(exc).__name__}) — 디스크를 확인하고 [실측 시작]을 누른다"
     return removed(raw) or why

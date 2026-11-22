@@ -46,6 +46,7 @@ gets the standing refusal and its areas' history (`build_turn`, `recurring`).
 | A conflict the builder and the review cannot settle | It goes to the owner. This applies when the builder answered an area in two rounds, naming a requirement a change would break, or when an area is refused again after its one mechanism replacement. The owner keeps the review's side, the builder's side, or writes their own decision |
 | Findings that belong to a later stage | They are not blocking findings of the backend. Each goes to that kind's own build turn |
 | "Replace the mechanism" | Once per area |
+| What the measurement's keeping guards against | Mistakes, not an attacker. The measurement script and the backend are this run's own code and already hold the secrets in their environment. Keeping masks what they leak by accident and survives ordinary failures: a full disk, a read-only file, a failed read, a leftover folder. A link, junction or hard link they plant, or a file they swap between a check and its read, is outside what the keeping promises. The link checks that exist stay, as a courtesy, not as a guarantee (owner, 2026-11-23) |
 | The round cap on `[재개]` | It resets, as before |
 | Order after the build | Build gate → pull request #1 (a draft) → real measurement → review. Fix commits stack on the same pull request, and the last stage makes it ready |
 | What the measurement runs | The backend ships a runnable headless server, with its API, its workers and the real sign-in, as a required product of the build. The measurement starts it with real accounts and real addresses |
@@ -207,9 +208,11 @@ copies out of it into the kept folder only those three:
 
 The raw folder itself is checked the same way before anything in it is
 read, `report_of` included, so a linked folder or report supplies nothing.
-The kept folder is made new for each run, and each kept file appears only
-once all of it is written. Then the raw folder is removed whole, on every
-exit, a failed copy included:
+The kept folder is made new for each run, and each kept file, a clip
+included, appears only once all of it is written (`staged`). A failed read
+of the report while it is kept stops the run like a failed copy; only
+invalid UTF-8 JSON is left out. Then the raw folder is removed whole, on
+every exit, a failed copy included:
 
 - a link or junction at its root is removed and never followed;
 - inside, only a failed removal is retried, once, with the entry made
@@ -219,9 +222,11 @@ exit, a failed copy included:
 If the copy fails or the folder remains, the run stops for the owner with
 that reason, an unforeseen error of the run included, and records no
 result. The next start removes every leftover raw folder before it runs,
-and stops again if one remains. ponytail: these checks run after the script
-and the backend have ended; a process that outlives the run and changes the
-folder between a check and its read is not guarded against. The plan and the report are
+and stops again if one remains or the folder cannot be listed. The raw
+folder is made only after the inputs are checked again under the lock, so
+an input taken back at that moment leaves none. A link, junction or hard
+link the script or the backend plants, and a file swapped between a check
+and its read, are outside what the keeping promises (owner decision above). The plan and the report are
 read strictly: `NaN`, `Infinity`, an overflowing float or a lone surrogate
 escape is refused. A metric equal to a secret's value, in any numeric
 spelling, never counts as a measurement. An integer is compared exactly; a
