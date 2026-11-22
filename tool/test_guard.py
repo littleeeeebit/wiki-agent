@@ -935,6 +935,18 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
     for wrapper in ("claude_pretool.py", "codex_pretool.py"):
         assert hook.run(["claude", wrapper]) == 0
         assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny", wrapper
+    # A legacy entry that seems to cover the wrapper never skips it in a credential session: it may not cover this call.
+    ran = []
+    monkeypatch.setattr(hook, "project_for", lambda cwd: (tmp_path, tmp_path))
+    monkeypatch.setattr(hook, "legacy", lambda *a: True)
+    monkeypatch.setattr(hook.runpy, "run_path", lambda *a, **k: ran.append(sys.argv[1:]))
+    for marked in (True, False):
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"{}"), encoding="utf-8"))
+        if not marked:
+            monkeypatch.delenv(guard_git.SECRETS_HELD)
+        assert real_main(["claude", "claude_pretool.py"]) == 0
+        monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
+    assert len(ran) == 1 and "--without" not in ran[0]   # run whole when marked, skipped as legacy otherwise
     monkeypatch.setattr(hook, "HERE", tmp_path)   # a wrapper that is not there at all
     assert real_main(["claude", "claude_pretool.py"]) == 0
     assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"

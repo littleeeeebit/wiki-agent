@@ -130,9 +130,11 @@ def main(argv: list[str]) -> int:
     if found is None:
         return closed(script, "훅이 이 작업의 프로젝트를 찾지 못했다")
     project, top = found
-    if legacy(top, host, script):
+    # A credential session runs every check here: a legacy entry may not cover this call (its matcher, its event).
+    held = bool(os.environ.get(__import__("secrets_held").SECRETS_HELD))
+    if not held and legacy(top, host, script):
         return 0
-    if script == "claude_pretool.py":
+    if script == "claude_pretool.py" and not held:
         # Each check it holds keeps the rule it had as a hook of its own.
         from claude_pretool import MEMBERS
 

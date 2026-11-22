@@ -165,11 +165,14 @@ def cleared(tree: Path, device: dict) -> str:
                               errors="replace", timeout=60)
         return None if done.returncode else done.stdout
 
-    # A clean tree first (a staged removal, a local edit: nothing is deleted under it), then HEAD and the index.
-    status, index, head = git("status", "--porcelain"), git("ls-files", "-z"), git("ls-tree", "-r", "-z", "--name-only", "HEAD")
-    if status is None or index is None or head is None:
+    from . import specs   # it imports this module
+
+    # A clean tree first, read as the final gate reads it (`specs.status`: the app's own records are not work): a
+    # staged removal or a local edit, and nothing is deleted under it. Then HEAD and the index.
+    status, index, head = specs.status(tree), git("ls-files", "-z"), git("ls-tree", "-r", "-z", "--name-only", "HEAD")
+    if index is None or head is None:
         return f"`{apk}` 를 Git 이 추적하는지 읽지 못했다 — 최종 게이트를 시작하지 않는다"
-    if status.strip():
+    if status.returncode or status.stdout.strip():
         return "커밋 안 된 변경이 있다 — 최종 게이트 전에 커밋한다"
     names = {apk.casefold(), (tree / apk).resolve().relative_to(tree.resolve()).as_posix().casefold()}
     if names & {e.casefold() for e in (index + "\0" + head).split("\0") if e}:

@@ -330,6 +330,10 @@ def test_every_gate_the_run_runs_has_each_given_secret_and_the_prompts_name_only
 def test_a_run_whose_calls_need_nothing_is_told_so():
     assert needs.told({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}) == \
         "- none: no outside call needs anything from the owner"
+    # A launch name the agent's shell never has is told as the gate's alone.
+    gate_only = {"N1": ({"id": "N1", "what": "a key", "kind": "secret", "env": "ANTHROPIC_API_KEY"}, [{"id": "X1"}])}
+    with patch.object(needs, "owed", lambda design: gate_only):
+        assert "server's gate alone has: it is not in your shell" in needs.told({"repo": "budget", "oneshot": {}})
 
 
 REPORTER = """import os, sys

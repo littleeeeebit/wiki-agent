@@ -502,7 +502,10 @@ def told(spec: dict) -> str:
     lines = []
     for nid, (n, calls) in owed(spec["oneshot"].get("design") or {}).items():
         uses = ", ".join(x["id"] for x in calls)
-        if n["kind"] == "secret":
+        if n["kind"] == "secret" and LAUNCH.fullmatch(n["env"]):   # never in the agent's shell (`agent`)
+            lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret the server's gate alone has: it is not in "
+                         f"your shell, so do not set, read or repair it there; the gate runs its live check ({uses})")
+        elif n["kind"] == "secret":
             lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret ({uses})")
         elif n["kind"] in ("tool", "file") and (path := (given.get(nid) or {}).get("path")):
             lines.append(f"- {nid} {n['what']}, a {'program' if n['kind'] == 'tool' else 'file'} at `{path}` ({uses})")

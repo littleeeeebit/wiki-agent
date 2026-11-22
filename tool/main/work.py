@@ -544,7 +544,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
         if chat is None:
             chat = ChatSession(path, model=model, effort=effort, write=True, system=prompt,
                                bypass=bypass, **({"env": env} if env else {}))
-            chat._spec_system, chat._spec_env, chat.hide = prompt, env, hide
+            chat._spec_system, chat._spec_env = prompt, env
             chat.settled = SETTLING.search
             if (digest := oneshot_needs.rotated(spec, secrets, recall(path, 0))) is not None:   # ends the old one
                 remember(path, "context", "비밀 값이 바뀌었다 — 새 대화로 시작한다", secrets=digest)
@@ -556,6 +556,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
                 chat.bypass = bypass
                 chat.close()
             chat.reconfigure(model, effort)
+        chat.hide = hide   # read for this turn: a gate-only value may change while the environment does not
         if getattr(chat, "fast", False) != fast:
             chat.fast = fast
             chat.close()
