@@ -9,16 +9,17 @@
 //       with the item still open, does it start the frame pool, and it keeps the first frame as `window.png` only
 //       while the item stays open through the copy. An item Windows refuses or gives empty is reported in
 //       `item.json` as `empty`, so the check stays pending.
-//   owner_capture surface <hwnd> <pid> <x> <y> <width> <height> <dir>   A surface read of exactly that region, the
-//       fixture's frame. Before it says it is ready it watches the fixture (a WinEvent hook on its process) and
-//       makes its bitmap, so nothing but the blit lies between the checks. On `go` it checks the fixture right
-//       before and right after the blit: the window `hwnd`, visible, of process `pid`, titled `oneshot-fixture`,
-//       with exactly that frame. Either check failing, or any move, hide or destruction of the fixture seen
-//       between the watch and the end, one put back included, keeps nothing. A fixture it cannot watch is
-//       unavailable, so the check stays pending. The blit is GDI's BitBlt with CAPTUREBLT, so layered windows
-//       over the fixture are composed in.
-//   owner_capture --check   Builds, starts, watches its own process and blits between two memory bitmaps with the
-//       same flags; reads no screen.
+//   owner_capture surface <hwnd> <pid> <x> <y> <width> <height> <marks> <dir>   A surface read of exactly that
+//       region, the fixture's frame. It makes its bitmap before it says it is ready. On `go` it checks the fixture
+//       right before and right after the blit: the window `hwnd`, visible, not minimized, with no window region,
+//       of process `pid`, titled `oneshot-fixture`, with exactly that frame. The frame is kept only when it
+//       carries every one of `<marks>` (the server's random colours, which the fixture paints along its client
+//       edges) where the fixture paints it: proof from the sampled pixels themselves that the fixture covered the
+//       region in that frame, however it was moved or put back around it. Marks missing leave the check pending;
+//       a check of the window failing fails it. The fixture also refuses every change to itself (oneshot_fixture.py).
+//       The blit is GDI's BitBlt with CAPTUREBLT, so layered windows over the fixture are composed in.
+//   owner_capture --check   Builds, starts, reads marks off a memory bitmap and blits between two memory bitmaps
+//       with the same flags; reads no screen.
 // Every release is tried on its own; one that fails is named in the result's `unreleased`.
 using System; using System.IO; using System.Runtime.InteropServices; using System.Text; using System.Threading;
 using System.Runtime.InteropServices.WindowsRuntime; using System.Drawing; using System.Drawing.Imaging;
@@ -49,34 +50,16 @@ public static class Program {
   [DllImport("gdi32")] static extern bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
   [DllImport("gdi32")] static extern bool DeleteDC(IntPtr dc);
   [DllImport("gdi32")] static extern bool DeleteObject(IntPtr obj);
-  delegate void WinEvent(IntPtr hook, uint ev, IntPtr hwnd, int obj, int child, uint thread, uint time);
-  [DllImport("user32")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEvent proc, uint pid, uint thread, uint flags);
-  [DllImport("user32")] static extern bool UnhookWinEvent(IntPtr hook);
-  [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public int x, y; }
-  [DllImport("user32")] static extern bool PeekMessageW(out MSG msg, IntPtr hwnd, uint min, uint max, uint remove);
-  [DllImport("user32")] static extern IntPtr DispatchMessageW(ref MSG msg);
-  const uint EVENT_OBJECT_DESTROY = 0x8001, EVENT_OBJECT_HIDE = 0x8003, EVENT_OBJECT_LOCATIONCHANGE = 0x800B;
+  [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+  [DllImport("user32")] static extern bool IsIconic(IntPtr hwnd);
+  [DllImport("user32")] static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
+  [DllImport("user32")] static extern int GetWindowRgn(IntPtr hwnd, IntPtr rgn);
+  [DllImport("gdi32")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+  const int TOLERANCE = 8;   // per channel: what the composition may change in a solid colour
 
   static int closed;   // set by the item's Closed event on another thread, read with a barrier
   static bool Closed() { return Volatile.Read(ref closed) != 0; }
   static readonly System.Collections.Generic.List<string> unreleased = new System.Collections.Generic.List<string>();
-
-  // The fixture's watch: an out-of-context hook queues each event to this thread as Windows makes the change, and
-  // `Stirred` delivers every one queued so far. Kept in a field, so the collector never takes the callback.
-  static WinEvent watcher; static IntPtr watched; static int stirred;
-  static void Seen(IntPtr hook, uint ev, IntPtr hwnd, int obj, int child, uint thread, uint time) {
-    if (hwnd == watched && obj == 0 && (ev == EVENT_OBJECT_DESTROY || ev == EVENT_OBJECT_HIDE || ev == EVENT_OBJECT_LOCATIONCHANGE))
-      Interlocked.Exchange(ref stirred, 1);
-  }
-  static IntPtr Watch(IntPtr hwnd, uint pid) {
-    watched = hwnd; watcher = Seen;
-    return SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE, IntPtr.Zero, watcher, pid, 0, 0);   // WINEVENT_OUTOFCONTEXT
-  }
-  static bool Stirred() {
-    MSG m;
-    while (PeekMessageW(out m, IntPtr.Zero, 0, 0, 1)) DispatchMessageW(ref m);   // PM_REMOVE
-    return Volatile.Read(ref stirred) != 0;
-  }
 
   static void Write(string dir, string name, string json) {   // replaced whole, so the server never reads half
     string part = Path.Combine(dir, name + ".part");
@@ -177,9 +160,37 @@ public static class Program {
     }
   }
 
+  static int[][] Marks(string file) {   // `x y width height rrggbb` per line, in the fixture's client pixels
+    var marks = new System.Collections.Generic.List<int[]>();
+    foreach (string line in File.ReadAllLines(file)) {
+      string[] p = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+      if (p.Length != 5) continue;
+      marks.Add(new[] { int.Parse(p[0]), int.Parse(p[1]), int.Parse(p[2]), int.Parse(p[3]), Convert.ToInt32(p[4], 16) });
+    }
+    if (marks.Count == 0) throw new InvalidDataException("no marks");
+    return marks.ToArray();
+  }
+
+  // Why the sampled frame does not carry every mark where the fixture paints it, its client area starting at
+  // (ox, oy) in the frame, or empty: each mark's middle pixel within TOLERANCE of its colour.
+  static string Marked(Bitmap frame, int[][] marks, int ox, int oy) {
+    foreach (int[] m in marks) {
+      int px = ox + m[0] + m[2] / 2, py = oy + m[1] + m[3] / 2;
+      if (px < 0 || py < 0 || px >= frame.Width || py >= frame.Height) return "a mark lies outside the frame";
+      Color c = frame.GetPixel(px, py);
+      if (Math.Abs(c.R - (m[4] >> 16 & 0xFF)) > TOLERANCE || Math.Abs(c.G - (m[4] >> 8 & 0xFF)) > TOLERANCE ||
+          Math.Abs(c.B - (m[4] & 0xFF)) > TOLERANCE) return "the fixture's marks are not in the sampled frame";
+    }
+    return "";
+  }
+
   static string Fixture(IntPtr hwnd, uint pid, int x, int y, int w, int h) {   // why the fixture is not that frame now
     uint owner; RECT r; var title = new StringBuilder(64);
-    if (!IsWindow(hwnd) || !IsWindowVisible(hwnd)) return "the fixture is gone or hidden";
+    if (!IsWindow(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return "the fixture is gone, hidden or minimized";
+    IntPtr shape = CreateRectRgn(0, 0, 0, 0);
+    int region = GetWindowRgn(hwnd, shape);   // ERROR (0): no region, the whole frame is the fixture's
+    DeleteObject(shape);
+    if (region != 0) return "the fixture's shape changed";
     GetWindowThreadProcessId(hwnd, out owner);
     GetWindowTextW(hwnd, title, title.Capacity);
     if (owner != pid || title.ToString() != FIXTURE) return "the handle names another window";
@@ -187,74 +198,83 @@ public static class Program {
     return "";
   }
 
-  static string Surface(IntPtr hwnd, uint pid, int x, int y, int w, int h, string dir) {
+  static string Surface(IntPtr hwnd, uint pid, int x, int y, int w, int h, string file, string dir) {
     if (w <= 0 || h <= 0) return Not("an empty region");
-    IntPtr hook = IntPtr.Zero, screen = IntPtr.Zero, dc = IntPtr.Zero, bits = IntPtr.Zero, old = IntPtr.Zero;
+    int[][] marks = Marks(file);
+    IntPtr screen = IntPtr.Zero, dc = IntPtr.Zero, bits = IntPtr.Zero, old = IntPtr.Zero;
     Bitmap kept = null;
     try {
-      // The watch and the bitmap before the helper says it is ready: between the checks there is only the blit.
-      hook = Watch(hwnd, pid);
-      screen = GetDC(IntPtr.Zero);
+      screen = GetDC(IntPtr.Zero);   // the bitmap before the helper says it is ready: only the blit is left for `go`
       if (screen != IntPtr.Zero) { dc = CreateCompatibleDC(screen); bits = CreateCompatibleBitmap(screen, w, h); }
-      if (hook == IntPtr.Zero || dc == IntPtr.Zero || bits == IntPtr.Zero) {   // nothing to read it with here: pending
-        string none = hook == IntPtr.Zero ? "the fixture cannot be watched" : "no bitmap to blit into";
-        Write(dir, "item.json", "{\"empty\": true, \"why\": " + Quote(none) + "}");
-        return Not(none);
+      if (dc == IntPtr.Zero || bits == IntPtr.Zero) {   // nothing to read it with here: pending
+        Write(dir, "item.json", "{\"empty\": true, \"why\": \"no bitmap to blit into\"}");
+        return Not("no bitmap to blit into");
       }
       old = SelectObject(dc, bits);
       Write(dir, "item.json", "{\"empty\": false}");
       string answer = Answer(dir);
       if (answer != "go") return Not(answer == "stop" ? "the binding was not proven" : "no answer from the server");
-      string why = Stirred() ? "the fixture moved or was hidden" : Fixture(hwnd, pid, x, y, w, h);
+      string why = Fixture(hwnd, pid, x, y, w, h);
       if (why != "") return Not(why);
       bool blitted = BitBlt(dc, 0, 0, w, h, screen, x, y, BLIT);
       why = Fixture(hwnd, pid, x, y, w, h);   // the fixture still that frame once sampled
-      Thread.Sleep(50);   // every event of a change made before the second check is queued by now
-      if (why == "" && Stirred()) why = "the fixture moved or was hidden while it was sampled";   // put back included
       // No pixels from this desktop (not the input one, or locked): no fault of the app's, so the check stays pending.
       if (!blitted) return "{\"read\": false, \"unavailable\": true, \"why\": \"BitBlt failed\"}";
       if (why != "") return Not(why);
       SelectObject(dc, old); old = IntPtr.Zero;
       kept = Image.FromHbitmap(bits);
+      // The proof is the frame itself: every mark the fixture paints, where it paints it, in the pixels sampled.
+      // A frame without them (covered, moved or put back, see-through, colours changed on the way) keeps nothing
+      // and leaves the check pending.
+      var origin = new POINT();
+      if (!ClientToScreen(hwnd, ref origin)) return Not("the fixture is gone");
+      string unmarked = Marked(kept, marks, origin.X - x, origin.Y - y);
+      if (unmarked != "") return "{\"read\": false, \"unavailable\": true, \"why\": " + Quote(unmarked) + "}";
       kept.Save(Path.Combine(dir, "surface.png"), ImageFormat.Png);
       return "{\"read\": true, \"width\": " + w + ", \"height\": " + h + "}";
     } finally {
-      IntPtr d = dc, b = bits, o = old, s = screen, k = hook;
+      IntPtr d = dc, b = bits, o = old, s = screen;
       Free("the saved bitmap", () => { if (kept != null) kept.Dispose(); });
       Free("the bitmap's selection", () => o == IntPtr.Zero || SelectObject(d, o) != IntPtr.Zero);
       Free("the memory DC", () => d == IntPtr.Zero || DeleteDC(d));
       Free("the bitmap", () => b == IntPtr.Zero || DeleteObject(b));
       Free("the screen DC", () => s == IntPtr.Zero || ReleaseDC(IntPtr.Zero, s) == 1);
-      Free("the fixture's watch", () => k == IntPtr.Zero || UnhookWinEvent(k));
     }
   }
 
-  static bool Check() {   // the watch and the blit's flags, on its own process and between memory bitmaps: no screen
-    IntPtr hook = Watch(IntPtr.Zero, (uint)System.Diagnostics.Process.GetCurrentProcess().Id);
+  static bool Check() {   // the marks' reading and the blit's flags, on memory bitmaps only: no screen
+    int[][] marks = { new[] { 2, 3, 8, 4, 0x112233 }, new[] { 20, 30, 6, 6, 0xABCDEF } };
+    using (var frame = new Bitmap(64, 64)) {
+      using (var g = Graphics.FromImage(frame)) {
+        g.Clear(Color.White);
+        foreach (int[] m in marks) using (var brush = new SolidBrush(Color.FromArgb(m[4] | unchecked((int)0xFF000000))))
+          g.FillRectangle(brush, m[0] + 10, m[1] + 12, m[2], m[3]);   // a client area starting at (10, 12)
+      }
+      if (Marked(frame, marks, 10, 12) != "" || Marked(frame, marks, 0, 0) == "") return false;   // elsewhere: none
+      frame.SetPixel(10 + 20 + 3, 12 + 30 + 3, Color.FromArgb(0xAB, 0xCD, 0xEF - 12));   // one mark off its colour
+      if (Marked(frame, marks, 10, 12) == "") return false;
+    }
     IntPtr src = CreateCompatibleDC(IntPtr.Zero), dst = CreateCompatibleDC(IntPtr.Zero);
     IntPtr a = CreateCompatibleBitmap(src, 4, 4), b = CreateCompatibleBitmap(dst, 4, 4);
     IntPtr oa = SelectObject(src, a), ob = SelectObject(dst, b);
-    try { return hook != IntPtr.Zero && BitBlt(dst, 0, 0, 4, 4, src, 0, 0, BLIT) && !Stirred(); }
-    finally {
-      SelectObject(src, oa); SelectObject(dst, ob); DeleteObject(a); DeleteObject(b); DeleteDC(src); DeleteDC(dst);
-      if (hook != IntPtr.Zero) UnhookWinEvent(hook);
-    }
+    try { return BitBlt(dst, 0, 0, 4, 4, src, 0, 0, BLIT); }
+    finally { SelectObject(src, oa); SelectObject(dst, ob); DeleteObject(a); DeleteObject(b); DeleteDC(src); DeleteDC(dst); }
   }
 
   public static int Main(string[] args) {
     SetProcessDpiAwarenessContext((IntPtr)(-4));   // per-monitor v2: physical pixels, as the driver reads them
     if (args.Length == 1 && args[0] == "--check") {
-      if (!Check()) { Console.Error.WriteLine("the WinEvent watch or BitBlt with CAPTUREBLT failed"); return 1; }
+      if (!Check()) { Console.Error.WriteLine("the marks' reading or BitBlt with CAPTUREBLT failed"); return 1; }
       Console.WriteLine("owner_capture ok");
       return 0;
     }
     string dir = args[args.Length - 1], result;
     try {
       if (args.Length == 3 && args[0] == "window") result = Window((IntPtr)long.Parse(args[1]), dir);
-      else if (args.Length == 8 && args[0] == "surface")
+      else if (args.Length == 9 && args[0] == "surface")
         result = Surface((IntPtr)long.Parse(args[1]), uint.Parse(args[2]), int.Parse(args[3]), int.Parse(args[4]),
-                         int.Parse(args[5]), int.Parse(args[6]), dir);
-      else { Console.Error.WriteLine("usage: owner_capture window <hwnd> <dir> | surface <hwnd> <pid> <x> <y> <w> <h> <dir> | --check"); return 2; }
+                         int.Parse(args[5]), int.Parse(args[6]), args[7], dir);
+      else { Console.Error.WriteLine("usage: owner_capture window <hwnd> <dir> | surface <hwnd> <pid> <x> <y> <w> <h> <marks> <dir> | --check"); return 2; }
     } catch (Exception e) {
       result = Not(e.GetType().Name + ": " + e.Message);
       if (!File.Exists(Path.Combine(dir, "item.json")))   // a failure before the item phase: nothing could be made here

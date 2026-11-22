@@ -105,16 +105,13 @@ async def lifespan(application: FastAPI):
 
 
 def going_down() -> None:
-    """`runtime.stopping` set under the oneshot lock, which a round's outcome is applied under
-    (`oneshot_pc.settled`): an outcome is applied wholly before the shutdown or as a stop. A
-    holder that does not let go in 10 s does not hold the shutdown up."""
+    """`runtime.stopping` set under the oneshot lock, which a round's grant to sample and its
+    outcome are decided under (`owner_round._read`, `oneshot_pc.settled`): each happens wholly
+    before the shutdown or as a stop. Every holder of that lock writes state or reads a HEAD,
+    and none waits on the shutdown, so waiting for it is bounded."""
 
-    locked = oneshot._lock.acquire(timeout=10)
-    try:
+    with oneshot._lock:
         runtime.stopping.set()
-    finally:
-        if locked:
-            oneshot._lock.release()
 
 
 def close_turns() -> None:

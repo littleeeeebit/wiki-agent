@@ -155,6 +155,18 @@ def test_a_read_the_helper_could_not_let_go_of_wholly_passes_nothing(desk, tmp_p
         read(tmp_path, binding, [PROCESS], helper=Helper(extra={"unreleased": ["the memory DC"]}))
 
 
+def test_a_release_failed_where_the_helper_could_not_get_ready_passes_nothing_either(desk, tmp_path):
+    class Leaky(Helper):   # no watch to install, and the screen DC it had taken not let go
+        def __call__(self, argv):
+            folder = Path(argv[-1])
+            (folder / "item.json").write_text(json.dumps({"empty": True, "why": "the fixture cannot be watched"}))
+            (folder / "result.json").write_text(json.dumps({"read": False, "unreleased": ["the screen DC"]}))
+
+    binding = owner_round.bind("app1", 101, [PROCESS])
+    with pytest.raises(RuntimeError, match="the screen DC"):
+        read(tmp_path, binding, [PROCESS], helper=Leaky())
+
+
 def test_a_blit_this_desktop_gives_no_pixels_leaves_the_check_pending(desk, tmp_path):
     binding = owner_round.bind("app1", 101, [PROCESS])
     with pytest.raises(owner_round.Unavailable, match="BitBlt failed"):
@@ -189,12 +201,12 @@ def test_the_fixture_that_moved_or_was_retitled_is_no_longer_the_rounds(desk):
 def test_a_surface_read_names_exactly_the_fixtures_frame_and_is_never_sampled_once_it_moved(desk, tmp_path):
     windows, _ = desk
     windows[101] = {**APP, "title": owner_round.FIXTURE}
-    fixture = owner_round.bind("fixture1", 101, [PROCESS], owner_round.FIXTURE)
+    fixture = {**owner_round.bind("fixture1", 101, [PROCESS], owner_round.FIXTURE), "marks": "marks.txt"}
     session = Session(tmp_path, Helper())
     got = owner_round.surface_read(session, "capture1", Path("helper.exe"), fixture, [80, 80, 960, 540],
                                    lambda: [PROCESS], threading.Event())
-    # The fixture's handle and process go with its frame, so the helper checks it itself around the blit.
-    assert got["read"] and session.started[0][1:8] == ["surface", "101", "7", "80", "80", "960", "540"]
+    # The fixture's handle, process and marks go with its frame, so the helper checks it itself around the blit.
+    assert got["read"] and session.started[0][1:9] == ["surface", "101", "7", "80", "80", "960", "540", "marks.txt"]
     helper = Helper()
 
     def moved():
@@ -205,6 +217,19 @@ def test_a_surface_read_names_exactly_the_fixtures_frame_and_is_never_sampled_on
                                    [80, 80, 960, 540], moved, threading.Event())
     assert got == {"read": False, "why": "the fixture moved"} and helper.answers == ["stop"]
     assert not list((tmp_path / "b").rglob("surface.png"))
+
+
+def test_the_fixtures_marks_run_along_every_edge_inside_it_in_fresh_colours():
+    marks = [line.split() for line in owner_round.marks(960, 540)]
+    boxes = [tuple(map(int, m[:4])) for m in marks]
+    assert all(x >= 0 and y >= 0 and x + w <= 960 and y + h <= 540 and w > 0 and h > 0 for x, y, w, h in boxes)
+    band = owner_round.BAND
+    # Every pixel of the outer band belongs to a mark, and the inside, where the page and the overlay are, to none.
+    edge = {(x, y) for x in range(960) for y in range(540) if min(x, y, 959 - x, 539 - y) < band}
+    covered = {(px, py) for x, y, w, h in boxes for px in range(x, x + w) for py in range(y, y + h)}
+    assert covered == edge
+    colours, again = [m[4] for m in marks], [line.split()[4] for line in owner_round.marks(960, 540)]
+    assert len(set(colours)) > len(colours) * 0.9 and colours != again   # drawn afresh for each check
 
 
 def test_the_fixtures_page_is_drawn_afresh_and_must_appear_whole():
@@ -237,9 +262,10 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
     with desktop_session.look(tmp_path, "fixture") as session:   # a desktop the test owns, never the owner's
         folder = session.reserve("files")
         (folder / "words.txt").write_text(" ".join(page), encoding="utf-8")
+        (folder / "marks.txt").write_text("\n".join(owner_round.marks(640, 360)), encoding="utf-8")
         session.start("fixture1", [sys.executable, str(owner_round.FIXTURE_PY), "--title", owner_round.FIXTURE,
-                                   "--words", str(folder / "words.txt"), "--rect", "40", "40", "640", "360",
-                                   "--out", str(folder / "window.json")], folder)
+                                   "--words", str(folder / "words.txt"), "--marks", str(folder / "marks.txt"),
+                                   "--rect", "40", "40", "640", "360", "--out", str(folder / "window.json")], folder)
         named = owner_round._waited(folder / "window.json", owner_round.FIXTURE_SECONDS, threading.Event())
         # A handle is read only from its own desktop: the round's server shares the owner's, so a probe there reads it.
         probe = f"import json, owner_round; print(json.dumps(owner_round.window({named['hwnd']})))"
@@ -252,41 +278,95 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
         assert seen["pid"] in {m["pid"] for m in members} and named["rect"][:2] == [40, 40]
 
 
+ASSAULT = r'''
+import ctypes, json, sys
+from ctypes import wintypes as w
+u, g = ctypes.windll.user32, ctypes.windll.gdi32
+u.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+u.SendMessageW.argtypes = [w.HWND, ctypes.c_uint, w.WPARAM, ctypes.c_void_p]
+hwnd, marks = int(sys.argv[1]), [line.split() for line in open(sys.argv[2], encoding="utf-8") if line.strip()]
+
+def state():
+    box, title = w.RECT(), ctypes.create_unicode_buffer(64)
+    u.GetWindowRect(hwnd, ctypes.byref(box))
+    u.GetWindowTextW(hwnd, title, 64)
+    return {"rect": [box.left, box.top, box.right - box.left, box.bottom - box.top], "title": title.value,
+            "visible": bool(u.IsWindowVisible(hwnd)), "iconic": bool(u.IsIconic(hwnd)), "ex": u.GetWindowLongW(hwnd, -20)}
+
+before = state()
+u.SetWindowPos(hwnd, 0, 500, 300, 200, 100, 0x14)          # moved and resized
+u.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x13)                 # no longer topmost
+u.ShowWindow(hwnd, 0)                                      # hidden
+u.ShowWindow(hwnd, 6)                                      # minimized
+u.SendMessageW(hwnd, 0x000C, 0, ctypes.c_wchar_p("Notepad"))   # retitled
+u.SetWindowLongW(hwnd, -20, before["ex"] | 0x80000)        # made layered, to be see-through
+u.SendMessageW(hwnd, 0x0112, 0xF060, None)                 # closed by its system menu
+u.SendMessageW(hwnd, 0x0010, 0, None)                      # closed
+import time; time.sleep(0.5)                               # a minimize undone by the fixture itself, at once
+after = state()
+# The marks, where the fixture paints them: read off the window on this desktop, which the test owns.
+box, origin = w.RECT(), w.POINT()
+u.GetWindowRect(hwnd, ctypes.byref(box))
+u.ClientToScreen(hwnd, ctypes.byref(origin))
+screen = u.GetDC(None)
+dc, bits = g.CreateCompatibleDC(screen), g.CreateCompatibleBitmap(screen, box.right - box.left, box.bottom - box.top)
+g.SelectObject(dc, bits)
+u.PrintWindow(hwnd, dc, 2)
+wrong = []
+for mx, my, mw, mh, color in marks:
+    px, py = origin.x - box.left + int(mx) + int(mw) // 2, origin.y - box.top + int(my) + int(mh) // 2
+    got = g.GetPixel(dc, px, py)
+    seen = (got & 0xFF, got >> 8 & 0xFF, got >> 16 & 0xFF)
+    want = (int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16))
+    if any(abs(a - b) > 8 for a, b in zip(seen, want)):
+        wrong.append([mx, my, color, "%02x%02x%02x" % seen])
+print(json.dumps({"before": before, "after": after, "marks": len(marks), "wrong": wrong}))
+'''
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="the helper and the fixture are Windows programs")
-def test_a_fixture_moved_and_put_back_while_the_helper_watches_is_never_sampled(tmp_path):
+def test_the_fixture_refuses_every_change_paints_its_marks_and_the_helper_reads_it_up_to_the_blit(tmp_path):
     import desktop_session
 
     if not (owner_round.FRAMEWORK / "csc.exe").is_file():
         pytest.skip("no .NET Framework compiler here")
     exe, here = owner_round.helper(tmp_path / "tools"), Path(owner_round.__file__).parent
-    with desktop_session.look(tmp_path, "watch") as session:   # a desktop the test owns, never the owner's
+    with desktop_session.look(tmp_path, "guard") as session:   # a desktop the test owns, never the owner's
         folder = session.reserve("files")
         (folder / "words.txt").write_text(" ".join(owner_round.words()), encoding="utf-8")
+        (folder / "marks.txt").write_text("\n".join(owner_round.marks(640, 360)), encoding="utf-8")
+        (folder / "assault.py").write_text(ASSAULT, encoding="utf-8")
         session.start("fixture1", [sys.executable, str(owner_round.FIXTURE_PY), "--title", owner_round.FIXTURE,
-                                   "--words", str(folder / "words.txt"), "--rect", "40", "40", "640", "360",
-                                   "--out", str(folder / "window.json")], folder)
+                                   "--words", str(folder / "words.txt"), "--marks", str(folder / "marks.txt"),
+                                   "--rect", "40", "40", "640", "360", "--out", str(folder / "window.json")], folder)
         named = owner_round._waited(folder / "window.json", owner_round.FIXTURE_SECONDS, threading.Event())
         session.observe()
         pid = session.record["jobs"]["fixture1"]["members"][0]["pid"]
+        code, out, why = session.run("assault", [sys.executable, str(folder / "assault.py"), str(named["hwnd"]),
+                                                 str(folder / "marks.txt")], here, 60, threading.Event())
+        assert code == 0, why
+        seen = json.loads(out.strip().splitlines()[-1])
+        # Every change was turned into none: place, size, z-order (WS_EX_TOPMOST), visibility, title, style.
+        assert seen["after"] == seen["before"] and seen["before"]["title"] == owner_round.FIXTURE
+        assert seen["before"]["ex"] & 0x8 and not seen["after"]["iconic"] and seen["after"]["visible"]
+        assert seen["marks"] == len(owner_round.marks(640, 360)) and seen["wrong"] == []
 
-        def surface(key: str, between=None) -> dict:
+        def surface(key: str) -> dict:
             out = session.reserve(key)
-            session.start(key, [str(exe), "surface", str(named["hwnd"]), str(pid), *map(str, named["rect"]), str(out)],
-                          out)
+            session.start(key, [str(exe), "surface", str(named["hwnd"]), str(pid), *map(str, named["rect"]),
+                                str(folder / "marks.txt"), str(out)], out)
             assert owner_round._waited(out / "item.json", 30, threading.Event()) == {"empty": False}
-            if between:   # watched from here on: the move and its undo both before the `go`
-                code, _, why = session.run(f"{key}_move", [sys.executable, "-c", between], here, 60, threading.Event())
-                assert code == 0, why
             (out / "go").write_text("", encoding="utf-8")
-            result = owner_round._waited(out / "result.json", 30, threading.Event())
-            return {**result, "kept": (out / "surface.png").is_file()}
+            return {**owner_round._waited(out / "result.json", 30, threading.Event()),
+                    "kept": (out / "surface.png").is_file()}
 
-        x, y = named["rect"][:2]
-        move = ("import ctypes; u = ctypes.windll.user32; u.SetProcessDpiAwarenessContext(-4); "
-                f"[u.SetWindowPos({named['hwnd']}, 0, a, {y}, 0, 0, 0x15) for a in ({x + 300}, {x})]")
-        moved = surface("moved", between=move)
-        assert moved == {"read": False, "why": "the fixture moved or was hidden", "kept": False}
-        # Left alone, the watch sees nothing and both checks pass. A desktop that is not the input one gives the blit
-        # no pixels, which leaves the check pending; every resource is let go either way.
-        still = surface("still")
-        assert still == {"read": False, "unavailable": True, "why": "BitBlt failed", "kept": False}
+        # Both checks of the window pass after the assault. A desktop that is not the input one gives the blit no
+        # pixels, which leaves the check pending; nothing is kept and every resource is let go.
+        assert surface("surface") == {"read": False, "unavailable": True, "why": "BitBlt failed", "kept": False}
+        # A hole cut into the fixture, which its marks along the edges would not show: never undone by the
+        # fixture, so the helper's check right after the blit always finds it.
+        hole = ("import ctypes; u, g = ctypes.windll.user32, ctypes.windll.gdi32; "
+                f"print(u.SetWindowRgn({named['hwnd']}, g.CreateRectRgn(0, 0, 100, 100), True))")
+        code, out, why = session.run("hole", [sys.executable, "-c", hole], here, 60, threading.Event())
+        assert code == 0 and out.strip().splitlines()[-1] != "0", why
+        assert surface("holed") == {"read": False, "why": "the fixture's shape changed", "kept": False}

@@ -57,6 +57,20 @@ def words(count: int = COUNT) -> list[str]:
     return [pool.pop(secrets.randbelow(len(pool))) for _ in range(count)]
 
 
+BAND, CELL = 8, 24   # the marks' thickness and length, in client pixels
+
+
+def marks(width: int, height: int) -> list[str]:
+    """The fixture's marks for one check, as `x y width height rrggbb` in its client pixels: a band of cells
+    along all four edges, each a colour the server draws at random, so only the fixture itself, in place in the
+    sampled frame, puts all of them there."""
+
+    cells = [(x, edge, min(CELL, width - x), BAND) for edge in (0, height - BAND) for x in range(0, width, CELL)]
+    cells += [(edge, y, BAND, min(CELL, height - BAND - y)) for edge in (0, width - BAND)
+              for y in range(BAND, height - BAND, CELL)]
+    return [f"{x} {y} {w} {h} {secrets.token_hex(3)}" for x, y, w, h in cells]
+
+
 def contains(text: str | None, page: list[str]) -> bool:
     """Whether `text` holds the fixture's page as it reads: its words in order, one after another, case and the
     breaks between them aside. A fixed text naming every word of `WORDS` holds none of the 12-word orders but
@@ -206,6 +220,10 @@ def _read(session, key: str, argv: list[str], binding: dict, members, halt, name
             return {"read": False, "why": "the round was stopped"}
         if item is None or item.get("empty"):
             (folder / "stop").write_text("", encoding="utf-8")
+            # Its result follows its item at once: a release it could not make there passes nothing either.
+            last = _waited(folder / "result.json", 2 if item else 0, halt) or {}
+            if last.get("unreleased"):
+                raise RuntimeError(f"캡처 도우미가 자원을 다 놓지 못했다 — {'; '.join(last['unreleased'])}")
             raise Unavailable(f"캡처 도우미가 읽을 준비를 하지 못했다 — {item.get('why') if item else '제때 답이 없다'}")
         why = proven(binding, members())   # with the item open: a window replaced since never gets its frames
         with gate:
@@ -235,29 +253,33 @@ def window_read(session, key: str, exe: Path, binding: dict, members, halt, gate
 
 def surface_read(session, key: str, exe: Path, binding: dict, rect: list[int], members, halt, gate=None) -> dict:
     """A surface read of exactly `rect`, the fixture's frame as it reports it in physical pixels, whatever is
-    composed there when sampled. The fixture's binding is proven again before the `go`. The helper watches the
-    fixture from before it is ready until after the blit, and checks it right before and after: any move, hide or
-    destruction meanwhile, one put back included, keeps nothing. The helper's job is ended on every outcome."""
+    composed there when sampled. The fixture's binding is proven again before the `go`. The fixture refuses every
+    change to itself, and the helper keeps the frame only when every one of the fixture's marks is in it, where
+    the fixture paints it: proof drawn from the sampled pixels themselves that the fixture covered the region
+    then. The helper's job is ended on every outcome."""
 
-    argv = [str(exe), "surface", str(binding["hwnd"]), str(binding["pid"]), *(str(v) for v in rect)]
+    argv = [str(exe), "surface", str(binding["hwnd"]), str(binding["pid"]), *(str(v) for v in rect), binding["marks"]]
     return _read(session, key, argv, binding, members, halt, "surface.png", gate or contextlib.nullcontext())
 
 
 def fixture(session, key: str, page: list[str], rect: list[int], halt) -> tuple[dict, list[int]]:
-    """The check's fixture started in a job of its own over `rect`, showing `page`: its binding and its frame in
-    physical pixels, as it reports them. RuntimeError, never the build's to fix, when it names no window of its
-    job in time; its job ends with the round's."""
+    """The check's fixture started in a job of its own over `rect`, showing `page` within fresh marks: its binding,
+    naming the marks' file, and its frame in physical pixels, as it reports them. RuntimeError, never the build's
+    to fix, when it names no window of its job in time; its job ends with the round's."""
 
     folder = session.reserve(key)
     (folder / "words.txt").write_text(" ".join(page), encoding="utf-8")
+    (folder / "marks.txt").write_text("\n".join(marks(rect[2], rect[3])), encoding="utf-8")
     out = folder / "window.json"
     session.start(key, [sys.executable, str(FIXTURE_PY), "--title", FIXTURE, "--words", str(folder / "words.txt"),
-                        "--rect", *(str(v) for v in rect), "--out", str(out)], folder, halt=halt)
+                        "--marks", str(folder / "marks.txt"), "--rect", *(str(v) for v in rect), "--out", str(out)],
+                  folder, halt=halt)
     named = _waited(out, FIXTURE_SECONDS, halt)
     if named is None:
         raise RuntimeError("고정 창이 제때 뜨지 않았다")
     session.observe()
     try:
-        return bind(key, named["hwnd"], session.record["jobs"][key]["members"], FIXTURE), named["rect"]
+        binding = bind(key, named["hwnd"], session.record["jobs"][key]["members"], FIXTURE)
+        return {**binding, "marks": str(folder / "marks.txt")}, named["rect"]
     except ValueError as exc:
         raise RuntimeError(f"고정 창을 묶지 못했다 — {exc}") from exc

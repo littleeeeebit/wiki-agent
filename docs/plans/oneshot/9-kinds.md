@@ -472,11 +472,21 @@ with no stop asked meanwhile, lets it sample.
 - A window capture hands the helper only a handle, bound against the window
   exactly as the driver read it. The helper keeps a frame only while the
   item stays open through the copy.
-- A composition hands it the fixture's frame with its handle and process.
-  The helper watches the fixture from before it says it is ready, and has
-  its bitmap made by then, so only the blit lies between its checks of the
-  fixture right before and after. A fixture moved, hidden or replaced
-  meanwhile keeps nothing, one moved and put back included.
+- A composition hands it the fixture's frame, its handle and process, and
+  the fixture's marks: cells of random colours the server draws for the
+  check, which the fixture paints along its client area's edges, 8 pixels
+  deep. The fixture refuses every change to itself in its own window
+  procedure: a move, a resize, a change of z-order, a hide, a new title or
+  style, a close. It undoes a minimize at once. The helper checks the
+  fixture right before and after the blit: the same window, visible, not
+  minimized, with no window region cut into it, and in exactly that frame.
+  It keeps the frame only when every mark is in it where the fixture paints
+  it, which proves from the sampled pixels themselves that the fixture
+  covered the region in that frame. A frame without them leaves the check
+  pending. A failed check of the window fails it. A region cut into the
+  fixture and taken out again between the blit and the second check would
+  escape both. The fixture never takes one out itself, so this needs an app
+  that cuts holes into the server's own window with that timing.
 - A report passes only when it holds the fixture's page as it reads: its
   words in order, one after another. A fixed text naming every word the
   server draws from is no capture of this round's page.
@@ -485,8 +495,8 @@ Each capture is copied out before the round's look is cleaned, and the critic
 judges it against `shows` and the fixture's words only after every window the
 round started is gone. A check stays pending when its helper cannot be built,
 or when the helper cannot read there: Windows refuses or empties the item,
-the fixture cannot be watched, the desktop gives the blit no pixels, or the
-helper says nothing in time.
+the desktop gives the blit no pixels, the fixture's marks are not in the
+sampled frame, or the helper says nothing in time.
 
 A failed check sends its high finding to the build, as the phone round's do.
 Pending checks send the run back to waiting with a new attempt, naming them.
