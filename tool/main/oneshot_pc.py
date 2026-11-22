@@ -40,32 +40,13 @@ JUDGE_PROMPT = (ROOT / "tool/prompts/oneshot-owner-judge.md").read_text(encoding
 MAX_REPORT = 1 << 20   # bytes of an app's report file the round reads
 _halts: dict[str, threading.Event] = {}
 # One round on the owner's desktop at a time, whichever repository it is for, from its look's start through its
-# proven cleanup: one window at a time by the fixture's title, and one fixture over its place on screen. A round
-# whose cleanup is not proven keeps the desktop (`_stuck`, its repository and why) until its repository's next
-# round proves its windows gone; every other round stops at once with that reason. The jobs end with the server
-# (KILL_ON_JOB_CLOSE), so a restart starts clear.
+# cleanup: one fixture over its place on screen. A fixture an earlier round left behind, whatever became of that
+# round, is found by its title before each check (`owner_round.fixtures`), so the lock never has to outlive one.
 _desk = threading.Lock()
-_stuck: dict[str, str] = {}
 
 
 class Stale(Exception):
     """The approved build no longer stands once the round has the owner's desktop: approved anew."""
-
-
-def _admitted(repo: str, stopped) -> None:
-    """The owner's desktop taken for `repo`'s round, or already held for it by its own unproven cleanup.
-    RuntimeError when another repository's unproven cleanup holds it, or on a stop while waiting."""
-
-    while True:
-        if held := dict(_stuck):
-            (who, why), = held.items()
-            if who == repo:   # its own windows: this round's look proves them gone before anything starts
-                return
-            raise RuntimeError(f"앞선 주인 화면 회차의 창이 끝났는지 확인되지 않았다 — {why}")
-        if _desk.acquire(timeout=1):
-            return
-        if stopped():
-            raise RuntimeError("다른 저장소의 주인 화면 회차를 기다리다 멈췄다")
 
 
 def plan(o: dict) -> dict:
@@ -294,6 +275,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
         return {"status": "judge", "file": str(file), "shows": seen["shows"], "page": page}
 
     try:
+        if why := oneshot_desktop.altered(runs.build):   # changed while the fixture came up: the app never starts
+            raise Stale(f"승인한 회차가 지금 빌드와 다르다 — 다시 승인한다 ({why})")
         report = runs.drive(scenario["screen"], scenario["state"], steps, then)
     finally:   # each check's fixture gone, its end proven, before the next one shows: one window by that title
         owner_round.ended(session, fixture_key, "고정 창을")
@@ -303,8 +286,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
 def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
     """Every check the approval lets run, each by `one` in the round's own look on the owner's desktop, whose
     cleanup is proven on every exit (RuntimeError when it is not). One round at a time across repositories
-    (`_desk`, `_admitted`), from the look's start through its proven cleanup; the build is confirmed again once the
-    round has the desktop (Stale when it no longer stands)."""
+    (`_desk`), from the look's start through its cleanup; the build is confirmed again once the round has the
+    desktop, and before each app starts (Stale when it no longer stands)."""
 
     import desktop_session
     import owner_round
@@ -318,8 +301,10 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
         exe, missing = None, str(exc)
     looks = base(repo) / "looks"
     looks.mkdir(parents=True, exist_ok=True)
-    results, unproven = {}, None
-    _admitted(repo, stopped)
+    results = {}
+    while not _desk.acquire(timeout=1):   # another repository's round is on the owner's desktop
+        if stopped():
+            raise RuntimeError("다른 저장소의 주인 화면 회차를 기다리다 멈췄다")
     try:
         if not confirmed(repo, build):   # changed while it waited: nothing starts on the owner's desktop
             raise Stale("승인한 회차가 지금 빌드와 다르다 — 다시 승인한다")
@@ -329,16 +314,10 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
                 if x["id"] not in skip:
                     runs.due()
                     results[x["id"]] = one(session, runs, n, x, build["checks"][x["id"]], exe, missing, keep)
-    except desktop_session.Refused as exc:   # the look's windows not proven gone: the desktop stays this round's
-        unproven = str(exc)
+    except desktop_session.Refused as exc:
         raise RuntimeError(f"주인 화면 회차를 정리하지 못했다 — {exc}") from exc
-    finally:
-        if unproven is not None:
-            _stuck.clear()
-            _stuck[repo] = unproven
-        else:   # proven gone, or nothing started: the next round may take the desktop
-            _stuck.pop(repo, None)
-            _desk.release()
+    finally:   # a fixture this round could not prove gone keeps every later check from starting by its title
+        _desk.release()
     runs.due()
     return results
 

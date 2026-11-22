@@ -97,7 +97,19 @@ def _user32():
     u.GetClassNameW.argtypes = [w.HWND, w.LPWSTR, ctypes.c_int]
     u.GetWindowTextW.argtypes = [w.HWND, w.LPWSTR, ctypes.c_int]
     u.GetWindowRect.argtypes = [w.HWND, ctypes.POINTER(w.RECT)]
+    u.FindWindowExW.argtypes = [w.HWND, w.HWND, w.LPCWSTR, w.LPCWSTR]
+    u.FindWindowExW.restype = w.HWND
     return u
+
+
+def fixtures() -> list[int]:
+    """Every top-level window on this desktop titled as the fixture, by `FindWindowExW` on that exact title: no
+    other window's title is read."""
+
+    u, found = _user32(), []
+    while hwnd := u.FindWindowExW(None, found[-1] if found else None, None, FIXTURE):
+        found.append(int(hwnd))
+    return found
 
 
 def window(hwnd: int) -> dict | None:
@@ -275,9 +287,13 @@ def surface_read(session, key: str, exe: Path, binding: dict, rect: list[int], m
 
 def fixture(session, key: str, page: list[str], rect: list[int], halt) -> tuple[dict, list[int]]:
     """The check's fixture started in a job of its own over `rect`, showing `page` within fresh marks: its binding,
-    naming the marks' file, and its client area on screen in physical pixels, as it reports them. RuntimeError, never the build's
-    to fix, when it names no window of its job in time; its job ends with the round's."""
+    naming the marks' file, and its client area on screen in physical pixels, as it reports them. RuntimeError,
+    never the build's to fix, when a window by the fixture's title is already there (an earlier round's, whatever
+    became of it), when it names no window of its job in time, or when its own is not then the only window by that
+    title; its job ends with the round's."""
 
+    if left := fixtures():
+        raise RuntimeError(f"앞선 회차의 고정 창이 아직 떠 있다 — {left}")
     folder = session.reserve(key)
     (folder / "words.txt").write_text(" ".join(page), encoding="utf-8")
     (folder / "marks.txt").write_text("\n".join(marks(rect[2], rect[3])), encoding="utf-8")
@@ -291,6 +307,8 @@ def fixture(session, key: str, page: list[str], rect: list[int], halt) -> tuple[
     session.observe()
     try:
         binding = bind(key, named["hwnd"], session.record["jobs"][key]["members"], FIXTURE)
-        return {**binding, "marks": str(folder / "marks.txt")}, named["rect"]
     except ValueError as exc:
         raise RuntimeError(f"고정 창을 묶지 못했다 — {exc}") from exc
+    if (now := fixtures()) != [binding["hwnd"]]:
+        raise RuntimeError(f"고정 창의 제목을 단 창이 이 검사의 것 하나가 아니다 — {now}")
+    return {**binding, "marks": str(folder / "marks.txt")}, named["rect"]

@@ -121,7 +121,9 @@ def main(argv: list[str] | None = None) -> None:
     # Shown topmost by Windows directly, never by Tk's `deiconify` or `-topmost`, which raise it and ask for focus.
     user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                                     ctypes.c_int, ctypes.c_uint]
-    user32.SetWindowPos(frame, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+    if not user32.SetWindowPos(frame, HWND_TOPMOST, 0, 0, 0, 0,
+                               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW):
+        raise SystemExit("the fixture could not be shown")   # before it ever says it is ready
     root.update()
     keep = []   # the guard's callback lives as long as the window
 
@@ -132,6 +134,8 @@ def main(argv: list[str] | None = None) -> None:
         if not (user32.GetClientRect(frame, ctypes.byref(box)) and user32.ClientToScreen(frame, ctypes.byref(origin))
                 and user32.GetWindowRect(frame, ctypes.byref(placed))):
             raise SystemExit("the fixture could not read where it is")
+        if not user32.IsWindowVisible(frame) or user32.IsIconic(frame):
+            raise SystemExit("the fixture is not on screen")
         # The window's region is exactly its client area, in window coordinates: a shape Windows reports as one
         # rectangle with those bounds, which the helper requires at each check.
         left, top = origin.x - placed.left, origin.y - placed.top

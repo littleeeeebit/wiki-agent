@@ -219,6 +219,36 @@ def test_a_surface_read_names_exactly_the_fixtures_frame_and_is_never_sampled_on
     assert not list((tmp_path / "b").rglob("surface.png"))
 
 
+def test_a_fixture_already_titled_on_the_desktop_starts_no_other(monkeypatch, tmp_path):
+    started, titled = [], [[41]]
+
+    class Look:
+        record = {"jobs": {"fixture1": {"members": []}}}
+
+        def reserve(self, key):
+            (tmp_path / key).mkdir(exist_ok=True)
+            return tmp_path / key
+
+        def start(self, key, argv, cwd, halt=None):
+            started.append(key)
+
+        def observe(self):
+            pass
+
+    monkeypatch.setattr(owner_round, "fixtures", lambda: titled.pop(0))
+    monkeypatch.setattr(owner_round, "_waited", lambda out, seconds, halt: {"hwnd": 42, "rect": [1, 2, 3, 4]})
+    monkeypatch.setattr(owner_round, "bind", lambda job, hwnd, members, title=None: {"job": job, "hwnd": hwnd})
+    with pytest.raises(RuntimeError, match="앞선 회차의 고정 창이 아직 떠 있다"):   # an earlier round's
+        owner_round.fixture(Look(), "fixture1", ["apple"], [0, 0, 640, 360], threading.Event())
+    assert started == []
+    titled[:] = [[], [41, 42]]   # its own up, and another by its title beside it
+    with pytest.raises(RuntimeError, match="이 검사의 것 하나가 아니다"):
+        owner_round.fixture(Look(), "fixture1", ["apple"], [0, 0, 640, 360], threading.Event())
+    titled[:] = [[], [42]]
+    binding, rect = owner_round.fixture(Look(), "fixture1", ["apple"], [0, 0, 640, 360], threading.Event())
+    assert binding["hwnd"] == 42 and rect == [1, 2, 3, 4] and started == ["fixture1", "fixture1"]
+
+
 def test_the_fixtures_marks_run_along_every_edge_inside_it_in_fresh_colours():
     marks = [line.split() for line in owner_round.marks(960, 540)]
     boxes = [tuple(map(int, m[:4])) for m in marks]
@@ -273,13 +303,15 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
                                    "--rect", "40", "40", "640", "360", "--out", str(folder / "window.json")], folder)
         named = owner_round._waited(folder / "window.json", owner_round.FIXTURE_SECONDS, threading.Event())
         # A handle is read only from its own desktop: the round's server shares the owner's, so a probe there reads it.
-        probe = f"import json, owner_round; print(json.dumps(owner_round.window({named['hwnd']})))"
+        probe = (f"import json, owner_round; print(json.dumps({{**owner_round.window({named['hwnd']}), "
+                 f"'titled': owner_round.fixtures()}}))")
         code, out, why = session.run("probe", [sys.executable, "-c", probe], Path(owner_round.__file__).parent, 60,
                                      threading.Event(), {"PYTHONPATH": str(Path(owner_round.__file__).parent)})
         seen = json.loads(out.strip().splitlines()[-1])
         session.observe()
         members = session.record["jobs"]["fixture1"]["members"]
         assert code == 0 and seen["title"] == owner_round.FIXTURE and seen["pid"] in {m["pid"] for m in members}
+        assert seen["titled"] == [named["hwnd"]]   # found by its title, the only window by it on that desktop
         # Its frame is placed at the rect's corner; what it reports is its client area, inside that frame.
         (fx, fy, fw, fh), (cx, cy, cw, ch) = seen["rect"], named["rect"]
         assert [fx, fy] == [40, 40] and [cw, ch] == [640, 360]
