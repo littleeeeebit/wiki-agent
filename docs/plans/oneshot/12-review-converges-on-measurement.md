@@ -62,10 +62,12 @@ A build turn sent back by a refusal answers the findings it does not change
 in one `oneshot-answers` block. Each entry names the finding's `area`, the
 `location`, the evidence, the requirements a change would break (`breaks`),
 and the test that pins the defended behaviour, as `path::name`. The build
-check (`oneshot_measure.answered`) refuses an entry whose area the refusal
+check (`oneshot_answers.answered`) refuses an entry whose area the refusal
 did not name, whose `breaks` are not design items or requirements, or whose
-test file did not change since the refused HEAD. It saves the entries on the
-spec under `answers`, with the round they answer.
+test file is not in the commits since the refused HEAD. After the gate, the
+named test must have run and passed in the build's own test run
+(`oneshot_answers.ran`). It saves the entries on the spec under `answers`,
+with the round they answer.
 
 `review_text` shows the next reviewer every answer (`answers_text`). In an
 area answered in the last round, a finding needs a `rebuttal`; without one
@@ -73,10 +75,10 @@ the verdict is refused and the reviewer is asked again (`held`).
 
 ### A turn without a commit goes back
 
-The build check reads HEAD first (`oneshot_measure.unchanged`). When the
-turn was sent back by a refusal, or by a failed measurement, and HEAD is
-still the HEAD refused or measured, the turn is refused and sent back to the
-build agent with that reason. It counts against `MAX_ATTEMPTS`, as a failed
+The build check reads HEAD first (`oneshot_answers.unchanged`). When HEAD
+is any HEAD a review refused, or whose measurement failed or the owner
+refused, the last one or an earlier one gone back to, the turn is refused
+and sent back to the build agent with that reason. It counts against `MAX_ATTEMPTS`, as a failed
 gate does. `[재개]` at the round cap marks the turn as sent back by the
 refusal (`fix`), so the same check holds there.
 
@@ -85,22 +87,26 @@ refusal (`fix`), so the same check holds there.
 After a refusal, `conflicted` looks at each blocking area the owner has not
 ruled on. It is a conflict when the builder answered it in two rounds with a
 broken requirement, or when its mechanism was already replaced once
-(`replaced`, recorded the turn it is replaced). A refusal with a conflict
+(`replaced`). The build turn told to replace it saves it as `replacing`; it
+counts as replaced only once a build passes, so a turn that never ran is told
+again. A refusal with a conflict
 does not go to the build or count towards the cap: the run waits at the
 `conflict` stage. The owner's board shows the review's findings beside the
 builder's answers, and for each area offers three rulings: the review's side,
 the builder's side, or the owner's own words. The rulings are saved on the
 spec (`rulings`) and shown to every later review and build turn. A P1 in an
-area ruled for the builder is refused unless it is a P0. When nothing is left
-to fix, the same HEAD is reviewed again under the rulings; otherwise the
+area ruled for the builder is refused; a P0 there still blocks. The rulings,
+the cleared board and the next stage are saved in one write. When nothing is
+left to fix, the same HEAD is reviewed again under the rulings; otherwise the
 build turn gets the remaining findings and the rulings.
 
 ### Later stages' findings wait
 
 A P1 may carry `later: {kind, what}` for a kind the run builds. It blocks
-nothing now. It is saved on the spec (`later`), and that kind's front-end
-build turn receives it (`later_text`). A `later` for a kind the run does not
-build is refused.
+nothing now. It is added to the spec's `later`, which every verdict keeps
+(approval, refusal, conflict and cap), and that kind's front-end build turn
+receives it (`later_text`). A `later` for a kind the run does not build is
+refused.
 
 ### The backend runs, and is measured before the review
 
@@ -126,26 +132,39 @@ there and what then appears; the last names what to copy.
 The build check reads the plan (`oneshot_measure.checked`). It refuses a
 guide step without its window, action or result, and a guide whose last step
 copies nothing. It refuses an outside call of the design that no metric
-reaches, and a command a PC app's confirmed tools do not cover. It then
-starts `serve` in a job of its own, waits for its health address to answer
-200, and stops it with everything it started. A tree the backend wrote into
-is refused.
+reaches, a command a PC app's confirmed tools do not cover, and a secret
+need of the design given as plain text. It then starts `serve` in a job of
+its own, waits for its health address to answer 200, and stops it with
+everything it started. A health port something already answers before the
+start, or one whose listener is outside the backend's process tree, is
+refused. A tree the backend wrote into is refused.
 
 After the check passes, the run is at `measure`. The server pushes the HEAD
 and opens pull request #1 as a draft, or finds and updates it
 (`published`). The measurement screen shows each input's steps, a box for
 each value (a secret goes to Windows Credential Manager and never comes
 back), the owner's steps for the run, and the metrics with their thresholds.
-[실측 시작] holds the worktree, starts `serve`, runs the script with the
-inputs in its environment and every secret masked from its output, and keeps
-the report and the clips. A failed metric, a missing report or a backend
+Each value is sent with the input's `env` and kind as the screen showed
+them; a plan rebuilt since answers 409. [실측 시작] holds the worktree, starts
+`serve`, runs the script with the inputs in its environment and every secret
+masked from its output, and keeps only the clips and the report and the
+backend's log, masked. Its stop is made before the worker starts and also
+holds while the server shuts down. A plan that no longer holds sends the run
+back to the build agent from the same button. A failed metric, a missing report or a backend
 that does not come up sends the result back to the build agent. An input the
 script calls wrong stops for the owner, who fixes it and presses
 [실측 시작] again. A run of passed metrics waits for the owner. They listen to
 the clips, then approve, which comments the record on the pull request and
 starts the review, or refuse with what they heard, which goes to the build
-agent. The review reads the approved measurement of its HEAD
-(`measured_text`). A finding the measurement contradicts is P2.
+agent. The verdict names the run's number and HEAD, and the tree must still
+be that HEAD with nothing uncommitted. A comment GitHub refuses is kept on
+the run as `comment_error`. The review reads the approved measurement of its
+HEAD (`measured_text`). A finding the measurement contradicts is P2.
+
+No review runs without that approval. A run that reaches the review another
+way goes back to `measure`. Review Loop neither lists nor takes the pull
+request of a oneshot run that has not finished (`oneshot_profile.in_run`).
+S8 makes the draft ready; when GitHub refuses, S8 stops instead of finishing.
 
 ## Steps
 

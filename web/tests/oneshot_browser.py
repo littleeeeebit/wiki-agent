@@ -1073,7 +1073,8 @@ def measurement():
         box.fill("123.apps.googleusercontent.com")
         with posting(page):
             page.get_by_role("button", name="M1 Google 데스크톱 클라이언트 ID 넣기").click()
-        assert posted[-1] == ("measure/inputs/M1", {"value": "123.apps.googleusercontent.com"}), posted
+        assert posted[-1] == ("measure/inputs/M1", {"value": "123.apps.googleusercontent.com", "env": "GOOGLE_CLIENT_ID",
+                                                    "kind": "secret"}), posted
         expect(box).to_have_value("")
         with posting(page):
             start.click()
@@ -1089,7 +1090,7 @@ def measurement():
         result.get_by_role("textbox").fill("목소리가 자연스럽다")
         with posting(page):
             page.get_by_role("button", name="승인 — 리뷰로").click()
-        assert posted[-1] == ("measure/decide", {"head": head, "approve": True, "note": "목소리가 자연스럽다"}), posted
+        assert posted[-1] == ("measure/decide", {"head": head, "n": 1, "approve": True, "note": "목소리가 자연스럽다"}), posted
         send = page.get_by_role("button", name="결정 보내기")
         expect(page.get_by_text("겹침은 R8 지연 때문이다")).to_be_visible()
         expect(send).to_be_disabled()

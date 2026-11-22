@@ -39,7 +39,13 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
       {view.stopped && (
         <p role="alert" className="rounded-md bg-wait/10 px-3 py-2">{view.stopped.detail}</p>
       )}
-      {m.error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2">실측 계획을 읽지 못했다 — {m.error}</p>}
+      {m.error && (
+        <div role="alert" className="flex flex-col items-start gap-2 rounded-md bg-destructive/10 px-3 py-2">
+          <p>실측 계획을 읽지 못했다 — {m.error}</p>
+          <Btn tone="wait" disabled={busy || !!view.working}
+            onClick={() => void act(() => api.measureStart(repo, m.head))}>빌드 에이전트에게 계획을 고치게 하기</Btn>
+        </div>
+      )}
       {m.plan && <>
         {m.plan.inputs.length > 0 && (
           <section aria-label="넣을 값" className="flex flex-col gap-3">
@@ -115,7 +121,7 @@ function Input({ repo, x, busy, act }: { repo: string; x: MeasureInput; busy: bo
   const [open, setOpen] = useState(!x.given)
   const label = `${x.id} ${x.what}`
   async function send() {
-    if (await act(() => api.measureGive(repo, x.id, value))) { setValue(''); setOpen(false) }
+    if (await act(() => api.measureGive(repo, x, value))) { setValue(''); setOpen(false) }
   }
   return (
     <article className={BOX}>
@@ -134,7 +140,7 @@ function Input({ repo, x, busy, act }: { repo: string; x: MeasureInput; busy: bo
           className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-foreground max-[560px]:text-base" />
         <Btn type="submit" tone="primary" disabled={busy || !value.trim()} aria-label={`${label} 넣기`}>넣기</Btn>
         {x.given && <Btn tone="ghost" disabled={busy} aria-label={`${label} 지우기`}
-          onClick={() => void act(() => api.measureTakeBack(repo, x.id))}>지우기</Btn>}
+          onClick={() => void act(() => api.measureTakeBack(repo, x))}>지우기</Btn>}
       </form>
     </article>
   )
@@ -193,9 +199,9 @@ function Result({ repo, run, busy, act }: { repo: string; run: MeasureRun; busy:
               className="rounded-md border border-input bg-background px-2 py-1 text-foreground max-[560px]:text-base" />
           </label>
           <div className="flex flex-wrap gap-2">
-            <Btn tone="wait" disabled={busy} onClick={() => void act(() => api.measureDecide(repo, run.head, true, note))}>승인 — 리뷰로</Btn>
+            <Btn tone="wait" disabled={busy} onClick={() => void act(() => api.measureDecide(repo, run, true, note))}>승인 — 리뷰로</Btn>
             <Btn tone="danger" disabled={busy || !note.trim()}
-              onClick={() => void act(() => api.measureDecide(repo, run.head, false, note))}>거절 — 빌드가 고친다</Btn>
+              onClick={() => void act(() => api.measureDecide(repo, run, false, note))}>거절 — 빌드가 고친다</Btn>
           </div>
         </form>
       )}

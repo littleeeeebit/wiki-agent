@@ -206,6 +206,19 @@ def test_the_gate_green_asks_for_the_text_then_opens_the_pull_request_attached_b
     assert shown["gates"][0]["edited"] == ["P1"] and shown["gates"][0]["reading"][0]["seconds"] == 80.0
 
 
+def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finished):
+    tree, sent = finished
+    readme(tree)
+    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    remote = Remote()   # answers `gh pr ready` as a logged-out gh does
+    with patch.object(specs, "sh", remote):
+        assert check(tree, SUMMARIZED) is None
+    assert any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls)
+    assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "pr" and "초안을 풀지 못했다" in o()["stopped"]["detail"]
+
+
 @pytest.mark.parametrize("change, said", [
     # an adapter gate that dropped the contract's command: refused as any change outside `[release]`, unrun
     (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "`[release]` 밖이"),

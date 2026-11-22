@@ -26,8 +26,8 @@ from common.budget import Budget, Cancelled, Exhausted
 from common.paths import RAW
 from workspace import adopt, base_branch, checkout, folder_for, holder, merged, remove, worktrees
 
-from . import (channels, connect, decisions, knowledge, maintenance, pr_text, prerequisite_review, query, refactor_run,
-               review_contract, runtime, specs, sweep, verification, work)
+from . import (channels, connect, decisions, knowledge, maintenance, oneshot_profile, pr_text, prerequisite_review, query,
+               refactor_run, review_contract, runtime, specs, sweep, verification, work)
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 from .review_result import (  # noqa: F401 -- preserve the loop protocol API
     FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
@@ -2719,7 +2719,7 @@ def prs() -> dict:
     rows = []
     for row in json.loads(done.stdout):
         spec = known.get(row["number"]) or unlinked(repo, row["headRefName"])
-        why = refusal(row, spec if spec and spec.get("pr") else None) or (
+        why = oneshot_profile.in_run(spec) or refusal(row, spec if spec and spec.get("pr") else None) or (
             "" if spec else clash(name, row["headRefName"]))
         rows.append({"number": row["number"], "title": row["title"], "branch": row["headRefName"],
                      "head": row["headRefOid"], "url": row["url"], "fork": bool(row.get("isCrossRepository")),
@@ -2763,7 +2763,7 @@ def take(repo: Path, n: int, environment: str = "local", cell: dict | None = Non
     cell = cell if cell and cell.get("model") else None
     spec = by_pr(repo.name).get(n)
     if spec is not None:
-        why = refusal({}, spec)
+        why = oneshot_profile.in_run(spec) or refusal({}, spec)
         if why:
             raise HTTPException(409, why)
         spec = named(repo, spec, cell)
@@ -2795,6 +2795,8 @@ def take(repo: Path, n: int, environment: str = "local", cell: dict | None = Non
         raise HTTPException(409, "연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
     sid = folder_for(view["headRefName"])
     existing = unlinked(repo, view["headRefName"])
+    if why := oneshot_profile.in_run(existing):
+        raise HTTPException(409, why)
     if existing is not None:
         spec = named(repo, attach(repo, existing, view, environment), cell)
         kick(repo.name, spec["id"])

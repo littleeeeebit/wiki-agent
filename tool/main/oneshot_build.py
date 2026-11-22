@@ -727,11 +727,11 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     every node id pinned at the tests commit passing: then the run moves to the backend review."""
 
     o = spec["oneshot"]
-    from . import oneshot_measure   # it imports this module
-    if why := oneshot_measure.unchanged(path, o) or reported(spec, final) or pinned(path, o):
+    from . import oneshot_answers as sent, oneshot_measure   # they import this module
+    if why := sent.unchanged(path, o) or reported(spec, final) or pinned(path, o):
         return why
     try:
-        answers = oneshot_measure.answered(path, spec, final)
+        answers = sent.answered(path, spec, final)
         gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
         oneshot_measure.planned(path, spec)   # a turn without a measurement plan never reaches the gate
     except ValueError as e:
@@ -739,12 +739,12 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     verdict = judged(path, run, spec, [gate], toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    if why := held(path, run, spec, verdict) or oneshot_measure.serve_check(path, run, spec):
+    if why := held(path, run, spec, verdict, lambda found: sent.ran(found, answers)) \
+            or oneshot_measure.serve_check(path, run, spec):
         return why
     # `working` names PR #1's push before its worker starts: a server that dies in between leaves it for `recover`.
     oneshot_spec.saved(spec["repo"], oneshot={"stage": "measure", "built_head": verdict["head"], "attempts": 0,
-                                              "working": "publish", "fix": None,
-                                              "answers": [*(o.get("answers") or []), *answers]})
+                                              "working": "publish", "fix": None, **sent.passed(o, answers)})
     specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}" + (f" · 답한 발견 {len(answers)}개" if answers else ""))
     return ""
 
@@ -762,12 +762,12 @@ def judged(path: Path, run, spec: dict, commands: list[str], env: dict | None, *
         report.unlink(missing_ok=True)
 
 
-def held(path: Path, run, spec: dict, verdict: dict) -> str:
-    """Empty when every case pinned at the tests commit passes in a run of the pinned command, and the run left
-    HEAD and the worktree as the green gate saw them, or why not."""
+def held(path: Path, run, spec: dict, verdict: dict, also=lambda found: "") -> str:
+    """Empty when every case pinned at the tests commit passes in a run of the pinned command, and `also` finds
+    nothing wrong with that run's cases, and the run left HEAD and the worktree as the green gate saw them."""
 
     o = spec["oneshot"]
-    if why := green(o["cases"], junit(path, run, spec, o["runner"])):
+    if why := green(o["cases"], found := junit(path, run, spec, o["runner"])) or also(found):
         return why
     if head(path) != verdict["head"] or specs.dirty(path):
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"

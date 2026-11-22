@@ -32,10 +32,17 @@ def reviewed(world):  # noqa: F811 — the imported fixture, requested by name
     oneshot_spec.saved("budget", start_head=base, requirements=REQS, oneshot={
         "glossary": GLOSSARY, "stage": "review", "design": sheet.parsed(DESIGN), "tests_head": base,
         "contract": ["test_budget.py"], "gate": "uv run pytest", "built_head": head, "working": "review",
-        "profile": PROFILE})
+        "profile": PROFILE, "measures": [approved(head)]})
     sent = []
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
         yield world, head, sent
+
+
+def approved(head: str, n: int = 1) -> dict:
+    """The owner's approval of `head`'s real measurement, without which no review runs (`oneshot_measure`)."""
+
+    return {"n": n, "head": head, "status": "owner", "metrics": [], "notes": "",
+            "owner": {"approve": True, "note": "들어 봤다", "ts": 0}}
 
 
 def o() -> dict:
@@ -360,7 +367,7 @@ def test_a_round_after_two_that_did_not_converge_reads_the_changed_lines_and_rec
                                         "    return amount\n", encoding="utf-8")
     git(tree, "commit", "-am", "fix")
     later = git(tree, "rev-parse", "HEAD")
-    oneshot_spec.saved("budget", oneshot={"built_head": later})
+    oneshot_spec.saved("budget", oneshot={"built_head": later, "measures": [approved(head), approved(later, 2)]})
     said, asking = answers(verdict(later, "refuse", {**P1, "location": "budget_app.py:3"}))
     with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
         oneshot_review.review("budget")
@@ -496,8 +503,51 @@ def test_a_build_resumed_at_the_cap_replaces_a_stuck_mechanism_once_and_remember
     oneshot_spec.saved("budget", oneshot={"stage": "build", "reviews": [
         {"verdict": "refuse", "head": h, "findings": [P1]} for h in ("old1", "old2", head)]})
     assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
-    assert o()["replaced"] == ["amount validation"]
+    assert o()["replacing"] == ["amount validation"] and not o().get("replaced")
+    # A turn that never ran (a crash, a refused turn) is told again: nothing counts as replaced before a pass.
+    assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
+    from main import oneshot_answers
+    oneshot_spec.saved("budget", oneshot=oneshot_answers.passed(o(), []))
+    assert o()["replaced"] == ["amount validation"] and not o().get("replacing")
     assert "replace the mechanism" not in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
+
+
+def test_no_review_runs_without_the_owner_approving_this_heads_measurement(reviewed):
+    _, head, _ = reviewed
+    oneshot_spec.saved("budget", oneshot={"measures": [{**approved(head), "owner": {"approve": False, "note": "끊긴다"}}]})
+    heard, asking = answers(verdict(head, "approve"))
+    with asking:
+        oneshot_review.review("budget")
+    assert not heard and o()["stage"] == "measure" and o()["stopped"]["reason"] == "measure"
+    s = specs.load("budget", oneshot.BRANCH)
+    assert "원샷" in loop.oneshot_profile.in_run(s)   # nor through Review Loop, which would read PR #1 unmeasured
+
+
+def test_a_ruling_for_the_builder_never_drops_a_p0_and_later_work_survives_every_verdict(reviewed):
+    _, head, sent = reviewed
+    p0 = {**P1, "severity": "P0", "reason": "합계가 깨진다"}
+    o_ = {"rulings": {"amount validation": {"keep": "build"}}}
+    assert oneshot_review.ruled_out(o_, P1) and not oneshot_review.ruled_out(o_, p0)
+    kept = {"kind": "webapp", "what": "자막 창", "location": "x", "reason": "y"}
+    oneshot_spec.saved("budget", oneshot={"later": [kept]})
+    _, asking = answers(verdict(head, "approve", P2))
+    with asking, patch.object(oneshot_spec, "start", lambda *a, **f: None):
+        oneshot_review.review("budget")
+    assert o()["stage"] == "split" and o()["later"] == [kept]
+
+
+def test_a_head_refused_in_an_earlier_round_is_never_built_on_again(reviewed):
+    tree, head, _ = reviewed
+    from main import oneshot_answers
+    rounds = {"reviews": [{"verdict": "refuse", "head": head, "findings": [P1]},
+                          {"verdict": "refuse", "head": "newer", "findings": [P1]}]}
+    assert "커밋이 하나도 늘지 않았다" in oneshot_answers.unchanged(tree, rounds)   # reset back to the older one
+    failed = {"measures": [{**approved(head), "status": "failed", "owner": None}]}
+    assert "실측이 실패했거나" in oneshot_answers.unchanged(tree, failed)
+    assert oneshot_answers.ran([("test_budget", "test_pin", "test_budget.py", "passed")],
+                               [{"test": "test_budget.py::test_pin"}]) == ""
+    assert "돌지 않음" in oneshot_answers.ran([], [{"test": "test_budget.py::test_pin"}])
+    assert "failed" in oneshot_answers.ran([("test_budget", "test_pin", "", "failed")], [{"test": "test_budget.py::test_pin"}])
 
 
 def test_an_owner_ruling_for_the_review_goes_to_the_build_with_their_words(reviewed):

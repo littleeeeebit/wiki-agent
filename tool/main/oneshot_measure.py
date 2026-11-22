@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import operator
 import os
-import posixpath
 import re
 import shutil
 import subprocess
@@ -30,6 +29,9 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import quote, urlsplit
+
+import psutil
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -37,7 +39,8 @@ from pydantic import BaseModel
 
 from common import masked, process, shell
 
-from . import oneshot, oneshot_build, oneshot_needs, oneshot_spec, prerequisite_review, release, specs
+from . import oneshot, oneshot_build, oneshot_needs, oneshot_spec, prerequisite_review, release, runtime, specs, work
+from .query import _lock as work_lock, hold
 
 router = APIRouter()
 PLAN = ".wiki/measure.json"
@@ -50,7 +53,24 @@ MAX_CLIPS, MAX_CLIP = 12, 64 * 1024 * 1024
 MAX_MINUTES, MAX_SERVE_SECONDS = 60, 600
 MAX_TEXT = 2_000   # an input's typed value, and the owner's note
 HEALTH = re.compile(r"http://(127\.0\.0\.1|localhost)(:\d{1,5})?(/\S*)?")
-HALTS: dict[str, threading.Event] = {}   # the measurement running now, by repository: `stop` sets it
+KEPT = ("report.json", "serve.log")   # what a measurement's folder keeps besides its clips, masked
+
+
+class Halted:
+    """A measurement's stop: the owner's, or the server going down. Made before its worker starts (`start`), so
+    a stop pressed in between is never lost."""
+
+    def __init__(self) -> None:
+        self.own = threading.Event()
+
+    def set(self) -> None:
+        self.own.set()
+
+    def is_set(self) -> bool:
+        return self.own.is_set() or runtime.stopping.is_set()
+
+
+HALTS: dict[str, Halted] = {}   # the measurement running now, by repository: `stop` sets it
 
 
 # -- The plan the build agent commits ---------------------------------------------------------------------
@@ -91,7 +111,11 @@ def checked(value, spec: dict, path: Path) -> dict:
     if (tools := oneshot_build.tools(o)) is not None and (
             bad := oneshot_build.undeclared(path, f"{serve['command']} && {measure['command'].replace('{out}', 'x')}", tools)):
         raise ValueError(f"확정한 도구도 작업트리 안의 파일도 아닌 프로그램을 부른다: {', '.join(bad)}")
+    for part in ("inputs", "during", "metrics"):
+        if not isinstance(value.get(part) or [], list):
+            raise ValueError(f"`{part}` 는 목록이다")
     inputs, envs = [], set()
+    secret = {n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)}   # the design's secrets stay secret
     for n, x in enumerate(value.get("inputs") or []):
         where = f"inputs[{n}]"
         if not isinstance(x, dict) or not isinstance(x.get("id"), str) or not IID.fullmatch(x["id"]):
@@ -100,6 +124,8 @@ def checked(value, spec: dict, path: Path) -> dict:
             raise ValueError(f"{where} {x['id']}: `kind` 는 secret(비밀 값) 이나 text(주소 같은 보통 글) 다")
         if not isinstance(x.get("env"), str) or not oneshot_needs.ENV.fullmatch(x["env"]) or x["env"] in envs:
             raise ValueError(f"{where} {x['id']}: `env` 는 서로 다른 대문자 환경 변수 이름이다")
+        if x["kind"] == "text" and x["env"].upper() in secret:
+            raise ValueError(f"{where} {x['id']}: `{x['env']}` 는 설계의 비밀 값이다 — kind 를 secret 으로 적는다")
         if not isinstance(x.get("what"), str) or not x["what"].strip():
             raise ValueError(f"{where} {x['id']}: `what` 이 비었다")
         guide = x.get("guide")
@@ -161,68 +187,6 @@ def planned(path: Path, spec: dict) -> dict:
     return checked(value, spec, path)
 
 
-# -- What a build turn sent back must end with ------------------------------------------------------------
-
-def unchanged(path: Path, o: dict) -> str:
-    """Why a build turn sent back by the review or the measurement ended without a new commit, or empty. A HEAD
-    the review refused, or the measurement failed, is never read again: the turn commits its fix, or the tests
-    that pin what it answered with evidence."""
-
-    now = oneshot_build.head(path)
-    if o.get("fix") == "review" and (last := (o.get("reviews") or [None])[-1]) and last["verdict"] == "refuse" \
-            and last["head"] == now:
-        return (f"리뷰가 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 고친 코드를 커밋하거나, 고치지 않고 "
-                "증거로 답한 발견마다 그 동작을 고정하는 테스트를 커밋하고 `oneshot-answers` 에 적는다")
-    if o.get("fix") == "measure" and (last := (o.get("measures") or [None])[-1]) and last["head"] == now:
-        return f"실측이 실패한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 원인을 고쳐 커밋한다"
-    return ""
-
-
-ANSWER = re.compile(r"^```oneshot-answers[ \t]*\r?\n(.*?)^```[ \t]*$", re.M | re.S)
-
-
-def answered(path: Path, spec: dict, final: str) -> list[dict]:
-    """The turn's `oneshot-answers`: each finding of the standing refusal it answered with evidence instead of a
-    change, the requirement a change would break, and the test committed since that refusal which pins the
-    behaviour it defends. `ValueError` says what is wrong; a turn sent back by nothing answers nothing."""
-
-    from . import oneshot_review   # it imports this module
-
-    o = spec["oneshot"]
-    found = ANSWER.findall(final)
-    if not found:
-        return []
-    last = (o.get("reviews") or [None])[-1]
-    if len(found) > 1 or o.get("fix") != "review" or not last or last["verdict"] != "refuse":
-        raise ValueError("`oneshot-answers` 는 리뷰가 거절해 돌아온 빌드 턴에 하나만 적는다")
-    try:
-        value = json.loads(found[0])
-    except ValueError as exc:
-        raise ValueError(f"`oneshot-answers` 가 JSON 이 아니다 — {exc}") from None
-    areas = {oneshot_review.area_of(f) for f in oneshot_review.blocking(last)}
-    anchors, since = oneshot_review.anchors(spec), set(oneshot_build.changed(path, last["head"]))
-    out = []
-    for n, a in enumerate(value if isinstance(value, list) else [None]):
-        where = f"`oneshot-answers`[{n}]"
-        if not isinstance(a, dict) or not all(isinstance(a.get(k), str) and a[k].strip()
-                                               for k in ("area", "location", "evidence", "test")):
-            raise ValueError(f"{where}: area, location, evidence, breaks, test 를 적는다")
-        if oneshot_review.area_of(a) not in areas:
-            raise ValueError(f"{where}: `{a['area']}` 는 이번 거절의 영역이 아니다 — 발견의 `area` 를 그대로 적는다")
-        if not isinstance(a.get("breaks"), list) or not a["breaks"] or not all(isinstance(b, str) and b in anchors
-                                                                              for b in a["breaks"]):
-            raise ValueError(f"{where}: `breaks` 는 고치면 깨지는 설계 항목·요구 번호의 목록이다")
-        file, _, name = a["test"].partition("::")
-        target = (path / file).resolve()
-        if not name or not target.is_relative_to(path.resolve()) or not target.is_file() \
-                or posixpath.normpath(file.replace("\\", "/")) not in since \
-                or name.split("[")[0] not in target.read_text(encoding="utf-8", errors="replace"):
-            raise ValueError(f"{where}: `test` 는 이번 턴에 커밋한 테스트 파일과 그 안의 테스트 이름(`경로::이름`)이다 — {a['test']}")
-        out.append({"round": len(o["reviews"]), "head": last["head"], "area": " ".join(a["area"].split()),
-                    **{k: a[k].strip() for k in ("location", "evidence", "test")}, "breaks": a["breaks"]})
-    return out
-
-
 # -- What the owner gives the measurement ----------------------------------------------------------------
 
 def kept(spec: dict) -> dict:
@@ -255,8 +219,24 @@ def env_of(spec: dict, plan: dict) -> tuple[dict, dict[str, str]]:
                 env[x["env"]] = secrets[x["env"]] = value
         elif value := (kept(spec).get(x["env"]) or {}).get("value"):
             env[x["env"]] = value
-    hide = {**oneshot_needs.hidden(spec, env), **{v: f"[{k}]" for k, v in secrets.items()}}
+    hide = {**oneshot_needs.hidden(spec, env),
+            **{form: f"[{k}]" for k, v in secrets.items() for form in {v, quote(v, safe="")}}}
     return env, hide
+
+
+def scrubbed(out: Path, hide: dict[str, str]) -> None:
+    """A measurement's folder as it is kept: the report and the backend's log masked, the clips, nothing else.
+    Whatever else the script wrote may hold a value it was given, so it goes."""
+
+    for p in sorted(out.rglob("*"), reverse=True):   # files before the folders that hold them
+        if p.parent == out / "clips" and p.is_file() or p == out / "clips":
+            continue
+        if p.parent == out and p.name in KEPT and p.is_file():
+            text = p.read_text(encoding="utf-8", errors="replace")
+            if (clean := masked(text, hide)) != text:
+                p.write_text(clean, encoding="utf-8")
+            continue
+        shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
 
 
 # -- Starting the backend ---------------------------------------------------------------------------------
@@ -266,6 +246,8 @@ def served(command: str, path: Path, env: dict, health: str, seconds: int, halt:
     """The backend started in a job of its own and answering `health` with 200, for the block; `ValueError` with
     the end of its log when it exits, or does not answer in `seconds`. Killed with everything it started after."""
 
+    if answers(health):   # whatever answers now is not the backend about to start
+        raise ValueError(f"`{health}` 에 이미 다른 프로그램이 답한다 — 그 프로그램을 끄거나 `serve` 의 포트를 바꾼다")
     argv, use_shell = shell.launch("gate", command=command)
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w+", encoding="utf-8", errors="replace") as output:
@@ -286,12 +268,10 @@ def served(command: str, path: Path, env: dict, health: str, seconds: int, halt:
                     raise ValueError("사람이 멈췄다")
                 if proc.poll() is not None:
                     raise ValueError(f"`serve.command` 가 떠 있지 않고 끝났다 (종료 코드 {proc.returncode}) — {tail(log)}")
-                try:
-                    with urllib.request.urlopen(health, timeout=3) as answer:
-                        if answer.status == 200:
-                            break
-                except (urllib.error.URLError, OSError, ValueError):
-                    pass
+                if answers(health) == 200:
+                    if not owned(proc, health):
+                        raise ValueError(f"`{health}` 에 답한 것이 띄운 백엔드가 아니다 — 같은 포트를 쓰는 다른 프로그램을 끈다")
+                    break
                 if time.monotonic() > deadline:
                     raise ValueError(f"백엔드가 {seconds}초 안에 `{health}` 에 200 으로 답하지 않았다 — {tail(log)}")
                 time.sleep(1)
@@ -302,6 +282,30 @@ def served(command: str, path: Path, env: dict, health: str, seconds: int, halt:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+def answers(health: str) -> int | None:
+    """The status `health` answers with, or `None` when nothing does."""
+
+    try:
+        with urllib.request.urlopen(health, timeout=3) as answer:
+            return answer.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def owned(proc: subprocess.Popen, health: str) -> bool:
+    """Whether the socket listening on `health`'s port belongs to `proc` or a process it started."""
+
+    port = urlsplit(health).port or 80
+    try:
+        tree = {proc.pid, *(c.pid for c in psutil.Process(proc.pid).children(recursive=True))}
+        return any(c.pid in tree for c in psutil.net_connections("tcp")
+                   if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port)
+    except (psutil.Error, OSError):
+        return False
 
 
 def tail(log: Path, size: int = 1500) -> str:
@@ -367,6 +371,8 @@ def published(repo: str) -> dict:
         found = specs.existing_pr(path, branch, base)   # `RuntimeError` when GitHub cannot be read
         if found:
             done = specs.sh(["gh", "pr", "edit", str(found[0]), "--body-file", fh.name], path, 120)
+            if done.returncode:
+                raise ValueError(f"PR #{found[0]} 의 설명을 고치지 못했다 — {specs.said(done)}")
         else:
             done = specs.sh(["gh", "pr", "create", "--draft", "--base", base, "--head", branch, "--title", title,
                              "--body-file", fh.name], path, 120)
@@ -401,7 +407,6 @@ def publish(repo: str) -> None:
         oneshot_spec.store(repo).stop("measure", f"PR #1 을 올리지 못했다 — {exc} — [실측 시작]을 누르면 다시 올린다")
         return
     oneshot_spec.saved(repo, oneshot={"working": None})
-    from . import work   # the owner is told where the run waits, as a pull request's readiness is
     work.notice(f"PR #{pr['number']} 초안 · 실측을 기다린다", f"{repo} · 입력을 넣고 [실측 시작]을 누른다")
 
 
@@ -418,7 +423,8 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
     if not isinstance(value, dict):
         return {"error": "`report.json` 은 metrics 를 담은 객체다"}
     if isinstance(bad := value.get("input_error"), dict) and isinstance(bad.get("why"), str):
-        return {"input_error": {"input": str(bad.get("input") or ""), "why": masked(bad["why"], hide)[:MAX_TEXT]}}
+        return {"input_error": {"input": masked(str(bad.get("input") or ""), hide)[:40],
+                                "why": masked(bad["why"], hide)[:MAX_TEXT]}}
     got = value.get("metrics") if isinstance(value.get("metrics"), dict) else {}
     rows = []
     for m in plan["metrics"]:
@@ -441,8 +447,7 @@ def clips_of(out: Path, hide: dict[str, str]) -> list[str]:
 def measure(repo: str) -> None:
     from . import oneshot_review   # it imports this module
 
-    halt = HALTS.setdefault(repo, threading.Event())
-    halt.clear()
+    halt = HALTS.setdefault(repo, Halted())   # `start` made a fresh one: a stop pressed since still holds
 
     def body(store, spec, tree):
         o = spec["oneshot"]
@@ -470,11 +475,15 @@ def measure(repo: str) -> None:
                     idle=limit, hide=hide)
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
+        finally:
+            found = report_of(out, plan, hide)
+            scrubbed(out, hide)   # every exit, a stop included, keeps nothing that shows a secret
         record["tail"] = (text or "").strip()[-3000:]
         if halt.is_set():
-            store.stop("measure", "사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다")
+            store.stop("measure", "사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
+                       else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다")
             return None
-        found = report_of(out, plan, hide) if not cut else {"error": cut}
+        found = found if not cut else {"error": cut}
         record |= found | {"clips": clips_of(out, hide), "code": code}
         if "input_error" in found:
             record["status"] = "input"
@@ -548,8 +557,8 @@ def fixing(spec: dict) -> str:
 
 # -- What the owner does ----------------------------------------------------------------------------------
 
-def measuring(repo: str) -> tuple[dict, dict]:
-    """`(spec, plan)` while the run is at the measurement with no worker running."""
+def measuring(repo: str, plan_needed: bool = True) -> tuple[dict, dict | None, str]:
+    """`(spec, plan, why the plan does not hold)` while the run is at the measurement with no worker running."""
 
     spec = oneshot_spec.spec_of(repo)
     o = spec["oneshot"]
@@ -557,13 +566,26 @@ def measuring(repo: str) -> tuple[dict, dict]:
     if o.get("stage") != "measure" or o.get("working"):
         raise HTTPException(409, f"지금 할 수 없다 — {o.get('stage')}{' 진행 중' if o.get('working') else ''}")
     try:
-        return spec, planned(Path(spec["worktree"]), spec)
+        return spec, planned(Path(spec["worktree"]), spec), ""
     except ValueError as exc:
-        raise HTTPException(409, str(exc)) from None
+        if plan_needed:
+            raise HTTPException(409, str(exc)) from None
+        return spec, None, str(exc)
 
 
 class Value(BaseModel):
     value: str = ""
+    env: str = ""    # the input as the owner's screen showed it: a plan rebuilt since is refused
+    kind: str = ""
+
+
+def shown_input(plan: dict, iid: str, body: Value) -> dict:
+    x = next((x for x in plan["inputs"] if x["id"] == iid), None)
+    if x is None:
+        raise HTTPException(404, f"실측 계획에 없는 입력이다: {iid}")
+    if (body.env, body.kind) != (x["env"], x["kind"]):
+        raise HTTPException(409, "실측 계획이 그 사이 바뀌었다 — 다시 불러와 새 칸에 넣는다")
+    return x
 
 
 @router.post("/api/oneshot/spec/{repo}/measure/inputs/{iid}")
@@ -571,11 +593,9 @@ def give(repo: str, iid: str, body: Value) -> dict:
     """One input the owner got by following its steps: a secret to Credential Manager, other text to the spec."""
 
     with oneshot._lock:
-        spec, plan = measuring(repo)
-        x = next((x for x in plan["inputs"] if x["id"] == iid), None)
+        spec, plan, _ = measuring(repo)
+        x = shown_input(plan, iid, body)
         value = body.value.strip()
-        if x is None:
-            raise HTTPException(404, f"실측 계획에 없는 입력이다: {iid}")
         if not value or len(value) > MAX_TEXT:
             raise HTTPException(400, f"값이 비었거나 {MAX_TEXT}자를 넘는다")
         if x["kind"] == "secret":
@@ -586,11 +606,10 @@ def give(repo: str, iid: str, body: Value) -> dict:
 
 
 @router.delete("/api/oneshot/spec/{repo}/measure/inputs/{iid}")
-def take_back(repo: str, iid: str) -> dict:
+def take_back(repo: str, iid: str, env: str = "", kind: str = "") -> dict:
     with oneshot._lock:
-        spec, plan = measuring(repo)
-        if (x := next((x for x in plan["inputs"] if x["id"] == iid), None)) is None:
-            raise HTTPException(404, f"실측 계획에 없는 입력이다: {iid}")
+        spec, plan, _ = measuring(repo)
+        x = shown_input(plan, iid, Value(env=env, kind=kind))
         if x["kind"] == "secret":
             oneshot_needs.stored(repo, x["env"], None)
         else:
@@ -605,8 +624,24 @@ class Start(BaseModel):
 @router.post("/api/oneshot/spec/{repo}/measure/start")
 def start(repo: str, body: Start) -> dict:
     with oneshot._lock:
-        spec, plan = measuring(repo)
+        spec, plan, broken = measuring(repo, plan_needed=False)
         o = spec["oneshot"]   # a measurement stopped (a wrong input, a restart) starts again from here
+        if body.head != o.get("built_head"):
+            raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
+        if broken:   # the committed plan no longer holds: only the build agent can fix it
+            spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "fix": None, "attempts": 0, "working": "build",
+                                                     "stopped": None})
+            text = (f"The committed `{PLAN}` no longer holds: {broken}\n\nFix it and end this turn on a new commit; "
+                    "the measurement runs before any review.\n\n" + oneshot_build.build_text(spec))
+            then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
+        else:
+            then = None
+    if then:
+        then()
+        return oneshot_spec.view(oneshot_spec.spec_of(repo))
+    with oneshot._lock:
+        spec, plan, _ = measuring(repo)
+        o = spec["oneshot"]
         if body.head != o.get("built_head"):
             raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
         if missing := [x["id"] for x in plan["inputs"] if not has(spec, x)]:
@@ -614,6 +649,7 @@ def start(repo: str, body: Start) -> dict:
         last = (o.get("measures") or [None])[-1]
         if last and last["head"] == o["built_head"] and last["status"] == "owner" and not last.get("owner"):
             raise HTTPException(409, "이 빌드의 실측이 판정을 기다린다 — 듣고 승인하거나 거절한다")
+        HALTS[repo] = Halted()   # before the worker: a stop pressed as it starts is kept
         oneshot.start_worker(oneshot_spec.store(repo), "measure", measure, (repo,), {})
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
@@ -627,6 +663,7 @@ def stop(repo: str) -> dict:
 
 class Decision(BaseModel):
     head: str = ""
+    n: int = 0   # the measurement the owner listened to: a later one, even of the same HEAD, is refused
     approve: bool = False
     note: str = ""
 
@@ -640,22 +677,30 @@ def decide(repo: str, body: Decision) -> dict:
 
     note = body.note.strip()
     with oneshot._lock:
-        spec, _ = measuring(repo)
-        o = spec["oneshot"]
+        spec, plan, _ = measuring(repo, plan_needed=False)
+        o, tree = spec["oneshot"], Path(spec["worktree"])
         runs = list(o.get("measures") or [])
         last = runs[-1] if runs else None
-        if not last or last["head"] != o.get("built_head") or body.head != last["head"] or last["status"] != "owner" \
-                or last.get("owner"):
+        if not last or last["head"] != o.get("built_head") or body.head != last["head"] or body.n != last["n"] \
+                or last["status"] != "owner" or last.get("owner"):
             raise HTTPException(409, "판정할 실측이 없다 — 다시 불러온다")
         if not body.approve and not note:
             raise HTTPException(400, "거절하려면 들은 것과 무엇이 틀렸는지 적는다")
         if len(note) > MAX_TEXT:
             raise HTTPException(400, f"글은 {MAX_TEXT}자까지다")
-        runs[-1] = {**last, "owner": {"approve": body.approve, "note": note, "ts": time.time()}}
+        # The tree is the one measured, read while no turn writes it; a moved one is measured again first.
+        let_go = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
+        try:
+            if why := oneshot_review.moved(spec, tree, "built_head"):
+                raise HTTPException(409, f"실측한 뒤 작업트리가 바뀌었다 — {why}")
+        finally:
+            let_go()
+        hide = env_of(spec, plan)[1] if plan else oneshot_needs.hidden(spec, oneshot_build.built_env(spec))
+        runs[-1] = {**last, "owner": {"approve": body.approve, "note": masked(note, hide), "ts": time.time()}}
         if body.approve:
             spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "stage": "review", "attempts": 0,
                                                      "measure_fails": 0, "fix": None, "working": "review"})
-            then = lambda: (commented(spec, runs[-1]), oneshot_review.begin(repo))   # noqa: E731
+            then = lambda: (noted_comment(repo, commented(spec, runs[-1])), oneshot_review.begin(repo))   # noqa: E731
         else:
             spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "stage": "build", "fix": "measure",
                                                      "attempts": 0, "working": "build"})
@@ -665,12 +710,22 @@ def decide(repo: str, body: Decision) -> dict:
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 
-def commented(spec: dict, record: dict) -> None:
-    """The approved measurement as a comment on pull request #1, so the review's record is the PR's; best effort."""
+def noted_comment(repo: str, why: str) -> None:
+    """A comment that could not be posted, kept on its measurement so the screen shows it."""
+
+    if why:
+        runs = list(oneshot_spec.spec_of(repo)["oneshot"].get("measures") or [])
+        runs[-1] = {**runs[-1], "comment_error": why}
+        oneshot_spec.saved(repo, oneshot={"measures": runs})
+
+
+def commented(spec: dict, record: dict) -> str:
+    """The approved measurement as a comment on pull request #1, so the review's record is the PR's; why it could
+    not be posted, or empty. The run goes on either way: the record is the spec's, the comment its copy."""
 
     pr = spec["oneshot"].get("pr1")
     if not pr:
-        return
+        return "PR #1 이 없다"
     rows = [f"| {m['what']} | {m['value']}{m['unit']} | {m['pass']['op']} {m['pass']['value']} | {'통과' if m['ok'] else '실패'} |"
             for m in record.get("metrics") or []]
     text = "\n".join([f"## 실측 {record['n']} · `{record['head'][:12]}` · 주인 승인", "",
@@ -680,9 +735,10 @@ def commented(spec: dict, record: dict) -> None:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(text)
     try:
-        specs.sh(["gh", "pr", "comment", str(pr["number"]), "--body-file", fh.name], Path(spec["worktree"]), 60)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+        done = specs.sh(["gh", "pr", "comment", str(pr["number"]), "--body-file", fh.name], Path(spec["worktree"]), 60)
+        return f"PR #{pr['number']} 에 실측 기록을 달지 못했다 — {specs.said(done)}" if done.returncode else ""
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"PR #{pr['number']} 에 실측 기록을 달지 못했다 — {exc}"
     finally:
         os.unlink(fh.name)
 

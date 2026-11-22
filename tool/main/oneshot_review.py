@@ -417,6 +417,12 @@ def owing(found: dict) -> list[dict]:
 
 def review(repo: str) -> None:
     def body(store, spec, tree):
+        if not measured_text(spec["oneshot"], spec["oneshot"].get("built_head")):
+            # No review without the owner's approval of this HEAD's real measurement (`oneshot_measure`): a run
+            # that reached the review another way, one from before the measurement included, is measured first.
+            oneshot_spec.saved(repo, oneshot={"stage": "measure", "attempts": 0})
+            store.stop("measure", "이 빌드의 진짜 환경 실측을 주인이 아직 승인하지 않았다 — 실측을 마치고 승인하면 리뷰한다")
+            return None
         found = verdict(store, spec, tree)
         return None if found is None else lambda: decided(repo, store, spec, found)
 
@@ -508,20 +514,20 @@ def decided(repo: str, store, spec: dict, found: dict):
     if found["verdict"] == "approve":
         # `working` names the split before its worker starts: a server that dies in between leaves it for `recover`.
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "owed": owing(found),
-                                          "working": "split"})
+                                          "later": later_of(o, found), "working": "split"})
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
     refused = int(o.get("refused") or 0) + 1
     if conflicts := conflicted(o, found):   # a decision only the owner can make: no build turn, no cap stop
         oneshot_spec.saved(repo, oneshot={"stage": "conflict", "reviews": reviews, "refused": refused,
                                           "conflicts": conflicts, "attempts": 0, "working": None,
-                                          "later": later_of(found)})
+                                          "later": later_of(o, found)})
         return None
     if refused >= cap():
         detail = f"백엔드 리뷰가 {refused}번 거부했다 — " + \
             " / ".join(f"[{f['severity']}] {f['location']} {f['reason']}" for f in found["findings"][:5])
         with oneshot._lock:   # one write: the stop names the HEAD it refused at the cap (`capped`), so a server
             # dying in between never leaves a refusal behind a `restart`, and a later cap change moves nothing
-            store.put(reviews=reviews, refused=refused, working=None, stopped={
+            store.put(reviews=reviews, refused=refused, working=None, later=later_of(o, found), stopped={
                 "reason": "review", "detail": detail, "state": store.get()[store.state], "capped": found["head"]})
         return None
     # `working` names the build before it is sent: a server that dies in between leaves it for `recover`.
@@ -529,31 +535,38 @@ def decided(repo: str, store, spec: dict, found: dict):
 
 
 def to_build(repo: str, o: dict, reviews: list[dict], found: dict, **fields):
-    """The refusal's build turn, sent once the tree is free. An area refused `STUCK` rounds gets its mechanism
-    replaced in this turn, and is remembered as replaced: a later refusal of it goes to the owner."""
+    """The refusal's build turn, sent once the tree is free, in one write with `fields`. An area refused `STUCK`
+    rounds gets its mechanism replaced in this turn; once a build passes, a later refusal of it goes to the owner."""
 
     spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "reviews": reviews, "attempts": 0, "working": "build",
-                                             "fix": "review", "later": later_of(found), **fields})
-    text = fixing(spec, found)   # read before `replaced` is saved: it tells which areas are newly replaced
+                                             "fix": "review", "later": later_of(o, found), **fields})
+    text = fixing(spec, found)
     replacing(repo, spec["oneshot"], found)
     return lambda: oneshot_build.send(repo, "build", text)
 
 
 def replacing(repo: str, o: dict, found: dict) -> None:
-    """The areas whose mechanism the build turn for `found`, the last of `o`'s reviews, replaces, remembered once
-    each, whichever path sends that turn: a refusal under the cap, or `[재개]` after the cap stopped it."""
+    """The areas whose mechanism the build turn for `found`, the last of `o`'s reviews, is told to replace,
+    whichever path sends that turn: a refusal under the cap, or `[재개]` after the cap stopped it. They count as
+    replaced only once a build passes its checks (`oneshot_answers.passed`): a turn that never ran is told again."""
 
-    old = o.get("replaced") or []
     serious = [f for f in blocking(found) if not ruled_out(o, f)]
-    if new := stuck_areas((o.get("reviews") or [])[:-1], serious, old):
-        oneshot_spec.saved(repo, oneshot={"replaced": sorted({*old, *new})})
+    new = stuck_areas((o.get("reviews") or [])[:-1], serious, o.get("replaced") or [])
+    if new != (o.get("replacing") or []):
+        oneshot_spec.saved(repo, oneshot={"replacing": new or None})
 
 
-def later_of(found: dict) -> list[dict]:
-    """The findings whose fix belongs to a kind's own later build, as that build's turn reads them."""
+def later_of(o: dict, found: dict) -> list[dict]:
+    """The work left to a kind's own later build: what earlier verdicts left there, and this one's findings that
+    carry `later`, each once; that build's turn reads them all."""
 
-    return [{"kind": f["later"]["kind"], "what": f["later"]["what"], "location": f["location"], "reason": f["reason"]}
-            for f in found["findings"] if "later" in f]
+    out = list(o.get("later") or [])
+    for f in found["findings"]:
+        item = {"kind": f["later"]["kind"], "what": f["later"]["what"], "location": f["location"], "reason": f["reason"]} \
+            if "later" in f else None
+        if item and item not in out:
+            out.append(item)
+    return out
 
 
 def later_text(o: dict, kinds: list[str] | None = None) -> str:
@@ -568,9 +581,9 @@ def later_text(o: dict, kinds: list[str] | None = None) -> str:
 
 
 def ruled_out(o: dict, f: dict) -> bool:
-    """`f` is in an area the owner ruled for the builder: nothing is left to fix there."""
+    """`f` is a P1 in an area the owner ruled for the builder: nothing is left to fix there. A P0 still is."""
 
-    return (o.get("rulings") or {}).get(area_of(f), {}).get("keep") == "build"
+    return f["severity"] == "P1" and (o.get("rulings") or {}).get(area_of(f), {}).get("keep") == "build"
 
 
 def conflicted(o: dict, found: dict) -> list[dict]:
@@ -742,13 +755,14 @@ def rule(repo: str, body: Rulings) -> dict:
             if len(note) > MAX_NOTE:
                 raise HTTPException(400, f"`{c['area']}` 의 글은 {MAX_NOTE}자까지다")
             rulings[c["key"]] = {"area": c["area"], "keep": keep, "note": note, "round": len(reviews)}
-        o = oneshot_spec.saved(repo, oneshot={"rulings": rulings, "conflicts": None})["oneshot"]
-        last = reviews[-1]
+        # One write: the rulings, the cleared board and the next stage, so no stop in between leaves an empty board.
+        o, last = {**o, "rulings": rulings}, reviews[-1]
         left = [f for f in blocking(last) if not ruled_out(o, f)]
         if left:
-            then = to_build(repo, o, reviews, last)
+            then = to_build(repo, o, reviews, last, rulings=rulings, conflicts=None)
         else:   # every finding ruled for the builder: the rulings are new input, so the same HEAD is read again
-            oneshot_spec.saved(repo, oneshot={"stage": "review", "attempts": 0, "working": "review"})
+            oneshot_spec.saved(repo, oneshot={"rulings": rulings, "conflicts": None, "stage": "review", "attempts": 0,
+                                              "working": "review"})
             then = lambda: begin(repo)   # noqa: E731
     then()
     return oneshot_spec.view(oneshot_spec.spec_of(repo))

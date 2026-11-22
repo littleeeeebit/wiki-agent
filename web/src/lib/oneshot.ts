@@ -91,7 +91,7 @@ export type MeasureRun = {
   n: number; head: string; ts: number; status: 'owner' | 'failed' | 'input'; code?: number | null
   metrics?: (Metric & { value: number | boolean | null; ok: boolean })[]; notes?: string; error?: string
   input_error?: { input: string; why: string }; clips?: string[]; tail?: string
-  owner?: { approve: boolean; note: string; ts: number }
+  owner?: { approve: boolean; note: string; ts: number }; comment_error?: string
 }
 /** The measurement stage (`oneshot_measure.shown`): the plan the build agent committed, or why it does not hold. */
 export type MeasureView = {
@@ -179,12 +179,15 @@ export const api = {
   approvePc: (repo: string, plan: PcPlan, surface: boolean) =>
     post(`${base(repo)}/pc/approve`, { plan, surface }).then(answer),
   // The real measurement (`oneshot_measure`): an input the owner got by following its steps, then the run.
-  measureGive: (repo: string, id: string, value: string) => post(`${base(repo)}/measure/inputs/${id}`, { value }).then(answer),
-  measureTakeBack: (repo: string, id: string) => post(`${base(repo)}/measure/inputs/${id}`, undefined, 'DELETE').then(answer),
+  // Each names the input as shown (`env`, `kind`): a plan rebuilt since answers 409, never a value in the wrong box.
+  measureGive: (repo: string, x: MeasureInput, value: string) =>
+    post(`${base(repo)}/measure/inputs/${x.id}`, { value, env: x.env, kind: x.kind }).then(answer),
+  measureTakeBack: (repo: string, x: MeasureInput) => post(
+    `${base(repo)}/measure/inputs/${x.id}?${new URLSearchParams({ env: x.env, kind: x.kind })}`, undefined, 'DELETE').then(answer),
   measureStart: (repo: string, head: string) => post(`${base(repo)}/measure/start`, { head }).then(answer),
   measureStop: (repo: string) => post(`${base(repo)}/measure/stop`, {}).then(answer),
-  measureDecide: (repo: string, head: string, approve: boolean, note: string) =>
-    post(`${base(repo)}/measure/decide`, { head, approve, note }).then(answer),
+  measureDecide: (repo: string, run: MeasureRun, approve: boolean, note: string) =>
+    post(`${base(repo)}/measure/decide`, { head: run.head, n: run.n, approve, note }).then(answer),
   clip: (repo: string, n: number, name: string) => `${base(repo)}/measure/${n}/clips/${encodeURIComponent(name)}`,
   rule: (repo: string, head: string, rulings: Record<string, { keep: Keep; note: string }>) =>
     post(`${base(repo)}/conflict`, { head, rulings }).then(answer),
