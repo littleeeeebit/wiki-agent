@@ -291,25 +291,30 @@ class Unfollowed(urllib.request.HTTPRedirectHandler):
 
 
 NO_REDIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), Unfollowed)   # loopback: never a proxy
-# Every listener a host name reaches: a dual-stack `::` socket answers IPv4 too, so it vouches, or refuses, there.
-LOOPBACK = {"127.0.0.1": {"127.0.0.1", "0.0.0.0", "::", "::ffff:127.0.0.1"},
-            "localhost": {"127.0.0.1", "0.0.0.0", "::1", "::", "::ffff:127.0.0.1"}}
+# Each address family a host name reaches: its exact loopback listeners, or, with none, its wildcard ones (a
+# dual-stack `::` socket answers IPv4 too). The most specific bound socket answers a connection.
+V4 = ({"127.0.0.1", "::ffff:127.0.0.1"}, {"0.0.0.0", "::"})
+LOOPBACK = {"127.0.0.1": [V4], "localhost": [V4, ({"::1"}, {"::"})]}
 
 
 def owned(proc: subprocess.Popen, health: str) -> bool:
-    """Whether every socket that could answer `health` (its port, on any address its host reaches) belongs to
-    `proc` or a process it started: another program on the other loopback address never vouches for it."""
+    """Whether every socket that answers `health` (its port: on each address family its host reaches, the exact
+    loopback listeners, or with none the wildcard ones) belongs to `proc` or a process it started. Another program
+    that answers there never vouches for it; one an exact listener of the backend shadows does not answer.
+    ponytail: a foreign IPv6-only `::` beside a backend on `0.0.0.0` refuses, as psutil cannot tell it apart."""
 
     try:
         import psutil   # `requirements-chat.txt`; here, so a server without it still starts and refuses only this
     except ImportError:
         raise ValueError("psutil 이 설치되지 않았다 — `pip install -r requirements-chat.txt` 로 다시 설치한다") from None
     url = urlsplit(health)
-    port, could = url.port or 80, LOOPBACK[url.hostname]
+    port = url.port or 80
     try:
         tree = {proc.pid, *(c.pid for c in psutil.Process(proc.pid).children(recursive=True))}
-        found = [c for c in psutil.net_connections("tcp")
-                 if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port and c.laddr.ip in could]
+        on = [c for c in psutil.net_connections("tcp")
+              if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port]
+        found = [c for exact, wild in LOOPBACK[url.hostname]
+                 for c in ([c for c in on if c.laddr.ip in exact] or [c for c in on if c.laddr.ip in wild])]
         return bool(found) and all(c.pid in tree for c in found)
     except (psutil.Error, OSError):
         return False
@@ -653,29 +658,29 @@ def decide(repo: str, body: Decision) -> dict:
         # The tree is the one measured, read while no turn writes it. A moved one retires the result and goes back
         # through the build check, then a new measurement: never a verdict on code that is no longer there.
         let_go = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
-        try:
+        try:   # held until the verdict is saved: no turn moves HEAD between the check and the record of it
             why = oneshot_review.moved(spec, tree, "built_head")
+            hide = env_of(spec, plan)[1] if plan else oneshot_needs.hidden(spec, oneshot_build.built_env(spec))
+            runs[-1] = {**last, "owner": {"approve": body.approve, "note": masked(note, hide), "ts": time.time()}}
+            if why:
+                spec = retire(spec, f"실측한 뒤 작업트리가 바뀌었다 — {why}", stage="build", fix=None, attempts=0,
+                              working="build")
+                text = (f"The worktree moved after HEAD `{last['head']}` was measured: {why}. Commit what belongs to "
+                        "the build, or undo it, and finish the turn; the build check and a new measurement follow.\n\n"
+                        + oneshot_build.build_text(spec))
+                then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
+            elif body.approve:
+                spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "stage": "review", "attempts": 0,
+                                                         "measure_fails": 0, "fix": None, "working": "review"})
+                then = lambda: (noted_comment(repo, masked(commented(spec, runs[-1]), hide)),   # noqa: E731
+                                oneshot_review.begin(repo))
+            else:
+                spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "stage": "build", "fix": "measure",
+                                                         "attempts": 0, "working": "build"})
+                text = fixing(spec)
+                then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
         finally:
             let_go()
-        hide = env_of(spec, plan)[1] if plan else oneshot_needs.hidden(spec, oneshot_build.built_env(spec))
-        runs[-1] = {**last, "owner": {"approve": body.approve, "note": masked(note, hide), "ts": time.time()}}
-        if why:
-            spec = retire(spec, f"실측한 뒤 작업트리가 바뀌었다 — {why}", stage="build", fix=None, attempts=0,
-                          working="build")
-            text = (f"The worktree moved after HEAD `{last['head']}` was measured: {why}. Commit what belongs to the "
-                    "build, or undo it, and finish the turn; the build check and a new measurement follow.\n\n"
-                    + oneshot_build.build_text(spec))
-            then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
-        elif body.approve:
-            spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "stage": "review", "attempts": 0,
-                                                     "measure_fails": 0, "fix": None, "working": "review"})
-            then = lambda: (noted_comment(repo, masked(commented(spec, runs[-1]), hide)),   # noqa: E731
-                            oneshot_review.begin(repo))
-        else:
-            spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "stage": "build", "fix": "measure",
-                                                     "attempts": 0, "working": "build"})
-            text = fixing(spec)
-            then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
     then()
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
@@ -698,6 +703,8 @@ def commented(spec: dict, record: dict) -> str:
     pr = spec["oneshot"].get("pr1")
     if not pr:
         return "PR #1 이 없다"
+    if pr.get("head") != record["head"] or spec["oneshot"].get("built_head") != record["head"]:
+        return f"PR #1 이 승인한 HEAD `{record['head'][:12]}` 를 보이지 않는다 — 실측 기록은 원샷 화면에만 있다"
     rows = [f"| {m['what']} | {m['value']}{m['unit']} | {m['pass']['op']} {m['pass']['value']} | {'통과' if m['ok'] else '실패'} |"
             for m in record.get("metrics") or []]
     text = "\n".join([f"## 실측 {record['n']} · `{record['head'][:12]}` · 주인 승인", "",

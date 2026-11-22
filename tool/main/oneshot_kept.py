@@ -7,6 +7,7 @@ accepts, its report and the backend's log, masked (`scrubbed`); the plan and the
 
 from __future__ import annotations
 
+import decimal
 import json
 import math
 import shutil
@@ -33,11 +34,19 @@ def strict(text: str):
     return value
 
 
-def numeric(text: str) -> float | None:
+def same_number(text: str, v: int | float) -> bool:
+    """Whether the secret `text` is the number `v`: exactly (an integer past a float's precision included), or as
+    the float a JSON reader rounds it to."""
+
     try:
-        return v if math.isfinite(v := float(text)) else None
-    except (ValueError, OverflowError):
-        return None
+        n = decimal.Decimal(text.strip())
+        if not n.is_finite():
+            return False
+        if n == decimal.Decimal(v):
+            return True
+        return math.isfinite(f := float(n)) and f == float(v)
+    except (decimal.InvalidOperation, OverflowError, ValueError):
+        return False
 
 
 def label_of(v, hide: dict[str, str]) -> str | None:
@@ -45,7 +54,7 @@ def label_of(v, hide: dict[str, str]) -> str | None:
 
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    return next((label for value, label in hide.items() if (n := numeric(value)) is not None and n == v), None)
+    return next((label for value, label in hide.items() if same_number(value, v)), None)
 
 
 def cleaned(value, hide: dict[str, str]):

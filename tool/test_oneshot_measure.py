@@ -111,11 +111,18 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=False))
     with pytest.raises(HTTPException, match="판정할 실측이 없다"):   # a screen showing another run
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"] + 1, approve=True))
-    begun = []
+    begun, held, save = [], [], measure.oneshot_spec.saved
+
+    def saving(repo, **kw):   # the worktree stays held through the verdict's save: no turn moves HEAD meanwhile
+        held.append(any(k == spec()["worktree"] for k in measure.work._busy))
+        return save(repo, **kw)
     with patch.object(measure, "commented", lambda *a: f"PR #1 에 실측 기록을 달지 못했다 — 401 {KEY}"), \
-            patch("main.oneshot_review.begin", begun.append):
+            patch("main.oneshot_review.begin", begun.append), patch.object(measure.oneshot_spec, "saved", saving):
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=True, note=f"자연스럽다 {KEY}"))
+    assert held[0] and not any(k == spec()["worktree"] for k in measure.work._busy)
     assert o()["stage"] == "review" and begun == ["budget"] and o()["measures"][-1]["owner"]["approve"]
+    assert "승인한 HEAD" in measure.commented({**spec(), "oneshot": {**o(), "pr1": {"number": 1, "head": "old"}}},
+                                          o()["measures"][-1])
     assert KEY not in json.dumps(o(), ensure_ascii=False) and "401" in o()["measures"][-1]["comment_error"]
     from main import oneshot_review
     assert "자연스럽다" in oneshot_review.measured_text(o(), run["head"])
@@ -276,6 +283,12 @@ def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):
     assert measure.report_of(out, plan, hide)["metrics"][0]["value"] is None   # the same number, spelled as a float
     measure.scrubbed(out, hide)
     assert json.loads((out / "report.json").read_text(encoding="utf-8")) == {"metrics": {"rate": "[PIN]"}}
+    big = {str(2 ** 53 + 1): "[BIG]"}   # past a float's precision: kept exact as an integer, rounded as a float
+    for text in (f'{{"metrics": {{"rate": {2 ** 53 + 1}}}}}', f'{{"metrics": {{"rate": {2 ** 53 + 1}.0}}}}'):
+        (out / "report.json").write_text(text, encoding="utf-8")
+        assert measure.report_of(out, plan, big)["metrics"][0]["value"] is None
+        measure.scrubbed(out, big)
+        assert json.loads((out / "report.json").read_text(encoding="utf-8")) == {"metrics": {"rate": "[BIG]"}}
     (out / "report.json").write_text('{"metrics": {}, "notes": "\\ud800"}', encoding="utf-8")   # a lone surrogate
     assert "error" in measure.report_of(out, plan, hide)
 
@@ -338,7 +351,9 @@ def test_only_the_started_backend_vouches_for_the_health_address():
         with patch.object(psutil, "net_connections", lambda kind: listening((11, "::"),)):   # dual-stack, ours
             assert measure.owned(me, "http://127.0.0.1:12345/health")
         with patch.object(psutil, "net_connections", lambda kind: listening((11, "127.0.0.1"), (99, "::"))):
-            assert not measure.owned(me, "http://127.0.0.1:12345/health")
+            assert measure.owned(me, "http://127.0.0.1:12345/health")   # the exact listener answers, not `::`
+        with patch.object(psutil, "net_connections", lambda kind: listening((11, "0.0.0.0"), (99, "::"))):
+            assert not measure.owned(me, "http://127.0.0.1:12345/health")   # two wildcards: either may answer
 
 
 def test_the_app_starts_without_psutil_which_the_install_declares():

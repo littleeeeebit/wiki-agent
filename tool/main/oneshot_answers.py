@@ -9,9 +9,13 @@ mechanisms it replaced (`passed`).
 
 from __future__ import annotations
 
+import ast
+import difflib
+import io
 import json
 import posixpath
 import re
+import tokenize
 from pathlib import Path
 
 from . import oneshot_build
@@ -137,12 +141,30 @@ def end_of(lines: list[str], start: int, marks: tuple[str, ...]) -> int:
     return end + 1 if end < len(lines) and lines[end].lstrip()[:1] in "})]" else end
 
 
+PYTHON = (".py", ".pyi")
+
+
 def test_span(text: str, parts: list[str], file: str = "") -> tuple[int, int] | None:
     """The 1-based lines of the test `parts` names (`[Class, …,] name`) in `text`: its definition (`def`, `class`,
     `func`, `fn`, `function`, or a `test`/`it`/`describe` call titled with it, on a code line) and its body, each
     part defined directly in the body of the one before it. `None` when a part is not defined there: a mention,
-    a test a class only inherits, or a same-named function nested deeper, is none."""
+    a test a class only inherits, or a same-named function nested deeper, is none. Python is read by its syntax
+    tree; other languages line by line."""
 
+    if file.lower().endswith(PYTHON) or not file:
+        node = None
+        try:
+            nodes, node = ast.parse(text).body, None
+        except (SyntaxError, ValueError):
+            nodes = None   # not Python, or not parsable: read line by line below
+        for part in parts if nodes is not None else ():
+            node = next((n for n in nodes if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                         and n.name == part.split("[")[0]), None)
+            if node is None:
+                return None
+            nodes = node.body
+        if node is not None:
+            return node.lineno, node.end_lineno
     lines, lo, hi, start, depth = text.splitlines(), 0, len(text.splitlines()), None, None
     marks = marks_of(file)
     for part in parts:
@@ -159,34 +181,45 @@ def test_span(text: str, parts: list[str], file: str = "") -> tuple[int, int] | 
     return start + 1, hi
 
 
+def code_lines(text: str, file: str) -> list[tuple[int, str]]:
+    """`text`'s code lines, `(1-based number, line)`, blank ones left out. A Python file loses its comments by its
+    tokens, so a `#` inside a string stays; ponytail: other languages keep theirs, so a comment edit there counts
+    as a change."""
+
+    lines = text.replace("\r\n", "\n").split("\n")
+    if file.lower().endswith(PYTHON):
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO("\n".join(lines)).readline):
+                if tok.type == tokenize.COMMENT:
+                    row, col = tok.start
+                    lines[row - 1] = lines[row - 1][:col]
+        except (tokenize.TokenError, SyntaxError):
+            pass   # not parsable to its end: the comments read so far are left out, the rest kept
+    return [(n, line.rstrip()) for n, line in enumerate(lines, 1) if line.strip()]
+
+
 def refused_lines(path: Path, since: str) -> dict[str, list[tuple[int, int]]]:
-    """The lines of commit `since` that the commits to HEAD changed with code, on `since`'s side, where a finding's
-    location points: a hunk whose lines are the same once comments and blank lines are left out (an inline
-    comment edited, a comment removed) is none, and a pure insertion marks the lines on both sides of it."""
+    """The lines of commit `since` that the commits to HEAD changed, on `since`'s side, where a finding's location
+    points: each file's code lines compared in order, line by line, so a comment or blank line changed is none, a
+    neighbour's change never marks the line beside it, a reorder is a change, and a pure insertion marks the lines
+    on both sides of it. A file the commits added has no lines of `since`."""
 
     from . import oneshot_review, specs
 
-    done = specs.sh(["git", "-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff", "-U0",
-                     "--src-prefix=a/", "--dst-prefix=b/", since, "HEAD"], path, 120)
-    out, file, hunk = {}, None, None
-
-    def close():
-        if file and hunk and sorted(hunk[2]) != sorted(hunk[3]):   # its code, indentation included, differs
-            a, b = hunk[0], hunk[1]
-            out.setdefault(file, []).append((a, a + b - 1) if b else (a, a + 1))
-    for line in done.stdout.splitlines() if not done.returncode else ():
-        if line.startswith("diff --git "):
-            close()
-            file, hunk = None, None
-        elif line.startswith("--- ") and hunk is None:
-            name = line[4:].rstrip("\t").strip('"')
-            file = oneshot_review.canonical(name[2:]) if name.startswith("a/") else None   # `/dev/null`: new file
-        elif m := re.match(r"@@ -(\d+)(?:,(\d+))? \+\S+ @@", line):
-            close()
-            hunk = [int(m[1]), int(m[2] if m[2] is not None else 1), [], []]
-        elif hunk and line[:1] in "+-" and (kept := stripped(line[1:], marks_of(file or ""))).strip():
-            hunk[2 if line[0] == "-" else 3].append(kept)
-    close()
+    done = specs.sh(["git", "-c", "core.quotePath=false", "diff", "--no-renames", "--name-only", "-z", since, "HEAD"],
+                    path, 120)
+    out = {}
+    for file in filter(None, done.stdout.split("\0") if not done.returncode else ()):
+        old, new = code_lines(committed(path, since, file), file), code_lines(committed(path, "HEAD", file), file)
+        if not old:
+            continue
+        at = [n for n, _ in old]
+        for op, i1, i2, _, _ in difflib.SequenceMatcher(None, [t for _, t in old], [t for _, t in new],
+                                                        autojunk=False).get_opcodes():
+            if op in ("replace", "delete"):
+                out.setdefault(oneshot_review.canonical(file), []).append((at[i1], at[i2 - 1]))
+            elif op == "insert":
+                out.setdefault(oneshot_review.canonical(file), []).append((at[max(i1 - 1, 0)], at[min(i1, len(at) - 1)]))
     return out
 
 
@@ -196,19 +229,25 @@ def runner_root(o: dict) -> str:
 
     if (root := o.get("runner_root")) is not None:
         return root
-    for _, _, at in o.get("cases") or []:
+    for cls, _, at in o.get("cases") or []:
         at = posixpath.normpath((at or "").replace("\\", "/"))
         for c in o.get("contract") or []:
             if at != "." and c != at and c.endswith("/" + at):
                 return c[:-len(at) - 1]
+            mod = c.rsplit(".", 1)[0].split("/")   # no file in the report: its module, `web/a.py` named `a`
+            if at == "." and (i := next((i for i in range(len(mod)) if cls.split(".")[:len(mod) - i] == mod[i:]),
+                                        None)) is not None:
+                return "/".join(mod[:i])
     return ""
 
 
 def ran(found: list[tuple[str, str, str, str]], answers: list[dict], root: str = "") -> str:
     """Why a pinning test an answer names did not run and pass in the build's test run (`oneshot_build.held`'s
     JUnit cases, `(classname, name, file, outcome)`), or empty: a name that only appears in the file is no test.
-    A selector with classes (`path::Class::name`) matches only the case of that class. The answer names a
-    worktree path; the report names files and modules from the runner's `root`, as the contract tests do."""
+    A case is the selector's whole identity: its module and classes, `path::name` none, after any prefix the
+    runner puts before the module; or, where the report names the file, that file with the module's own name and
+    the classes ending its class name. The answer names a worktree path; the report names files and modules from
+    the runner's `root`, as the contract tests do."""
 
     bad = []
     for a in answers:
@@ -219,12 +258,11 @@ def ran(found: list[tuple[str, str, str, str]], answers: list[dict], root: str =
         module = local.rsplit(".", 1)[0].replace("/", ".")
         owner = ".".join([module, *classes])
         same = lambda at: at and posixpath.normpath(posixpath.join(root, at.replace("\\", "/"))) == file   # noqa: E731
+        tail = [module.rsplit(".", 1)[-1], *classes]   # what ends the class name of exactly this case
         kinds = [kind for cls, case, at, kind in found
                  if (case == name or case.startswith(name + "["))
-                 and (cls == owner or classes and cls.endswith("." + ".".join(classes)) and same(at)
-                      # no class named: the module-level case, never a class's same-named one in that file
-                      or not classes and not cls.startswith(module + ".") and (
-                          same(at) or posixpath.normpath(posixpath.join(root, cls.replace("\\", "/"))) == file))]
+                 and (cls == owner or cls.endswith("." + owner) or same(at) and cls.split(".")[-len(tail):] == tail
+                      or not classes and posixpath.normpath(posixpath.join(root, cls.replace("\\", "/"))) == file)]
         if not kinds or any(k != "passed" for k in kinds):
             bad.append(f"{a['test']}({'돌지 않음' if not kinds else ', '.join(sorted(set(kinds)))})")
     return "답에 적은 고정 테스트가 통과하지 못했다: " + ", ".join(bad) if bad else ""

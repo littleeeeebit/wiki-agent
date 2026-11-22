@@ -126,7 +126,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   const unposted = view.stage !== 'measure' && view.measure?.runs.at(-1)?.comment_error   // told past the measure screen
   const faulted = (fault || !!view.phone_owned?.length || !!unposted) && (
     <div className="flex flex-col gap-2 px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
-      <Fault text={fault || (unposted ? `${unposted} — 실측 기록은 원샷 화면에 남아 있다` : '')} />
+      <Fault text={[fault, unposted && `${unposted} — 실측 기록은 원샷 화면에 남아 있다`].filter(Boolean).join('\n')} />
       {/* Shown on the run, whatever its stage, until the phone is listed again and the cleanup finishes. */}
       {view.phone_owned?.map((r) => r.state === 'unsure' ? (
         <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
@@ -171,8 +171,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   if (view.stopped) {
     return (
       <Track view={view} halt={<>
-        <Fault text={fault} />
-        {view.phone_owned?.length ? faulted : null}
+        {view.phone_owned?.length || unposted ? faulted : <Fault text={fault} />}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
       </>} />
     )
