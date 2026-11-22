@@ -249,17 +249,24 @@ function Nested($element, [int64]$root, $others) {   # another top-level window 
 function Target($step) {
   # By AutomationId, or by a name only one element carries, within one window and none it shows nested: the main
   # window, or with `in: owned` the one window the main window owns.
-  $root = [int64](Main)
+  $root, $window = [int64](Main), $report.main
   if ($step.in -eq "owned") {
     $owned = @(Windows | Where-Object { $_.owner -eq $root })
     if ($owned.Count -ne 1) { return [ordered]@{ error = "the main window owns $($owned.Count) windows, not one" } }
-    $root = [int64]$owned[0].hwnd
+    $root, $window = [int64]$owned[0].hwnd, $owned[0]
   }
   $others = @(Windows | ForEach-Object { [int64]$_.hwnd } | Where-Object { $_ -ne $root })
   $A = [System.Windows.Automation.AutomationElement]
   $property, $value = if ($step.id) { $A::AutomationIdProperty, $step.id } else { $A::NameProperty, $step.control }
-  $all = $A::FromHandle([IntPtr]$root).FindAll([System.Windows.Automation.TreeScope]::Descendants,
-                       (New-Object System.Windows.Automation.PropertyCondition $property, $value))
+  # The root resolved first, then proven the window chosen, so a handle that names another app's window by now has
+  # its tree never queried.
+  $element = $A::FromHandle([IntPtr]$root)
+  if (-not (Current $window) -or [int64]$element.Current.NativeWindowHandle -ne $root `
+      -or -not [Desk]::InApp([uint32]$element.Current.ProcessId)) {
+    return [ordered]@{ error = "the window is gone or no longer the app's" }
+  }
+  $all = $element.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                          (New-Object System.Windows.Automation.PropertyCondition $property, $value))
   $mine = @($all | Where-Object { -not (Nested $_ $root $others) })
   if ($mine.Count -ne 1) { return [ordered]@{ error = "$($mine.Count) elements match $value" } }
   if (-not [Desk]::InApp([uint32]$mine[0].Current.ProcessId)) { return [ordered]@{ error = "the element is not the app's" } }

@@ -86,6 +86,8 @@ export type PcRound = {
   /** The approval the running round used up as it started. */
   ran?: PcApproval
   last?: { status: string; detail?: string; results?: Record<string, PcResult> } | null
+  /** A round that passed: each check's result, kept beside the R3 hold. */
+  results?: Record<string, PcResult>
 }
 /** The turn running now (`oneshot.turned`, `oneshot_build.send`): a work turn carries `turn`. */
 export type Inflight = { role: string; codex: boolean; sent: number; seen?: number; turn?: string }

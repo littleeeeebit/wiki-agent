@@ -465,11 +465,25 @@ order:
 
 The server builds the helper with the .NET Framework's `csc` against the
 system's WinMetadata, which every Windows 10 and 11 carries, and starts it in
-a job of its own. A window capture hands it only a handle; a composition hands
-it only the fixture's frame. Each capture is copied out before the round's
-look is cleaned, and the critic judges it against `shows` and the fixture's
-words only after every window the round started is gone. A check whose
-helper cannot be built, or whose item Windows gives empty, stays pending.
+a job of its own. Each read has two phases. The helper says it is ready, the
+server proves the binding again, and only a `go` written after that proof,
+with no stop asked meanwhile, lets it sample.
+
+- A window capture hands the helper only a handle, bound against the window
+  exactly as the driver read it. The helper keeps a frame only while the
+  item stays open through the copy.
+- A composition hands it the fixture's frame with its handle and process.
+  The helper checks the fixture itself right before and after the blit, so
+  a fixture moved, hidden or replaced meanwhile keeps nothing.
+- A report passes only when it holds the fixture's page as it reads: its
+  words in order, one after another. A fixed text naming every word the
+  server draws from is no capture of this round's page.
+
+Each capture is copied out before the round's look is cleaned, and the critic
+judges it against `shows` and the fixture's words only after every window the
+round started is gone. A check stays pending when its helper cannot be built,
+or when the helper cannot get ready to read: Windows refuses or empties the
+item, or the helper says nothing in time.
 
 A failed check sends its high finding to the build, as the phone round's do.
 Pending checks send the run back to waiting with a new attempt, naming them.

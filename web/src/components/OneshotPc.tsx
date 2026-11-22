@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Btn } from '@/components/Modal'
 import { Decide, GO, Split, Title } from '@/components/OneshotSpec'
-import { api, type PcPlan, type SpecView } from '@/lib/oneshot'
+import { api, type PcPlan, type PcResult, type SpecView } from '@/lib/oneshot'
 
 /** What the owner's desktop round will start and read, for the owner's one-time approval: the checks, the app and
  *  each fixture, and each capture with what it reads. A screen-region capture runs only when the owner allows it;
@@ -34,18 +34,7 @@ export function PcApprove({ repo, view, plan, busy, act }: {
           회차에만 쓴다. 서버가 다시 켜지거나 빌드가 바뀌면 다시 승인한다.</p>
         <p className="text-muted-foreground">승인하면 바로 내 화면 왼쪽 위에 고정 창과 앱이 뜬다. 회차는 창을 앞으로 가져오거나 키를
           보내지 않는다. 끝날 때까지 그 영역을 덮지 않는다.</p>
-        {last && (
-          <section aria-label="지난 회차" className="flex flex-col gap-2">
-            <Title><span>지난 회차</span></Title>
-            <ul className="flex flex-col gap-1.5">
-              {Object.entries(last).map(([id, r]) => (
-                <li key={id}><span className="font-mono text-[12px] text-faint">{id}</span>{' '}
-                  {{ passed: '통과', failed: '실패', pending: '남음', judge: '판정 전' }[r.status]}
-                  {r.why && <span className="text-muted-foreground"> — {r.why}</span>}</li>
-              ))}
-            </ul>
-          </section>
-        )}
+        {last && <PcResults title="지난 회차" results={last} />}
         <section aria-label="돌릴 검사" className="flex flex-col gap-2">
           <Title><span>돌릴 검사</span><span className="font-mono">{plan.checks.length}</span></Title>
           <ul className="flex flex-col gap-1.5">
@@ -77,5 +66,21 @@ export function PcApprove({ repo, view, plan, busy, act }: {
         {view.oneshot.pc?.detail && <p role="alert" className="rounded-md bg-wait/10 px-3 py-2">{view.oneshot.pc.detail}</p>}
       </div>
     </Split>
+  )
+}
+
+/** Each check's result in a round on the owner's desktop: the last one at `pc`, a passed one beside R3's hold. */
+export function PcResults({ title, results }: { title: string; results: Record<string, PcResult> }) {
+  return (
+    <section aria-label={title} className="flex flex-col gap-2">
+      <Title><span>{title}</span></Title>
+      <ul className="flex flex-col gap-1.5">
+        {Object.entries(results).map(([id, r]) => (
+          <li key={id}><span className="font-mono text-[12px] text-faint">{id}</span>{' '}
+            {{ passed: '통과', failed: '실패', pending: '남음', judge: '판정 전' }[r.status]}
+            {r.why && <span className="text-muted-foreground"> — {r.why}</span>}</li>
+        ))}
+      </ul>
+    </section>
   )
 }

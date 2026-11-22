@@ -5,7 +5,7 @@ import { Choices } from '@/components/Blocks'
 import { Btn, Zoom } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
 import { Needs } from '@/components/OneshotNeeds'
-import { PcApprove } from '@/components/OneshotPc'
+import { PcApprove, PcResults } from '@/components/OneshotPc'
 import { Track } from '@/components/OneshotTrack'
 import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName, toolText,
@@ -173,6 +173,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
         <Fault text={fault} />
         {view.phone_owned?.length ? faulted : null}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
+        {view.stage === 'r3' && o.pc?.results ? <PcResults title="주인 화면 회차 — 통과" results={o.pc.results} /> : null}
       </>} />
     )
   }

@@ -244,14 +244,17 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
         try:
             if what == "window":
                 import desktop_driver
-                hwnd = desktop_driver.scope(report, report["states"][-1], seen.get("in", "main"))
-                try:
-                    binding = owner_round.bind(key, hwnd, members(key))
-                except ValueError as exc:   # gone or replaced since the driver read it: never read
+                last = report["states"][-1]
+                hwnd = desktop_driver.scope(report, last, seen.get("in", "main"))
+                read = next((w for w in last.get("windows") or [] if hwnd and w.get("hwnd") == hwnd), None)
+                try:   # the window as the driver read it: a handle that names another since is never read
+                    binding = owner_round.bind(key, hwnd, members(key), seen=read or {})
+                except ValueError as exc:
                     return {"status": "failed", "why": f"앱의 창을 묶지 못했다 — {exc}"}
                 got = owner_round.window_read(session, f"capture{n}", exe, binding, lambda: members(key), runs.halt)
             else:
-                got = owner_round.surface_read(session, f"capture{n}", exe, rect, runs.halt)
+                got = owner_round.surface_read(session, f"capture{n}", exe, fixture, rect,
+                                               lambda: members(fixture_key), runs.halt)
         except owner_round.Unavailable as exc:
             return {"status": "pending", "why": str(exc)}
         if not got.get("read"):
@@ -347,10 +350,8 @@ def owner_round(repo: str) -> None:
         try:
             results = observe(repo, o, stopped)
         except ValueError as exc:   # the app refused, changed its frozen copy or overran: the build's to fix
-            if stopped():
-                return lambda: settled(repo, {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"})
-            review.rebuild(repo, store, f"주인 화면 회차 — {exc}", front_build.STAGE)
-            return None
+            again = {"status": "rebuild", "detail": f"주인 화면 회차 — {exc}"}   # `exc` is gone once out of here
+            return lambda: settled(repo, again, store)
         except Exception as exc:   # an unproven cleanup, a fixture that never showed: nothing passes
             cut = {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"} if stopped() else \
                 {"status": "error", "detail": f"주인 화면 회차가 끝나지 못했다 — {exc}"}
@@ -367,17 +368,22 @@ def owner_round(repo: str) -> None:
     review.holding(repo, "주인 화면 회차", body, "front_built_head", front_build.STAGE)
 
 
-def settled(repo: str, result: dict):
+def settled(repo: str, result: dict, store=None):
     """The outcome applied: a pass goes on through the guard to R3 (its brief written once the tree is let go), a
-    failure to the build with the round's findings, anything else back to waiting with a new attempt."""
+    failure to the build with the round's findings, `rebuild` (the app refused or overran) to the build's checks,
+    anything else back to waiting with a new attempt. A stop or a shutdown accepted before it is every outcome's."""
 
     from . import oneshot_build, oneshot_critique   # they import this module
     with oneshot._lock:   # as `stop` takes it: a stop accepted before this point is never a pass
-        if _halts.setdefault(repo, threading.Event()).is_set():
+        if _halts.setdefault(repo, threading.Event()).is_set() or runtime.stopping.is_set():
             result = {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"}
         o = oneshot_spec.spec_of(repo)["oneshot"]
         if result["status"] == "passed":
             return onward(repo, {"pc": {**(o.get("pc") or {}), **result}})
+        if result["status"] == "rebuild":
+            oneshot_spec.saved(repo, oneshot={"pc": {**fresh(), "last": (o.get("pc") or {}).get("last")}})
+            review.rebuild(repo, store, result["detail"], front_build.STAGE)
+            return None
         pc = {**fresh(result.get("detail") or ""), "last": result}
         if result["status"] != "failed":
             oneshot_spec.saved(repo, oneshot={"pc": pc, "working": None})

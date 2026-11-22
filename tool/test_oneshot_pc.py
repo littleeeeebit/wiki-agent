@@ -258,7 +258,7 @@ def driven(value: str | None = None, acted: bool = True, **over) -> dict:
     """A driver's report of the scenario's one step on the owner's desktop: read, never shot."""
 
     node = {"window": 101, "id": "seen", "value": value, "type": "Text", "depth": 1}
-    state = {"windows": [{"hwnd": 101}], "shots": [{"hwnd": 101, "drawn": False, "unshot": True}],
+    state = {"windows": [{"hwnd": 101, "pid": 7, "class": "App"}], "shots": [{"hwnd": 101, "drawn": False, "unshot": True}],
              "reads": [{"hwnd": 101, "read": True}], "nodes": [node]}
     return {"phase": "done", "main": {"hwnd": 101, "pid": 7, "class": "App"},
             "states": [{**state, "id": "s00", "name": "start"}, {**state, "id": "s01", "name": "go"}],
@@ -290,13 +290,14 @@ class Session:
 def desk(monkeypatch, tmp_path):
     """The Windows side as stand-ins: the fixture shows `PAGE`, every binding stands, and each read is counted."""
 
-    reads = {"window": [], "surface": []}
+    reads = {"window": [], "surface": [], "bound": []}
     capture = tmp_path / "capture.png"
     capture.write_bytes(b"PNG")
     monkeypatch.setattr(owner_round, "words", lambda: list(PAGE))
     monkeypatch.setattr(owner_round, "fixture", lambda session, key, page, rect, halt: (FIXTURE, FIXTURE["rect"]))
     monkeypatch.setattr(owner_round, "proven", lambda binding, members: "")
-    monkeypatch.setattr(owner_round, "bind", lambda job, hwnd, members, title=None: {"job": job, "hwnd": hwnd})
+    monkeypatch.setattr(owner_round, "bind", lambda job, hwnd, members, title=None, seen=None:
+                        reads["bound"].append(seen) or {"job": job, "hwnd": hwnd})
     monkeypatch.setattr(owner_round, "window_read", lambda *a: reads["window"].append(a) or {"read": True, "file": str(capture)})
     monkeypatch.setattr(owner_round, "surface_read", lambda *a: reads["surface"].append(a) or {"read": True, "file": str(capture)})
     (tmp_path / "keep").mkdir()
@@ -316,7 +317,10 @@ def test_valid_controls_whose_report_is_blank_or_wrong_fail_the_check(held, desk
 
 
 def test_a_report_holding_the_whole_page_passes_from_an_element_or_a_file_under_data(held, desk):
-    assert checked(desk, REPORT, driven("Captured: Apple, River and GARDEN."))["status"] == "passed"
+    assert checked(desk, REPORT, driven("Captured:\nApple, River,\nGARDEN."))["status"] == "passed"
+    # The page as it reads: a fixed text naming every word, or the page out of order, is no capture of it.
+    for fixed in (" ".join(sorted(owner_round.WORDS)), "garden river apple", "apple river and garden"):
+        assert checked(desk, REPORT, driven(fixed))["status"] == "failed"
     _, root = desk
     (root / "data" / "seen.txt").write_text("apple river garden", encoding="utf-8")
     assert checked(desk, SCREEN, driven())["status"] == "passed"
@@ -339,16 +343,33 @@ def test_a_fixture_replaced_before_the_read_fails_and_nothing_is_read(held, desk
     monkeypatch.setattr(owner_round, "proven", lambda binding, members: "the window is gone")
     window = {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}
     got = checked(desk, window, driven())
-    assert got["status"] == "failed" and "고정 창" in got["why"] and desk[0] == {"window": [], "surface": []}
+    assert got["status"] == "failed" and "고정 창" in got["why"] and desk[0] == {"window": [], "surface": [], "bound": []}
 
 
 def test_an_app_window_replaced_after_the_drivers_read_is_never_read(held, desk, monkeypatch):
-    def gone(job, hwnd, members, title=None):
+    window = {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}
+    checked(desk, window, driven())   # bound against the window exactly as the driver read it
+    assert desk[0]["bound"] == [{"hwnd": 101, "pid": 7, "class": "App"}]
+
+    def gone(job, hwnd, members, title=None, seen=None):
         raise ValueError(f"window {hwnd} is not one of {job}'s")
 
     monkeypatch.setattr(owner_round, "bind", gone)
-    got = checked(desk, {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}, driven())
+    desk[0]["window"].clear()
+    got = checked(desk, window, driven())
     assert got["status"] == "failed" and not desk[0]["window"]
+
+
+def test_a_handle_naming_another_class_than_the_driver_read_is_never_bound(monkeypatch):
+    # Already replaced when the capture path starts: the job's own process, another window class.
+    member = {"pid": 7, "created": 1, "exe": "app.exe"}
+    monkeypatch.setattr(owner_round, "window", lambda hwnd: {"hwnd": hwnd, "pid": 7, "class": "Replacement",
+                                                            "title": "x", "rect": [0, 0, 1, 1]})
+    monkeypatch.setattr(owner_round.native_process, "identity", lambda pid: member)
+    with pytest.raises(ValueError, match="driver read"):
+        owner_round.bind("app1", 101, [member], seen={"hwnd": 101, "pid": 7, "class": "App"})
+    with pytest.raises(ValueError, match="driver read"):   # a window the driver never read is never bound
+        owner_round.bind("app1", 101, [member], seen={})
 
 
 def test_a_window_check_reads_only_through_the_window_and_a_composition_only_the_fixtures_frame(held, desk):
@@ -356,12 +377,13 @@ def test_a_window_check_reads_only_through_the_window_and_a_composition_only_the
     assert window["status"] == "judge" and window["page"] == PAGE and Path(window["file"]).is_file()
     assert len(desk[0]["window"]) == 1 and not desk[0]["surface"]   # whatever moves over it never enters the read
     composed = checked(desk, SURFACE, driven())
-    assert composed["status"] == "judge" and desk[0]["surface"][0][3] == FIXTURE["rect"]
+    # Exactly the fixture's frame, with its binding, which the helper proves itself right before and after the blit.
+    assert composed["status"] == "judge" and desk[0]["surface"][0][3:5] == (FIXTURE, FIXTURE["rect"])
 
 
 def test_no_capture_helper_leaves_a_capture_check_pending(held, desk):
     got = checked(desk, SURFACE, driven(), exe=None)
-    assert got == {"status": "pending", "why": "도우미가 없다"} and desk[0] == {"window": [], "surface": []}
+    assert got == {"status": "pending", "why": "도우미가 없다"} and desk[0] == {"window": [], "surface": [], "bound": []}
 
 
 def test_the_critic_judges_a_capture_against_its_sentence_and_the_page(held, desk, monkeypatch):
@@ -449,6 +471,22 @@ def test_a_stop_accepted_before_the_rounds_outcome_is_saved_never_passes(held, m
     pc.stop("budget")   # after the round's last check of its own halt, before its outcome is applied
     pc.settled("budget", pc.outcome(o(), {"O2": {"status": "passed"}, "O3": {"status": "passed"}}))
     assert o()["stage"] == "pc" and o()["pc"]["last"]["status"] == "stopped" and not pc.passed(o())
+
+
+def test_a_shutdown_accepted_before_the_rounds_outcome_is_saved_never_passes(held, monkeypatch):
+    pc.approve("budget", approval())
+    monkeypatch.setattr(pc.runtime, "stopping", threading.Event())
+    pc.runtime.stopping.set()   # after the body's own last check, before `settled`
+    pc.settled("budget", pc.outcome(o(), {"O2": {"status": "passed"}, "O3": {"status": "passed"}}))
+    assert o()["stage"] == "pc" and o()["pc"]["last"]["status"] == "stopped" and not pc.passed(o())
+
+
+def test_an_app_that_overran_goes_back_to_the_builds_checks_unless_a_stop_came_first(held, monkeypatch):
+    after = ran(monkeypatch, error=ValueError("the app overran its deadline"))
+    assert after["stage"] == "build-front" and after["stopped"]["reason"] == "gate" and "overran" in after["stopped"]["detail"]
+    oneshot_spec.saved("budget", oneshot={"stage": "pc", "stopped": None, "pc": pc.fresh()})
+    after = ran(monkeypatch, error=ValueError("the app overran its deadline"), during=lambda: pc.stop("budget"))
+    assert after["stage"] == "pc" and after["pc"]["last"]["status"] == "stopped" and after["stopped"] is None
 
 
 def test_a_round_whose_approval_no_longer_stands_runs_nothing(held, monkeypatch):
