@@ -4,7 +4,9 @@ See `docs/plans/oneshot/3-spec-backend.md` ("Backend review"). The review turn
 (`oneshot.ask`) is a stand-in; Git runs in a temporary worktree.
 """
 
+import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -577,6 +579,12 @@ def test_review_loops_own_paths_leave_an_unfinished_oneshot_alone(reviewed):
         loop.rereview("budget", s)
         loop.kick("budget", s["id"])
     assert not kicked and not specs.load("budget", oneshot.BRANCH).get("review_again")
+    listed = json.dumps([{"number": 1, "title": "원샷", "headRefName": oneshot.BRANCH, "headRefOid": "a" * 40,
+                          "url": "u", "isCrossRepository": False}])
+    with patch.object(loop, "project", lambda: "budget"), patch.object(loop, "current_repo", lambda: Path(".")), \
+            patch.object(loop.specs, "sh", lambda *a, **k: subprocess.CompletedProcess(a, 0, listed, "")), \
+            patch.object(loop, "by_pr", lambda name: {1: s}):
+        assert loop.prs()["rows"] == []   # the picker never shows an unfinished Oneshot's PR
 
 
 def test_a_ruling_for_the_builder_never_drops_a_p0_and_later_work_survives_every_verdict(reviewed):
@@ -604,40 +612,37 @@ def test_a_head_refused_in_an_earlier_round_is_never_built_on_again(reviewed):
     assert "커밋이 하나도 늘지 않았다" in oneshot_answers.unchanged(tree, rounds)   # reset back to the older one
     failed = {"measures": [{**approved(head), "status": "failed", "owner": None}]}
     assert "실측이 실패했거나" in oneshot_answers.unchanged(tree, failed)
-    assert oneshot_answers.ran([("test_budget", "test_pin", "test_budget.py", "passed")],
-                               [{"test": "test_budget.py::test_pin"}]) == ""
-    assert "돌지 않음" in oneshot_answers.ran([], [{"test": "test_budget.py::test_pin"}])
-    assert "failed" in oneshot_answers.ran([("test_budget", "test_pin", "test_budget.py", "failed")],
-                                           [{"test": "test_budget.py::test_pin"}])
+    pin = [{"test": "test_budget.py::test_pin"}]
+    assert oneshot_answers.ran([("test_budget", "test_pin", "test_budget.py", "passed")], pin, {}) == ""
+    assert "돌지 않음" in oneshot_answers.ran([], pin, {})
+    assert "failed" in oneshot_answers.ran([("test_budget", "test_pin", "test_budget.py", "failed")], pin, {})
     two = [("test_budget.TestA", "test_pin", "test_budget.py", "failed"), ("test_budget.TestB", "test_pin", "test_budget.py", "passed")]
-    assert oneshot_answers.ran(two, [{"test": "test_budget.py::TestB::test_pin"}]) == ""   # the class it names
-    assert "failed" in oneshot_answers.ran(two, [{"test": "test_budget.py::TestA::test_pin"}])
+    assert oneshot_answers.ran(two, [{"test": "test_budget.py::TestB::test_pin"}], {}) == ""   # the class it names
+    assert "failed" in oneshot_answers.ran(two, [{"test": "test_budget.py::TestA::test_pin"}], {})
 
 
-def test_an_answer_names_a_test_its_turn_added_never_an_old_one_edited(reviewed):
+def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     tree, head, _ = reviewed
     from main import oneshot_answers
-    (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\n\nclass TestRefund:\n"
-                                      "    def test_value(self):\n        assert True\n", encoding="utf-8")
-    git(tree, "add", "test_pin.py")
+    for name in ("test_pin.py", "test_other.py"):
+        (tree / name).write_text("def test_old():\n    assert True\n", encoding="utf-8")
+        git(tree, "add", name)
     git(tree, "commit", "-m", "pins")
     refused = git(tree, "rev-parse", "HEAD")
     oneshot_spec.saved("budget", oneshot={"fix": "review", "reviews": [{"verdict": "refuse", "head": refused,
                                                                          "findings": [P1]}]})
-    (tree / "test_pin.py").write_text("# a note\ndef test_old():\n    assert True\n\n\nclass TestRefund:\n"
-                                      "    def test_value(self):\n        assert 1 == 1\n\n"
-                                      "    def test_refund(self):\n        assert True\n", encoding="utf-8")
-    git(tree, "commit", "-am", "note, an old pin edited and a new one")
+    (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\ndef test_refund():\n    pass\n", encoding="utf-8")
+    git(tree, "commit", "-am", "a new pin")
+    (tree / "test_other.py").write_text("def test_late():\n    pass\n", encoding="utf-8")   # never committed
 
     def answer(test):
-        return "```oneshot-answers\n" + __import__("json").dumps([{
+        return "```oneshot-answers\n" + json.dumps([{
             "area": "amount validation", "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
             "test": test}]) + "\n```\n"
     s = specs.load("budget", oneshot.BRANCH)
-    for old in ("test_pin.py::test_old", "test_pin.py::TestRefund::test_value"):   # a note above, a body edited
-        with pytest.raises(ValueError, match="새로 더한"):
-            oneshot_answers.answered(tree, s, answer(old))
-    assert oneshot_answers.answered(tree, s, answer("test_pin.py::TestRefund::test_refund"))[0]["test"].endswith("test_refund")
+    with pytest.raises(ValueError, match="새로 더한"):
+        oneshot_answers.answered(tree, s, answer("test_other.py::test_late"))
+    assert oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
 
 
 def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_did_not_answer(reviewed):
@@ -651,68 +656,29 @@ def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_
     assert oneshot_answers.passed(tree, o_, [])["replaced"] == ["amount validation"]
 
 
-def test_a_test_span_is_the_definition_and_its_whole_body():
-    from main.oneshot_answers import test_span
-    assert test_span('LABEL = "test_old"\n', ["test_old"]) is None   # a mention is no test
-    assert test_span("def test_old():\n# a note\n    assert x\nok = 1\n", ["test_old"]) == (1, 3)
-    assert test_span("class TestA:\n    def test_b(self):\n        pass\n", ["TestA", "test_b"]) == (2, 3)
-    assert test_span("it('adds one', () => {\n  expect(1)\n})\n", ["adds one"]) == (1, 3)
-    inherited = "class TestTarget(Base):\n    pass\n\nclass TestOther:\n    def test_value(self):\n        pass\n"
-    assert test_span(inherited, ["TestTarget", "test_value"]) is None   # found only inside the class named
-    assert test_span("// test('value', () => {\n  run()\n", ["value"]) is None   # a comment defines nothing
-    assert test_span("test('value', () => {\n  --count;\n  check()\n})\n", ["value"], "a.test.ts") == (1, 4)
-    nested = "class TestSub(Base):\n    def helper(self):\n        def test_value():\n            pass\n"
-    assert test_span(nested, ["TestSub", "test_value"]) is None   # a local function is no member test
-    wrapped = "class TestRefund(\n    Base,\n):\n    def test_refund(self):\n        pass\n"
-    assert test_span(wrapped, ["TestRefund", "test_refund"], "test_a.py") == (4, 5)   # a declaration over lines
-    assert test_span('const help = "Run test(\'refund\') first"\n', ["refund"], "a.test.js") is None   # in a string
-    template = "const t = `\ntest('refund', () => {})\n`\n"   # inside a template literal over lines
-    assert test_span(template, ["refund"], "a.test.js") is None
-    assert test_span("/* old:\ntest('refund', () => {})\n*/\n", ["refund"], "a.test.js") is None   # a block comment
-    assert test_span('x = "http://a" // note\ntest(\'refund\', () => {\n  run()\n})\n', ["refund"], "a.test.ts") == (2, 4)
-
-
-def test_an_answers_test_is_new_since_the_refusal_and_runs_as_the_runner_names_it(reviewed):
+def test_a_pin_is_a_case_the_refused_run_did_not_report_in_the_answers_file(reviewed):
     tree, _, _ = reviewed
-    from main import oneshot_answers
     from main.oneshot_answers import ran, runner_root
-    write = lambda text: (tree / "test_pin.py").write_text(text, encoding="utf-8")   # noqa: E731
-    write("def test_old():\n    if True:\n        pass\n    assert 1  # first\n")
-    git(tree, "add", "test_pin.py")
-    git(tree, "commit", "-m", "an old test")
-    refused = git(tree, "rev-parse", "HEAD")
-    oneshot_spec.saved("budget", oneshot={"fix": "review", "reviews": [
-        {"verdict": "refuse", "head": refused, "findings": [P1]}]})
-    answer = lambda name: fenced("oneshot-answers", [{   # noqa: E731
-        "area": P1["area"], "location": P1["location"], "evidence": "x", "breaks": ["R1"], "test": name}])
-    write("def test_old():\n    if True:\n        assert 1  # moved, a new note\n\ndef test_new():\n    assert 2\n")
-    git(tree, "commit", "-am", "an old test edited, a new one added")
-    run = specs.load("budget", oneshot.BRANCH)
-    with pytest.raises(ValueError, match="새로 더한"):   # an old test edited is still the old test
-        oneshot_answers.answered(tree, run, answer("test_pin.py::test_old"))
-    assert oneshot_answers.answered(tree, run, answer("test_pin.py::test_new"))[0]["test"] == "test_pin.py::test_new"
+    pin = [{"test": "test_pin.py::test_new"}]
+    old = ("suite.test_pin", "test_new", "test_pin.py")
+    o_ = {"run_cases": [list(old)]}   # the refused build's run reported this case already
+    assert "이전 실행에도" in ran([(*old, "passed")], pin, o_, tree)   # an old test is not new
+    assert o_["run_cases"] == [list(old)] or o_["run_cases"] == [old]   # this run's cases, for the next round
+    o_ = {"run_cases": []}
+    for case in [("suite.refund.test", "test_new", "test_pin.py"), ("x", "test_new", ""),   # any naming, or no file
+                 ("t", "test_new", str(tree / "test_pin.py"))]:   # an absolute path, read as the gate reads it
+        assert ran([(*case, "passed")], pin, o_, tree) == ""
+    assert "돌지 않음" in ran([("pkg.test_pin", "test_new", "pkg/test_pin.py", "passed")], pin, o_, tree)   # elsewhere
     case = [("test_budget", "test_x", "test_budget.py", "passed")]   # the runner reports from `web`
-    assert ran(case, [{"test": "web/test_budget.py::test_x"}], "web") == ""
-    assert "돌지 않음" in ran(case, [{"test": "web/test_budget.py::test_x"}])
+    assert ran(case, [{"test": "web/test_budget.py::test_x"}], {"runner_root": "web"}) == ""
+    assert "돌지 않음" in ran(case, [{"test": "web/test_budget.py::test_x"}], {})
     old_run = {"contract": ["web/test_budget.py"], "cases": [["test_budget", "test_y", "test_budget.py"]]}
     assert runner_root(old_run) == "web" and runner_root({**old_run, "runner_root": ""}) == ""
-    for cls in ("test_pin.TestRules", "suite.test_pin.TestRules"):   # a class's same-named case, prefixed or not
-        assert "돌지 않음" in ran([(cls, "test_new", "test_pin.py", "passed")], [{"test": "test_pin.py::test_new"}])
-        assert ran([(cls, "test_new", "test_pin.py", "passed")], [{"test": "test_pin.py::TestRules::test_new"}]) == ""
-    pin = [{"test": "test_pin.py::test_new"}]
-    for cls in ("suite.test_pin", "test_pin"):   # no file: the only `test_pin.*` defining it, any prefix or root
-        assert ran([(cls, "test_new", "", "passed")], pin, "", tree) == ""
-    assert ran([("test_pin", "test_new", str(tree / "test_pin.py"), "passed")], pin, "", tree) == ""   # absolute
-    (tree / "pkg").mkdir()
-    (tree / "pkg" / "test_pin.py").write_text("def test_new():\n    pass\n", encoding="utf-8")
-    git(tree, "add", "pkg/test_pin.py")
-    git(tree, "commit", "-m", "the same test in another file of the same name")
-    assert "xunit1" in ran([("test_pin", "test_new", "", "passed")], pin, "", tree)   # which one ran is unknown
-    other = [("pkg.test_pin", "test_new", "pkg/test_pin.py", "passed")]
-    assert "돌지 않음" in ran(other, pin, "", tree)   # the same names, another file the report names
-    assert runner_root({"contract": ["web/test_budget.py"], "cases": [["test_budget", "test_y", ""]]}) == ""
     both = {"contract": ["test_budget.py", "web/test_budget.py"], "cases": [["test_budget", "test_y", "test_budget.py"]]}
     assert runner_root(both) == ""   # an exact path is the root itself, not the other folder
+    parent = {"contract": ["web/tests/test_budget.py", "shared/test_support.py"],
+              "cases": [["a", "x", "tests/test_budget.py"], ["b", "y", "../shared/test_support.py"]]}
+    assert runner_root(parent) == "web"   # `../` read from the root, as `oneshot_build.source` reads it
 
 
 def test_a_replacement_counts_once_the_findings_file_is_not_what_the_refusal_read(reviewed):

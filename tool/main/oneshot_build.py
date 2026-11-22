@@ -739,7 +739,7 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     verdict = judged(path, run, spec, [gate], toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    if why := held(path, run, spec, verdict, lambda found: sent.ran(found, answers, sent.runner_root(o), path)) \
+    if why := held(path, run, spec, verdict, lambda found: sent.ran(found, answers, o, path)) \
             or oneshot_measure.serve_check(path, run, spec):
         return why
     # `working` names PR #1's push before its worker starts: a server that dies in between leaves it for `recover`.

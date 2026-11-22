@@ -64,24 +64,30 @@ in one `oneshot-answers` block. Each entry names the finding's `area`, the
 and the test that pins the defended behaviour, as `path::name`. The build
 check (`oneshot_answers.answered`) refuses an entry whose area the refusal
 did not name, whose `breaks` are not design items or requirements, or whose
-test is not one HEAD defines and the refused HEAD did not (`path::name`, or
-`path::Class::name` inside a class): the pinning test is new, so no edit of
-an old test's comments, spacing or nesting stands in for one. Each part is
-a direct member of the one before it, read in Python by its syntax tree and
-in other languages from its definition lines, with strings and comments
-read across lines (a template literal, a block comment); a mention, an
-inherited test or a nested function of the same name is none. After the
-gate, that test must have run and passed in the build's own test run
-(`oneshot_answers.ran`). A case's class name ends in the file's module name
-and the selector's classes. A case that names its file counts only where
-that file, read as the contract gate reads it (`oneshot_build.source`: an
-absolute path inside the worktree, or a relative one from the runner's
-`root`), is the answer's. A case without a file counts only while the
-answer's file is the only tracked file of its name that defines the test
-(`alone`), so no prefix or root is guessed and a resumed run whose report
-names no files still verifies. The root is saved at the contract commit, or
-recovered as the one folder every pinned case's file fits (`runner_root`,
-an exact path being the root itself). It saves the entries on the spec under `answers`,
+test (`path::name`, or `path::Class::name` inside a class) lies in a file
+this turn's commits did not change. No source is parsed: whether the test is
+new is read from the test runs themselves. After the gate, that test must
+have run and passed in the build's own test run as a new case
+(`oneshot_answers.ran`):
+
+- its name is the selector's;
+- a class the selector names is a word of the case's class name;
+- where the report names a file, that file is the answer's, read as the
+  contract gate reads it (`oneshot_build.source`: an absolute path inside the
+  worktree, or a relative one from the runner's root);
+- the refused build's own run did not report it, so an old test edited is
+  not new.
+
+Each build's run leaves its cases on the spec (`run_cases`) for the next
+round to compare with. The root is saved at the contract commit, or
+recovered as the one folder from which every pinned case's file is a
+contract file (`runner_root`; `../` included, an exact path being the root
+itself). The stated limits:
+
+- a report without files matches by name and classes;
+- a run committed before `run_cases` was saved has no newness check;
+- the review reads the answer and its test, and judges whether the test pins
+  the defended behaviour. It saves the entries on the spec under `answers`,
 with the round they answer.
 
 `review_text` shows the next reviewer every answer (`answers_text`). In an

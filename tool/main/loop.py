@@ -2724,9 +2724,9 @@ def prs() -> dict:
     known = by_pr(name)
     rows = []
     for row in json.loads(done.stdout):
-        spec = known.get(row["number"]) or unlinked(repo, row["headRefName"])
-        why = oneshot_profile.in_run(spec) or refusal(row, spec if spec and spec.get("pr") else None) or (
-            "" if spec else clash(name, row["headRefName"]))
+        if oneshot_profile.in_run(spec := known.get(row["number"]) or unlinked(repo, row["headRefName"])):
+            continue   # an unfinished Oneshot's PR is not listed at all; dispatch checks it again
+        why = refusal(row, spec if spec and spec.get("pr") else None) or ("" if spec else clash(name, row["headRefName"]))
         rows.append({"number": row["number"], "title": row["title"], "branch": row["headRefName"],
                      "head": row["headRefOid"], "url": row["url"], "fork": bool(row.get("isCrossRepository")),
                      "spec": spec["id"] if spec else None, "state": spec["state"] if spec else None,
