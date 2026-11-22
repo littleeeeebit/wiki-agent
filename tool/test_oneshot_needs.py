@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -24,7 +25,7 @@ from agent.chat_session import Event
 from common import Veil, host, masked, overlaps, question_list
 
 from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
-    oneshot_sheet as sheet, oneshot_spec, release, specs, work
+    oneshot_sheet as sheet, oneshot_spec, prerequisite_review, release, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, STACK, android  # noqa: F401 — `android` is the fixture
 from test_oneshot_spec import DESIGN as WEB, GLOSSARY as WEB_GLOSSARY, PROFILE, REQS as WEB_REQS, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -569,36 +570,53 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
                             chat=SimpleNamespace(hide={"x" * 16: "[N2]"}, id="c", parent_id=None))
     with patch.object(needs, "leaked", broke):
         assert needs.settle(at_r1, person, "끝냈다") and needs.settle(at_r1, other, "끝냈다")
-    assert sorted(spec()["oneshot"]["unscanned"].values()) == [["N1"], ["N2"]]
+
+    def held():
+        return sorted(h["needs"] for h in spec()["oneshot"]["unscanned"].values())
 
     def row():
         return next(n for n in needs.shown(spec()) if n["id"] == "N1")
 
-    assert row()["unsure"] and not row()["leaked"]   # awaiting a scan, never shown as found
+    assert held() == [["N1"], ["N2"]] and row()["unsure"] and not row()["leaked"]   # awaiting a scan, not found
     assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), {}, "끝냈다")   # no values: it cannot clear
-    assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), hide, "끝냈다")   # the other set is still owed
-    assert list(spec()["oneshot"]["unscanned"].values()) == [["N2"]] and not row()["unsure"]
+    # A scan with the same values answers for its own hold, never the other set's; only a turn's last scan ends it.
+    assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), hide, "끝냈다") and held() == [["N1"], ["N2"]]
+    assert needs.settle(at_r1, person, "끝냈다") and held() == [["N2"]] and not row()["unsure"]
     # The end scan gates what a passed stage was to start: refused, the run stops; a repair turn goes on.
     oneshot_spec.saved("budget", oneshot={"stopped": None})
     passed = SimpleNamespace(**{**vars(person), "person": False, "passed": True})
     assert needs.settle(at_r1, person, "끝냈다", moving=True)   # a person's turn moves nothing
     assert not needs.settle(at_r1, passed, "끝냈다", moving=True) and spec()["oneshot"]["stopped"]["reason"] == "block"
     assert needs.settle(at_r1, SimpleNamespace(**{**vars(passed), "passed": False}), "끝냈다", moving=True)
-    assert needs.publishable(at_r1, spec())   # and nothing goes out while it is owed
     oneshot_spec.saved("budget", oneshot={"stopped": None})
-    # A hold whose write fails stays in memory: every scan, and so every check and external write, refuses until
-    # it is written.
-    real = needs.saved
-    with patch.object(needs, "leaked", broke), patch.object(needs, "saved", lambda *a, **k: (_ for _ in ()).throw(OSError())):
-        assert not needs.settle(at_r1, passed, "끝냈다", moving=True)
-    assert needs.PENDING["budget"]
-    with patch.object(needs, "saved", lambda *a, **k: (_ for _ in ()).throw(OSError())):
+    # Nothing goes out while a hold is owed: every push of the branch, whatever stage pushes it, and its refusal
+    # is masked as kept.
+    assert "검사를 끝내지 못한" in needs.publishable(at_r1, spec())
+    pushed = prerequisite_review.push(at_r1, {}, ["git", "push", "origin", "HEAD"])
+    assert pushed.returncode == 1 and "검사를 끝내지 못한" in pushed.stderr
+    # A turn's hold is written at its start (`owe`): one that never reaches its last scan, or whose failed mark
+    # cannot be written either, still holds, a restart included; a hold that cannot be written stops the start.
+    def fails(*a, **k):
+        raise OSError("disk")
+
+    owing = SimpleNamespace(chat=SimpleNamespace(hide={"y" * 16: "[N3]"}))
+    needs.owe(at_r1, owing)
+    assert ["N3"] in held()
+    with patch.object(needs, "leaked", broke), patch.object(needs, "saved", fails):
+        assert not needs.settle(at_r1, SimpleNamespace(**{**vars(passed), "chat": owing.chat}), "끝냈다", moving=True)
         with pytest.raises(OSError):
-            needs.leaked(at_r1, spec(), hide, "끝냈다")
-        assert "게시하지 않는다" in needs.publishable(at_r1, spec())
-    assert needs.saved is real and "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), {}, "끝냈다") and "budget" not in needs.PENDING
+            needs.owe(at_r1, SimpleNamespace(chat=SimpleNamespace(hide={"z" * 16: "[N4]"})))
+    assert ["N3"] in held() and ["N4"] not in held()
     git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])   # the history gone and the tree clean
     assert needs.leaked(at_r1, spec(), {}, "끝냈다") == "" and spec()["oneshot"]["unscanned"] == {}
+    # The APK that goes up is read itself, every entry decompressed, UTF-16 text included.
+    apk = tmp_path_factory.mktemp("apk") / "a.apk"
+    with zipfile.ZipFile(apk, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("resources.arsc", f"x{value}y".encode("utf-16-le"))
+        z.writestr("a.txt", "clean")
+    with patch.object(needs, "agent", lambda s: ({}, hide)):
+        why = needs.asset(apk, spec())
+        assert "[N1]" in why and value.lower() not in why.lower()
 
 
 def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_answer_as_given(tmp_path, monkeypatch):

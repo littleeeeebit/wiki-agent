@@ -808,6 +808,8 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
     hide = getattr(chat, "hide", None) or {}   # a oneshot's secrets: shown and kept as `[N1]`, checked as given
     veil = Veil(hide)
     try:
+        from . import oneshot_needs   # owed from its start: a turn that never reaches its last scan still holds
+        oneshot_needs.owe(path, run)
         events = None
         if replay is not None:
             final, events = text, ()

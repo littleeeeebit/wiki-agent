@@ -298,6 +298,8 @@ def released(spec: dict) -> dict:
     try:
         if not file.is_file() or android_owned.sha256(file) != frozen["sha256"]:
             raise ValueError("최종 게이트가 고정한 APK 사본이 없거나 바뀌었다")
+        if why := oneshot_needs.asset(file, spec):   # the exact bytes that go up, every entry of them
+            raise ValueError(why)
         repo = github_release.slug(release.remote(path))
 
         def found() -> dict | None:
@@ -370,8 +372,6 @@ def handed(path: Path, run, spec: dict, final: str):
     run.checked = True
     # The text asked again is the run's own turn: charged, and stopping the stage if it fails.
     ask = lambda text: oneshot_build.send(repo, STAGE, text) or True   # noqa: E731 — sent stops itself on a refusal
-    if why := oneshot_needs.publishable(path, spec):   # the exact state the push and the pull request send
-        return oneshot_spec.store(repo).stop(STAGE, why) and None   # stopped: no next turn
     try:
         then = specs.written(specs.channels.repo_for(repo), path, run, spec, final, ask)
     except Exception as exc:   # a push that timed out: stopped with its reason, resumed from the README turn

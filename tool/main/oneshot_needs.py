@@ -211,7 +211,7 @@ def agent(spec: dict | None) -> tuple[dict, dict]:
     return env, hidden(spec, env)
 
 
-def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
+def leaked(path: Path, spec: dict, hide: dict | None, final: str, last: bool = False) -> str:
     """Why a build turn is refused when what it leaves holds a secret its session carried (`hide`, from `agent`):
     its answer, every commit since the design commit with its message and names (the history the pull request
     pushes), or what it has not committed. Matched in any casing; the refusal names the need, never the value, and
@@ -219,7 +219,6 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
 
     # Whatever the store holds now, a rotated value is still in those commits; the scan below still runs, so a
     # commit made meanwhile is recorded too.
-    flush(spec["repo"])   # a hold a failed write left in memory is kept first: it raises while it cannot be
     if not hide:   # nothing carried, nothing found now: the sheet keeps only what the history still holds
         if spec_of(spec["repo"])["oneshot"].get("leaked"):
             saved(spec["repo"], oneshot={"leaked": []})
@@ -266,10 +265,11 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         old = o.get("tainted_needs") or {}
         saved(spec["repo"], oneshot={"tainted": sorted({*(o.get("tainted") or []), *hit}), "tainted_needs": {
             **old, **{c: sorted({*old.get(c, []), *ids}) for c, ids in hit.items()}}})
-    if (holds := spec_of(spec["repo"])["oneshot"].get("unscanned") or {}) and (d := digest(spec, hide)) in holds:
-        # The scan a failure left owed, done with the same values: that hold only, each other set still owed.
+    # A hold with these very values is covered by this finished scan; only a turn's last scan (`settle`) ends it.
+    d = digest(spec, hide) if (holds := spec_of(spec["repo"])["oneshot"].get("unscanned") or {}) else None
+    if last and d in holds:
         saved(spec["repo"], oneshot={"unscanned": {k: v for k, v in holds.items() if k != d}})
-    refused = still_tainted(path, spec_of(spec["repo"]))
+    refused = still_tainted(path, spec_of(spec["repo"]), covered=d)
     if not found:
         return refused
     every, rows = list(hide), list(owed(spec["oneshot"].get("design") or {}).items())
@@ -311,8 +311,21 @@ def marked(o: dict) -> set[str]:
 
 
 def unsure(o: dict) -> set[str]:
-    """The needs a scan that could not finish carried (`unscanned`): not found, awaiting a scan that finishes."""
-    return {n for needs in (o.get("unscanned") or {}).values() for n in needs}
+    """The needs a scan that could not finish carried (`unscanned`, `failed`): not found, awaiting a scan."""
+    return {n for h in (o.get("unscanned") or {}).values() if h.get("failed") for n in h["needs"]}
+
+
+def owe(path: Path, run) -> None:
+    """A turn carrying a oneshot's secrets owes a scan from its start: a hold for its set of values is written
+    before anything is sent, so a turn that never reaches its last scan (`settle`), a restart included, still
+    holds what it may have made. Raises, and the turn does not start, when the hold cannot be written."""
+
+    from . import specs   # it imports this module
+
+    if (hide := getattr(run.chat, "hide", None)) and (spec := specs.owner(path)) and spec.get("oneshot"):
+        holds, d = spec_of(spec["repo"])["oneshot"].get("unscanned") or {}, digest(spec, hide)
+        if d not in holds:
+            saved(spec["repo"], oneshot={"unscanned": {**holds, d: {"needs": sorted(need_ids(hide.values())), "failed": False}}})
 
 
 def settle(path: Path, run, final: str, moving: bool = False) -> bool:
@@ -329,14 +342,14 @@ def settle(path: Path, run, final: str, moving: bool = False) -> bool:
     try:
         if not ((spec := specs.owner(path)) and spec.get("oneshot")):
             return True
-        why = leaked(path, spec, hide, final)
+        why = leaked(path, spec, hide, final, last=True)
     except Exception as exc:
         errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
         try:
             why = unscanned(path, spec, hide, type(exc).__name__) if hide and spec else f"비밀 값 검사가 실패했다 ({type(exc).__name__})"
         except Exception as again:
             errorlog.record("oneshot-scan", type(again).__name__, path=str(path))
-            why = "비밀 값 검사를 기록하지 못했다 — 기록할 수 있을 때까지 게시와 다음 단계를 막는다"
+            why = "비밀 값 검사를 끝내지 못했다 — 턴이 시작할 때 적어 둔 보류가 게시와 다음 단계를 막는다"
     if why and moving and spec:
         try:
             oneshot_spec.store(spec["repo"]).stop("block", masked(why, hide or {}))
@@ -345,28 +358,40 @@ def settle(path: Path, run, final: str, moving: bool = False) -> bool:
     return not (why and moving)
 
 
+def asset(file: Path, spec: dict) -> str:
+    """Why an asset about to be uploaded (the frozen APK) is not sent: a value the store holds, in any entry of it
+    (an APK is a zip: each entry is read decompressed), as UTF-8 or UTF-16 text, in any casing. A file that cannot
+    be read is refused too."""
+
+    import zipfile
+
+    hide = agent(spec)[1]
+    if not hide:
+        return ""
+    try:
+        if not zipfile.is_zipfile(file):
+            parts = [file.read_bytes()]
+        else:
+            with zipfile.ZipFile(file) as z:
+                parts = [z.read(i) for i in z.infolist()]
+    except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
+        return f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})"
+    found = sorted({n for b in parts for enc in ("utf-8", "utf-16-le") for n in held_in(b.decode(enc, "ignore"), hide)})
+    return masked(f"비밀 값 {', '.join(f'[{n}]' for n in found)} 이(가) 올릴 파일에 들어 있다 — 올리지 않는다", hide) \
+        if found else ""
+
+
 def publishable(path: Path, spec: dict) -> str:
     """Why nothing goes out: checked at each external write (the APK upload, the push and the pull request) on the
     exact state it sends, under the values the store holds now, with every refusal and hold recorded before. A
     check that cannot finish refuses too."""
 
     try:
-        return leaked(path, spec, agent(spec)[1], "")
+        hide = agent(spec)[1]
+        return masked(leaked(path, spec, hide, ""), hide)   # as the stop that keeps it shows it
     except Exception as exc:
         errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
         return f"비밀 값 검사를 끝내지 못해 게시하지 않는다 ({type(exc).__name__})"
-
-
-# ponytail: in memory, a hold a failed spec write could not keep, written at the next scan; a restart loses it
-PENDING: dict[str, dict[str, list[str]]] = {}
-
-
-def flush(repo: str) -> None:
-    """Write the holds a failed write left in memory (`PENDING`); raises, keeping them, while the spec cannot be
-    written, so every scan, the stage checks and each external write refuse until it can."""
-    if held := PENDING.get(repo):
-        saved(repo, oneshot={"unscanned": {**(spec_of(repo)["oneshot"].get("unscanned") or {}), **held}})
-        PENDING.pop(repo, None)
 
 
 def digest(spec: dict, hide: dict) -> str:
@@ -376,17 +401,19 @@ def digest(spec: dict, hide: dict) -> str:
 
 
 def unscanned(path: Path, spec: dict, hide: dict, what: str) -> str:
-    """A scan that could not finish leaves a hold (`unscanned`) with the needs it carried: refused and marked until
-    a scan with the same values finishes (`leaked`), or the history after the design commit is gone and nothing is
-    left uncommitted (`still_tainted`); a value replaced meanwhile can no longer be looked for."""
-    # One hold per set of values, each owed alone; kept in memory first, so a write that fails still holds it.
-    PENDING.setdefault(spec["repo"], {})[digest(spec, hide)] = sorted(need_ids(hide.values()))
-    flush(spec["repo"])
+    """A scan that could not finish marks its turn's hold (`unscanned`, written at the turn's start by `owe`) failed:
+    refused and shown as unsure until a turn's last scan with the same values finishes (`leaked`), or the history
+    after the design commit is gone and nothing is left uncommitted (`still_tainted`); a value replaced meanwhile
+    can no longer be looked for."""
+    # One hold per set of values, each owed alone; the turn's start wrote it (`owe`), this marks it failed.
+    holds = spec_of(spec["repo"])["oneshot"].get("unscanned") or {}
+    saved(spec["repo"], oneshot={"unscanned": {**holds, digest(spec, hide): {
+        "needs": sorted(need_ids(hide.values())), "failed": True}}})
     return " / ".join(filter(None, [still_tainted(path, spec_of(spec["repo"])),
                                     f"비밀 값이 남았는지 확인하지 못했다 — {what}"]))
 
 
-def still_tainted(path: Path, spec: dict) -> str:
+def still_tainted(path: Path, spec: dict, covered: str | None = None) -> str:
     """Why a turn is refused while a commit once found holding a secret is still in HEAD's history, or empty,
     clearing the record once none is. Bound to the commits, never to today's values, so a value the owner
     replaced or took back is refused until the history is rewritten. A scan left owed (`unscanned`) is refused
@@ -396,10 +423,13 @@ def still_tainted(path: Path, spec: dict) -> str:
         done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=60)
         return done.returncode == 0 and not done.stdout.strip()
 
-    hold, base = spec["oneshot"].get("unscanned"), spec["oneshot"].get("design_head")
+    # `covered`: the hold of the values a scan just finished with, which that scan answers for, kept until its turn's
+    # last scan ends it.
+    holds, base = spec["oneshot"].get("unscanned") or {}, spec["oneshot"].get("design_head")
+    hold = {k: v for k, v in holds.items() if k != covered}
     if hold and base and empty("rev-list", f"{base}..HEAD") and empty("status", "--porcelain"):
-        saved(spec["repo"], oneshot={"unscanned": {}})
-        hold = None
+        saved(spec["repo"], oneshot={"unscanned": {k: v for k, v in holds.items() if k == covered}})
+        hold = {}
     unsure = "비밀 값 검사를 끝내지 못한 턴이 있다 — 같은 값으로 다시 검사하거나 설계 커밋 뒤의 기록을 지운다" if hold else ""
     tainted = spec["oneshot"].get("tainted") or []
     left = []

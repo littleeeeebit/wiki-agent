@@ -10,7 +10,6 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -360,9 +359,10 @@ def test_an_android_apps_apk_goes_to_a_draft_prerelease_the_pull_request_links(a
 
 
 def test_nothing_goes_out_while_the_secret_check_refuses(android, github):
-    """The APK upload, the push and the pull request each check the exact state they send first (`publishable`)."""
+    """The APK upload checks the exact state first; every push of the branch does too, whatever stage pushes it
+    (`prerequisite_review.push`), so the pull request and a review repair's push are refused alike."""
 
-    from main import oneshot_needs
+    from main import oneshot_needs, prerequisite_review
 
     tree, _ = android
     readme(tree)
@@ -370,11 +370,10 @@ def test_nothing_goes_out_while_the_secret_check_refuses(android, github):
             patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
         assert not made(github) and o()["stopped"]["detail"].startswith("비밀 값 [N1]")
-        oneshot_spec.saved("budget", oneshot={"stopped": None})
         remote = Remote()
         with patch.object(specs, "sh", remote):
-            assert oneshot_pr.handed(tree, SimpleNamespace(chat=SimpleNamespace(hide={})), spec(), SUMMARIZED) is None
-        assert not remote.calls and o()["stopped"]["detail"].startswith("비밀 값 [N1]")
+            pushed = prerequisite_review.push(tree, spec(), ["git", "push", "origin", "HEAD"])
+        assert pushed.returncode == 1 and pushed.stderr.startswith("비밀 값 [N1]") and not remote.calls
 
 
 def untracked_apks(tree):
