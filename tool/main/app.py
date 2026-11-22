@@ -594,8 +594,13 @@ def demo() -> None:
             if ev.kind == "done":
                 first = ev.meta
 
-        answer = query.configure(cid, query.Config(repo=query.config(cid)["repo"], effort="max"))
-        assert answer["kept"], answer
+        now = query.config(cid)   # a request without a model sets none: the effort goes with the current model
+        others = sorted(query.channels.efforts_of(now["model"]) - {now["effort"], ""})
+        if not others:
+            raise SystemExit(f"`{now['model']}` 에는 바꿀 effort 가 없다 — effort 가 여럿인 모델을 골라 다시 확인하라")
+        effort = others[0]
+        answer = query.configure(cid, query.Config(repo=now["repo"], model=now["model"], effort=effort))
+        assert answer["kept"] and query.config(cid)["effort"] == effort, answer
 
         text = ""
         for ev in query.session(cid).say("아까 기억하라고 한 표를 그대로 적어라. 그것만."):

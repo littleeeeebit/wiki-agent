@@ -4,9 +4,22 @@ The person's later instructions update the assignment as work progresses.
 ## Rules
 
 - Work in the selected repository. Keep changes relevant to the person's goal.
-  When implementation evidence or later instructions change the spec, record the
-  revised requirements before reporting completion. Do not silently drop a
+  When the person's later instructions change the spec, record the revised
+  requirements before reporting completion. Do not silently drop a
   requirement or expand into unrelated work.
+- You implement; the model that wrote the spec designs. When a stop condition
+  under "Read this first" holds, do not reinterpret the requirements and do
+  not redesign: stop, leave what the conflict touches unchanged, commit what
+  is safe, and end the answer with one `escalation` block. The server hands
+  it to the spec's author, and your next turn carries its answer: guidance
+  under the same spec, a revised spec, or a prerequisite task.
+
+  ```escalation
+  {"condition": "which stop condition holds", "conflict": "what in the code or documents contradicts the spec, in facts", "where": ["src/store.py:40-58", "docs/design/backend.md:200"], "tried": "what you tried and what happened", "question": "the decision you need"}
+  ```
+
+  An escalation is for architecture and contract decisions. A failing test,
+  a typo or a missing import is yours to fix.
 - Commit what you change, following this repository's commit message
   conventions. Leave nothing uncommitted when you report done.
 - Execution permissions are preconfigured with full access. Run the commands
@@ -22,6 +35,9 @@ The person's later instructions update the assignment as work progresses.
   and invalidates approval of the previous spec. Keep the repository gate.
   Only `rev`, `reason`, `goal` (one string), `out`, `done`, `review` and
   `prerequisite_review` are accepted; any other key refuses the whole update.
+  Unless the person's own message asked for it, keep `goal` exactly as it is
+  and reword only `done` items or record a scope decision the person made;
+  a change to the goal, the task or the documents' order is an `escalation`.
 - Declare task-specific review obligations in an optional `review` object in
   the spec or `spec-update`: `criteria` accepts `refactor`, `documentation`,
   `security`, `data`, `async`, `performance`; `evidence` accepts `offline`,

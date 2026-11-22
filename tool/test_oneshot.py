@@ -991,6 +991,24 @@ def test_an_empty_model_is_the_roles_own_default_and_an_older_run_keeps_the_wind
     older = made(world)                                                                  # no `models`
     with patch("main.query.config", lambda cid: {"model": "next-model", "effort": "e"}):
         assert oneshot.role_config("intake", oneshot.run_store(older))["model"] == "next-model"
+    # That setting is the window's own, changed in place: a turn reports what it ran with, not what it became.
+    live = {"model": "sonnet", "effort": "low"}
+
+    class Chat:
+        is_codex = False
+
+        def __init__(self, where, model="", effort="", **k):
+            self.ran = (model, effort)
+
+        def say(self, text, halt, images):
+            live.update(model="opus", effort="high")   # the settings route, while the session answers
+            yield SimpleNamespace(kind="done", text="x", meta={"model": "claude-sonnet-4-6"})
+
+        def close(self):
+            pass
+    with patch("main.query.config", lambda cid: live), patch.object(oneshot, "ChatSession", Chat):
+        _, meta, _ = oneshot.ask(oneshot.run_store(older), "design", "", "")
+    assert meta["asked"] == {"model": "sonnet", "effort": "low"}
 
 
 @pytest.mark.parametrize("role", [{"model": "opus; rm -rf", "effort": ""}, {"model": "opus", "effort": "HIGH!"},

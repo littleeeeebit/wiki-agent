@@ -252,6 +252,7 @@ def test_a_running_turn_is_named_by_its_repository_and_every_live_answer_is_coun
 SELECTION_READERS = {
     "query.current_repo", "query.session_key", "query.config", "query.session",
     "query.remember", "query.recall", "query.hits_for", "loop.mine", "planning.begun", "work.ours",
+    "query._configure", "query.basis",   # the `configure` route's body and its comparison, on its thread
 }
 
 

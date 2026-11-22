@@ -344,13 +344,13 @@ def test_provider_switch_and_config_validation(tmp_path):
     with patch.object(chat_channels, "repo_for", return_value=tmp_path), \
          patch.object(chat_channels, "codex_models", return_value=models), \
          patch.object(chat, "_config", {}), patch.object(chat, "_sessions", {}):
+        # A switch carries no model of its own: one sent with it is neither checked nor set.
+        assert web.post("/api/config/wiki", json={"repo": "sample", "model": "codex"}).status_code == 200
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "codex"}).status_code == 400
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:missing"}).status_code == 400
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model", "effort": "max"}).status_code == 400
         response = web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:test-model", "effort": "max"})
-        assert response.json()["switched"]
-        response = web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:test-model", "effort": "max"})
-        assert response.status_code == 200 and not response.json()["kept"]
+        assert response.status_code == 200 and not response.json()["kept"] and not response.json()["switched"]
         response = web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model"})
         assert response.json()["kept"] and response.json()["effort"] == "high"
         # A Claude name typed by hand goes through; a shell-shaped one does not.
@@ -358,6 +358,157 @@ def test_provider_switch_and_config_validation(tmp_path):
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "opus; rm -rf"}).status_code == 400
         with patch.object(chat, "_busy", {chat.session_key("wiki"): object()}):
             assert web.post("/api/reset/wiki", json={"keep": "delete"}).status_code == 409
+
+
+def test_focus_model_survives_restart_per_project(tmp_path):
+    repos = {name: tmp_path / name for name in ("a", "b")}
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
+        web.post("/api/config/next", json={"repo": "a", "model": "opus", "effort": "high"}).raise_for_status()
+        chat._config.clear()   # a restart
+        assert (chat.config("next", "a")["model"], chat.config("next", "a")["effort"]) == ("opus", "high")
+        assert chat.config("next", "b")["model"] == "", "another project keeps its own default"
+        assert chat.config("retro", "a")["model"] == "", "another focus keeps its own default"
+        # A saved Codex model no longer listed falls back instead of failing the focus.
+        chat.chosen("a", "next", {"model": "codex:gone", "effort": "low"})
+        chat._config.clear()
+        with patch.object(chat_channels, "codex_models", return_value=[]):
+            assert chat.config("next", "a")["model"] == ""
+
+
+def test_focus_pick_is_the_persons_and_lands_whole(tmp_path):
+    from fastapi import HTTPException
+
+    models = [{"id": "codex:test", "default_effort": "low", "efforts": [{"id": "low"}]}]
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect={"a": tmp_path / "a"}.get), \
+         patch.object(chat_channels, "codex_models", return_value=models):
+        web.post("/api/config/refactor", json={"repo": "a"}).raise_for_status()
+        web.post("/api/config/refactor", json={"repo": "a", "model": "opus", "effort": "high"}).raise_for_status()
+        # Another mode releases a survey's pin to the person's own pick; the survey model is never saved as one.
+        chat.refactor_mode("a", "preserve", 0, {"model": "sonnet", "effort": "low"})
+        chat._config.clear()
+        assert chat.config("refactor", "a")["model"] == "sonnet"
+        web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == chat.chosen("a")["refactor"]["model"] == "opus"
+        # A Codex list that cannot be read keeps nothing, so the pick is read again once it can.
+        chat.chosen("a", "next", {"model": "codex:test", "effort": "low"})
+        with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("down")), \
+             pytest.raises(HTTPException):
+            chat.config("next", "a")
+        assert chat.config("next", "a")["model"] == "codex:test"
+        # A pick that cannot be saved changes nothing, so a retry still sees the provider change.
+        with patch.object(chat, "chosen", side_effect=OSError("disk")), pytest.raises(OSError):
+            web.post("/api/config/next", json={"repo": "a", "model": "opus", "effort": "high"})
+        assert chat.config("next", "a")["model"] == "codex:test"
+        # A setting written while a first read waited on the Codex list is not overwritten by that read.
+        chat._config.clear()
+
+        def racing():
+            chat._config[("a", "next")] = {"repo": "a", "model": "haiku", "effort": "low"}
+            return models
+        with patch.object(chat_channels, "codex_models", side_effect=racing):
+            assert chat.config("next", "a")["model"] == "haiku"
+
+
+def test_a_survey_pin_lets_go_to_a_checked_pick_and_only_once_written(tmp_path):
+    models = [{"id": "codex:test", "default_effort": "low", "efforts": [{"id": "low"}]}]
+    sonnet = {"repo": "a", "model": "sonnet", "effort": "low"}
+    web = client()
+
+    def pinned(pick):
+        chat._config.clear()
+        chat.chosen("a", "refactor", pick)
+        chat.refactor_mode("a", "preserve", 0, {"model": "sonnet", "effort": "low"})
+    with patch.object(chat_channels, "repo_for", side_effect={"a": tmp_path / "a", "b": tmp_path / "b"}.get):
+        web.post("/api/config/refactor", json={"repo": "a"}).raise_for_status()
+        # The pin overrides an unused Codex pick, so an unreadable Codex list does not hold up the read.
+        pinned({"model": "codex:test", "effort": "low"})
+        with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("down")):
+            assert chat.config("refactor", "a")["model"] == "sonnet"
+        # Released by a mode-only request (no model), a saved Codex model the list no longer has falls back,
+        # as a cold read does.
+        with patch.object(chat_channels, "codex_models", return_value=[{**models[0], "id": "codex:other"}]):
+            web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] != "codex:test"
+        # The same mode-only request again, after the first released the pin, still saves nothing.
+        pinned({"model": "opus", "effort": "high"})
+        for _ in range(2):
+            web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == chat.chosen("a")["refactor"]["model"] == "opus"
+        # A model the person chose with the new mode is theirs, even the survey's own: applied and saved.
+        pinned({"model": "opus", "effort": "high"})
+        web.post("/api/config/refactor", json={**sonnet, "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == chat.chosen("a")["refactor"]["model"] == "sonnet"
+        # A failed mode write publishes nothing and takes back the pick written with it.
+        pinned({"model": "opus", "effort": "high"})
+        with patch.object(chat, "refactor_mode", side_effect=[chat.refactor_mode("a"), OSError("disk")]), \
+             pytest.raises(OSError):
+            web.post("/api/config/refactor", json={**sonnet, "model": "haiku", "refactor_mode": "simplify"})
+        assert chat.config("refactor", "a").get("refactor_pinned") and chat.chosen("a")["refactor"]["model"] == "opus"
+        # A switch that carries a new mode releases the destination's pin to the destination's own pick, and
+        # one that fails on it leaves the default project where it was.
+        web.post("/api/config/refactor", json={"repo": "b"}).raise_for_status()
+        pinned({"model": "codex:test", "effort": "low"})
+        with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("down")):
+            assert web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "rework"}).status_code == 503
+        assert chat.project() == "b" and chat.config("refactor", "a").get("refactor_pinned")
+        # A project file that cannot be written takes back the destination's mode with it.
+        (chat.LOGS / "project.tmp").mkdir()
+        with patch.object(chat_channels, "codex_models", return_value=models), pytest.raises(OSError):
+            web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "rework"})
+        assert chat.refactor_mode("a")["survey"] and chat.project() == "b"
+        (chat.LOGS / "project.tmp").rmdir()
+        with patch.object(chat_channels, "codex_models", return_value=models):
+            web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "rework"}).raise_for_status()
+            assert (chat.project(), chat.config("refactor", "a")["model"]) == ("a", "codex:test")
+
+        # The Codex list is read outside the lock that also admits work turns.
+        def listed():
+            free = []
+
+            def take():
+                free.append(chat._lock.acquire(timeout=0))
+                if free[-1]:
+                    chat._lock.release()
+            t = threading.Thread(target=take)
+            t.start()
+            t.join()
+            assert free == [True]
+            return models
+        with patch.object(chat_channels, "codex_models", side_effect=listed):
+            web.post("/api/config/next", json={"repo": "a", "model": "codex:test", "effort": "low"}).raise_for_status()
+            # A cold switch resolves the destination's saved Codex pick with the lock free too.
+            web.post("/api/config/next", json={"repo": "b"}).raise_for_status()
+            chat._config.clear()
+            web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
+        # A pick another window saved while a release looked up the old one is looked up again.
+        pinned({"model": "opus", "effort": "high"})
+        real = chat.picked
+
+        def superseded(name, cid, pick=None):
+            if not superseded.done:
+                superseded.done = True
+                chat.chosen(name, cid, {"model": "haiku", "effort": "low"})
+                return {"model": "opus", "effort": "high"}
+            return real(name, cid, pick)
+        superseded.done = False
+        with patch.object(chat, "picked", side_effect=superseded):
+            web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == "haiku"
+        # A pick a failing request wrote and then took back never reaches the release that saw it meanwhile.
+        pinned({"model": "opus", "effort": "high"})
+
+        def undone(name, cid, pick=None):
+            chat.chosen(name, cid, {"model": "haiku", "effort": "low"})
+            try:
+                return real(name, cid, pick)
+            finally:
+                chat.chosen(name, cid, {"model": "opus", "effort": "high"})
+        with patch.object(chat, "picked", side_effect=undone):
+            web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "simplify"}).raise_for_status()
+        assert chat.config("refactor", "a")["model"] == "opus"
 
 
 def test_project_shared_sessions_and_records_isolated(tmp_path):
