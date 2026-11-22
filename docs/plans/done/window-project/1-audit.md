@@ -20,6 +20,10 @@ handler, where the request's `X-Project` answers them in stage 2. The other
 `app.demo`, a command-line self check with no server, also reaches
 `query.session`.
 
+`query._configure` and its `basis` (#422) run synchronously inside the
+`configure` route, on the request's thread. The route's `X-Project` answers
+them, as it answers the route itself.
+
 Threads that write without a request already name their repository:
 
 - `specs.told`, called from `loop.poll` and work turns, passes `repo` to `query.remember`.
