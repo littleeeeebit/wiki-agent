@@ -472,16 +472,23 @@ with no stop asked meanwhile, lets it sample.
 - A window capture hands the helper only a handle, bound against the window
   exactly as the driver read it. The helper keeps a frame only while the
   item stays open through the copy.
-- A composition hands it the fixture's frame, its handle and process, and
-  the fixture's marks: cells of random colours the server draws for the
+- A composition hands it the fixture's client area on screen, which the
+  fixture paints whole and opaque (never its frame, whose borders DWM
+  draws partly invisible), with its handle and process, and the fixture's
+  marks. The marks are cells of random colours the server draws for the
   check, which the fixture paints along its client area's edges, 8 pixels
-  deep. The fixture refuses every change to itself in its own window
-  procedure: a move, a resize, a change of z-order, a hide, a new title or
-  style, a close. It undoes a minimize at once. The helper checks the
-  fixture right before and after the blit: the same window, visible, not
-  minimized, with no window region cut into it, and in exactly that frame.
-  It keeps the frame only when every mark is in it where the fixture paints
-  it, which proves from the sampled pixels themselves that the fixture
+  deep. No two colours, and no colour and the page's white or black, lie
+  within twice the helper's tolerance of each other. The fixture refuses
+  every change to itself in its own window procedure: a move, a resize, a
+  change of z-order, a hide, a new title or style, a close. It undoes at
+  once what Windows changes without asking it: a minimize, or a move, hide
+  or loss of topmost sent past its guard. The helper checks the fixture
+  right before and after the blit: the same window, visible, not
+  minimized, with no window region (`GetWindowRgnBox`, which copies
+  nothing), and its client area exactly that region. It keeps the frame
+  only when every pixel of every mark is in it. A fixture displaced by
+  even a pixel shows a neighbour's colour or the page at some mark's edge,
+  so this proves from the sampled pixels themselves that the fixture
   covered the region in that frame. A frame without them leaves the check
   pending. A failed check of the window fails it. A region cut into the
   fixture and taken out again between the blit and the second check would

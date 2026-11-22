@@ -10,12 +10,13 @@
 //       while the item stays open through the copy. An item Windows refuses or gives empty is reported in
 //       `item.json` as `empty`, so the check stays pending.
 //   owner_capture surface <hwnd> <pid> <x> <y> <width> <height> <marks> <dir>   A surface read of exactly that
-//       region, the fixture's frame. It makes its bitmap before it says it is ready. On `go` it checks the fixture
-//       right before and right after the blit: the window `hwnd`, visible, not minimized, with no window region,
-//       of process `pid`, titled `oneshot-fixture`, with exactly that frame. The frame is kept only when it
-//       carries every one of `<marks>` (the server's random colours, which the fixture paints along its client
-//       edges) where the fixture paints it: proof from the sampled pixels themselves that the fixture covered the
-//       region in that frame, however it was moved or put back around it. Marks missing leave the check pending;
+//       region, the fixture's client area, which it paints whole. It makes its bitmap before it says it is ready.
+//       On `go` it checks the fixture right before and right after the blit: the window `hwnd`, visible, not
+//       minimized, with no window region, of process `pid`, titled `oneshot-fixture`, its client area exactly
+//       that region. The frame is kept only when every pixel of every one of `<marks>` (the server's random
+//       colours, which the fixture paints along its client edges) is there: proof from the sampled pixels
+//       themselves that the fixture covered the region in that frame, however it was moved or put back around
+//       it, by a pixel included. Marks missing leave the check pending;
 //       a check of the window failing fails it. The fixture also refuses every change to itself (oneshot_fixture.py).
 //       The blit is GDI's BitBlt with CAPTUREBLT, so layered windows over the fixture are composed in.
 //   owner_capture --check   Builds, starts, reads marks off a memory bitmap and blits between two memory bitmaps
@@ -41,7 +42,7 @@ public static class Program {
   [DllImport("user32")] static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
   [DllImport("user32", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hwnd, StringBuilder text, int max);
-  [DllImport("user32")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+  [DllImport("user32")] static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
   [DllImport("user32")] static extern IntPtr GetDC(IntPtr hwnd);
   [DllImport("user32")] static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
   [DllImport("gdi32")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
@@ -53,8 +54,7 @@ public static class Program {
   [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
   [DllImport("user32")] static extern bool IsIconic(IntPtr hwnd);
   [DllImport("user32")] static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
-  [DllImport("user32")] static extern int GetWindowRgn(IntPtr hwnd, IntPtr rgn);
-  [DllImport("gdi32")] static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+  [DllImport("user32")] static extern int GetWindowRgnBox(IntPtr hwnd, out RECT box);
   const int TOLERANCE = 8;   // per channel: what the composition may change in a solid colour
 
   static int closed;   // set by the item's Closed event on another thread, read with a barrier
@@ -173,28 +173,34 @@ public static class Program {
 
   // Why the sampled frame does not carry every mark where the fixture paints it, its client area starting at
   // (ox, oy) in the frame, or empty: each mark's middle pixel within TOLERANCE of its colour.
+  // Every pixel of every mark, `ox, oy` being where the client area starts in the frame. The server keeps each
+  // mark's colour away from every other's and from the page's, so a fixture displaced by a pixel fails here.
   static string Marked(Bitmap frame, int[][] marks, int ox, int oy) {
     foreach (int[] m in marks) {
-      int px = ox + m[0] + m[2] / 2, py = oy + m[1] + m[3] / 2;
-      if (px < 0 || py < 0 || px >= frame.Width || py >= frame.Height) return "a mark lies outside the frame";
-      Color c = frame.GetPixel(px, py);
-      if (Math.Abs(c.R - (m[4] >> 16 & 0xFF)) > TOLERANCE || Math.Abs(c.G - (m[4] >> 8 & 0xFF)) > TOLERANCE ||
-          Math.Abs(c.B - (m[4] & 0xFF)) > TOLERANCE) return "the fixture's marks are not in the sampled frame";
+      if (ox + m[0] < 0 || oy + m[1] < 0 || ox + m[0] + m[2] > frame.Width || oy + m[1] + m[3] > frame.Height)
+        return "a mark lies outside the frame";
+      for (int px = ox + m[0]; px < ox + m[0] + m[2]; px++)
+        for (int py = oy + m[1]; py < oy + m[1] + m[3]; py++) {
+          Color c = frame.GetPixel(px, py);
+          if (Math.Abs(c.R - (m[4] >> 16 & 0xFF)) > TOLERANCE || Math.Abs(c.G - (m[4] >> 8 & 0xFF)) > TOLERANCE ||
+              Math.Abs(c.B - (m[4] & 0xFF)) > TOLERANCE) return "the fixture's marks are not in the sampled frame";
+        }
     }
     return "";
   }
 
-  static string Fixture(IntPtr hwnd, uint pid, int x, int y, int w, int h) {   // why the fixture is not that frame now
-    uint owner; RECT r; var title = new StringBuilder(64);
+  // Why the fixture's client area, what it paints, is not exactly the region x, y, w, h now, or "".
+  static string Fixture(IntPtr hwnd, uint pid, int x, int y, int w, int h) {
+    uint owner; RECT r, box; var title = new StringBuilder(64); var origin = new POINT();
     if (!IsWindow(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return "the fixture is gone, hidden or minimized";
-    IntPtr shape = CreateRectRgn(0, 0, 0, 0);
-    int region = GetWindowRgn(hwnd, shape);   // ERROR (0): no region, the whole frame is the fixture's
-    DeleteObject(shape);
-    if (region != 0) return "the fixture's shape changed";
+    // GetWindowRgnBox copies no region, so it needs nothing made: ERROR (0) with the window still there, as the
+    // checks below find it, is a window with no region, the whole of it the fixture's.
+    if (GetWindowRgnBox(hwnd, out box) != 0) return "the fixture's shape changed";
     GetWindowThreadProcessId(hwnd, out owner);
     GetWindowTextW(hwnd, title, title.Capacity);
     if (owner != pid || title.ToString() != FIXTURE) return "the handle names another window";
-    if (!GetWindowRect(hwnd, out r) || r.Left != x || r.Top != y || r.Right - r.Left != w || r.Bottom - r.Top != h) return "the fixture moved";
+    if (!GetClientRect(hwnd, out r) || !ClientToScreen(hwnd, ref origin)) return "the fixture is gone";
+    if (origin.X != x || origin.Y != y || r.Right != w || r.Bottom != h) return "the fixture moved";
     return "";
   }
 
@@ -225,10 +231,8 @@ public static class Program {
       kept = Image.FromHbitmap(bits);
       // The proof is the frame itself: every mark the fixture paints, where it paints it, in the pixels sampled.
       // A frame without them (covered, moved or put back, see-through, colours changed on the way) keeps nothing
-      // and leaves the check pending.
-      var origin = new POINT();
-      if (!ClientToScreen(hwnd, ref origin)) return Not("the fixture is gone");
-      string unmarked = Marked(kept, marks, origin.X - x, origin.Y - y);
+      // and leaves the check pending. The region is the client area itself, as both checks found it.
+      string unmarked = Marked(kept, marks, 0, 0);
       if (unmarked != "") return "{\"read\": false, \"unavailable\": true, \"why\": " + Quote(unmarked) + "}";
       kept.Save(Path.Combine(dir, "surface.png"), ImageFormat.Png);
       return "{\"read\": true, \"width\": " + w + ", \"height\": " + h + "}";
@@ -251,6 +255,7 @@ public static class Program {
           g.FillRectangle(brush, m[0] + 10, m[1] + 12, m[2], m[3]);   // a client area starting at (10, 12)
       }
       if (Marked(frame, marks, 10, 12) != "" || Marked(frame, marks, 0, 0) == "") return false;   // elsewhere: none
+      if (Marked(frame, marks, 11, 12) == "" || Marked(frame, marks, 10, 11) == "") return false;   // a pixel off
       frame.SetPixel(10 + 20 + 3, 12 + 30 + 3, Color.FromArgb(0xAB, 0xCD, 0xEF - 12));   // one mark off its colour
       if (Marked(frame, marks, 10, 12) == "") return false;
     }

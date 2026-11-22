@@ -58,17 +58,25 @@ def words(count: int = COUNT) -> list[str]:
 
 
 BAND, CELL = 8, 24   # the marks' thickness and length, in client pixels
+TOLERANCE = 8   # per channel, as the helper reads a mark (owner_capture.cs)
 
 
 def marks(width: int, height: int) -> list[str]:
     """The fixture's marks for one check, as `x y width height rrggbb` in its client pixels: a band of cells
     along all four edges, each a colour the server draws at random, so only the fixture itself, in place in the
-    sampled frame, puts all of them there."""
+    sampled frame, puts all of them there. The helper reads every pixel of every mark, and no two colours, nor
+    a colour and the page's white or black, are within twice the tolerance of each other: a fixture shifted by
+    even a pixel shows a neighbour's colour, or the page, at some mark's edge."""
 
     cells = [(x, edge, min(CELL, width - x), BAND) for edge in (0, height - BAND) for x in range(0, width, CELL)]
     cells += [(edge, y, BAND, min(CELL, height - BAND - y)) for edge in (0, width - BAND)
               for y in range(BAND, height - BAND, CELL)]
-    return [f"{x} {y} {w} {h} {secrets.token_hex(3)}" for x, y, w, h in cells]
+    taken = [b"\xff\xff\xff", b"\x00\x00\x00"]
+    while len(taken) < len(cells) + 2:
+        colour = secrets.token_bytes(3)
+        if all(max(abs(a - b) for a, b in zip(colour, t)) > 2 * TOLERANCE for t in taken):
+            taken.append(colour)
+    return [f"{x} {y} {w} {h} {c.hex()}" for (x, y, w, h), c in zip(cells, taken[2:])]
 
 
 def contains(text: str | None, page: list[str]) -> bool:
@@ -202,8 +210,8 @@ def _read(session, key: str, argv: list[str], binding: dict, members, halt, name
     """The helper's two phases: it says it is ready (`item.json`), the binding is proven again then, and only a
     `go` written after that proof, with no stop asked, lets it sample. The stop is decided and `go` written under
     `gate`, the lock a stop is accepted under, so a stop accepted first always reaches the helper as `stop`.
-    Unavailable when the helper could make nothing here (an item Windows refused or gave empty, a fixture it
-    cannot watch, or no word from it in time): the check stays pending. RuntimeError when it let go of
+    Unavailable when the helper could make nothing here (an item Windows refused or gave empty, no bitmap, or
+    no word from it in time): the check stays pending. RuntimeError when it let go of
     something it made only partly: nothing passes."""
 
     folder = session.reserve(key)
@@ -252,11 +260,11 @@ def window_read(session, key: str, exe: Path, binding: dict, members, halt, gate
 
 
 def surface_read(session, key: str, exe: Path, binding: dict, rect: list[int], members, halt, gate=None) -> dict:
-    """A surface read of exactly `rect`, the fixture's frame as it reports it in physical pixels, whatever is
-    composed there when sampled. The fixture's binding is proven again before the `go`. The fixture refuses every
-    change to itself, and the helper keeps the frame only when every one of the fixture's marks is in it, where
-    the fixture paints it: proof drawn from the sampled pixels themselves that the fixture covered the region
-    then. The helper's job is ended on every outcome."""
+    """A surface read of exactly `rect`, the fixture's client area as it reports it in physical pixels, whatever
+    is composed there when sampled. The fixture's binding is proven again before the `go`. The fixture refuses
+    every change to itself, and the helper keeps the frame only when every pixel of every one of the fixture's
+    marks is in it, where the fixture paints it: proof drawn from the sampled pixels themselves that the fixture
+    covered the region then. The helper's job is ended on every outcome."""
 
     argv = [str(exe), "surface", str(binding["hwnd"]), str(binding["pid"]), *(str(v) for v in rect), binding["marks"]]
     return _read(session, key, argv, binding, members, halt, "surface.png", gate or contextlib.nullcontext())

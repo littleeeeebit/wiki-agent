@@ -229,7 +229,12 @@ def test_the_fixtures_marks_run_along_every_edge_inside_it_in_fresh_colours():
     covered = {(px, py) for x, y, w, h in boxes for px in range(x, x + w) for py in range(y, y + h)}
     assert covered == edge
     colours, again = [m[4] for m in marks], [line.split()[4] for line in owner_round.marks(960, 540)]
-    assert len(set(colours)) > len(colours) * 0.9 and colours != again   # drawn afresh for each check
+    assert colours != again   # drawn afresh for each check
+    # Apart from each other and from the page's white and black by more than twice the helper's tolerance, so a
+    # fixture shifted by a pixel shows a wrong colour at some mark's edge.
+    rgb = [bytes.fromhex(c) for c in ["ffffff", "000000", *colours]]
+    assert all(max(abs(x - y) for x, y in zip(a, b)) > 2 * owner_round.TOLERANCE
+               for i, a in enumerate(rgb) for b in rgb[i + 1:])
 
 
 def test_the_fixtures_page_is_drawn_afresh_and_must_appear_whole():
@@ -274,8 +279,11 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
         seen = json.loads(out.strip().splitlines()[-1])
         session.observe()
         members = session.record["jobs"]["fixture1"]["members"]
-        assert code == 0 and seen["title"] == owner_round.FIXTURE and seen["rect"] == named["rect"]
-        assert seen["pid"] in {m["pid"] for m in members} and named["rect"][:2] == [40, 40]
+        assert code == 0 and seen["title"] == owner_round.FIXTURE and seen["pid"] in {m["pid"] for m in members}
+        # Its frame is placed at the rect's corner; what it reports is its client area, inside that frame.
+        (fx, fy, fw, fh), (cx, cy, cw, ch) = seen["rect"], named["rect"]
+        assert [fx, fy] == [40, 40] and [cw, ch] == [640, 360]
+        assert fx < cx and fy < cy and cx + cw < fx + fw and cy + ch < fy + fh
 
 
 ASSAULT = r'''
@@ -302,7 +310,10 @@ u.SendMessageW(hwnd, 0x000C, 0, ctypes.c_wchar_p("Notepad"))   # retitled
 u.SetWindowLongW(hwnd, -20, before["ex"] | 0x80000)        # made layered, to be see-through
 u.SendMessageW(hwnd, 0x0112, 0xF060, None)                 # closed by its system menu
 u.SendMessageW(hwnd, 0x0010, 0, None)                      # closed
-import time; time.sleep(0.5)                               # a minimize undone by the fixture itself, at once
+u.SetWindowPos(hwnd, 0, before["rect"][0] + 1, before["rect"][1], 0, 0, 0x415)   # a pixel, past its guard
+u.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x413)                # no longer topmost, past its guard
+u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x497)                 # hidden, past its guard
+import time; time.sleep(0.5)                               # what passed the guard, undone by the fixture at once
 after = state()
 # The marks, where the fixture paints them: read off the window on this desktop, which the test owns.
 box, origin = w.RECT(), w.POINT()
@@ -313,14 +324,18 @@ dc, bits = g.CreateCompatibleDC(screen), g.CreateCompatibleBitmap(screen, box.ri
 g.SelectObject(dc, bits)
 u.PrintWindow(hwnd, dc, 2)
 wrong = []
-for mx, my, mw, mh, color in marks:
-    px, py = origin.x - box.left + int(mx) + int(mw) // 2, origin.y - box.top + int(my) + int(mh) // 2
-    got = g.GetPixel(dc, px, py)
-    seen = (got & 0xFF, got >> 8 & 0xFF, got >> 16 & 0xFF)
+for mx, my, mw, mh, color in marks:   # every pixel of every mark, as the helper reads them
     want = (int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16))
-    if any(abs(a - b) > 8 for a, b in zip(seen, want)):
-        wrong.append([mx, my, color, "%02x%02x%02x" % seen])
-print(json.dumps({"before": before, "after": after, "marks": len(marks), "wrong": wrong}))
+    for px in range(int(mx), int(mx) + int(mw)):
+        for py in range(int(my), int(my) + int(mh)):
+            got = g.GetPixel(dc, origin.x - box.left + px, origin.y - box.top + py)
+            seen = (got & 0xFF, got >> 8 & 0xFF, got >> 16 & 0xFF)
+            if any(abs(a - b) > 8 for a, b in zip(seen, want)):
+                wrong.append([px, py, color, "%02x%02x%02x" % seen])
+client = w.RECT()
+u.GetClientRect(hwnd, ctypes.byref(client))
+print(json.dumps({"before": before, "after": after, "marks": len(marks), "wrong": wrong[:5],
+                  "client": [origin.x, origin.y, client.right, client.bottom]}))
 '''
 
 
@@ -350,6 +365,8 @@ def test_the_fixture_refuses_every_change_paints_its_marks_and_the_helper_reads_
         assert seen["after"] == seen["before"] and seen["before"]["title"] == owner_round.FIXTURE
         assert seen["before"]["ex"] & 0x8 and not seen["after"]["iconic"] and seen["after"]["visible"]
         assert seen["marks"] == len(owner_round.marks(640, 360)) and seen["wrong"] == []
+        # What the round reads is the client area, all of it painted: never the frame's invisible borders.
+        assert named["rect"] == seen["client"] and named["rect"][2:] == [640, 360]
 
         def surface(key: str) -> dict:
             out = session.reserve(key)

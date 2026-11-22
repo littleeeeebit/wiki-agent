@@ -107,8 +107,9 @@ async def lifespan(application: FastAPI):
 def going_down() -> None:
     """`runtime.stopping` set under the oneshot lock, which a round's grant to sample and its
     outcome are decided under (`owner_round._read`, `oneshot_pc.settled`): each happens wholly
-    before the shutdown or as a stop. Every holder of that lock writes state or reads a HEAD,
-    and none waits on the shutdown, so waiting for it is bounded."""
+    before the shutdown or as a stop. The wait has no deadline: it lasts as long as the
+    holder's write or read does, a stalled file operation included. No holder waits on the
+    shutdown."""
 
     with oneshot._lock:
         runtime.stopping.set()
