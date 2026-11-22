@@ -653,6 +653,13 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     git(tree, "commit", "-m", "the other file deleted")
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # in the diff, but not in the commit the review reads
         oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
+    (tree / "test_other.py").unlink()
+    (tree / "test_other.py").mkdir()
+    (tree / "test_other.py" / "test_in.py").write_text("def test_old():\n    pass\n", encoding="utf-8")
+    git(tree, "add", "test_other.py/test_in.py")
+    git(tree, "commit", "-m", "a folder where the file was")
+    with pytest.raises(ValueError, match="HEAD 에 없다"):   # a folder at that path is no test file
+        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
     assert oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
 
 
@@ -676,6 +683,8 @@ def test_a_pin_is_a_case_the_refused_run_did_not_report_in_the_answers_file(revi
     assert "이전 실행에도" in ran([(*old, "passed")], pin, o_, tree)   # an old test is not new
     for spelt in ("./test_pin.py", str(tree / "test_pin.py")):   # another spelling of the same file is the same case
         assert "이전 실행에도" in ran([(old[0], old[1], spelt, "passed")], pin, {"run_cases": [list(old)]}, tree)
+    assert "이전 실행에도" in ran([(old[0], old[1], "", "passed")], pin, {"run_cases": [list(old)]}, tree)   # no file now
+    assert "이전 실행에도" in ran([(*old, "passed")], pin, {"run_cases": [[old[0], old[1], ""]]}, tree)   # none before
     assert o_["run_cases"] == [list(old)] or o_["run_cases"] == [old]   # this run's cases, for the next round
     o_ = {"run_cases": []}
     for case in [("suite.refund.test", "test_new", "test_pin.py"), ("x", "test_new", ""),   # any naming, or no file

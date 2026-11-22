@@ -429,6 +429,10 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     git(tree, "commit", "-m", "pin the refund")
     check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
     assert "test_missing(돌지 않음)" in sent[-1][2]   # its file was committed; the test run has no such case
+    assert o()["attempts"] == 1   # HEAD moved, and the gate still refused it: counted
+    for _ in range(oneshot_build.MAX_ATTEMPTS):   # the HEAD the gate last refused, again without a commit
+        check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
+    assert o()["attempts"] == 1 and not o().get("stopped")
     oneshot_spec.saved("budget", oneshot={"attempts": 0})   # under the attempt cap for the cases below
     write(tree, "ghost.py", "def test_ghost():\n    pass\n")   # a definition the test command never collects
     check(tree, said.replace("test_refund.py::test_a_refund_is_negative", "ghost.py::test_ghost"))()
@@ -607,7 +611,7 @@ def test_a_build_without_its_report_or_with_a_red_gate_is_refused(built_world):
     to_build(tree, sent)
     assert check(tree, "다 했다.")() is None and "완료 보고" in sent[-1][2]
     check(tree, "만들었다.\n" + report())()
-    assert "게이트 실패" in sent[-1][2] and o()["attempts"] == 2
+    assert "게이트 실패" in sent[-1][2] and o()["attempts"] == 1   # the same HEAD, no commit since: not counted
 
 
 # -- Turns, the hand-over and resuming -----------------------------------------------

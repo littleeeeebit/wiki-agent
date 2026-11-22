@@ -84,11 +84,11 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
 
 
 def committed(path: Path, rev: str, file: str) -> str:
-    """`file` as `rev` holds it, or empty when it does not."""
+    """`file` as `rev` holds it, or empty when it does not or holds a folder there."""
 
     from . import specs
 
-    done = specs.sh(["git", "show", f"{rev}:{file}"], path)
+    done = specs.sh(["git", "cat-file", "blob", f"{rev}:{file}"], path)
     return "" if done.returncode else done.stdout
 
 
@@ -136,8 +136,9 @@ def ran(found: list[tuple[str, str, str, str]], answers: list[dict], o: dict, pa
     name is the selector's, its file, where the report names one, is the answer's file (read as the contract gate
     reads it, `oneshot_build.source`, from the runner's root), and the refused build's run did not report it: a
     test that ran before is not new. A class the selector names must be a word of the case's class name. The
-    run's cases go on `o` as `run_cases`, which `passed` saves for the next round. ponytail: a report without
-    files is matched by name and classes, and a run from before `run_cases` was saved has no newness check."""
+    run's cases go on `o` as `run_cases`, which `passed` saves for the next round. Where either run left a
+    case's file out, its class name and name alone say it ran before. ponytail: a report without files is
+    matched by name and classes, and a run from before `run_cases` was saved has no newness check."""
 
     root, before = runner_root(o, path), o.get("run_cases")
 
@@ -145,13 +146,15 @@ def ran(found: list[tuple[str, str, str, str]], answers: list[dict], o: dict, pa
         return oneshot_build.source(path or Path.cwd(), at, root) if at else ""
 
     o["run_cases"] = sorted({tuple(c[:3]) for c in found})   # as reported; both runs are read through `where`
-    old = {(c[0], c[1], where(c[2])) for c in before} if before is not None else set()
+    old = {(c[0], c[1], where(c[2])) for c in before or []}
+    bare = {(c[0], c[1]) for c in before or []}   # a case without a file on either side is old by its names alone
+    unfiled = {(c[0], c[1]) for c in before or [] if not c[2]}
     bad = []
     for a in answers:
         file, _, rest = a["test"].partition("::")
         *classes, name = rest.split("::")
         file = posixpath.normpath(file.replace("\\", "/"))
-        named = [((c[0], c[1], where(c[2])) in old, c[3]) for c in found
+        named = [((c[0], c[1], where(c[2])) in old or (c[0], c[1]) in (unfiled if c[2] else bare), c[3]) for c in found
                  if (c[1] == name or c[1].startswith(name + "[")) and (not c[2] or where(c[2]) == file)
                  and set(classes) <= set(re.split(r"\W+", c[0]))]   # a class it names is a word of the class name
         kinds = [kind for was, kind in named if not was]

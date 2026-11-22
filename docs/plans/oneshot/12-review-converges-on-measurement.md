@@ -65,7 +65,7 @@ and the test that pins the defended behaviour, as `path::name`. The build
 check (`oneshot_answers.answered`) refuses an entry whose area the refusal
 did not name, whose `breaks` are not design items or requirements, or whose
 test (`path::name`, or `path::Class::name` inside a class) lies in a file
-this turn's commits did not change, or one HEAD no longer holds. No source is parsed: whether the test is
+this turn's commits did not change, or one HEAD does not hold as a file. No source is parsed: whether the test is
 new is read from the test runs themselves. After the gate, that test must
 have run and passed in the build's own test run as a new case
 (`oneshot_answers.ran`):
@@ -77,7 +77,8 @@ have run and passed in the build's own test run as a new case
   worktree, or a relative one from the runner's root);
 - the refused build's own run did not report it, so an old test edited is
   not new. Both runs' files are read through the same rule, so `./a.py`,
-  `a.py` and an absolute path are one file.
+  `a.py` and an absolute path are one file. Where either run left the
+  case's file out, its class name and name alone say it ran before.
 
 Each build's run leaves its cases on the spec (`run_cases`) for the next
 round to compare with. The root is saved at the contract commit, or
@@ -102,7 +103,9 @@ is any HEAD a review refused, or whose measurement failed or the owner
 refused, the last one or an earlier one gone back to, the turn is refused
 and sent back to the build agent with that reason (`oneshot_answers.Again`).
 Per the owner decision it never counts against `MAX_ATTEMPTS` and never
-stops the run; only the owner's `[멈춤]` ends such a loop. `[재개]` at the
+stops the run; only the owner's `[멈춤]` ends such a loop. The same holds
+for any turn ending on the HEAD the build check last refused
+(`refused_at`): only a turn that moved HEAD and still failed is counted. `[재개]` at the
 round cap marks the turn as sent back by the refusal (`fix`), so the same
 check holds there.
 
