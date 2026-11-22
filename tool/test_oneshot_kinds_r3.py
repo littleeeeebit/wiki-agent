@@ -40,7 +40,10 @@ def at_r3(kinds):  # noqa: F811 — the imported fixture, requested by name
               for k, found in [("android", []), ("android", [DROID_LEFT]), ("webapp", []), ("webapp", [WEB_LEFT])]]
     oneshot_spec.saved("budget", oneshot={
         "stage": "r3", "working": None, "looks": [look(head, 1, [WEB_HIGH]), look(head, 2, [ON_PHONE])],
-        "critiques": rounds, "phone": PHONE, "r3": critique.opening(o()),
+        # The phone's pass names the HEAD, APKs and accepted build it ran, as the round's own does.
+        "critiques": rounds, "front_build": "b1",
+        "phone": {**PHONE, "head": o().get("front_built_head"), "apks": o().get("apks"), "front_build": "b1"},
+        "r3": critique.opening(o()),
         "profile": {**o()["profile"], "os_now": "windows", "os_later": "none"}})   # S8's README turn reads them
     # The view's R1 sheet and brief read a whole core design, which this fixture leaves out.
     real = brief.shown
@@ -134,3 +137,15 @@ def test_a_run_an_earlier_version_stopped_before_r3_opens_its_sheet(at_r3):
     oneshot_spec.recover()
     assert o()["stage"] == "r3" and not o().get("stopped") and o()["r3"]["round"] == 1
     assert "r3_sheet" in oneshot_spec.view(oneshot_spec.spec_of("budget"))
+
+
+def test_r3s_approval_while_a_device_round_is_due_goes_to_that_round_never_the_pull_request(at_r3):
+    _, sent = at_r3
+    # An earlier version's open sheet: start-up gives its accepted build a generation no phone pass names.
+    oneshot_spec.saved("budget", oneshot={"front_build": None})
+    oneshot_spec.recover()
+    assert o()["stage"] == "r3" and o()["front_build"] and o()["r3"]   # the sheet stays open
+    before = len(sent)
+    critique.decide("budget", on_r3(decisions={"S1": {"approve": True}, "S2": {"approve": True}}))
+    assert o()["stage"] == "phone" and o()["phone"]["status"] == "waiting" and not o().get("working")
+    assert len(sent) == before   # no README turn: the pull request waits for the phone

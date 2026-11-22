@@ -265,7 +265,9 @@ def deferred(f: dict, devices: dict[str, set[str]]) -> bool:
         and d.get("requirement") in devices[d["kind"]] and isinstance(d.get("check"), str) and bool(d["check"].strip()) \
         and (d.get("source") in SOURCES[d["kind"]] if d["kind"] in SOURCES else "source" not in d) \
         and (not oneshot_desktop.postcondition(d.get("expect")) and not oneshot_desktop.action(d.get("act"))
-             if d.get("source") == "look" else not {"expect", "act"} & set(d))
+             and "observe" not in d if d.get("source") == "look" else
+             not oneshot_desktop.action(d.get("act")) and not oneshot_desktop.observed(d.get("observe"))
+             and "expect" not in d if d.get("source") == "owner" else not {"expect", "act", "observe"} & set(d))
 
 
 def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rules: dict | None = None) -> dict:
@@ -289,7 +291,9 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
                          "`look`(UI Automation 상태) 이나 `owner`(주인 화면에서만 보이는 캡처·합성) 를 적고, 둘 다 "
                          "아니면 미루지 못한다. `look` 은 결과를 낼 동작 `act`(action, 컨트롤의 `AutomationId` id, "
                          "set_value 의 value) 와 결과 `expect`(요소의 id 에 name, value, toggle 중 하나 이상) 를 적고, "
-                         "주 창이 가진 창이면 둘에 `in: owned` 를 단다. 안드로이드는 `source` 를 적지 않는다")
+                         "주 창이 가진 창이면 둘에 `in: owned` 를 단다. `owner` 는 캡처를 시작할 동작 `act` 와 볼 것 "
+                         "`observe`(앱이 캡처한 것을 내놓는 `report` 의 요소 id 나 데이터 폴더의 file 과 캡처하는 곳 from, 또는 캡처에 "
+                         "보여야 할 것 `shows` 를 단 `window` 나 `composition`) 를 적는다. 안드로이드는 `source` 를 적지 않는다")
     serious = [f for f in findings if f["severity"] != "P2" and "device" not in f]
     if not all(area_of(f) for f in serious):
         raise ValueError("P0·P1 발견마다 그것이 걸린 동작 방식의 이름 `area` 를 적는다")
@@ -303,7 +307,7 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
                           **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
                           **({k: f[k] for k in ("breaks", "repro") if f.get(k)}),
-                          **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source", "act", "expect")
+                          **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source", "act", "expect", "observe")
                                          if k in f["device"]}}
                              if "device" in f else {})} for f in findings]}
 

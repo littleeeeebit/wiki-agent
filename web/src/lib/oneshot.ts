@@ -71,6 +71,14 @@ export type PhoneRound = {
   timing?: { frames: number | null; janky_percent: number | null; p50_ms: number | null; p90_ms: number | null }
   memory_kb?: number | null
 }
+/** What the owner approves for the owner's desktop round (`oneshot_pc.plan`), and the approval it records. */
+export type PcPlan = {
+  attempt: string; head: string; build: string; freeze: string; checks: string[]; starts: string[]
+  captures: { check: string; by: 'round' | 'app'; kind: 'window' | 'surface'; reads: string }[]
+}
+export type PcApproval = PcPlan & { surface: boolean; ts: number }
+/** The owner's desktop round before R3 (`oneshot_pc`): `waiting` for the owner's approval, then `approved`. */
+export type PcRound = { status: string; detail?: string; approval?: PcApproval }
 /** The turn running now (`oneshot.turned`, `oneshot_build.send`): a work turn carries `turn`. */
 export type Inflight = { role: string; codex: boolean; sent: number; seen?: number; turn?: string }
 export type SpecView = SpecSummary & {
@@ -88,7 +96,8 @@ export type SpecView = SpecSummary & {
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
     spend?: { usd?: number; seconds?: number; calls?: number }
     stack?: { part: string; choice: string; why: string; status: string; tools?: Tool[] }[]
-    r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }; phone?: PhoneRound
+    r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }; phone?: PhoneRound; pc?: PcRound
+    owed?: { id: string; kind: string; source?: string; requirement: string; check: string }[]
     reading?: Record<string, { round: number; seconds: number | null; opened: string[]; edited: string[] }[]>
   }
   requirements?: { id: string; text: string; status: string; kinds?: string[] }[]
@@ -103,6 +112,8 @@ export type SpecView = SpecSummary & {
   summary?: RunSummary
   /** A phone round's cleanup that has not finished: shown until that phone is listed again. */
   phone_owned?: Owned[]
+  /** At `pc`: what the owner approves, the approval while it stands, and the checks that stay pending. */
+  pc_plan?: PcPlan; pc_approved?: PcApproval | null; pc_unrun?: string[]
 }
 
 export const base = (repo: string) => `/api/oneshot/spec/${repo}`
@@ -128,6 +139,9 @@ export const api = {
     .then((r) => json<{ devices: Handset[]; owned: Owned[] }>(r, '연결된 휴대폰')),
   phone: (repo: string, serial: string, keep: boolean) => post(`${base(repo)}/phone`, { serial, keep }).then(answer),
   stopPhone: (repo: string) => post(`${base(repo)}/phone/stop`, {}).then(answer),
+  // The owner's one-time approval of the round exactly as `plan` showed it, whole (`oneshot_pc.approve`).
+  approvePc: (repo: string, plan: PcPlan, surface: boolean) =>
+    post(`${base(repo)}/pc/approve`, { plan, surface }).then(answer),
 }
 
 // The stages in order. `talk` and `gate` wait for the owner; the rest run on their own.
@@ -139,7 +153,10 @@ export const STAGES: { id: string; label: string; kind: 'talk' | 'gate' | 'auto'
   { id: 'frontend', label: '화면 설계', kind: 'auto' }, { id: 'r2', label: 'R2 화면 설계', kind: 'gate' },
   { id: 'build-front', label: '프런트엔드 빌드', kind: 'auto' }, { id: 'critique', label: '화면 비평', kind: 'auto' },
   // An Android app's only (`stagesOf`): one round on the owner's phone before R3.
-  { id: 'phone', label: '휴대폰 회차', kind: 'gate' }, { id: 'r3', label: 'R3 완성 화면', kind: 'gate' }, { id: 'pr', label: '풀 리퀘스트', kind: 'auto' },
+  { id: 'phone', label: '휴대폰 회차', kind: 'gate' },
+  // A PC app's only: its `owner` checks on the owner's own desktop before R3.
+  { id: 'pc', label: '주인 화면 회차', kind: 'gate' },
+  { id: 'r3', label: 'R3 완성 화면', kind: 'gate' }, { id: 'pr', label: '풀 리퀘스트', kind: 'auto' },
   { id: 'done', label: '끝', kind: 'auto' },
 ]
 // The stages a core runs through, as its sheet names it (`oneshot_sheet.core_sheet`): a web app alone has a backend.
@@ -148,9 +165,10 @@ const cored = (kinds: readonly string[]) => kinds.length > 0 && !(kinds.length =
 export const stageLabel = (id: string, kinds: readonly string[] = []) =>
   (cored(kinds) && CORE_LABELS[id]) || (STAGES.find((s) => s.id === id)?.label ?? id)
 /** The stages a run of these kinds passes through, each under its name for them: the phone round is a run's with
- *  an Android app among them, and a core's stages are named for the core. */
+ *  an Android app among them, the owner's desktop round one's with a PC app, and a core's stages are named for
+ *  the core. */
 export const stagesOf = <T extends { id: string; label: string }>(stages: readonly T[], kinds: readonly string[] = []) =>
-  stages.filter((s) => s.id !== 'phone' || kinds.includes('android'))
+  stages.filter((s) => (s.id !== 'phone' || kinds.includes('android')) && (s.id !== 'pc' || kinds.includes('desktop')))
     .map((s) => ({ ...s, label: (cored(kinds) && CORE_LABELS[s.id]) || s.label }))
 export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',

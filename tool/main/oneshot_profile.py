@@ -24,12 +24,12 @@ HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2), and
 # several kinds without `desktop` since 9c4b. `desktop`, alone or among other kinds, runs its core path, S6, R2
 # and the frontend build with every kind's look, its PC app's included (9e4a), and the critique with its `look`
-# owed checks and the phone round of an Android app among them (9e4b); it waits before R3 until the owner's
-# desktop round (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
-KIND_STOPS: dict[str, str] = {"desktop": "r3"}
+# owed checks and the phone round of an Android app among them (9e4b), and the owner's approval of the owner's
+# desktop round; it waits there until the round lands (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
+KIND_STOPS: dict[str, str] = {"desktop": "pc"}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
 STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "review", "split", "board", "frontend", "r2", "build-front",
-               "critique", "phone", "r3", "pr", "done")
+               "critique", "phone", "pc", "r3", "pr", "done")
 # The sizes S7 sets a PC app's main window to: its frame in physical pixels, as the driver reads it back.
 WINDOWS = ("1280x800", "1024x768", "1440x900", "1920x1080")
 # The reference phone S7 shoots (`device` replaces `responsive` for `android`): emulator hardware profiles.

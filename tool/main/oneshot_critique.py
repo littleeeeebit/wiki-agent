@@ -198,11 +198,8 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
         return lambda: oneshot_spec.handoff(repo, "critique") or True
     if done:   # no critique reads these shots again: their secrets leave memory (a later critique shoots anew)
         front_build.MASKS.pop(repo, None)
-    if done and "android" in kinds_of(o):
-        from . import oneshot_phone   # it imports this module
-        return oneshot_phone.waits(repo, rounds)   # the owner's phone comes before R3
-    if done:
-        return oneshot_spec.briefing(repo, "r3", {"critiques": rounds, "stage": "r3", "r3": opening(o)})
+        from . import oneshot_pc   # it imports this module
+        return oneshot_pc.onward(repo, {"critiques": rounds})   # the device rounds come before R3
     # A clean round at the cap earns the one confirming it (a new freeze may have cleared the earlier ones).
     if len(mine) >= MAX_ROUNDS and not (rounds[-1]["clean"] and len(mine) == MAX_ROUNDS):
         high = [f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high"]
@@ -416,8 +413,12 @@ def decide(repo: str, body: Decisions) -> dict:
         decisions, comments = oneshot_spec.decided(items, o["r3"]["decisions"], given)
         reading = oneshot_spec.read(o, "r3", body.reading, comments, briefed)
         if not comments:
+            from . import oneshot_pc   # it imports this module
             oneshot_spec.saved(repo, oneshot={"r3": {**o["r3"], "decisions": decisions}, "reading": reading})
-            approved(repo)
+            if oneshot_pc.due(o):   # a device pass cleared since the sheet opened (a new build's generation)
+                oneshot_pc.onward(repo, {})
+            else:
+                approved(repo)
         else:
             # `working` and `fix` are saved with the decisions: a server that dies before the turn is sent, or a
             # session that cannot open, leaves a `[재개]` that sends the owner's edits again.

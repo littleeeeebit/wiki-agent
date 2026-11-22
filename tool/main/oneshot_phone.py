@@ -295,7 +295,7 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
         passed = not any(f["severity"] == "high" for f in findings)
         return {"status": "passed" if passed else "failed", "round": n, "model": picked["model"], "size": size,
                 "findings": findings, "timing": frames, "memory_kb": used, "head": o["front_built_head"],
-                "apks": o["apks"], "detail": ""}
+                "apks": o["apks"], "front_build": o.get("front_build"), "detail": ""}
     finally:
         try:
             call(home, "shell", "rm", "-f", device.DUMP)
@@ -355,15 +355,15 @@ def phone_round(repo: str) -> None:
 
 
 def settled(repo: str, outcome: dict):
-    """The outcome applied: R3's sheet on a pass (its brief written once the tree is let go), the build with
-    the phone's findings on a fail, else the prompt."""
+    """The outcome applied: on a pass, the next device round or R3's sheet (its brief written once the tree is let
+    go), the build with the phone's findings on a fail, else the prompt."""
 
-    from . import oneshot_critique   # it imports this module
+    from . import oneshot_critique, oneshot_pc   # they import this module
     with oneshot._lock:
         o = oneshot_spec.spec_of(repo)["oneshot"]
         result = {**(o.get("phone") or {}), **outcome}
         if outcome["status"] == "passed":
-            return oneshot_spec.briefing(repo, "r3", {"phone": result, "stage": "r3", "r3": oneshot_critique.opening(o)})
+            return oneshot_pc.onward(repo, {"phone": result})
         if outcome["status"] != "failed":
             oneshot_spec.saved(repo, oneshot={"phone": {**result, "status": "waiting"}, "working": None})
             return None
@@ -378,23 +378,25 @@ def settled(repo: str, outcome: dict):
     return lambda: oneshot_build.send(repo, front_build.STAGE, oneshot_critique.front_turn(spec))
 
 
-def waits(repo: str, rounds: list[dict]) -> dict:
-    """The emulator loop's two clean critiques: the prompt to connect the phone, the round counted on."""
+def waits(repo: str, fields: dict) -> dict:
+    """The prompt to connect the phone, with `fields` saved: the critiques the round counted on."""
 
     o = oneshot_spec.spec_of(repo)["oneshot"]
     phone = {**(o.get("phone") or {}), "status": "waiting", "detail": ""}
-    return oneshot_spec.saved(repo, oneshot={"critiques": rounds, "stage": STAGE, "working": None, "phone": phone})
+    return oneshot_spec.saved(repo, oneshot={**fields, "stage": STAGE, "working": None, "phone": phone})
 
 
 def earlier(repo: str, o: dict) -> None:
-    """A run an earlier version stopped before R3 for its kind: with no phone round passed, this version waits
-    for the phone; with one passed, it opens R3's sheet."""
+    """A run an earlier version stopped before R3 for its kind: with no phone round passed on its current HEAD, APKs
+    and build, this version waits for the phone; with one, it opens R3's sheet."""
 
-    from . import oneshot_critique   # it imports this module
+    from . import oneshot_critique, oneshot_pc   # they import this module
     stop = o.get("stopped") or {}
     if "android" not in kinds_of(o) or o.get("stage") != "r3" or stop.get("reason") != "kind" or oneshot_spec.held(o):
         return   # a run this version still holds before R3 (with `desktop`) stays as it is
-    if (o.get("phone") or {}).get("status") == "passed":
+    # The guard's own test, on the worktree as it is: a pass of another HEAD, APKs or build, or a worktree moved off
+    # its HEAD, waits for the phone, whose round sends a moved tree back to the build.
+    if oneshot_pc.phoned(o) and oneshot_pc.at_head(repo, o.get("front_built_head")):
         oneshot_spec.saved(repo, oneshot={"stopped": None, "working": None, "r3": oneshot_critique.opening(o)})
     else:
         oneshot_spec.saved(repo, oneshot={"stage": STAGE, "stopped": None, "working": None,

@@ -76,9 +76,43 @@ send executable HTML. Do not invent alternatives merely to meet a count.
   "grounds": {"pages": ["craft/some-page"], "files": ["path/in/repo.py:12"], "rules": ["rules that apply"]},
   "decisions": [{"what": "the approach taken", "why": "why", "rejected": "the alternative dropped"}],
   "plan": {"path": "docs/plans/loop/3-spec.md", "row": "2"},
-  "review_profile": "code"
+  "review_profile": "code",
+  "task": {"kind": "fix", "what": "one sentence: the single job this session does"},
+  "precedence": [
+    {"ref": ".wiki/project.md", "role": "current", "why": "the in-app reader the app runs today"},
+    {"ref": "docs/design/backend.md:180-329", "role": "current", "why": "in-app reader section"},
+    {"ref": "docs/design/backend.md:1-128", "role": "legacy", "why": "screen-capture pipeline the app no longer starts"},
+    {"ref": "docs/research/", "role": "reference"}
+  ],
+  "escalate": ["a stop condition particular to this task"]
 }
 ```
+
+The implementer is often a lighter model that reads its prompt top to bottom
+and trusts whatever looks strongest. `task`, `precedence` and `escalate` are
+put above everything else it reads, so write them for that reader:
+
+- `task`: required. `kind` is one of `fix`, `change`, `feature`, `refactor`,
+  `docs`; `what` is the one job, so a fix never turns into a restructure.
+- `precedence`: required. The documents this task follows, in order; the
+  earlier one wins where two disagree. Before writing it, check the
+  repository for documents from different stages of its design (a design
+  file the code has since moved away from, research notes, an older plan) and
+  rank them: `current` is the contract, `legacy` describes code the task must
+  not reshape, `reference` is background, never a contract. A document whose
+  parts belong to different stages gets one entry per part, with line ranges
+  (`path:first-last`), and every range must exist in the file. The server
+  shows the implementer each file's length, so a partly loaded document
+  cannot pass for a read one.
+- `escalate`: optional. The server always adds the standing stop conditions
+  (the code contradicts the spec, an architecture change the spec does not
+  describe, changing code only a `legacy` document describes, a done item
+  that cannot be met). List only what is particular to this task, such as
+  "the queue cannot sit inside the existing transaction boundary". Meeting
+  one, the implementer stops and hands the conflict back to you, the model
+  that wrote the spec, instead of reinterpreting it. Decide the architecture
+  here (placement, data model, retries, idempotency, failure handling,
+  verification) so the implementer only implements.
 
 - `slug`: lowercase ASCII letters, digits and `-`, at most 64 characters. It
   names the task and the branch.

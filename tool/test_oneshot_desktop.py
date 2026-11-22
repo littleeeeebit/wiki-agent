@@ -183,7 +183,9 @@ LOOK = {"location": "core/src/capture.rs:18", "severity": "P1", "reason": "번�
                                      "source": "look", "act": {"action": "toggle", "id": "translate"},
                                      "expect": {"id": "translate", "toggle": "On"}}}
 OWNER = {**LOOK, "device": {**{k: v for k, v in LOOK["device"].items() if k not in ("act", "expect")},
-                            "check": "고정 창을 캡처한 결과가 `{data}/seen.txt` 에 그 글을 담는다", "source": "owner"}}
+                            "check": "고정 창을 캡처한 결과가 `{data}/seen.txt` 에 그 글을 담는다", "source": "owner",
+                            "act": {"action": "invoke", "id": "capture"},
+                            "observe": {"report": {"file": "seen.txt", "from": "fixture"}}}}
 
 
 def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
@@ -201,9 +203,23 @@ def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
                 {"act": {"action": "click", "id": "translate"}}, {"act": {"action": "set_value", "id": "translate"}}):
         with pytest.raises(ValueError, match="`expect`"):   # a `look` check names its step and what it brings about
             oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], **bad}}), "h", devices)
-    for extra in ({"expect": LOOK["device"]["expect"]}, {"act": LOOK["device"]["act"]}):   # an owner's names neither
-        with pytest.raises(ValueError, match="`expect`"):
-            oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], **extra}}), "h", devices)
+    for bad in ({"expect": LOOK["device"]["expect"]}, {"act": None}, {"observe": None}, {"observe": {}},
+                {"observe": {"report": {"file": "../seen.txt", "from": "fixture"}}},
+                {"observe": {"report": {"file": "seen.txt"}}}, {"observe": {"report": {"file": "seen.txt", "from": "monitor"}}},
+                {"observe": {"report": {"id": "seen", "in": "other", "from": "screen"}}},
+                {"observe": {"window": {"shows": " ", "from": "fixture"}}},
+                {"observe": {"composition": {"shows": "글", "in": "owned", "from": "fixture"}}},
+                {"observe": {"window": {"shows": "글"}}},   # the app's own capture unnamed
+                {"observe": {"report": {"id": "seen", "from": "screen"}, "window": {"shows": "글"}}}):
+        with pytest.raises(ValueError, match="`observe`"):   # an owner's names its step and what it observes
+            oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], **bad}}), "h", devices)
+    with pytest.raises(ValueError, match="`source`"):   # a `look` one observes nothing
+        oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], "observe": OWNER["device"]["observe"]}}),
+                                  "h", devices)
+    for fine in ({"report": {"id": "seen", "in": "owned", "from": "screen"}}, {"window": {"shows": "고정 창의 글을 번역한 문장", "from": "screen"}},
+                 {"composition": {"shows": "고정 창 위에 번역문이 겹쳐 보인다", "from": "fixture"}}):
+        assert oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], "observe": fine}}), "h", devices)
+    assert oneshot_review.owing(found)[1]["observe"] == {"report": {"file": "seen.txt", "from": "fixture"}}
     assert oneshot_review.owing(found)[0]["act"] == {"action": "toggle", "id": "translate"}
     gone = {**LOOK, "device": {k: v for k, v in LOOK["device"].items() if k not in ("source", "act", "expect")}}
     with pytest.raises(ValueError, match="`source`"):
@@ -567,14 +583,16 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    # A PC app runs through its critique, alone or among other kinds (9e4b), and is held before R3.
-    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held({**o(), "stage": "critique"})
+    # A PC app runs through its critique and the phone round, alone or among other kinds (9e4b), and is held at the
+    # owner's desktop round (9e5a).
+    assert oneshot_profile.waits_at(o()) == "pc" and not oneshot_profile.held({**o(), "stage": "phone"})
     oneshot_spec.saved("budget", oneshot={"stage": "critique",
                                           "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
-    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held(o())
-    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
-            pytest.raises(HTTPException, match="다음 버전"):
-        START("budget", "design", stage="r3")
+    assert oneshot_profile.waits_at(o()) == "pc" and not oneshot_profile.held(o())
+    for stage in ("pc", "r3"):
+        with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
+                pytest.raises(HTTPException, match="다음 버전"):
+            START("budget", "design", stage=stage)
     assert o()["stage"] == "critique"
 
 
@@ -594,8 +612,9 @@ def frozen_in(tree, tmp_path) -> dict:
 
 
 def test_a_resume_or_a_shutdown_after_two_clean_rounds_never_opens_r3(desktop, tmp_path):
-    # Two clean critiques passed on the frozen build, then the stop was lost (a restart that replaced it): the run
-    # is held before R3 with its build, never resumable into it, and its stop names the owner's pending checks.
+    # An earlier version held the run before R3 with an owner check pending, then the stop was lost (a restart that
+    # replaced it): the run is held, never resumable into R3, and recovery moves it to the owner's desktop round,
+    # held there with its build, its stop naming the pending check.
     frozen = frozen_in(desktop, tmp_path)
     owner = {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처에 글이 있다"}
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "features": [], "owed": [owner],
@@ -605,18 +624,23 @@ def test_a_resume_or_a_shutdown_after_two_clean_rounds_never_opens_r3(desktop, t
     with patch.object(oneshot_spec, "start", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             pytest.raises(HTTPException, match="다음 버전"):
         oneshot_spec.resume("budget")
-    assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"]
+    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "r3"
     oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "r3", "detail": "x"}})
     oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "r3" and o()["desktop_build"] == frozen
+    assert o()["stage"] == "pc" and o()["pc"]["status"] == "waiting" and o()["desktop_build"] == frozen
+    assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"] and not o().get("r3")
+    oneshot_spec.recover()   # held at the round: a second restart leaves it there
+    assert o()["stage"] == "pc" and o()["stopped"]["reason"] == "kind"
 
 
 def test_a_mixed_run_whose_phone_round_passed_waits_before_r3_instead_of_opening_it(desktop):
     from main import oneshot_phone
 
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
-                                          "stage": "phone", "working": "phone", "phone": {"status": "running"}})
-    assert oneshot_phone.settled("budget", {"status": "passed", "detail": ""}) is None   # no brief is written
+                                          "stage": "phone", "working": "phone", "phone": {"status": "running"},
+                                          "front_build": "b1"})
+    assert oneshot_phone.settled("budget", {"status": "passed", "detail": "", "head": o().get("front_built_head"),
+                                            "apks": o().get("apks"), "front_build": "b1"}) is None   # no brief
     assert o()["stage"] == "r3" and o()["phone"]["status"] == "passed" and o()["stopped"]["reason"] == "kind"
     assert not o().get("working") and "R3 는 다음 버전에서" in o()["stopped"]["detail"]
     held = {k: v for k, v in o().items() if k != "ts"}
@@ -629,7 +653,7 @@ def test_several_kinds_an_earlier_versions_run_held_at_the_critique_is_resumable
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "critique", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "critique"}})
-    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "pc" and not oneshot_profile.held(o())
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "restart" and o()["stage"] == "critique"   # `[재개]` starts the critique
 
@@ -681,7 +705,8 @@ def test_a_pc_app_has_its_own_prompts_through_s4_and_no_web_fallback_for_later_s
     assert "Windows program" in review and "`source`" in review and "`look`" in review and "`owner`" in review
     assert "Windows program" in split and "oneshot-features" in split and "Android" not in review + split
     mixed = " ".join(oneshot.prompt("review", "kinds").split())
-    for said in ("`source`", "where the program reports what it captured", "reads the fixture's region of the screen"):
+    for said in ("`source`", "where the program reports what it captured", "`{\"composition\": {\"shows\": \"…\", \"from\": \"…\"}}`",
+                 "drawn at random for the round"):
         assert said in mixed and said in " ".join(review.split())   # a mixed run's `owner` check is as runnable
     screens = oneshot.prompt("frontend", "desktop")
     assert "Windows program" in screens and "`window`" in screens and "AutomationId" in screens

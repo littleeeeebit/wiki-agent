@@ -93,6 +93,7 @@ type Props = {
   selectedSpec: Spec | null
   onSpecs: () => void
   onStart: BlockProps['onStart']
+  startChoice?: BlockProps['startChoice']
   /** A plan the Plan action started: select its worktree. */
   onPlanned: (spec: Spec) => void
   /** Show a finished run's graph paths on the map. */
@@ -130,7 +131,7 @@ const SCOPES = [
 
 /** The middle pane's conversation: ask the wiki under one focus, read the
  *  grounds, and settle the next task into a spec. */
-export function Query({ channels, options, on, seed, onChannels, onBusy, specs, selectedSpec, onSpecs, onStart, onPlanned,
+export function Query({ channels, options, on, seed, onChannels, onBusy, specs, selectedSpec, onSpecs, onStart, startChoice, onPlanned,
   onMapRun }: Props) {
   const [active, setActive] = useState('wiki')
   const [planning, setPlanning] = useState(false)
@@ -308,19 +309,19 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   const start = onStart
 
   const apply = useCallback(
-    async (cfg: { model: string; effort: string; refactor_mode?: RefactorMode }) => {
+    async (cfg: { model?: string; effort?: string; refactor_mode?: RefactorMode }) => {
       if (!here) return
       setFault('')
       setConfiguring(true)
       try {
-        const { kept } = await api.setConfig(active, { repo: here.repo,
-          ...(here.refactor_mode ? { refactor_mode: here.refactor_mode } : {}), ...cfg })
+        // Only the mode picker sends a mode: a model change from a window that has not seen another window's
+        // new mode and survey would otherwise put the old mode back and release that survey's pin.
+        const { kept } = await api.setConfig(active, { repo: here.repo, ...cfg })
         onChannels(await api.getChannels())
         if (!kept) {
           setMessages([])
           setNote('Claude/Codex 를 바꿔 새 대화를 시작했다. 지난 기록은 그대로 남아 있다.')
         } else {
-          // The toolbar sends the current mode along with a model change.
           setNote(cfg.refactor_mode && cfg.refactor_mode !== here.refactor_mode ? '모드를 바꿨다. 대화는 이어지고, 이전 모드의 시작 전 명세는 이 모드로 다시 조사해야 시작할 수 있다.'
             : '다음 질문부터 적용된다. 지금까지 한 대화는 이어진다.')
         }
@@ -452,7 +453,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
               mode={here.refactor_mode ?? 'preserve'} generation={here.refactor_generation ?? 0}
               options={options} korean={on} busy={busy} onSpecs={onSpecs}
               onPinned={() => void api.getChannels().then(onChannels).catch(() => {})}
-              onMode={(mode: RefactorMode) => void apply({ model: here.model, effort: here.effort, refactor_mode: mode })} />}
+              onMode={(mode: RefactorMode) => void apply({ refactor_mode: mode })} />}
             after={active === 'refactor' && here && <div aria-label="리팩터링 명세" className="space-y-3">
               {specs.filter((s) => s.repo === here.repo && s.refactor?.survey && s.refactor.mode === (here.refactor_mode ?? 'preserve')
                 && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === s.id)))
@@ -476,7 +477,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
                 || !('id' in b) || latestSpec.get(b.id) === m)} specs={specs} korean={on} busy={busy}
                 refactorMode={active === 'refactor' ? here?.refactor_mode ?? 'preserve' : undefined}
                 refactorGeneration={here?.refactor_generation} options={options}
-                onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />
+                onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} startChoice={startChoice} />
             ) : undefined}
             empty={active === 'next' ? propose : active === 'refactor' ? <span /> : undefined}
           />

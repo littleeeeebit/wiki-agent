@@ -106,7 +106,11 @@ def build_front_text(spec: dict) -> str:
     # The review's checks go in last, as written: no later substitution may rewrite what the builder copies.
     pc_owed = "\n".join(f"- `{x['id']}` ({x['requirement']}, `{x['location']}`): {x['check']} — {x['reason']} · act "
                         f"`{json.dumps(x['act'], ensure_ascii=False)}` · expect `{json.dumps(x['expect'], ensure_ascii=False)}`"
-                        for x in oneshot_desktop.looked_for(o)) or "- (none)"
+                        for x in oneshot_desktop.looked_for(o))
+    pc_owed = "\n".join(filter(None, [pc_owed, *(
+        f"- `{x['id']}` ({x['requirement']}, `{x['location']}`, the owner's desktop round): {x['check']} — {x['reason']}"
+        f" · act `{json.dumps(x['act'], ensure_ascii=False)}` · observe `{json.dumps(x['observe'], ensure_ascii=False)}`"
+        for x in oneshot_desktop.owner_scripted(o))])) or "- (none)"
     if "android" not in kinds_of(o):
         return text.replace("{desktop_owed}", pc_owed)
     if shape(o) == "kinds":   # the Android parts read only what applies to the Android app
@@ -224,8 +228,10 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     # `working` names the critique before its worker starts: a server that dies in between leaves it for `recover`.
     # The fixes this turn was sent with are built now: a resumed build no longer carries them. A run this version
     # holds at the critique is saved stopped in the same write, so no poll sees it resumable.
-    passed = {"stage": "critique", "front_built_head": verdict["head"], "looks": looks, "attempts": 0,
-              "working": "critique", "fix": None, **({"device": device, "apks": apks} if android else {})}
+    # `front_build` names this accepted build: a device round's pass counts only for the build it ran, so a rebuild
+    # clears every earlier one, even of the same HEAD and the same APK digests.
+    passed = {"stage": "critique", "front_built_head": verdict["head"], "front_build": uuid.uuid4().hex, "looks": looks,
+              "attempts": 0, "working": "critique", "fix": None, **({"device": device, "apks": apks} if android else {})}
     if oneshot_spec.held({**o, "stage": "critique"}):
         passed.update(working=None, stopped=oneshot_spec.kind_stop("critique"))
     oneshot_spec.saved(spec["repo"], oneshot=passed)
@@ -293,3 +299,15 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
 oneshot_build.STAGES[STAGE] = (built_front, "gate", build_front_text, lambda repo: None)   # the critic follows (4c)
 oneshot_build.GRANTS[STAGE] = lambda spec: True
 oneshot_spec.TURNS.add(STAGE)
+
+
+def generation(repo: str, o: dict) -> None:
+    """A build an earlier version accepted, saved without a `front_build`, gets one at start-up, before the device
+    rounds' own repairs read it: no earlier pass names it, so each due device round runs again, and its pass names
+    this build."""
+
+    if o.get("front_built_head") and not o.get("front_build"):
+        oneshot_spec.saved(repo, oneshot={"front_build": uuid.uuid4().hex})
+
+
+oneshot_spec.RECOVERS.insert(0, generation)   # first, whichever device module loaded before this one
