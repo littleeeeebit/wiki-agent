@@ -202,6 +202,11 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
     measure.measure("budget")
+    assert o()["measures"][-1]["status"] == "owner"
+    oneshot_needs.forget("budget", ENV)   # the general route that removes a secret at any stage
+    assert o()["measures"][-1]["status"] == "stale"
+    given()
+    measure.measure("budget")
     run = o()["measures"][-1]
     write(tree, "stray.txt", "x")   # the tree moved since it was measured
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):

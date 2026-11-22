@@ -525,6 +525,27 @@ def test_no_review_runs_without_the_owner_approving_this_heads_measurement(revie
     assert "원샷" in loop.oneshot_profile.in_run(s)   # nor through Review Loop, which would read PR #1 unmeasured
 
 
+def test_the_reviewer_reads_only_the_approved_head_never_a_commit_made_since(reviewed):
+    tree, head, _ = reviewed
+    (tree / "later.py").write_text("x = 1\n", encoding="utf-8")
+    git(tree, "add", "later.py")
+    git(tree, "commit", "-m", "after the approval")
+    heard, asking = answers(verdict(head, "approve"))
+    with asking:   # past the hold's first look, as if the commit landed in between
+        with patch.object(oneshot_review, "moved", side_effect=["", oneshot_review.moved(
+                specs.load("budget", oneshot.BRANCH), tree)]):
+            oneshot_review.review("budget")
+    assert not heard and o()["stage"] == "build" and o()["stopped"]["reason"] == "gate"
+
+
+def test_a_finding_handed_to_a_later_build_names_its_area_so_a_ruling_matches_it(reviewed):
+    _, head, _ = reviewed
+    nameless = {k: v for k, v in P1.items() if k != "area"} | {"later": {"kind": "webapp", "what": "x"}}
+    with pytest.raises(ValueError, match="area"):
+        oneshot_review.verdict_of({"verdict": "approve", "head": head, "findings": [nameless]}, head,
+                                  rules={"ruled": {"amount validation"}, "kinds": {"webapp"}})
+
+
 def test_review_loops_own_paths_leave_an_unfinished_oneshot_alone(reviewed):
     oneshot_spec.saved("budget", pr={"number": 1, "url": "u"}, state="PR #1", oneshot={"stage": "pr", "measures": []})
     s = specs.load("budget", oneshot.BRANCH)

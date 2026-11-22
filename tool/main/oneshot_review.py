@@ -72,12 +72,19 @@ def begin(repo: str) -> None:
         oneshot_spec.store(repo).stop("restart", "서버가 꺼지는 중이라 백엔드 리뷰를 시작하지 못했다")
 
 
+class MovedError(ValueError):
+    """The worktree is no longer the HEAD the build passed."""
+
+
 def frozen(spec: dict) -> tuple[str, str, int | None]:
     """`(head, how to read the diff, lines it adds)`, the diff from the base commit written for `pr_diff` and kept
-    as the record."""
+    as the record. The head is the one the build passed and the owner's measurement approved, never whatever
+    the tree holds: a tree that moved is `ValueError`, before anything reaches the reviewer."""
 
     tree, store = Path(spec["worktree"]), oneshot_spec.store(spec["repo"])
-    head = specs.sh(["git", "rev-parse", "HEAD"], tree).stdout.strip()
+    head = spec["oneshot"]["built_head"]
+    if why := moved(spec, tree):
+        raise MovedError(why)
     done = specs.sh(["git", "diff", "--no-color", spec["start_head"], head], tree, 120)
     if done.returncode:
         raise ValueError(f"리뷰할 diff 를 읽지 못했다 — {(done.stderr or '').strip()[-300:]}")
@@ -355,9 +362,10 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
                          "`observe`(앱이 캡처한 것을 내놓는 `report` 의 요소 id 나 데이터 폴더의 file 과 캡처하는 곳 from, 또는 캡처에 "
                          "보여야 할 것 `shows` 를 단 `window` 나 `composition`) 를 적는다. 안드로이드는 `source` 를 적지 않는다")
     serious = [f for f in findings if f["severity"] != "P2" and not waits(f)]
-    if not all(area_of(f) for f in serious):
+    blocking_all = [f for f in findings if f["severity"] != "P2"]   # one handed to a later build or a device too:
+    if not all(area_of(f) for f in blocking_all):                   # the owner's rulings match it by its area
         raise ValueError("P0·P1 발견마다 그것이 걸린 동작 방식의 이름 `area` 를 적는다")
-    for f in [f for f in findings if f["severity"] != "P2"] if rules else ():   # one handed to a later build too
+    for f in blocking_all if rules else ():
         held(f, rules)
     if value["verdict"] == "approve" and serious:
         raise ValueError("P0·P1 발견이 있는데 승인했다")
@@ -623,6 +631,9 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
     try:
         head, how, added = frozen(spec)
         rules = ruled(spec, tree, head)
+    except MovedError as exc:   # the approved HEAD is no longer the tree: the build checks it again
+        rebuild(spec["repo"], store, f"리뷰 직전에 작업트리가 바뀌었다 — {exc}")
+        return None
     except (ValueError, OSError, RuntimeError) as exc:
         store.stop("review", str(exc))
         return None

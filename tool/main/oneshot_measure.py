@@ -746,5 +746,7 @@ def shown(spec: dict) -> dict:
 
 
 oneshot_spec.VIEWS.append(shown)
+# A secret changed by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran with it.
+oneshot_needs.CHANGED.append(lambda repo, env: retire(oneshot_spec.spec_of(repo), "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다"))
 oneshot_spec.SHEETS.add("measure")
 oneshot_spec.WAITS.add("measure")

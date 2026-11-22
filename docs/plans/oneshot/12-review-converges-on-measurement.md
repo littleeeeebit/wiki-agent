@@ -169,7 +169,10 @@ run as `comment_error` and told to the owner. The review reads the approved meas
 HEAD (`measured_text`). A finding the measurement contradicts is P2.
 
 No review runs without that approval. A run that reaches the review another
-way goes back to `measure`. Review Loop neither lists, takes, asks again for
+way goes back to `measure`. The reviewer is given `built_head` itself, and a
+tree that moved off it goes back through the build check first. Any route
+that changes a stored value (`oneshot_needs.stored`) also sets a waiting
+result aside. Review Loop neither lists, takes, asks again for
 nor dispatches (`kick`, `rereview`) the pull request of a oneshot run that has
 not finished (`oneshot_profile.in_run`). The ownership check needs `psutil`,
 declared in `requirements-chat.txt`.
