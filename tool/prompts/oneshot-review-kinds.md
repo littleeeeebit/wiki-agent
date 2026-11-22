@@ -74,16 +74,18 @@ main window owns. The build may add steps that lead to yours; the look ends
 on your `act` and passes only when your `expect` did not hold before it and
 holds after it.
 An `owner` check gives the step that sets the capture going in `act`, as a
-`look` one does, and what it observes in `observe`, exactly one of:
+`look` one does, and what it observes in `observe`, exactly one of the three
+below, each also naming `from`, what the program itself captures however the
+round observes it: `fixture`, the fixture's window, or `screen`, the region of
+the screen the fixture covers, which runs only when the owner allows that
+region to be read.
 `{"report": {"id": "…", "from": "…"}}` or
 `{"report": {"file": "…", "from": "…"}}`, where the program reports what it
 captured, an element's value or a UTF-8 file relative to its data folder,
-which must contain the fixture's words, `from` naming what it captures:
-`fixture`, the fixture's window, or `screen`, the region of the screen the
-fixture covers, which runs only when the owner allows that region to be read;
-`{"window": {"shows": "…"}}`, the round's capture of the program's main window
+which must contain the fixture's words;
+`{"window": {"shows": "…", "from": "…"}}`, the round's capture of the program's main window
 (`"in": "owned"` for the one it owns), which an independent critic judges
-against `shows`; or `{"composition": {"shows": "…"}}`, the round's capture of
+against `shows`; or `{"composition": {"shows": "…", "from": "…"}}`, the round's capture of
 the fixture's region of the screen, judged the same way for the overlay over
 the fixture. A "capturing" label or the program's own drawn window is never
 what a `report` reads. A `desktop` finding that fits neither is never deferred,

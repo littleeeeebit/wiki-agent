@@ -272,7 +272,7 @@ function PcApprove({ repo, view, plan, busy, act }: {
             <Title><span>찍고 읽을 것</span></Title>
             <ul className="flex flex-col gap-1.5">
               {plan.captures.map((c) => (
-                <li key={c.check}><span className="font-mono text-[12px] text-faint">{c.check}</span>{' '}
+                <li key={`${c.check}-${c.by}`}><span className="font-mono text-[12px] text-faint">{c.check}</span>{' '}
                   {c.by === 'app' ? '앱이 읽는 ' : '회차가 찍는 '}{c.reads}
                   {c.kind === 'surface' && <span className="text-muted-foreground"> — 그 영역에 뜬 알림도 함께 찍힌다</span>}</li>
               ))}

@@ -207,15 +207,17 @@ def test_a_pc_apps_deferral_names_where_its_check_reads_the_evidence(desktop):
                 {"observe": {"report": {"file": "../seen.txt", "from": "fixture"}}},
                 {"observe": {"report": {"file": "seen.txt"}}}, {"observe": {"report": {"file": "seen.txt", "from": "monitor"}}},
                 {"observe": {"report": {"id": "seen", "in": "other", "from": "screen"}}},
-                {"observe": {"window": {"shows": " "}}}, {"observe": {"composition": {"shows": "글", "in": "owned"}}},
+                {"observe": {"window": {"shows": " ", "from": "fixture"}}},
+                {"observe": {"composition": {"shows": "글", "in": "owned", "from": "fixture"}}},
+                {"observe": {"window": {"shows": "글"}}},   # the app's own capture unnamed
                 {"observe": {"report": {"id": "seen", "from": "screen"}, "window": {"shows": "글"}}}):
         with pytest.raises(ValueError, match="`observe`"):   # an owner's names its step and what it observes
             oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], **bad}}), "h", devices)
     with pytest.raises(ValueError, match="`source`"):   # a `look` one observes nothing
         oneshot_review.verdict_of(approve({**LOOK, "device": {**LOOK["device"], "observe": OWNER["device"]["observe"]}}),
                                   "h", devices)
-    for fine in ({"report": {"id": "seen", "in": "owned", "from": "screen"}}, {"window": {"shows": "고정 창의 글을 번역한 문장"}},
-                 {"composition": {"shows": "고정 창 위에 번역문이 겹쳐 보인다"}}):
+    for fine in ({"report": {"id": "seen", "in": "owned", "from": "screen"}}, {"window": {"shows": "고정 창의 글을 번역한 문장", "from": "screen"}},
+                 {"composition": {"shows": "고정 창 위에 번역문이 겹쳐 보인다", "from": "fixture"}}):
         assert oneshot_review.verdict_of(approve({**OWNER, "device": {**OWNER["device"], "observe": fine}}), "h", devices)
     assert oneshot_review.owing(found)[1]["observe"] == {"report": {"file": "seen.txt", "from": "fixture"}}
     assert oneshot_review.owing(found)[0]["act"] == {"action": "toggle", "id": "translate"}
@@ -635,8 +637,10 @@ def test_a_mixed_run_whose_phone_round_passed_waits_before_r3_instead_of_opening
     from main import oneshot_phone
 
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
-                                          "stage": "phone", "working": "phone", "phone": {"status": "running"}})
-    assert oneshot_phone.settled("budget", {"status": "passed", "detail": ""}) is None   # no brief is written
+                                          "stage": "phone", "working": "phone", "phone": {"status": "running"},
+                                          "front_build": "b1"})
+    assert oneshot_phone.settled("budget", {"status": "passed", "detail": "", "head": o().get("front_built_head"),
+                                            "apks": o().get("apks"), "front_build": "b1"}) is None   # no brief
     assert o()["stage"] == "r3" and o()["phone"]["status"] == "passed" and o()["stopped"]["reason"] == "kind"
     assert not o().get("working") and "R3 는 다음 버전에서" in o()["stopped"]["detail"]
     held = {k: v for k, v in o().items() if k != "ts"}
@@ -701,7 +705,7 @@ def test_a_pc_app_has_its_own_prompts_through_s4_and_no_web_fallback_for_later_s
     assert "Windows program" in review and "`source`" in review and "`look`" in review and "`owner`" in review
     assert "Windows program" in split and "oneshot-features" in split and "Android" not in review + split
     mixed = " ".join(oneshot.prompt("review", "kinds").split())
-    for said in ("`source`", "where the program reports what it captured", "`{\"composition\": {\"shows\": \"…\"}}`",
+    for said in ("`source`", "where the program reports what it captured", "`{\"composition\": {\"shows\": \"…\", \"from\": \"…\"}}`",
                  "drawn at random for the round"):
         assert said in mixed and said in " ".join(review.split())   # a mixed run's `owner` check is as runnable
     screens = oneshot.prompt("frontend", "desktop")

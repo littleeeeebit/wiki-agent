@@ -70,18 +70,18 @@ show it, and that check's `source`:
   fixture: a window showing a page of English words drawn at random for the
   round. It passes only on what is observed. Give the step that sets the
   capture going in `act`, as for `look`, and what the check observes in
-  `observe`, exactly one of:
+  `observe`, exactly one of the three below. Each also names `from`, what the
+  program itself captures however the round observes it: `fixture`, the
+  fixture's window, or `screen`, the region of the screen the fixture covers,
+  which runs only when the owner allows that region to be read.
   - `{"report": {"id": "…", "from": "…"}}` or
     `{"report": {"file": "…", "from": "…"}}`: where the program reports what
     it captured, an element's value or a UTF-8 file relative to its data
-    folder, which must contain the fixture's words. `from` is what the
-    program captures: `fixture`, the fixture's window, or `screen`, the
-    region of the screen the fixture covers, which runs only when the owner
-    allows that region to be read;
-  - `{"window": {"shows": "…"}}`: the round captures the program's main
+    folder, which must contain the fixture's words;
+  - `{"window": {"shows": "…", "from": "…"}}`: the round captures the program's main
     window (`"in": "owned"` for the one it owns), and an independent critic
     judges whether it shows what `shows` says;
-  - `{"composition": {"shows": "…"}}`: the round captures the fixture's
+  - `{"composition": {"shows": "…", "from": "…"}}`: the round captures the fixture's
     region of the screen, and the critic judges whether the overlay shows
     what `shows` says over the fixture.
   A "capturing" label or the program's own drawn window is never what a

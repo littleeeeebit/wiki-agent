@@ -40,8 +40,9 @@ def at_r3(kinds):  # noqa: F811 — the imported fixture, requested by name
               for k, found in [("android", []), ("android", [DROID_LEFT]), ("webapp", []), ("webapp", [WEB_LEFT])]]
     oneshot_spec.saved("budget", oneshot={
         "stage": "r3", "working": None, "looks": [look(head, 1, [WEB_HIGH]), look(head, 2, [ON_PHONE])],
-        # The phone's pass names the HEAD and APKs it ran, as the round's own does.
-        "critiques": rounds, "phone": {**PHONE, "head": o().get("front_built_head"), "apks": o().get("apks")},
+        # The phone's pass names the HEAD, APKs and accepted build it ran, as the round's own does.
+        "critiques": rounds, "front_build": "b1",
+        "phone": {**PHONE, "head": o().get("front_built_head"), "apks": o().get("apks"), "front_build": "b1"},
         "r3": critique.opening(o()),
         "profile": {**o()["profile"], "os_now": "windows", "os_later": "none"}})   # S8's README turn reads them
     # The view's R1 sheet and brief read a whole core design, which this fixture leaves out.

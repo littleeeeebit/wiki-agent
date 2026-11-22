@@ -47,7 +47,8 @@ def kinds(world):  # noqa: F811 — the imported fixture, requested by name
         "features": FEATURES, "frequency": {"read": "every", "history": "every"}, "r2": {"palette": "C1"},
         "first_screen": {"android": "만화를 읽으며 번역을 켠다", "webapp": "지난 번역을 찾아본다"},
         "profile": {**PROFILE, "responsive": "desktop", "device": "medium-phone"}, "design": {"modules": []},
-        "looks": [look(head)], "front_built_head": head, "device": DEVICE, "apks": {DEVICE["apk"]: "digest"},
+        "looks": [look(head)], "front_built_head": head, "front_build": "b1", "device": DEVICE,
+        "apks": {DEVICE["apk"]: "digest"},
         "tests_head": "b" * 40, "contract": ["test_budget.py"], "gate": "uv run pytest"})
     sent = []
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
@@ -106,9 +107,10 @@ def test_the_phone_round_runs_on_the_android_app_alone_and_its_pass_opens_r3(kin
         yield tmp_path
 
     def drive(repo, home, spec, frozen, stopped):
-        given.append(spec)   # a pass names the HEAD and APKs it ran, as the round's own does
+        given.append(spec)   # a pass names the HEAD, APKs and accepted build it ran, as the round's own does
         return {"status": "passed", "round": 1, "model": "SM-G991N", "findings": [], "detail": "",
-                "head": spec["oneshot"].get("front_built_head"), "apks": spec["oneshot"].get("apks")}
+                "head": spec["oneshot"].get("front_built_head"), "apks": spec["oneshot"].get("apks"),
+                "front_build": spec["oneshot"].get("front_build")}
 
     with patch.object(device, "built", lambda tree, d: ""), \
             patch.object(device, "frozen", lambda tree, d, into: {DEVICE["apk"]: "digest"}), \

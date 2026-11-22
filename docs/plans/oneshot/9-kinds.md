@@ -328,14 +328,15 @@ source, and the server assigns it:
 
   The review's `owner` deferral names the step that sets the capture going,
   `act`, as a `look` one does, and what the check observes, `observe`,
-  exactly one of:
+  exactly one of the three below. Each names `from`, what the app itself
+  captures however the round observes it: `fixture`, the fixture's window, or
+  `screen`, the region the fixture covers. An app that reads the screen reads
+  a surface, so that check runs only when the approval allows it, as a
+  `composition` does.
 
   - `report`: the app's own report of what it captured, the value of an
     element (`id`, with `in: owned` in the window the main window owns) or a
     UTF-8 file under `{data}` (`file`), which must contain the fixture's text.
-    Its `from` names what the app captures: `fixture`, the fixture's window,
-    or `screen`, the region the fixture covers. An app that reads the screen
-    reads a surface, so that check runs only when the approval allows it.
   - `window`: the round's window-bound capture of the app's main window, or
     with `in: owned` the one it owns, which must show what `shows` says.
   - `composition`: the round's surface capture of the fixture's region, which
@@ -465,6 +466,12 @@ The round:
 
 A failed check goes to the builder as a finding. A rebuild clears every
 earlier device pass: the phone round's, the owned rounds' and this one's.
+Each accepted frontend build has its own generation id, and a pass counts
+only when it names the current one, so a rebuild clears passes even when
+its HEAD and APK digests are the same. A build an earlier version accepted
+has no id, so its device rounds run again. Before recovery reopens a held
+R3, and before the owner's approval is recorded, the worktree must be read
+at the build's HEAD. A HEAD that cannot be read confirms nothing.
 
 R3 has one guarded entry for every device round. When a run has both a phone
 round and an owner's desktop round due, R3 opens only when both passed on the

@@ -394,7 +394,9 @@ def earlier(repo: str, o: dict) -> None:
     stop = o.get("stopped") or {}
     if "android" not in kinds_of(o) or o.get("stage") != "r3" or stop.get("reason") != "kind" or oneshot_spec.held(o):
         return   # a run this version still holds before R3 (with `desktop`) stays as it is
-    if oneshot_pc.phoned(o):   # the guard's own test: a pass of another HEAD, APKs or build waits for the phone
+    # The guard's own test, on the worktree as it is: a pass of another HEAD, APKs or build, or a worktree moved off
+    # its HEAD, waits for the phone, whose round sends a moved tree back to the build.
+    if oneshot_pc.phoned(o) and oneshot_pc.at_head(repo, o.get("front_built_head")):
         oneshot_spec.saved(repo, oneshot={"stopped": None, "working": None, "r3": oneshot_critique.opening(o)})
     else:
         oneshot_spec.saved(repo, oneshot={"stage": STAGE, "stopped": None, "working": None,
