@@ -256,6 +256,11 @@ WAIT_ANSWER = ("답을 기다린다 — 같은 답에서 물은 결정을 명세
                "answers the `choices` block, not in the same answer.")
 
 
+def author(cfg: dict, meta: dict) -> dict:
+    """Who answers a card's escalations (`handoff`): the model the turn ran on, the CLI's default named."""
+    return {"model": cfg["model"] or str(meta.get("model") or ""), "effort": cfg["effort"]}
+
+
 def asked_first(cid: str, found: list[dict], model: str) -> list[dict]:
     """Codex's spec waits for the person. One beside a `choices` block decides
     what it asks, so it is held as `WAIT_ANSWER`; the first in a conversation
@@ -954,7 +959,8 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                     found = asked_first(cid, specs.blocks(out["rest"])[1], cfg["model"] or "")
                     cited = {c["evidence_id"]: c for c in verification["citations"]}
                     accepted = {e: cited[c] for e, c in out["evidence_ids"].items() if c in cited}
-                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", ""),
+                              "author": author(cfg, metadata)}
                     if cid == "refactor":
                         source["refactor_mode"] = cfg.get("refactor_mode", "preserve")
                         source["refactor_generation"] = cfg.get("refactor_generation", 0)
@@ -994,7 +1000,8 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                     # translates JSON; they go to the screen apart.
                     reply[0], found = specs.blocks(reply[0])
                     found = asked_first(cid, found, cfg["model"] or "")
-                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", ""),
+                              "author": author(cfg, metadata)}
                     if cid == "refactor":
                         source["refactor_mode"] = cfg.get("refactor_mode", "preserve")
                         source["refactor_generation"] = cfg.get("refactor_generation", 0)

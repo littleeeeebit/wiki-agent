@@ -219,7 +219,7 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
     """One turn, read-only, in `where` (the store's own folder by default), `images` beside the text:
     `(final, meta, codex)`. `tools=""` is a turn with no tools at all, on either provider. Patched in tests."""
 
-    cfg = role_config(role, store)
+    cfg = dict(role_config(role, store))   # a copy: an old run's is the window's live `next` setting
     where = where or store.folder
     where.mkdir(parents=True, exist_ok=True)
     # Claude isolated: no hooks, settings or app instructions. Codex stays on `app-server`, whose read-only
@@ -242,7 +242,7 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
         chat.close()
     if failed:
         raise Failed(failed, meta)
-    return final, meta, chat.is_codex
+    return final, {**meta, "asked": {"model": cfg["model"], "effort": cfg["effort"]}}, chat.is_codex
 
 
 def prompt(name: str, kind: str = "webapp") -> str:
@@ -295,9 +295,17 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
             store.put(inflight=None, spend=charged(store.get().get("spend"), role, codex, meta.get("cost_usd"),
                                                    time.monotonic() - started))
         try:
-            return check(final, attempt) if "," in name else check(block(final, name))
+            got = check(final, attempt) if "," in name else check(block(final, name))
         except (ValueError, TypeError, KeyError, AttributeError) as exc:   # the answer's shape, refused
             reason = str(exc)
+            continue
+        # Who gave the accepted answer, on the setting that turn ran with (`ask` reports it) or as the provider named
+        # a CLI default: the caller saves it with what the answer made, `design_author` beside the design.
+        cfg = meta.get("asked") or {"model": "", "effort": ""}   # a stand-in `ask` reports none
+        with _lock:
+            store.put(answering={**(store.get().get("answering") or {}),
+                                 role: {"model": cfg["model"] or str(meta.get("model") or ""), "effort": cfg["effort"]}})
+        return got
     store.stop("block", masked(f"`{name}` 블록이 두 번 거부됐다 — {reason}", hide))
     return None
 

@@ -667,7 +667,8 @@ class Loop:
             chat.stop(self.halt)
         if run is not None and not run.done:
             run.halt.set()
-            run.chat.stop(run.halt)
+            with run.saving:   # as `work.stop`: a save already past its stop check lands before this returns
+                run.chat.stop(run.halt)
 
 
 _loops: dict[tuple[str, str], Loop] = {}
@@ -1037,18 +1038,18 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     return end["text"]
 
 
-def asked(repo: str, sid: str) -> bool:
+def asked(repo: str, sid: str, detail: str = "") -> bool:
     """A work-cell turn ended on a `choices` question while this spec's loop
-    runs — its own repair turn or a person's between its turns. Codex asks by
-    ending its turn, so the loop halts on `Why.ASKED` instead of sending on.
-    Called from that turn's thread before it lets the worktree go: no answer
-    can start, or end, before the stop is written."""
+    runs — its own repair turn or a person's between its turns. Codex asks by ending its turn, so the loop
+    halts on `Why.ASKED` instead of sending on. Called from that turn's thread before it lets the worktree
+    go: no answer can start, or end, before the stop is written. `detail`, on the pause, is what the person
+    decides on (a spec author's answer, `handoff`)."""
 
     with _lock:
         loop = _loops.get((repo, sid))
     if loop is None or loop.halt.is_set():
         return False
-    stop(loop, repo, sid, Why.ASKED, "작업 에이전트가 판단을 물었다 — 에이전트 칸에서 고르면 그 답의 턴이 끝난 뒤 루프가 이어 간다")
+    stop(loop, repo, sid, Why.ASKED, detail or "작업 에이전트가 판단을 물었다 — 에이전트 칸에서 고르면 그 답의 턴이 끝난 뒤 루프가 이어 간다")
     loop.halt.set()   # not the turn's own halt: the question is not a cancelled turn
     return True
 
