@@ -195,7 +195,10 @@ class Look:
     """One look: an owned desktop, its apps' jobs and their disposable folders, all named in `folder`'s record.
     Use it through `look()`, which runs `close()` on every outcome."""
 
-    def __init__(self, root: Path, name: str):
+    def __init__(self, root: Path, name: str, owned: bool = True):
+        """`owned` false is the owner's desktop round (plan 9e5): its jobs start on the desktop the server runs on,
+        the owner's, and the look creates and closes no desktop of its own; its record and proof are the same."""
+
         self.root = Path(root).absolute()   # a child starts elsewhere: its data paths must not be relative
         self.folder = self.root / name
         self.result = None   # the teardown's reasons, kept until its proof is saved
@@ -211,7 +214,8 @@ class Look:
         owner = native_process.identity(os.getpid())
         if owner is None:   # recovery could not tell a live look of this server from a dead one
             raise Refused("cannot record this server's own identity")
-        self.record = {"state": "owning", "desktop": "wiki-look-" + uuid.uuid4().hex, "session": session(),
+        self.record = {"state": "owning", "desktop": "wiki-look-" + uuid.uuid4().hex if owned else None,
+                       "session": session(),
                        "logon": logon(), "uptime": uptime(), "owner": owner, "folders": [], "jobs": {},
                        "listeners": [], "proof": None}
         self.folder.mkdir()
@@ -224,8 +228,8 @@ class Look:
 
     def open(self) -> None:
         self._open_for_more()
-        if self.desktop:
-            raise Refused("the look's desktop is already open")
+        if self.desktop or not self.record["desktop"]:
+            raise Refused("the look's desktop is already open, or it has none of its own")
         handle = self.u.CreateDesktopW(self.record["desktop"], None, None, 0, DESKTOP_ALL, None)
         if not handle:
             raise Refused(f"cannot create the look's desktop: {ctypes.get_last_error()}")
@@ -501,14 +505,15 @@ class Look:
 
 
 @contextmanager
-def look(root: Path, name: str):
-    """A look in `root/name`, its desktop open; cleaned and proven on every exit. A proof that is not clean
-    raises, naming what it could not prove."""
+def look(root: Path, name: str, owned: bool = True):
+    """A look in `root/name`, its desktop open (with `owned` false, on the owner's desktop: `Look`); cleaned and
+    proven on every exit. A proof that is not clean raises, naming what it could not prove."""
 
-    session_ = Look(root, name)
+    session_ = Look(root, name, owned)
     failure = None
     try:
-        session_.open()
+        if owned:
+            session_.open()
         yield session_
     except BaseException as error:
         failure = error

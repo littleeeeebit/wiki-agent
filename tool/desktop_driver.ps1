@@ -207,10 +207,14 @@ function State([string]$name) {   # every window of the app in this state, shot 
   $script:tops = @($windows | ForEach-Object { [int64]$_.hwnd })
   $state = [ordered]@{ id = $id; name = $name; windows = $windows; shots = @(); reads = @(); nodes = @() }
   foreach ($w in $windows) {
-    Enter "shoot $id $($w.hwnd)"
-    $shot = Shoot $w $id
+    if ($ask.shoot -eq $false) {   # the owner's desktop: no PrintWindow, whose handle may name another app's window
+      $shot = [ordered]@{ hwnd = $w.hwnd; drawn = $false; unshot = $true }
+    } else {
+      Enter "shoot $id $($w.hwnd)"
+      $shot = Shoot $w $id
+    }
     $state.shots += $shot
-    if (-not $shot.drawn) { continue }
+    if (-not $shot.drawn -and -not $shot.unshot) { continue }
     Enter "read $id $($w.hwnd)"
     $script:nodes, $script:lists = @(), @()
     $script:walked = New-Object 'System.Collections.Generic.List[object]'

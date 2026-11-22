@@ -5,8 +5,10 @@
 with a pending `owner` check waits at `pc` for the owner's one-time approval of exactly what the round will
 start and read: the HEAD, the frozen build, the checks, the app and each check's fixture, and each capture with
 the surface it reads. The approval is checked again against the run before it is recorded, and a restart, a new
-HEAD or a new build sends the run back to waiting. This version (9e5a) records the approval and stops there;
-the round on the owner's desktop is 9e5b.
+HEAD or a new build sends the run back to waiting. The approval starts the round (9e5b): for each check the
+server's fixture in a job of its own, the frozen app from a fresh start beside it, driven without a shot, then
+what the check observes, each source bound and proven again before it is read; the critic judges a capture. A
+pass goes on to R3, a failure goes to the build as findings, and a check that cannot be read here stays pending.
 
 R3 opens through `onward` alone: the phone round of an Android app, then this round, each due until it passed on
 the current HEAD and build.
@@ -14,6 +16,8 @@ the current HEAD and build.
 
 from __future__ import annotations
 
+import shutil
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -21,13 +25,20 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import oneshot, oneshot_desktop, oneshot_spec, specs
-from .oneshot_profile import held, kinds_of
+from . import oneshot, oneshot_desktop, oneshot_desktop_look as desktop_look, oneshot_front_build as front_build, \
+    oneshot_review as review, oneshot_spec, runtime, specs
+from .oneshot_profile import kinds_of
+from .query import ROOT
 
 router = APIRouter()
 
 STAGE = "pc"
 FIXTURE = "oneshot-fixture"   # the server's own window of random English words, one for each check
+RECT = [80, 80, 960, 540]   # the fixture's frame on the primary monitor, in physical pixels
+JUDGE = "oneshot-owner-judge"
+JUDGE_PROMPT = (ROOT / "tool/prompts/oneshot-owner-judge.md").read_text(encoding="utf-8")
+MAX_REPORT = 1 << 20   # bytes of an app's report file the round reads
+_halts: dict[str, threading.Event] = {}
 
 
 def plan(o: dict) -> dict:
@@ -143,27 +154,244 @@ def fresh(detail: str = "") -> dict:
 
 
 def waits(repo: str, fields: dict) -> dict:
-    """The run at `pc`, with `fields` saved and no approval: this version holds it there with its `kind` stop."""
+    """The run at `pc`, with `fields` saved, waiting for the owner's approval: a stop an earlier version held the
+    run with is let go."""
 
-    o = {**oneshot_spec.spec_of(repo)["oneshot"], **fields, "stage": STAGE, "pc": fresh()}
-    return oneshot_spec.saved(repo, oneshot={**fields, "stage": STAGE, "working": None, "pc": o["pc"],
-                                             **({"stopped": oneshot_spec.kind_stop(STAGE, o)} if held(o) else {})})
+    return oneshot_spec.saved(repo, oneshot={**fields, "stage": STAGE, "working": None, "stopped": None,
+                                             "pc": fresh()})
 
 
 def earlier(repo: str, o: dict) -> None:
-    """A restart sends the run back to waiting: an approval is never applied after it. A run an earlier version
-    held before R3 with a pending `owner` check goes on by the guard instead: to the phone while its round is due,
-    else here."""
+    """A restart sends the run back to waiting: an approval is never applied after it, and an earlier version's
+    `kind` stop here (9e5a's) is let go, so the approval starts the round. A run an earlier version held before R3
+    with a pending `owner` check goes on by the guard instead: to the phone while its round is due, else here."""
 
     if o.get("stage") == STAGE:   # a new attempt even with none approved: a request prepared before it is stale
-        waiting = {**o, "pc": fresh("서버가 다시 켜졌다 — 회차를 다시 승인한다" if (o.get("pc") or {}).get("approval") else "")}
-        oneshot_spec.saved(repo, oneshot={"pc": waiting["pc"], **(
-            {"stopped": oneshot_spec.kind_stop(STAGE, waiting)} if held(waiting) else {})})
+        given = (o.get("pc") or {}).get("approval") or (o.get("pc") or {}).get("ran")
+        pc = fresh("서버가 다시 켜졌다 — 회차를 다시 승인한다" if given else "")
+        kind = (o.get("stopped") or {}).get("reason") == "kind"
+        oneshot_spec.saved(repo, oneshot={"pc": {**pc, "last": (o.get("pc") or {}).get("last")},
+                                          **({"stopped": None} if kind else {})})
     elif "desktop" in kinds_of(o) and o.get("stage") == "r3" and not o.get("working") and not o.get("r3") \
             and oneshot_desktop.owner_owed(o) and not passed(o):
         onward(repo, {})   # the guard's own order: a phone round still due comes first
 
 
+def base(repo: str) -> Path:
+    return oneshot_spec.store(repo).folder / STAGE
+
+
+def ran(report: dict, n: int) -> str:
+    """Why the driver's run of a scenario is no ground for an observation, or empty: it passed a deadline, failed
+    or stopped before `done`, chose no main window, read no state, or did not act every one of its `n` steps.
+    On the owner's desktop no window is shot, so a read without a shot counts."""
+
+    steps = report.get("steps") or []
+    if report.get("ended"):
+        return f"드라이버가 {report['ended']} 에서 시간을 넘겼다"
+    if report.get("error") or report.get("phase") != "done":
+        return f"드라이버가 끝나지 못했다 — {report.get('error') or report.get('refusal') or report.get('last')}"
+    if not report.get("main") or not report.get("states"):
+        return "앱의 주 창을 읽지 못했다"
+    if len(steps) != n or not all(s.get("acted") and not s.get("error") for s in steps):
+        return "시나리오의 단계가 다 돌지 않았다"
+    return ""
+
+
+def reported(report: dict, seen: dict, data: Path) -> str | None:
+    """The app's own report of what it captured: the value of the one element `id` names in the window it names,
+    in the last state, or the UTF-8 file under its `{data}`; None when there is none to read."""
+
+    import desktop_driver
+
+    if "file" in seen:
+        file = (data / seen["file"]).resolve()
+        if not file.is_relative_to(data.resolve()) or not file.is_file() or file.stat().st_size > MAX_REPORT:
+            return None
+        return file.read_text(encoding="utf-8", errors="replace")
+    last = report["states"][-1]
+    window = desktop_driver.scope(report, last, seen.get("in", "main"))
+    nodes = [n for n in last["nodes"] if not n.get("foreign") and n.get("window") == window and n.get("id") == seen["id"]]
+    return nodes[0].get("value") if window is not None and len(nodes) == 1 else None
+
+
+def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep: Path) -> dict:
+    """One `owner` check: its fixture, then the app from a fresh start of its scenario, then what it observes while
+    both still run, each source proven again first. `passed`, `failed` or `pending` with why, or `judge` with the
+    capture copied into `keep` for the critic."""
+
+    import owner_round
+
+    page, fixture_key = owner_round.words(), f"fixture{n}"
+    fixture, rect = owner_round.fixture(session, fixture_key, page, RECT, runs.halt)
+    (what, seen), = x["observe"].items()
+    steps = scenario["steps"]
+
+    def members(key: str) -> list[dict]:
+        session.observe()
+        return session.record["jobs"][key]["members"]
+
+    def then(report: dict, key: str) -> dict:
+        if why := ran(report, len(steps)):
+            return {"status": "failed", "why": why}
+        if why := owner_round.proven(fixture, members(fixture_key)):   # what the app read was not the round's page
+            return {"status": "failed", "why": f"고정 창이 바뀌었다 — {why}"}
+        if what == "report":
+            return {"status": "passed"} if owner_round.contains(reported(report, seen, Path(runs.data)), page) else \
+                {"status": "failed", "why": "앱이 캡처했다고 낸 것에 고정 창의 낱말이 다 들어 있지 않다"}
+        if exe is None:
+            return {"status": "pending", "why": missing}
+        try:
+            if what == "window":
+                import desktop_driver
+                hwnd = desktop_driver.scope(report, report["states"][-1], seen.get("in", "main"))
+                try:
+                    binding = owner_round.bind(key, hwnd, members(key))
+                except ValueError as exc:   # gone or replaced since the driver read it: never read
+                    return {"status": "failed", "why": f"앱의 창을 묶지 못했다 — {exc}"}
+                got = owner_round.window_read(session, f"capture{n}", exe, binding, lambda: members(key), runs.halt)
+            else:
+                got = owner_round.surface_read(session, f"capture{n}", exe, rect, runs.halt)
+        except owner_round.Unavailable as exc:
+            return {"status": "pending", "why": str(exc)}
+        if not got.get("read"):
+            return {"status": "failed", "why": f"캡처를 읽지 못했다 — {got.get('why')}"}
+        file = keep / f"c{n}-{what}.png"
+        shutil.copyfile(got["file"], file)   # the session's folders go with its cleanup
+        return {"status": "judge", "file": str(file), "shows": seen["shows"], "page": page}
+
+    report = runs.drive(scenario["screen"], scenario["state"], steps, then)
+    return report.get("observed") or {"status": "failed", "why": "검사를 끝내지 못했다"}
+
+
+def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
+    """Every check the approval lets run, each by `one` in the round's own look on the owner's desktop, whose
+    cleanup is proven on every exit (RuntimeError when it is not)."""
+
+    import desktop_session
+    import owner_round
+
+    build, skip = o["desktop_build"], set(unrun(o))
+    keep = base(repo) / "rounds" / f"r{time.time_ns()}"
+    keep.mkdir(parents=True)
+    try:
+        exe, missing = owner_round.helper(base(repo) / "tools"), ""
+    except owner_round.Unavailable as exc:
+        exe, missing = None, str(exc)
+    looks = base(repo) / "looks"
+    looks.mkdir(parents=True, exist_ok=True)
+    results = {}
+    try:
+        with desktop_session.look(looks, f"round-{uuid.uuid4().hex[:12]}", owned=False) as session:
+            runs = desktop_look.Launches(session, build, desktop_look.size(o["profile"]), stopped, shoot=False)
+            for n, x in enumerate(oneshot_desktop.owner_scripted(o), 1):
+                if x["id"] not in skip:
+                    runs.due()
+                    results[x["id"]] = one(session, runs, n, x, build["checks"][x["id"]], exe, missing, keep)
+    except desktop_session.Refused as exc:
+        raise RuntimeError(f"주인 화면 회차를 정리하지 못했다 — {exc}") from exc
+    runs.due()
+    return results
+
+
+def judged(store, tree: Path, cid: str, result: dict) -> dict | None:
+    """The critic's verdict on a capture: `passed`, or `failed` with what it saw; None after stopping."""
+
+    def verdict(value) -> dict:
+        if not isinstance(value, dict) or not isinstance(value.get("shows"), bool) \
+                or not isinstance(value.get("why"), str) or not value["why"].strip():
+            raise ValueError("`oneshot-owner-judge` 는 shows(true/false) 와 why(한 문장) 를 담은 객체다")
+        return value
+
+    text = (f"The check `{cid}`. The fixture showed exactly these words: {' '.join(result['page'])}\n\n"
+            f"What the capture must show: {result['shows']}\n\nThe capture, attached: `{Path(result['file']).name}`\n")
+    found = oneshot.turned(store, "critic", JUDGE_PROMPT, text, JUDGE, verdict, tree, (Path(result["file"]),), {})
+    if found is None:
+        return None
+    return {"status": "passed"} if found["shows"] else {"status": "failed", "why": f"비평가: {found['why']}"}
+
+
+def outcome(o: dict, results: dict[str, dict]) -> dict:
+    """The round's outcome: `failed` with a high finding for each failed check, `passed` once every pending
+    `owner` check passed on this HEAD and build, else `waiting` naming what stays pending."""
+
+    build, scripted = o["desktop_build"], {x["id"]: x for x in oneshot_desktop.owner_scripted(o)}
+    passed_ = [cid for cid, r in results.items() if r["status"] == "passed"]
+    if failed := {cid: r for cid, r in results.items() if r["status"] == "failed"}:
+        findings = [desktop_look.finding(build["checks"][cid]["screen"], build["checks"][cid]["state"],
+                                         f"주인 화면에서 확인할 {cid}({scripted[cid]['requirement']}) 이 통과하지 못했다 — {r['why']}")
+                    for cid, r in failed.items()]
+        return {"status": "failed", "findings": findings, "passed": passed_, "results": results}
+    if {x["id"] for x in oneshot_desktop.owner_owed(o)} <= set(passed_):
+        return {"status": "passed", "head": build["head"], "freeze": build["freeze"], "front_build": o["front_build"],
+                "passed": passed_, "results": results}
+    left = [f"{x['id']}" + (f"({results[x['id']]['why']})" if x["id"] in results else "")
+            for x in oneshot_desktop.owner_owed(o) if x["id"] not in passed_]
+    return {"status": "waiting", "detail": f"주인 화면에서 아직 확인하지 못한 검사 — {', '.join(left)}", "results": results}
+
+
+def owner_round(repo: str) -> None:
+    """The worker: the round holds the worktree on the HEAD the look passed, as the critic does. It runs only what
+    the stored approval names, still standing; a stop or a shutdown never passes it."""
+
+    halt = _halts.setdefault(repo, threading.Event())
+    stopped = lambda: halt.is_set() or runtime.stopping.is_set()   # noqa: E731
+
+    def body(store, spec, tree):
+        o = spec["oneshot"]
+        if not (given := approved(o)) or not confirmed(repo, o.get("desktop_build") or {}):
+            return lambda: settled(repo, {"status": "waiting", "detail": "승인한 회차가 지금 빌드와 다르다 — 다시 승인한다"})
+        # Used up as the round starts: however it ends, a stop or a refused turn included, the next is approved anew.
+        oneshot_spec.saved(repo, oneshot={"pc": {**fresh(), "status": "running", "ran": given,
+                                                 "last": (o.get("pc") or {}).get("last")}})
+        try:
+            results = observe(repo, o, stopped)
+        except ValueError as exc:   # the app refused, changed its frozen copy or overran: the build's to fix
+            if stopped():
+                return lambda: settled(repo, {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"})
+            review.rebuild(repo, store, f"주인 화면 회차 — {exc}", front_build.STAGE)
+            return None
+        except Exception as exc:   # an unproven cleanup, a fixture that never showed: nothing passes
+            cut = {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"} if stopped() else \
+                {"status": "error", "detail": f"주인 화면 회차가 끝나지 못했다 — {exc}"}
+            return lambda: settled(repo, cut)
+        for cid, result in results.items():   # the critic judges each capture once the round's windows are gone
+            if result["status"] == "judge" and not stopped():
+                if (verdict := judged(store, tree, cid, result)) is None:
+                    return None
+                results[cid] = {**result, **verdict}
+        if stopped():   # a stop accepted before the round ended: never its outcome
+            return lambda: settled(repo, {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"})
+        return lambda: settled(repo, outcome(o, results))
+
+    review.holding(repo, "주인 화면 회차", body, "front_built_head", front_build.STAGE)
+
+
+def settled(repo: str, result: dict):
+    """The outcome applied: a pass goes on through the guard to R3 (its brief written once the tree is let go), a
+    failure to the build with the round's findings, anything else back to waiting with a new attempt."""
+
+    from . import oneshot_build, oneshot_critique   # they import this module
+    with oneshot._lock:   # as `stop` takes it: a stop accepted before this point is never a pass
+        if _halts.setdefault(repo, threading.Event()).is_set():
+            result = {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"}
+        o = oneshot_spec.spec_of(repo)["oneshot"]
+        if result["status"] == "passed":
+            return onward(repo, {"pc": {**(o.get("pc") or {}), **result}})
+        pc = {**fresh(result.get("detail") or ""), "last": result}
+        if result["status"] != "failed":
+            oneshot_spec.saved(repo, oneshot={"pc": pc, "working": None})
+            return None
+        # As the phone round's: the build's fix goes through the look and the critique before the round again.
+        spec = oneshot_spec.saved(repo, oneshot={
+            "pc": pc, "stage": front_build.STAGE, "attempts": 0, "working": front_build.STAGE,
+            "critique_base": len(o.get("critiques") or []),
+            "fix": {"who": "The run's round on the owner's desktop found these", "findings": result["findings"]}})
+    return lambda: oneshot_build.send(repo, front_build.STAGE, oneshot_critique.front_turn(spec))
+
+
+oneshot_spec.WORKERS[STAGE] = owner_round
+oneshot_spec.SHEETS.add(STAGE)   # a round the server went down in: `[재개]` puts the approval back
 oneshot_spec.WAITS.add(STAGE)
 oneshot_spec.RECOVERS.append(earlier)
 
@@ -177,9 +405,10 @@ class Approval(BaseModel):
 
 @router.post("/api/oneshot/spec/{repo}/pc/approve")
 def approve(repo: str, body: Approval) -> dict:
-    """The owner's one-time approval of the round exactly as the screen showed it, in this wait: refused when the
-    frozen build no longer stands, when it names anything other than what the round would start and read now, or
-    when one is already recorded."""
+    """The owner's one-time approval of the round exactly as the screen showed it, in this wait, which starts it:
+    refused while the round runs, when the frozen build no longer stands, or when it names anything other than what
+    the round would start and read now. The round uses it up as it starts, so a second press of the same screen is
+    refused by its attempt; one standing with no round running is a round that never started, approved again."""
 
     with oneshot._lock:
         o = oneshot_spec.spec_of(repo)["oneshot"]
@@ -190,14 +419,24 @@ def approve(repo: str, body: Approval) -> dict:
             raise HTTPException(409, "주인 화면에서 돌릴 수 있는 검사가 없다")
         if not now["attempt"] or not confirmed(repo, o.get("desktop_build") or {}):
             raise HTTPException(409, "얼린 PC 앱 빌드가 지금 작업트리의 것이 아니다 — 다시 빌드한 뒤 승인한다")
-        if approved(o):
-            raise HTTPException(409, "이미 승인했다 — 승인 한 번은 회차 한 번에만 쓴다")
         if body.plan != now:
             raise HTTPException(409, "승인한 회차가 지금 회차와 다르다 — 화면을 다시 읽고 승인한다")
-        pc = {**(o.get("pc") or {}), "status": "approved", "detail": "",
+        pc = {**(o.get("pc") or {}), "status": "running", "detail": "",
               "approval": {**now, "surface": body.surface, "ts": time.time()}}
-        o = {**o, "pc": pc}
-        oneshot_spec.saved(repo, oneshot={"pc": pc, **({"stopped": oneshot_spec.kind_stop(STAGE, o)} if held(o) else {})})
+        _halts.setdefault(repo, threading.Event()).clear()   # before `working` names the round: a stop then holds
+        oneshot_spec.start(repo, STAGE, pc=pc)
+    return oneshot_spec.view(oneshot_spec.spec_of(repo))
+
+
+@router.post("/api/oneshot/spec/{repo}/pc/stop")
+def stop(repo: str) -> dict:
+    """The running round stops at its next operation; what it started is ended and its cleanup proven on the way
+    out, and nothing passes."""
+
+    with oneshot._lock:   # decided against the round's own end (`settled`), which takes it too
+        if oneshot_spec.spec_of(repo)["oneshot"].get("working") != STAGE:
+            raise HTTPException(409, "주인 화면 회차가 돌고 있지 않다")
+        _halts.setdefault(repo, threading.Event()).set()
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 

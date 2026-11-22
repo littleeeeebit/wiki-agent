@@ -77,8 +77,16 @@ export type PcPlan = {
   captures: { check: string; by: 'round' | 'app'; kind: 'window' | 'surface'; reads: string }[]
 }
 export type PcApproval = PcPlan & { surface: boolean; ts: number }
-/** The owner's desktop round before R3 (`oneshot_pc`): `waiting` for the owner's approval, then `approved`. */
-export type PcRound = { status: string; detail?: string; approval?: PcApproval }
+/** One check's result in the owner's desktop round (`oneshot_pc.one`, `judged`). */
+export type PcResult = { status: 'passed' | 'failed' | 'pending' | 'judge'; why?: string }
+/** The owner's desktop round before R3 (`oneshot_pc`): `waiting` for the owner's approval, `running` once approved,
+ *  then `passed`, or `waiting` again with the last round's outcome (`last`). */
+export type PcRound = {
+  status: string; detail?: string; approval?: PcApproval
+  /** The approval the running round used up as it started. */
+  ran?: PcApproval
+  last?: { status: string; detail?: string; results?: Record<string, PcResult> } | null
+}
 /** The turn running now (`oneshot.turned`, `oneshot_build.send`): a work turn carries `turn`. */
 export type Inflight = { role: string; codex: boolean; sent: number; seen?: number; turn?: string }
 export type SpecView = SpecSummary & {
@@ -142,6 +150,7 @@ export const api = {
   // The owner's one-time approval of the round exactly as `plan` showed it, whole (`oneshot_pc.approve`).
   approvePc: (repo: string, plan: PcPlan, surface: boolean) =>
     post(`${base(repo)}/pc/approve`, { plan, surface }).then(answer),
+  stopPc: (repo: string) => post(`${base(repo)}/pc/stop`, {}).then(answer),
 }
 
 // The stages in order. `talk` and `gate` wait for the owner; the rest run on their own.

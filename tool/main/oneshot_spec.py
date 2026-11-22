@@ -544,13 +544,8 @@ def standing(repo: str, build: dict) -> bool:
 
 
 def kind_stop(stage: str, o: dict | None = None) -> dict:
-    """The `kind` stop at `stage`, where this version's run ends; at `pc`, the owed checks and the approval."""
+    """The `kind` stop at `stage`, where this version's run ends."""
 
-    if stage == "pc" and o is not None:
-        from . import oneshot_desktop
-        owner = ", ".join(x["id"] for x in oneshot_desktop.owner_owed(o))
-        given = "승인했다" if (o.get("pc") or {}).get("approval") else "승인하면 기록한다"
-        return {"reason": "kind", "state": stage, "detail": f"주인 화면에서 확인할 {owner} 의 회차를 {given} — 회차는 다음 버전에서 돈다"}
     return {"reason": "kind", "state": stage, "detail": {"r3": "화면 비평과 기기 회차를 마쳤다 — R3 는 다음 버전에서 이어진다"}.get(
         stage, "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다")}
 

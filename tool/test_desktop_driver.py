@@ -42,6 +42,18 @@ def test_the_main_window_is_sized_to_the_card_shot_and_read(tmp_path):
     assert start["nodes"][0]["type"] == "Window" and start["nodes"][0]["name"] == "fixture"
 
 
+def test_without_shots_each_state_is_read_and_no_window_is_shot(tmp_path):
+    # The owner's desktop round's mode (plan 9e5b): PrintWindow is never called there, so nothing is shot.
+    with desktop_session.look(tmp_path, "tk") as look:
+        look.start("app", python(WINDOW), tmp_path)
+        report = desktop_driver.drive(look, "app", (640, 480), [], settle_ms=500, shoot=False)
+    start = report["states"][0]
+    assert report["phase"] == "done" and start["shots"] == [{"hwnd": start["windows"][0]["hwnd"], "drawn": False,
+                                                              "unshot": True}], report
+    assert start["reads"][0]["read"] and start["nodes"][0]["name"] == "fixture"
+    assert not list((tmp_path / "tk" / "evidence" / "driver").glob("*.png"))
+
+
 LATER = ("import pathlib, subprocess, sys, time; marker = pathlib.Path(sys.argv[1]) / 'evidence' / 'driver' / "
          "'progress.json'\nwhile not marker.exists(): time.sleep(0.05)\n"   # the driver runs before the child starts
          f"subprocess.run([sys.executable, '-c', {WINDOW!r}])")

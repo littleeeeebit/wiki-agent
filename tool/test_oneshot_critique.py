@@ -136,10 +136,10 @@ def test_a_pc_apps_two_clean_rounds_on_one_freeze_wait_at_the_owners_round_with_
         assert o()["stage"] == "critique" and not o().get("stopped")
         critique.critique("budget")
     assert [p.name for p in heard[0][2]][:1] == ["S1-window-full.png"] and o()["stage"] == "pc"
-    assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"] and not o().get("working")
+    assert not o().get("stopped") and not o().get("working")   # waiting for the owner's approval of the round
     assert o()["pc"]["status"] == "waiting" and o()["pc"]["attempt"]
     assert not o().get("r3") and [c.get("freeze") for c in o()["critiques"]] == ["f1", "f2", "f2"]
-    assert "r3_sheet" not in critique.extra(oneshot_spec.spec_of("budget"))   # a held run opens no review state
+    assert "r3_sheet" not in critique.extra(oneshot_spec.spec_of("budget"))   # R3 stays closed until it passed
 
 
 def test_a_look_whose_proof_came_from_another_version_of_the_check_proves_nothing():

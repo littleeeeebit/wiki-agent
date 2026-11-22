@@ -1,16 +1,26 @@
-"""The owner's desktop round's approval and the one guarded entry to R3 for every device round (plan 9e5a), on
-stand-ins: nothing starts on the owner's desktop in this version."""
+"""The owner's desktop round: its approval, the round it starts and the one guarded entry to R3 for every device
+round (plan 9e5), on stand-ins: nothing starts on the owner's desktop here. The Windows side's own fakes are
+`test_oneshot_owner_round.py`."""
 
 from __future__ import annotations
+
+import json
+import threading
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot_desktop, oneshot_pc as pc, oneshot_profile, oneshot_spec
+import owner_round
+from main import oneshot, oneshot_build, oneshot_critique, oneshot_desktop, oneshot_pc as pc, oneshot_profile, \
+    oneshot_spec
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import o, world  # noqa: F401 — `world` is the temporary worktree's fixture
 
 BUILD: dict = {}   # the run's frozen build, a real copy at the worktree's HEAD (`held`)
+STEP = {"name": "go", "action": "invoke", "id": "capture", "expect": {"id": "capture", "name": "캡처"}}
+SCENARIO = {"screen": "S1", "state": "full", "steps": [STEP]}
+PAGE = ["apple", "river", "garden"]   # the fixture's words, drawn for the round as `owner_round.words` would
 REPORT = {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처한 글이 보인다",
           "act": {"action": "invoke", "id": "capture"}, "observe": {"report": {"id": "seen", "from": "fixture"}}}
 SURFACE = {**REPORT, "id": "O3", "observe": {"composition": {"shows": "고정 창 위에 번역문이 겹친다", "from": "fixture"}}}
@@ -27,11 +37,16 @@ def held(world, monkeypatch, tmp_path):  # noqa: F811 — the imported fixture, 
     from test_oneshot_desktop import frozen_in
 
     monkeypatch.setattr(oneshot_spec, "view", lambda spec: spec)
+    # The worker's start as `start_worker` saves it; the tests run the worker in their own thread (`ran`).
+    monkeypatch.setattr(oneshot_spec, "start", lambda repo, work, **fields: oneshot_spec.saved(
+        repo, oneshot={**fields, "working": work, "stopped": None}))
     BUILD.clear()
-    BUILD.update(frozen_in(world, tmp_path), freeze="f1")
+    BUILD.update(frozen_in(world, tmp_path), freeze="f1", checks={"O2": SCENARIO, "O3": SCENARIO})
     oneshot_spec.saved("budget", oneshot={"intent": {"restated": "화면 번역기", "kind": "desktop"}, "features": [],
                                           "front": {"screens": [{"id": "S1", "kind": "desktop", "primary": True}]},
-                                          "owed": [LOOK, REPORT, SURFACE], "desktop_build": BUILD, "front_build": "b1"})
+                                          "profile": {**o()["profile"], "window": "1280x800"},
+                                          "owed": [LOOK, REPORT, SURFACE], "desktop_build": BUILD, "front_build": "b1",
+                                          "front_built_head": BUILD["head"]})
     pc.waits("budget", {"critiques": [{"clean": True}] * 2})
     return world
 
@@ -43,8 +58,7 @@ def approval(surface: bool = True, **changed) -> pc.Approval:
 
 
 def test_the_owner_approves_once_exactly_what_the_round_starts_and_reads(held):
-    assert o()["stage"] == "pc" and o()["stopped"]["reason"] == "kind" and oneshot_profile.held(o())
-    assert "O2, O3" in o()["stopped"]["detail"] and "승인하면" in o()["stopped"]["detail"]
+    assert o()["stage"] == "pc" and not o()["stopped"] and not oneshot_profile.held(o())   # this version runs it
     plan = pc.extra(oneshot_spec.spec_of("budget"))["pc_plan"]
     assert plan["checks"] == ["O2", "O3"] and plan["starts"] == ["app.exe", "oneshot-fixture (O2)", "oneshot-fixture (O3)"]
     app = {"by": "app", "kind": "window", "reads": "oneshot-fixture 창"}
@@ -59,12 +73,13 @@ def test_the_owner_approves_once_exactly_what_the_round_starts_and_reads(held):
     assert not o()["pc"].get("approval")
     pc.approve("budget", approval())
     given = pc.approved(o())
-    assert given["checks"] == ["O2", "O3"] and given["surface"] and o()["pc"]["status"] == "approved"
-    assert o()["stopped"]["reason"] == "kind" and "승인했다" in o()["stopped"]["detail"]
-    with pytest.raises(HTTPException, match="이미 승인했다"):   # a duplicate: one approval, one round
+    assert given["checks"] == ["O2", "O3"] and given["surface"] and o()["pc"]["status"] == "running"
+    assert o()["working"] == "pc" and not o()["stopped"]   # the approval starts the round
+    with pytest.raises(HTTPException, match="기다리고 있지 않다"):   # a second press while it runs
         pc.approve("budget", approval())
-    with pytest.raises(HTTPException, match="다음 버전"):   # the round itself is the next version's
-        oneshot_spec.resume("budget")
+    oneshot_spec.saved("budget", oneshot={"working": None})   # a round that never started: its worktree was busy
+    pc.approve("budget", approval())   # approved again, it starts
+    assert o()["working"] == "pc"
 
 
 def test_an_approval_of_a_build_the_worktree_has_left_is_refused(held):
@@ -94,18 +109,30 @@ def test_a_restart_or_a_new_build_after_the_approval_sends_the_run_back_to_waiti
     assert pc.approved(o()) is None   # never applied to a different launch
     oneshot_spec.saved("budget", oneshot={"desktop_build": BUILD})
     assert pc.approved(o())
-    oneshot_spec.recover()
+    oneshot_spec.recover()   # the round the approval started was cut with the server
     assert o()["stage"] == "pc" and o()["pc"]["status"] == "waiting" and not o()["pc"].get("approval")
-    assert o()["stopped"]["reason"] == "kind" and "승인하면" in o()["stopped"]["detail"]
+    assert o()["stopped"]["reason"] == "restart" and not o()["working"]
+    oneshot_spec.resume("budget")   # `[재개]` puts the approval back, never the cut round
+    assert o()["stage"] == "pc" and not o()["stopped"] and not o()["working"]
     with pytest.raises(HTTPException, match="지금 회차와 다르다"):   # another wait: the earlier request is stale
         pc.approve("budget", before)
     pc.approve("budget", approval())   # approved afresh, off the plan shown now
     assert pc.approved(o())
 
 
+def test_an_earlier_versions_kind_stop_at_the_approval_is_let_go_on_recovery(held):
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "kind", "state": "pc", "detail": "9e5a"},
+                                          "pc": {**o()["pc"], "status": "approved", "approval": pc.plan(o())}})
+    oneshot_spec.recover()
+    assert o()["stage"] == "pc" and not o()["stopped"] and not o()["pc"].get("approval")   # 9e5a's never runs
+    pc.approve("budget", approval())
+    assert o()["working"] == "pc"
+
+
 def test_an_expired_approval_never_blocks_the_approval_of_the_plan_shown_now(held):
     pc.approve("budget", approval())
-    oneshot_spec.saved("budget", oneshot={"owed": [LOOK, REPORT, {**SURFACE, "observe": {"window": {"shows": "글", "from": "fixture"}}}]})
+    oneshot_spec.saved("budget", oneshot={"working": None, "owed": [
+        LOOK, REPORT, {**SURFACE, "observe": {"window": {"shows": "글", "from": "fixture"}}}]})
     assert pc.approved(o()) is None   # O3 now reads another capture
     pc.approve("budget", approval())
     assert pc.approved(o())["captures"][2]["kind"] == "window"
@@ -163,7 +190,7 @@ def test_the_guarded_entry_holds_r3_until_every_due_device_round_passed(held):
                                           "front_build": "b1", "phone": {"status": "running"}})
     passed = {"status": "passed", "detail": "", "head": BUILD["head"], "apks": {"app.apk": "x"}, "front_build": "b1"}
     assert not callable(oneshot_phone.settled("budget", passed))   # the phone passed first: the owner's round is next
-    assert o()["stage"] == "pc" and o()["phone"]["status"] == "passed" and o()["stopped"]["reason"] == "kind"
+    assert o()["stage"] == "pc" and o()["phone"]["status"] == "passed" and not o()["stopped"]
     assert not o().get("r3")
     # The owner's round passed on this build: the phone's pass on this HEAD still stands, and R3 opens (held here).
     oneshot_spec.saved("budget", oneshot={"pc": {"status": "passed", "head": BUILD["head"], "freeze": "f1",
@@ -219,3 +246,223 @@ def test_an_earlier_versions_mixed_run_held_at_r3_waits_for_the_phone_before_the
                                           "stopped": {"reason": "kind", "state": "r3", "detail": "9e4b"}})
     oneshot_spec.recover()
     assert o()["stage"] == "phone" and o()["phone"]["status"] == "waiting" and not o().get("r3")
+
+
+# -- the round ---------------------------------------------------------------------------------------------------
+
+FIXTURE = {"job": "fixture1", "hwnd": 201, "pid": 5, "class": "TkTopLevel", "title": "oneshot-fixture",
+           "rect": [80, 80, 976, 579], "process": {"pid": 5, "created": 1, "exe": "python.exe"}}
+
+
+def driven(value: str | None = None, acted: bool = True, **over) -> dict:
+    """A driver's report of the scenario's one step on the owner's desktop: read, never shot."""
+
+    node = {"window": 101, "id": "seen", "value": value, "type": "Text", "depth": 1}
+    state = {"windows": [{"hwnd": 101}], "shots": [{"hwnd": 101, "drawn": False, "unshot": True}],
+             "reads": [{"hwnd": 101, "read": True}], "nodes": [node]}
+    return {"phase": "done", "main": {"hwnd": 101, "pid": 7, "class": "App"},
+            "states": [{**state, "id": "s00", "name": "start"}, {**state, "id": "s01", "name": "go"}],
+            "steps": [{"name": "go", "acted": acted, "state": "s01"}], **over}
+
+
+class Runs:
+    """`Launches` on the owner's desktop as a stand-in: each start drives `report`, then calls `then` with it."""
+
+    def __init__(self, report: dict, data: Path):
+        self.report, self.data, self.halt, self.drove = report, str(data), threading.Event(), []
+
+    def drive(self, sid, state, steps, then):
+        self.drove.append((sid, state, steps))
+        return {**self.report, "observed": then(self.report, "app1")}
+
+    def due(self):
+        pass
+
+
+class Session:
+    record = {"jobs": {"fixture1": {"members": [FIXTURE["process"]]}, "app1": {"members": []}}}
+
+    def observe(self):
+        pass
+
+
+@pytest.fixture
+def desk(monkeypatch, tmp_path):
+    """The Windows side as stand-ins: the fixture shows `PAGE`, every binding stands, and each read is counted."""
+
+    reads = {"window": [], "surface": []}
+    capture = tmp_path / "capture.png"
+    capture.write_bytes(b"PNG")
+    monkeypatch.setattr(owner_round, "words", lambda: list(PAGE))
+    monkeypatch.setattr(owner_round, "fixture", lambda session, key, page, rect, halt: (FIXTURE, FIXTURE["rect"]))
+    monkeypatch.setattr(owner_round, "proven", lambda binding, members: "")
+    monkeypatch.setattr(owner_round, "bind", lambda job, hwnd, members, title=None: {"job": job, "hwnd": hwnd})
+    monkeypatch.setattr(owner_round, "window_read", lambda *a: reads["window"].append(a) or {"read": True, "file": str(capture)})
+    monkeypatch.setattr(owner_round, "surface_read", lambda *a: reads["surface"].append(a) or {"read": True, "file": str(capture)})
+    (tmp_path / "keep").mkdir()
+    (tmp_path / "data").mkdir()
+    return reads, tmp_path
+
+
+def checked(desk, x: dict, report: dict, exe="helper.exe") -> dict:
+    reads, root = desk
+    return pc.one(Session(), Runs(report, root / "data"), 1, x, SCENARIO, exe, "도우미가 없다", root / "keep")
+
+
+@pytest.mark.parametrize("value", [None, "", "capture active", "apple river"])
+def test_valid_controls_whose_report_is_blank_or_wrong_fail_the_check(held, desk, value):
+    # The scenario ran and its controls held: only what the app reports it captured is evidence.
+    assert checked(desk, REPORT, driven(value))["status"] == "failed"
+
+
+def test_a_report_holding_the_whole_page_passes_from_an_element_or_a_file_under_data(held, desk):
+    assert checked(desk, REPORT, driven("Captured: Apple, River and GARDEN."))["status"] == "passed"
+    _, root = desk
+    (root / "data" / "seen.txt").write_text("apple river garden", encoding="utf-8")
+    assert checked(desk, SCREEN, driven())["status"] == "passed"
+    outside = {**SCREEN, "observe": {"report": {"file": "../keep/seen.txt", "from": "screen"}}}
+    (root / "keep" / "seen.txt").write_text("apple river garden", encoding="utf-8")
+    assert checked(desk, outside, driven())["status"] == "failed"   # never a file outside the app's `{data}`
+
+
+@pytest.mark.parametrize("report, why", [
+    (driven("apple river garden", acted=False), "단계가 다 돌지"),
+    (driven("apple river garden", ended="act go"), "시간을 넘겼다"),
+    (driven("apple river garden", phase="acting", error="boom"), "끝나지 못했다"),
+])
+def test_a_scenario_that_did_not_run_whole_is_no_ground_for_any_observation(held, desk, report, why):
+    got = checked(desk, REPORT, report)
+    assert got["status"] == "failed" and why in got["why"]
+
+
+def test_a_fixture_replaced_before_the_read_fails_and_nothing_is_read(held, desk, monkeypatch):
+    monkeypatch.setattr(owner_round, "proven", lambda binding, members: "the window is gone")
+    window = {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}
+    got = checked(desk, window, driven())
+    assert got["status"] == "failed" and "고정 창" in got["why"] and desk[0] == {"window": [], "surface": []}
+
+
+def test_an_app_window_replaced_after_the_drivers_read_is_never_read(held, desk, monkeypatch):
+    def gone(job, hwnd, members, title=None):
+        raise ValueError(f"window {hwnd} is not one of {job}'s")
+
+    monkeypatch.setattr(owner_round, "bind", gone)
+    got = checked(desk, {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}, driven())
+    assert got["status"] == "failed" and not desk[0]["window"]
+
+
+def test_a_window_check_reads_only_through_the_window_and_a_composition_only_the_fixtures_frame(held, desk):
+    window = checked(desk, {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}, driven())
+    assert window["status"] == "judge" and window["page"] == PAGE and Path(window["file"]).is_file()
+    assert len(desk[0]["window"]) == 1 and not desk[0]["surface"]   # whatever moves over it never enters the read
+    composed = checked(desk, SURFACE, driven())
+    assert composed["status"] == "judge" and desk[0]["surface"][0][3] == FIXTURE["rect"]
+
+
+def test_no_capture_helper_leaves_a_capture_check_pending(held, desk):
+    got = checked(desk, SURFACE, driven(), exe=None)
+    assert got == {"status": "pending", "why": "도우미가 없다"} and desk[0] == {"window": [], "surface": []}
+
+
+def test_the_critic_judges_a_capture_against_its_sentence_and_the_page(held, desk, monkeypatch):
+    asked = []
+    monkeypatch.setattr(oneshot, "turned", lambda store, role, system, text, name, check, tree, images, hide:
+                        asked.append((role, text, images)) or check({"shows": False, "why": "검게 비었다"}))
+    result = {"status": "judge", "file": str(desk[1] / "capture.png"), "shows": "번역문이 겹친다", "page": PAGE}
+    got = pc.judged(oneshot_spec.store("budget"), held, "O3", result)
+    assert got == {"status": "failed", "why": "비평가: 검게 비었다"}
+    role, text, images = asked[0]
+    assert role == "critic" and "apple river garden" in text and "번역문이 겹친다" in text and images[0].name == "capture.png"
+    # A verdict without its reason is refused, so `turned` asks again instead of taking it.
+    monkeypatch.setattr(oneshot, "turned", lambda *a: a[5]({"shows": True}))
+    with pytest.raises(ValueError, match="why"):
+        pc.judged(oneshot_spec.store("budget"), held, "O3", result)
+
+
+def ran(monkeypatch, results=None, error: Exception | None = None, during=None) -> dict:
+    """The approved round run by its worker in this thread, `observe` a stand-in returning `results`."""
+
+    def observe(repo, o_, stopped):
+        if during:
+            during()
+        if error:
+            raise error
+        return dict(results)
+
+    monkeypatch.setattr(pc, "observe", observe)
+    pc.approve("budget", approval())
+    pc.owner_round("budget")
+    return o()
+
+
+def test_a_round_that_passes_every_owner_check_opens_r3_held_at_this_versions_stop(held, monkeypatch):
+    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "passed"}})
+    assert after["stage"] == "r3" and after["stopped"]["reason"] == "kind" and not after["working"]
+    assert after["pc"]["status"] == "passed" and after["pc"]["passed"] == ["O2", "O3"] and pc.passed(after)
+    assert pc.due(after) is None
+
+
+def test_a_failed_check_goes_to_the_build_as_a_finding(held, monkeypatch):
+    sent = []
+    monkeypatch.setattr(oneshot_build, "send", lambda *a: sent.append(a))
+    monkeypatch.setattr(oneshot_critique, "front_turn", lambda s: json.dumps(s["oneshot"]["fix"], ensure_ascii=False))
+    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "failed", "why": "비평가: 검게 비었다"}})
+    assert after["stage"] == "build-front" and after["working"] == "build-front" and after["critique_base"] == 2
+    (finding,) = after["fix"]["findings"]
+    assert finding["severity"] == "high" and "O3" in finding["what"] and "검게 비었다" in finding["what"]
+    assert "owner's desktop" in after["fix"]["who"] and sent and not pc.passed(after)
+    assert after["pc"]["status"] == "waiting" and not after["pc"].get("approval")   # the next round is approved anew
+
+
+def test_a_check_this_desktop_cannot_read_stays_pending_with_r3_closed(held, monkeypatch):
+    before = o()["pc"]["attempt"]
+    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "pending", "why": "창 캡처 항목이 비었다"}})
+    assert after["stage"] == "pc" and after["pc"]["status"] == "waiting" and after["pc"]["attempt"] != before
+    assert "O3(창 캡처 항목이 비었다)" in after["pc"]["detail"] and not pc.approved(after) and pc.due(after) == "pc"
+
+
+def test_a_cleanup_failure_never_passes_the_round(held, monkeypatch):
+    after = ran(monkeypatch, error=RuntimeError("주인 화면 회차를 정리하지 못했다 — pid 7 is still running"))
+    assert after["stage"] == "pc" and after["pc"]["status"] == "waiting" and "정리하지 못했다" in after["pc"]["detail"]
+    assert after["pc"]["last"]["status"] == "error" and not pc.passed(after) and not after.get("r3")
+
+
+def test_a_stopped_round_never_calls_the_next_stage_even_when_its_checks_passed(held, monkeypatch):
+    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "passed"}},
+                during=lambda: pc.stop("budget"))
+    assert after["stage"] == "pc" and after["pc"]["last"]["status"] == "stopped" and not pc.passed(after)
+    assert not after.get("r3") and not after["working"]
+
+
+def test_a_round_uses_its_approval_up_so_the_same_screen_pressed_again_is_refused(held, monkeypatch):
+    screen, during = approval(), []
+    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "pending", "why": "비었다"}},
+                during=lambda: during.append((pc.approved(o()), o()["pc"]["ran"]["checks"])))
+    assert during == [(None, ["O2", "O3"])]   # used up as the round started, whatever its end
+    with pytest.raises(HTTPException, match="지금 회차와 다르다"):
+        pc.approve("budget", screen)
+    assert after["pc"]["last"]["status"] == "waiting"
+
+
+def test_a_stop_accepted_before_the_rounds_outcome_is_saved_never_passes(held, monkeypatch):
+    pc.approve("budget", approval())
+    pc.stop("budget")   # after the round's last check of its own halt, before its outcome is applied
+    pc.settled("budget", pc.outcome(o(), {"O2": {"status": "passed"}, "O3": {"status": "passed"}}))
+    assert o()["stage"] == "pc" and o()["pc"]["last"]["status"] == "stopped" and not pc.passed(o())
+
+
+def test_a_round_whose_approval_no_longer_stands_runs_nothing(held, monkeypatch):
+    pc.approve("budget", approval())
+    oneshot_spec.saved("budget", oneshot={"desktop_build": {**BUILD, "freeze": "f2"}})   # rebuilt after it
+    monkeypatch.setattr(pc, "observe", lambda *a: pytest.fail("nothing starts on a stale approval"))
+    pc.owner_round("budget")
+    assert o()["pc"]["status"] == "waiting" and "다시 승인한다" in o()["pc"]["detail"]
+
+
+def test_a_capture_the_critic_rejects_fails_its_check(held, monkeypatch):
+    monkeypatch.setattr(oneshot_build, "send", lambda *a: None)
+    monkeypatch.setattr(oneshot_critique, "front_turn", lambda s: "")
+    monkeypatch.setattr(oneshot, "turned", lambda *a: {"shows": False, "why": "번역문이 없다"})
+    after = ran(monkeypatch, {"O2": {"status": "passed"},
+                              "O3": {"status": "judge", "file": "c1.png", "shows": "번역문", "page": PAGE}})
+    assert after["stage"] == "build-front" and "번역문이 없다" in after["fix"]["findings"][0]["what"]

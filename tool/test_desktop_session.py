@@ -53,6 +53,18 @@ def test_a_look_runs_its_app_on_its_desktop_and_proves_everything_gone(tmp_path)
     assert all(desktop_session.exited(member) for entry in record["jobs"].values() for member in entry["members"])
 
 
+def test_a_look_on_the_owners_desktop_makes_no_desktop_and_proves_its_cleanup_the_same(tmp_path):
+    # The owner's desktop round's look (plan 9e5b): its record names no desktop, and nothing is started here, so
+    # nothing reaches the owner's screen; its folders and proof are a look's.
+    with desktop_session.look(tmp_path, "owner", owned=False) as look:
+        assert look.record["desktop"] is None and look.desktop is None
+        with pytest.raises(desktop_session.Refused):
+            look.open()
+        folder = look.reserve("files")
+    record = desktop_session.load(tmp_path / "owner")
+    assert record["state"] == "proven" and record["proof"]["clean"] and not folder.exists(), record["proof"]
+
+
 def test_a_command_run_on_the_look_returns_when_its_root_exits_and_what_it_left_ends_with_the_look(tmp_path):
     import threading
 
