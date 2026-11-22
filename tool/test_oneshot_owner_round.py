@@ -281,6 +281,7 @@ def test_the_fixtures_page_is_drawn_afresh_and_must_appear_whole():
     assert not owner_round.contains(" ".join(owner_round.WORDS), page)   # every word, but not the page
     assert not owner_round.contains(" ".join(w + "é" for w in page), page)   # each word misread by a letter
     assert not owner_round.contains("1".join(page), page)   # joined into one token
+    assert not owner_round.contains(" ".join(w + "́" for w in page), page)   # a combining accent, decomposed
     assert owner_round.contains("캡처: " + " ".join(page) + ".", page)   # other text beside it is no matter
     assert not owner_round.contains(" ".join(page).replace(page[0], page[0] + "s"), page)   # whole words only
     assert not owner_round.contains("", []) and not owner_round.contains(None, page)

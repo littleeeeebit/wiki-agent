@@ -12,11 +12,11 @@ import ctypes
 import hashlib
 import json
 import os
-import re
 import secrets
 import subprocess
 import sys
 import time
+import unicodedata
 from ctypes import wintypes as w
 from pathlib import Path
 
@@ -84,8 +84,15 @@ def contains(text: str | None, page: list[str]) -> bool:
     breaks between them aside. A fixed text naming every word of `WORDS` holds none of the 12-word orders but
     the few it happens to spell, so only a capture of this round's page passes."""
 
-    # Words as runs of any letter or digit: `appleé` or `apple1river` is no `apple` (an OCR slip, a join).
-    found = re.findall(r"[^\W_]+", (text or "").lower())
+    # Words as runs of letters, digits and the marks that combine with them, in any script, the text normalized
+    # first: `appleé`, `apple` with a combining accent, or `apple1river` is no `apple` (an OCR slip, a join).
+    found, word = [], []
+    for ch in unicodedata.normalize("NFC", text or "").lower() + " ":
+        if unicodedata.category(ch)[0] in "LNM":
+            word.append(ch)
+        elif word:
+            found.append("".join(word))
+            word = []
     return bool(page) and any(found[i:i + len(page)] == page for i in range(len(found) - len(page) + 1))
 
 

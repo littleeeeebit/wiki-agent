@@ -338,9 +338,17 @@ source, and the server assigns it:
     element (`id`, with `in: owned` in the window the main window owns) or a
     UTF-8 file under `{data}` (`file`), which must contain the fixture's text.
     The report holds the page when its words appear in order, case and
-    punctuation aside. A word is a run of letters and digits of any script,
-    so a misread word such as `appleé`, or words joined into one token, is
-    no match.
+    punctuation aside. A word is a run of letters, digits and combining
+    marks of any script, read after canonical (NFC) normalization. A
+    misread word such as `appleé`, in either encoding, or words joined into
+    one token, is no match. The driver reads a control's value without UI
+    Automation's defaults, so a provider that does not supply it leaves the
+    value unknown, never empty.
+    A known limit, accepted by the owner: the approval decides what the
+    round itself captures and which checks run. A report check cannot tell
+    whether the app read the fixture's window or the screen region it
+    covers, since the fixture is visible either way. With the owner's
+    approval, the app runs on the owner's desktop as built.
     The report must be the capture step's own, measured against what was
     proven just before that step. The driver reads it with the step's target
     found, just before the step acts: a whole state for an element, and the

@@ -202,9 +202,15 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
   # one never matches; and the toggle state.
   if ($patterns -contains "Value") {
     try {
-      $v = [string]$element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
-      $node.value = if ($v.Length -gt $MAX_VALUE) { $null } else { $v }
-      if ($v.Length -gt $MAX_VALUE) { $node.unvalued = $true }
+      # Without defaults: a provider that does not supply the value answers NotSupported, never an empty string.
+      $raw = $element.GetCurrentPropertyValue([System.Windows.Automation.ValuePattern]::ValueProperty, $true)
+      if ([object]::ReferenceEquals($raw, [System.Windows.Automation.AutomationElement]::NotSupported) -or $null -eq $raw) {
+        $node.value = $null; $node.unvalued = $true
+      } else {
+        $v = [string]$raw
+        $node.value = if ($v.Length -gt $MAX_VALUE) { $null } else { $v }
+        if ($v.Length -gt $MAX_VALUE) { $node.unvalued = $true }
+      }
     } catch { $node.value = $null; $node.unvalued = $true }   # unread or cut: what it held is unknown, not empty
   }
   if ($patterns -contains "Toggle") {
