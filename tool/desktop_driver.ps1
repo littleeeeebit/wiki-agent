@@ -355,7 +355,12 @@ try {
     $found = Target $step
     if ($found.error) { $done.error = $found.error; Save; continue }
     # What the step's report is weighed against, read with its target found, just before it acts.
-    if ($step.before) { $done.before = (State "before-$($step.name)").id }
+    if ($step.before) {
+      $done.before = (State "before-$($step.name)").id
+      Enter "find $($step.name) again"   # what the read found may have moved meanwhile: the target as it is now
+      $found = Target $step
+      if ($found.error) { $done.error = $found.error; Save; continue }
+    }
     if ($step.baseline) { Enter "baseline $($step.name)"; $done.baseline = Baseline ([string]$step.baseline) }
     Enter "act $($step.name)"
     try { Act $found.element $step; $done.acted = $true } catch { $done.error = "$($_.Exception.Message)"; Save; continue }

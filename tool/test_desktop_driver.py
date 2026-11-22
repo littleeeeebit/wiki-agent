@@ -318,6 +318,8 @@ def test_a_steps_baseline_and_before_state_are_read_with_its_target_found_just_b
     states = {s["id"]: s for s in report["states"]}
     before = states[report["steps"][1]["before"]]   # read after step one acted, before step two did
     assert before["name"] == "before-two" and [n.get("value") for n in before["nodes"] if n.get("id") == "source"] == ["a"]
+    after = states[report["steps"][1]["state"]]   # the target found again after that read is the one acted on
+    assert report["steps"][1]["acted"] and [n.get("value") for n in after["nodes"] if n.get("id") == "source"] == ["b"]
 
 
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():

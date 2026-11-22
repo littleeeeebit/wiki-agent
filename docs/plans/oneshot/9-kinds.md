@@ -340,7 +340,8 @@ source, and the server assigns it:
     The report must be the capture step's own, measured against what was
     proven just before that step. The driver reads it with the step's target
     found, just before the step acts: a whole state for an element, and the
-    file's text for a file.
+    file's text for a file. It then finds the target again, so the step acts
+    on the control as it is after that read.
     - An element counts only when its window was read whole, without any
       unread items, both in the state after the step and in the one read
       just before it. There must be exactly one element by its id, offering
@@ -354,10 +355,17 @@ source, and the server assigns it:
       text without the page. Rewriting the page an earlier capture left is
       no capture of the step's.
 
-    A known limit, accepted by the owner: an app that finishes a capture of
-    its own in the milliseconds between that read and the step's action is
-    not told apart from the step's. The fixture's words are drawn at random
-    for each check, so even then the app did capture the fixture.
+    A known limit, accepted by the owner. What a report proves is that the
+    app captured this check's fixture during this run. Each check draws its
+    own random words and starts the app after the fixture is up, so no other
+    run's capture can hold them. That the capture step itself made the
+    capture is checked as far as the outside can see, and no further.
+    Outside checks cannot tell a capture of the app's own earlier in the
+    run from the step's, if the app shows or publishes it only when the step
+    acts. That includes a capture finished in the milliseconds after the
+    read, one kept in a window not shown before the step, and one cached
+    and written out by the step. Proving the link would need the app to
+    report a mark of the step's own.
   - `window`: the round's window-bound capture of the app's main window, or
     with `in: owned` the one it owns, which must show what `shows` says.
   - `composition`: the round's surface capture of the fixture's region, which
