@@ -1,6 +1,7 @@
 """The desktop look's driver: the main window chosen once and sized, each state shot and read, steps through
 patterns only, a deadline per phase, and the mechanical findings (docs/research/oneshot-desktop-session.md)."""
 
+import hashlib
 import json
 import sys
 import time
@@ -301,6 +302,20 @@ def test_a_check_reads_a_controls_value_and_toggle_state_after_its_steps(tmp_pat
     assert [desktop_driver.holds(states[s["state"]], s["expect"]) for s in report["steps"]] == [True, holds], report
     assert [n.get("toggle") for n in states["s00"]["nodes"] if n.get("id") == "translate-on"] == ["Off"]
     assert ("step on: its postcondition was not read" in desktop_driver.findings(report)) is not holds
+
+
+def test_a_steps_baseline_is_the_report_files_digest_or_its_proven_absence_just_before_it_acts(tmp_path):
+    script, there = tmp_path / "form.ps1", tmp_path / "there.txt"
+    script.write_text(WPF_FORM, encoding="utf-8")
+    there.write_bytes(b"old report")
+    steps = [{"name": "one", "action": "set_value", "id": "source", "value": "a", "baseline": str(there)},
+             {"name": "two", "action": "set_value", "id": "source", "value": "b", "baseline": str(tmp_path / "none.txt")}]
+    with desktop_session.look(tmp_path, "baseline") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), steps, wait=30, settle_ms=300)
+    assert [s.get("baseline") for s in report["steps"]] == [
+        {"sha256": hashlib.sha256(b"old report").hexdigest()}, {"absent": True}], report
 
 
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():

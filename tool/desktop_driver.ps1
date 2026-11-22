@@ -127,6 +127,21 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
 
 function Rid($element) { ($element.GetRuntimeId()) -join "." }   # the element's identity while it lives
 
+function Baseline([string]$path) {   # a report file as a step begins: its SHA-256, proven absent, or why unknown
+  try {
+    $s = [System.IO.File]::OpenRead($path)
+    try { $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($s) } finally { $s.Dispose() }
+    return [ordered]@{ sha256 = ([System.BitConverter]::ToString($hash) -replace "-", "").ToLower() }
+  } catch {
+    $x = $_.Exception
+    if ($x -is [System.Management.Automation.MethodInvocationException]) { $x = $x.InnerException }
+    if ($x -is [System.IO.FileNotFoundException] -or $x -is [System.IO.DirectoryNotFoundException]) {
+      return [ordered]@{ absent = $true }
+    }
+    return [ordered]@{ error = "$($x.Message)" }
+  }
+}
+
 function Items([string]$at) {   # each open item container's items, realized or not, against the nodes the walk read
   # `items`: how many its provider holds; `unread`: how many of them the walk did not read, null when the
   # provider will not say, holds more than the driver counts, or the container (an expanded tree item) has none.
@@ -178,7 +193,8 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     try {
       $v = [string]$element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
       $node.value = if ($v.Length -gt $MAX_VALUE) { $null } else { $v }
-    } catch { $node.value = $null }
+      if ($v.Length -gt $MAX_VALUE) { $node.unvalued = $true }
+    } catch { $node.value = $null; $node.unvalued = $true }   # unread or cut: what it held is unknown, not empty
   }
   if ($patterns -contains "Toggle") {
     try { $node.toggle = [string]$element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
@@ -328,8 +344,8 @@ try {
     Enter "find $($step.name)"
     $found = Target $step
     if ($found.error) { $done.error = $found.error; Save; continue }
+    if ($step.baseline) { Enter "baseline $($step.name)"; $done.baseline = Baseline ([string]$step.baseline) }
     Enter "act $($step.name)"
-    $done.at = [DateTime]::UtcNow.ToFileTimeUtc()   # what the step's report is weighed against: written after this
     try { Act $found.element $step; $done.acted = $true } catch { $done.error = "$($_.Exception.Message)"; Save; continue }
     Save
     Settle

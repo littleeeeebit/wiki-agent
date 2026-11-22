@@ -267,6 +267,18 @@ def launches(tmp_path, desk, env=None, altered=""):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_a_steps_baseline_is_handed_to_the_driver_under_this_starts_data(tmp_path):
+    import desktop_driver
+
+    desk, sent = Desk(tmp_path), []
+    runs, _, kept = launches(tmp_path, desk)
+    with patch.object(desktop_driver, "drive", lambda look, app, window, steps, **k: sent.append(steps) or
+                      shown("S1", "full", [])), kept:
+        runs.drive("S1", "full", [{"name": "a"}, {"name": "go", "baseline": "out/seen.txt"}])
+    assert sent == [[{"name": "a"}, {"name": "go", "baseline": str(Path(runs.data) / "out/seen.txt")}]]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
 def test_a_look_past_its_whole_deadline_halts_its_driver_and_goes_back_to_the_build(tmp_path, monkeypatch):
     desk = Desk(tmp_path)
     runs, driving, kept = launches(tmp_path, desk)

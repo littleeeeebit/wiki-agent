@@ -337,12 +337,18 @@ source, and the server assigns it:
   - `report`: the app's own report of what it captured, the value of an
     element (`id`, with `in: owned` in the window the main window owns) or a
     UTF-8 file under `{data}` (`file`), which must contain the fixture's text.
-    The report must be the capture step's own. An element counts only when
-    its window was read whole both in the state after the step and in the
-    one before it, and its value before the step did not yet hold the page.
-    A window that did not exist before the step holds nothing. A file
-    counts only when it was written after the step began, as the driver
-    records the step's start.
+    The report must be the capture step's own, measured against what was
+    proven just before that step.
+    - An element counts only when its window was read whole, without any
+      unread items, both in the state after the step and in the one before
+      it. There must be exactly one element by its id, with a value that was
+      neither unread nor cut.
+    - Before the step, the element must be proven absent, or proven to hold
+      a value without the page. An owned window counts as absent only when
+      the main window owned none. An ambiguous window, two elements by the
+      id, or an unread value is unknown, and the report counts for nothing.
+    - A file counts only when the driver, reading it just before the step
+      acted, proved it absent or found other bytes there (its SHA-256).
   - `window`: the round's window-bound capture of the app's main window, or
     with `in: owned` the one it owns, which must show what `shows` says.
   - `composition`: the round's surface capture of the fixture's region, which

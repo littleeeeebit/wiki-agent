@@ -173,6 +173,8 @@ class Launches:
         argv = [str(folder / launch["program"]), *(a.replace("{data}", data) for a in launch["args"])]
         extra = {**{k: v.replace("{data}", data) for k, v in launch["env"].items()
                     if k.upper() not in oneshot_desktop.LOOK_ENV}, "ONESHOT_SCREEN": sid, "ONESHOT_STATE": state}
+        # A step's `baseline`, a report file under `{data}`, is read by the driver just before that step acts.
+        steps = [{**s, "baseline": str(Path(data) / s["baseline"])} if s.get("baseline") else s for s in steps]
         report, failed = {}, None
         try:
             self.look.start(key, argv, folder / launch["cwd"], extra, halt=self.halt, ready=self.ready,

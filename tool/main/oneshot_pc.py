@@ -241,9 +241,13 @@ def ran(report: dict, n: int) -> str:
 def reported(report: dict, seen: dict, data: Path, page: list[str]) -> str | None:
     """The app's own report of what the capture step captured, or None when there is none to weigh: the value of
     the one element `id` names in the window it names, in the state after the last step (the review's `act`), or
-    the UTF-8 file under its `{data}`. Each is fresh from that step: the element's window read whole in that state
-    and in the one before the step, and its value there not yet holding the fixture's words; the file written
-    after the step began, as the driver recorded it (`at`, a Windows file time)."""
+    the UTF-8 file under its `{data}`. Each is fresh from that step, against what was proven just before it: the
+    element's window read whole, and the element one or proven absent, in the state before the step, its value
+    there not yet holding the fixture's words; the file proven absent, or of other bytes, as the driver read it
+    just before the step acted (the step's `baseline`). Anything unknown before the step, an ambiguous window, an
+    unread or cut value, a partial read, proves nothing new."""
+
+    import hashlib
 
     import desktop_driver
     import owner_round
@@ -252,25 +256,34 @@ def reported(report: dict, seen: dict, data: Path, page: list[str]) -> str | Non
         file = (data / seen["file"]).resolve()
         if not file.is_relative_to(data.resolve()) or not file.is_file() or file.stat().st_size > MAX_REPORT:
             return None
-        written = file.stat().st_mtime_ns // 100 + 116444736000000000   # the same clock as the driver's `at`
-        at = (report.get("steps") or [{}])[-1].get("at")
-        return file.read_text(encoding="utf-8", errors="replace") if isinstance(at, int) and written > at else None
+        raw, was = file.read_bytes(), (report.get("steps") or [{}])[-1].get("baseline") or {}
+        fresh = was.get("absent") is True or isinstance(was.get("sha256"), str) and \
+            was["sha256"] != hashlib.sha256(raw).hexdigest()
+        return raw.decode("utf-8", errors="replace") if fresh else None
 
-    def value(state: dict) -> tuple[bool, str | None]:   # (read whole, the element's value); no window: read, none
-        window = desktop_driver.scope(report, state, seen.get("in", "main"))
-        if window is None:
-            return True, None
-        if not any(r.get("hwnd") == window and r.get("read") for r in state.get("reads") or []):
-            return False, None   # a read that ended partway proves neither one element nor none
+    unknown = object()
+
+    def value(state: dict):   # the element's value; None when proven absent; `unknown` when not proven either way
+        where = seen.get("in", "main")
+        window = desktop_driver.scope(report, state, where)
+        if window is None:   # proven absent only as an owned window the main window has none of
+            main = (report.get("main") or {}).get("hwnd")
+            owned = [w for w in state.get("windows") or [] if main is not None and w.get("owner") == main]
+            return None if where == "owned" and main is not None and not owned else unknown
+        if not any(r.get("hwnd") == window and r.get("read") for r in state.get("reads") or []) or \
+                desktop_look.partial(state, {window}):
+            return unknown   # a read that ended partway, or items it did not reach, proves neither one nor none
         nodes = [n for n in state["nodes"]
                  if not n.get("foreign") and n.get("window") == window and n.get("id") == seen["id"]]
-        return True, nodes[0].get("value") if len(nodes) == 1 else None
+        if len(nodes) > 1 or nodes and nodes[0].get("unvalued"):
+            return unknown
+        return nodes[0].get("value") if nodes else None
 
     if len(report["states"]) < 2:
         return None
-    (whole, now), (whole_before, before) = value(report["states"][-1]), value(report["states"][-2])
-    if not whole or not whole_before or owner_round.contains(before, page):   # held before the step: not its doing
-        return None
+    now, before = value(report["states"][-1]), value(report["states"][-2])
+    if now is unknown or now is None or before is unknown or owner_round.contains(before, page):
+        return None   # held before the step, or not proven otherwise: not the step's doing
     return now
 
 
@@ -290,6 +303,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
     fixture, rect = owner_round.fixture(session, fixture_key, page, RECT, runs.halt)
     (what, seen), = x["observe"].items()
     steps = scenario["steps"]
+    if what == "report" and "file" in seen:   # the driver reads the file just before the capture step acts
+        steps = [*steps[:-1], {**steps[-1], "baseline": seen["file"]}]
 
     def members(key: str) -> list[dict]:
         session.observe()

@@ -4,10 +4,10 @@ round (plan 9e5), on stand-ins: nothing starts on the owner's desktop here. The 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -258,10 +258,10 @@ FIXTURE = {"job": "fixture1", "hwnd": 201, "pid": 5, "class": "TkTopLevel", "tit
 
 
 def driven(value: str | None = None, acted: bool = True, before: str | None = None, whole: bool = True,
-           at: int = 125911584000000000, **over) -> dict:
+           baseline: dict | None = None, **over) -> dict:
     """A driver's report of the scenario's one step on the owner's desktop: read, never shot. `before` is the
-    element's value as the step began, `whole` whether the state after it was read whole, `at` the step's start as
-    a Windows file time (2000 by default, before any file a test writes)."""
+    element's value as the step began, `whole` whether the state after it was read whole, `baseline` the report
+    file as the driver read it just before the step (proven absent by default)."""
 
     def state(value, read=True):
         return {"windows": [{"hwnd": 101, "pid": 7, "class": "App"}],
@@ -270,7 +270,8 @@ def driven(value: str | None = None, acted: bool = True, before: str | None = No
 
     return {"phase": "done", "main": {"hwnd": 101, "pid": 7, "class": "App"},
             "states": [{**state(before), "id": "s00", "name": "start"}, {**state(value, whole), "id": "s01", "name": "go"}],
-            "steps": [{"name": "go", "acted": acted, "state": "s01", "at": at}], **over}
+            "steps": [{"name": "go", "acted": acted, "state": "s01", "baseline": baseline or {"absent": True}}],
+            **over}
 
 
 class Runs:
@@ -344,11 +345,38 @@ def test_a_report_counts_only_as_the_capture_steps_own_from_a_whole_read(held, d
     assert checked(desk, REPORT, driven(page, before="waiting"))["status"] == "passed"
     assert checked(desk, REPORT, driven(page, before=page))["status"] == "failed"   # it held the page before the act
     assert checked(desk, REPORT, driven(page, whole=False))["status"] == "failed"   # a read that ended partway
+    unknown = [  # what the element held before the step was never proven
+        lambda r: r["states"][0]["reads"][0].update(read=False),
+        lambda r: r["states"][0]["nodes"].append({**r["states"][0]["nodes"][0]}),   # two by that id
+        lambda r: r["states"][0]["nodes"][0].update(value=None, unvalued=True),   # its value unread
+        lambda r: r["states"][0]["nodes"].insert(0, {"window": 101, "type": "List", "items": 3, "unread": 1}),
+        lambda r: r["states"][1]["nodes"].insert(0, {"window": 101, "type": "List", "items": 3, "unread": 1}),
+    ]
+    for change in unknown:
+        report = driven(page)
+        change(report)
+        assert checked(desk, REPORT, report)["status"] == "failed"
     _, root = desk
     (root / "data" / "seen.txt").write_text(page, encoding="utf-8")
-    later = time.time_ns() // 100 + 116444736000000000 + 10 ** 8   # the step began ten seconds after the write
-    assert checked(desk, SCREEN, driven(at=later))["status"] == "failed"
-    assert checked(desk, SCREEN, driven(at=None))["status"] == "failed"   # no start recorded: nothing to weigh
+    same = {"sha256": hashlib.sha256(page.encode()).hexdigest()}   # these bytes were there before the step
+    assert checked(desk, SCREEN, driven(baseline=same))["status"] == "failed"
+    assert checked(desk, SCREEN, driven(baseline={"sha256": "0" * 64}))["status"] == "passed"   # other bytes before
+    assert checked(desk, SCREEN, driven(baseline={"error": "denied"}))["status"] == "failed"   # unknown before
+
+
+def test_an_owned_report_window_counts_absent_before_the_step_only_when_there_was_none(held, desk):
+    page, owned = "apple river garden", {**REPORT, "observe": {"report": {"id": "seen", "in": "owned", "from": "fixture"}}}
+
+    def report(before_windows: int) -> dict:
+        got = driven(page)
+        for state, n in ((got["states"][0], before_windows), (got["states"][1], 1)):
+            state["windows"] += [{"hwnd": 200 + i, "pid": 7, "class": "App", "owner": 101} for i in range(n)]
+            state["reads"] += [{"hwnd": 200 + i, "read": True} for i in range(n)]
+            state["nodes"] = [{"window": 200, "id": "seen", "value": page, "type": "Text", "depth": 1}]
+        return got
+
+    assert checked(desk, owned, report(0))["status"] == "passed"   # it appeared with the step
+    assert checked(desk, owned, report(2))["status"] == "failed"   # two before: which one held what is unknown
 
 
 @pytest.mark.parametrize("report, why", [
