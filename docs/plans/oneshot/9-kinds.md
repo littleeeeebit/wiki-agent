@@ -469,7 +469,9 @@ earlier device pass: the phone round's, the owned rounds' and this one's.
 Each accepted frontend build has its own generation id, and a pass counts
 only when it names the current one, so a rebuild clears passes even when
 its HEAD and APK digests are the same. A build an earlier version accepted
-has no id, so its device rounds run again. Before recovery reopens a held
+gets its id at start-up, before any device round's recovery, so no earlier
+pass counts for it, its device rounds run again in the guard's order, phone
+first, and their passes name it. Before recovery reopens a held
 R3, and before the owner's approval is recorded, the worktree must be read
 at the build's HEAD. A HEAD that cannot be read confirms nothing.
 

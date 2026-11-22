@@ -292,3 +292,15 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
 oneshot_build.STAGES[STAGE] = (built_front, "gate", build_front_text, lambda repo: None)   # the critic follows (4c)
 oneshot_build.GRANTS[STAGE] = lambda spec: True
 oneshot_spec.TURNS.add(STAGE)
+
+
+def generation(repo: str, o: dict) -> None:
+    """A build an earlier version accepted, saved without a `front_build`, gets one at start-up, before the device
+    rounds' own repairs read it: no earlier pass names it, so each due device round runs again, and its pass names
+    this build."""
+
+    if o.get("front_built_head") and not o.get("front_build"):
+        oneshot_spec.saved(repo, oneshot={"front_build": uuid.uuid4().hex})
+
+
+oneshot_spec.RECOVERS.insert(0, generation)   # first, whichever device module loaded before this one

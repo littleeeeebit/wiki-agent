@@ -193,3 +193,29 @@ def test_an_earlier_versions_android_run_held_at_r3_reopens_only_on_a_pass_of_it
     assert o()["stage"] == "phone" and not o().get("r3")
     held_at_r3(BUILD["head"], {"status": "passed", "head": BUILD["head"], "apks": {"app.apk": "x"}, "front_build": "b1"})
     assert o()["stage"] == "r3" and o()["r3"]
+
+
+def test_a_build_an_earlier_version_accepted_gets_its_generation_and_its_rerun_pass_counts(held):
+    legacy = {"status": "passed", "head": BUILD["head"], "apks": {"app.apk": "x"}}   # no generation named
+    oneshot_spec.saved("budget", oneshot={"intent": {"restated": "화면 번역기", "kind": "android"}, "stage": "r3",
+                                          "working": None, "front_built_head": BUILD["head"], "apks": {"app.apk": "x"},
+                                          "front_build": None, "phone": legacy, "pc": None, "r3": None,
+                                          "stopped": {"reason": "kind", "state": "r3", "detail": "7f2"}})
+    oneshot_spec.recover()
+    stamped = o()["front_build"]
+    assert stamped and o()["stage"] == "phone" and not o().get("r3")
+    oneshot_spec.recover()   # once: a second start keeps it, so a pass of the rerun still names it
+    assert o()["front_build"] == stamped
+    # The rerun's pass names that generation, as `drive` records the run's (`test_oneshot_phone`): it counts.
+    assert pc.phoned({**o(), "phone": {**legacy, "front_build": stamped}})
+
+
+def test_an_earlier_versions_mixed_run_held_at_r3_waits_for_the_phone_before_the_owners_round(held):
+    oneshot_spec.saved("budget", oneshot={"intent": {"restated": "화면 번역기", "kind": "android",
+                                                     "kinds": ["android", "desktop"]},
+                                          "stage": "r3", "working": None, "front_built_head": BUILD["head"],
+                                          "apks": {"app.apk": "x"}, "front_build": None, "pc": None, "r3": None,
+                                          "phone": {"status": "passed", "head": BUILD["head"], "apks": {"app.apk": "x"}},
+                                          "stopped": {"reason": "kind", "state": "r3", "detail": "9e4b"}})
+    oneshot_spec.recover()
+    assert o()["stage"] == "phone" and o()["phone"]["status"] == "waiting" and not o().get("r3")

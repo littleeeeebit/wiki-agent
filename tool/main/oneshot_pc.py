@@ -142,7 +142,8 @@ def waits(repo: str, fields: dict) -> dict:
 
 def earlier(repo: str, o: dict) -> None:
     """A restart sends the run back to waiting: an approval is never applied after it. A run an earlier version
-    held before R3 with a pending `owner` check waits here instead."""
+    held before R3 with a pending `owner` check goes on by the guard instead: to the phone while its round is due,
+    else here."""
 
     if o.get("stage") == STAGE:   # a new attempt even with none approved: a request prepared before it is stale
         waiting = {**o, "pc": fresh("서버가 다시 켜졌다 — 회차를 다시 승인한다" if (o.get("pc") or {}).get("approval") else "")}
@@ -150,7 +151,7 @@ def earlier(repo: str, o: dict) -> None:
             {"stopped": oneshot_spec.kind_stop(STAGE, waiting)} if held(waiting) else {})})
     elif "desktop" in kinds_of(o) and o.get("stage") == "r3" and not o.get("working") and not o.get("r3") \
             and oneshot_desktop.owner_owed(o) and not passed(o):
-        waits(repo, {})
+        onward(repo, {})   # the guard's own order: a phone round still due comes first
 
 
 oneshot_spec.WAITS.add(STAGE)
