@@ -312,12 +312,26 @@ def owned(proc: subprocess.Popen, health: str) -> bool:
                     s.connect(address)
                 except OSError:
                     continue   # nothing answers on this address: it cannot answer for the backend either
-                mine = s.getsockname()[1]
-                pids.append(next((c.pid for c in psutil.net_connections("tcp") if c.laddr and c.laddr.port == port
-                                  and c.raddr and c.raddr.port == mine), None))
+                pids.append(accepted_by(psutil, s.getpeername()[:2], s.getsockname()[:2]))
         return bool(pids) and all(p in tree for p in pids)
     except (psutil.Error, OSError):
         return False
+
+
+def accepted_by(psutil, server: tuple, client: tuple, seconds: float = 3.0) -> int | None:
+    """The process holding the server side of the connection `client` made to `server`, matched on both ends'
+    address and port (an IPv4-mapped address read as IPv4), or `None`. A connection still queued for `accept`
+    has no owner on Linux yet, so the table is read again until one shows or `seconds` pass."""
+
+    ip = lambda a: a.lower().removeprefix("::ffff:")   # noqa: E731
+    deadline = time.monotonic() + seconds
+    while True:
+        pid = next((c.pid for c in psutil.net_connections("tcp") if c.laddr and c.raddr
+                    and (ip(c.laddr.ip), c.laddr.port) == (ip(server[0]), server[1])
+                    and (ip(c.raddr.ip), c.raddr.port) == (ip(client[0]), client[1])), None)
+        if pid is not None or time.monotonic() > deadline:
+            return pid
+        time.sleep(0.1)
 
 
 def tail(log: Path, size: int = 1500) -> str:

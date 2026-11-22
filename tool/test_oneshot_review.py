@@ -607,7 +607,8 @@ def test_a_head_refused_in_an_earlier_round_is_never_built_on_again(reviewed):
     assert oneshot_answers.ran([("test_budget", "test_pin", "test_budget.py", "passed")],
                                [{"test": "test_budget.py::test_pin"}]) == ""
     assert "돌지 않음" in oneshot_answers.ran([], [{"test": "test_budget.py::test_pin"}])
-    assert "failed" in oneshot_answers.ran([("test_budget", "test_pin", "", "failed")], [{"test": "test_budget.py::test_pin"}])
+    assert "failed" in oneshot_answers.ran([("test_budget", "test_pin", "test_budget.py", "failed")],
+                                           [{"test": "test_budget.py::test_pin"}])
     two = [("test_budget.TestA", "test_pin", "test_budget.py", "failed"), ("test_budget.TestB", "test_pin", "test_budget.py", "passed")]
     assert oneshot_answers.ran(two, [{"test": "test_budget.py::TestB::test_pin"}]) == ""   # the class it names
     assert "failed" in oneshot_answers.ran(two, [{"test": "test_budget.py::TestA::test_pin"}])
@@ -665,9 +666,10 @@ def test_a_test_span_is_the_definition_and_its_whole_body():
     wrapped = "class TestRefund(\n    Base,\n):\n    def test_refund(self):\n        pass\n"
     assert test_span(wrapped, ["TestRefund", "test_refund"], "test_a.py") == (4, 5)   # a declaration over lines
     assert test_span('const help = "Run test(\'refund\') first"\n', ["refund"], "a.test.js") is None   # in a string
-    from main.oneshot_answers import stripped
-    assert stripped("x = a // b  # half", ("#",)) == "x = a // b"   # Python's `//` is division
-    assert stripped('url = "http://a#b"  // note', ("//",)) == 'url = "http://a#b"'
+    template = "const t = `\ntest('refund', () => {})\n`\n"   # inside a template literal over lines
+    assert test_span(template, ["refund"], "a.test.js") is None
+    assert test_span("/* old:\ntest('refund', () => {})\n*/\n", ["refund"], "a.test.js") is None   # a block comment
+    assert test_span('x = "http://a" // note\ntest(\'refund\', () => {\n  run()\n})\n', ["refund"], "a.test.ts") == (2, 4)
 
 
 def test_an_answers_test_is_new_since_the_refusal_and_runs_as_the_runner_names_it(reviewed):
@@ -697,11 +699,20 @@ def test_an_answers_test_is_new_since_the_refusal_and_runs_as_the_runner_names_i
     for cls in ("test_pin.TestRules", "suite.test_pin.TestRules"):   # a class's same-named case, prefixed or not
         assert "돌지 않음" in ran([(cls, "test_new", "test_pin.py", "passed")], [{"test": "test_pin.py::test_new"}])
         assert ran([(cls, "test_new", "test_pin.py", "passed")], [{"test": "test_pin.py::TestRules::test_new"}]) == ""
-    assert "xunit1" in ran([("suite.test_pin", "test_new", "", "passed")], [{"test": "test_pin.py::test_new"}])
-    assert ran([("test_pin", "test_new", "", "passed")], [{"test": "test_pin.py::test_new"}]) == ""   # exact, no file
-    other = [("integration.tests.test_pin", "test_new", "integration/tests/test_pin.py", "passed")]
-    assert "돌지 않음" in ran(other, [{"test": "tests/test_pin.py::test_new"}])   # the same names, another file
+    pin = [{"test": "test_pin.py::test_new"}]
+    for cls in ("suite.test_pin", "test_pin"):   # no file: the only `test_pin.*` defining it, any prefix or root
+        assert ran([(cls, "test_new", "", "passed")], pin, "", tree) == ""
+    assert ran([("test_pin", "test_new", str(tree / "test_pin.py"), "passed")], pin, "", tree) == ""   # absolute
+    (tree / "pkg").mkdir()
+    (tree / "pkg" / "test_pin.py").write_text("def test_new():\n    pass\n", encoding="utf-8")
+    git(tree, "add", "pkg/test_pin.py")
+    git(tree, "commit", "-m", "the same test in another file of the same name")
+    assert "xunit1" in ran([("test_pin", "test_new", "", "passed")], pin, "", tree)   # which one ran is unknown
+    other = [("pkg.test_pin", "test_new", "pkg/test_pin.py", "passed")]
+    assert "돌지 않음" in ran(other, pin, "", tree)   # the same names, another file the report names
     assert runner_root({"contract": ["web/test_budget.py"], "cases": [["test_budget", "test_y", ""]]}) == ""
+    both = {"contract": ["test_budget.py", "web/test_budget.py"], "cases": [["test_budget", "test_y", "test_budget.py"]]}
+    assert runner_root(both) == ""   # an exact path is the root itself, not the other folder
 
 
 def test_a_replacement_counts_once_the_findings_file_is_not_what_the_refusal_read(reviewed):

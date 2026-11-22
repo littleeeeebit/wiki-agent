@@ -349,10 +349,13 @@ def test_a_redirect_from_the_health_address_is_its_status_never_followed():
 def test_only_the_started_backend_vouches_for_the_health_address():
     import socket
     from types import SimpleNamespace as NS
-    with socket.socket() as listener:   # this test's own process answers on a loopback port
+    import threading
+    with socket.socket() as listener:   # this test's own process answers on a loopback port, accepting as a server
         listener.bind(("127.0.0.1", 0))
         listener.listen()
         port = listener.getsockname()[1]
+        accepted = []
+        threading.Thread(target=lambda: [accepted.append(listener.accept()[0]) for _ in range(2)], daemon=True).start()
         assert measure.owned(NS(pid=os.getpid()), f"http://127.0.0.1:{port}/health")   # it accepted the connection
         other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:   # a process that started nothing answering there
@@ -360,7 +363,18 @@ def test_only_the_started_backend_vouches_for_the_health_address():
         finally:
             other.kill()
             other.wait()
+            for c in accepted:
+                c.close()
     assert not measure.owned(NS(pid=os.getpid()), f"http://127.0.0.1:{port}/health")   # nothing answers
+    row = lambda pid, here, there: NS(pid=pid, laddr=NS(ip=here[0], port=here[1]),   # noqa: E731
+                                      raddr=NS(ip=there[0], port=there[1]))
+    table = NS(net_connections=lambda kind: [row(99, ("::1", 8000), ("::1", 50000)),   # IPv6, the same two ports
+                                             row(11, ("::ffff:127.0.0.1", 8000), ("::ffff:127.0.0.1", 50000))])
+    assert measure.accepted_by(table, ("127.0.0.1", 8000), ("127.0.0.1", 50000)) == 11   # both ends, mapped read
+    queued = iter([[row(None, ("127.0.0.1", 8000), ("127.0.0.1", 50000))]] * 2 + [[row(11, ("127.0.0.1", 8000),
+                                                                                       ("127.0.0.1", 50000))]])
+    assert measure.accepted_by(NS(net_connections=lambda kind: next(queued)), ("127.0.0.1", 8000),
+                               ("127.0.0.1", 50000)) == 11   # no owner while queued, then the one accepting
 
 
 def test_the_app_starts_without_psutil_which_the_install_declares():

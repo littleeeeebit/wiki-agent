@@ -68,16 +68,20 @@ test is not one HEAD defines and the refused HEAD did not (`path::name`, or
 `path::Class::name` inside a class): the pinning test is new, so no edit of
 an old test's comments, spacing or nesting stands in for one. Each part is
 a direct member of the one before it, read in Python by its syntax tree and
-in other languages from its definition lines; a mention, an inherited test or
-a nested function of the same name is none. After the gate, that test must
-have run and passed in the build's own test run (`oneshot_answers.ran`). A
-case that names its file counts only where that file is the answer's and
-its class name ends in the module's own name and the selector's classes; a
-case without a file only where its class name is exactly the module and
-classes. Paths are read from the runner's `root` as the contract tests are
-(`runner_root`, recovered from the pinned cases' files for a run committed
-before it was saved). No prefix is guessed: the error tells a builder whose
-runner adds one to name files (pytest `-o junit_family=xunit1`). It saves the entries on the spec under `answers`,
+in other languages from its definition lines, with strings and comments
+read across lines (a template literal, a block comment); a mention, an
+inherited test or a nested function of the same name is none. After the
+gate, that test must have run and passed in the build's own test run
+(`oneshot_answers.ran`). A case's class name ends in the file's module name
+and the selector's classes. A case that names its file counts only where
+that file, read as the contract gate reads it (`oneshot_build.source`: an
+absolute path inside the worktree, or a relative one from the runner's
+`root`), is the answer's. A case without a file counts only while the
+answer's file is the only tracked file of its name that defines the test
+(`alone`), so no prefix or root is guessed and a resumed run whose report
+names no files still verifies. The root is saved at the contract commit, or
+recovered as the one folder every pinned case's file fits (`runner_root`,
+an exact path being the root itself). It saves the entries on the spec under `answers`,
 with the round they answer.
 
 `review_text` shows the next reviewer every answer (`answers_text`). In an
@@ -157,7 +161,10 @@ everything it started. A health port something already answers before the
 start is refused. So is one where a process that accepts a connection to it
 is outside the backend's process tree. The server connects once to each
 address its host resolves to (both for `localhost`) and reads the accepted
-socket's owner, so whichever listener the system picks is the one judged. A
+socket's owner, so whichever listener the system picks is the one judged.
+The accepted socket is matched on both ends' address and port (an
+IPv4-mapped address read as IPv4), and read again for up to three seconds
+while it is still queued for `accept` and has no owner yet. A
 redirect is
 the health address's own status, never followed. The build reads the plan
 committed at HEAD, as the screen does, never an ignored file. A tree the

@@ -92,44 +92,53 @@ def marks_of(file: str) -> tuple[str, ...]:
     return ("#",) if suffix in HASH else ("//",) if suffix in SLASH else ("#", "//")
 
 
-def stripped(line: str, marks: tuple[str, ...] = ("#", "//")) -> str:
-    """`line` without its trailing line comment (a mark outside a string), right-stripped; empty for a line that is
-    only a comment. ponytail: a block comment's inner line or a docstring still counts as code."""
-
-    quote, i = "", 0
-    while i < len(line):
-        c = line[i]
-        if quote:
-            quote = "" if c == quote else quote
-            i += 2 if c == "\\" else 1
-            continue
-        if c in "\"'`":
-            quote = c
-        elif any(line.startswith(m, i) for m in marks):
-            line = line[:i]
-            break
-        i += 1
-    block = ("/*", "*") if "//" in marks else ()
-    return "" if line.lstrip().startswith(block) else line.rstrip()
+HIDDEN = "\0"
 
 
-def quoted(line: str, at: int) -> bool:
-    """Whether `line[at]` lies inside a string literal of that line."""
+def unquoted(text: str, marks: tuple[str, ...] = ("#", "//")) -> list[str]:
+    """`text`'s lines with every string literal's content and every comment replaced by `HIDDEN`, columns kept:
+    the state carries across lines, so a template literal (`` ` ``) or a block comment (`/* */`, where `//`
+    marks comments) spans them, while `'` and `"` end at their line. ponytail: a regex literal reads as code."""
 
-    quote, i = "", 0
-    while i < at:
-        if quote and line[i] == "\\":
-            i += 2
-            continue
-        quote = ("" if line[i] == quote else quote) if quote else (line[i] if line[i] in "\"'`" else "")
-        i += 1
-    return bool(quote)
+    out, quote, i = [], "", 0
+    while i < len(text):
+        c = text[i]
+        if quote in ("/*", "line"):   # inside a comment
+            end = quote == "/*" and text.startswith("*/", i)
+            out.append("\n" if c == "\n" else HIDDEN * (2 if end else 1))
+            quote = "" if end or (c == "\n" and quote == "line") else quote
+            i += 2 if end else 1
+        elif quote:
+            if c == "\\" and i + 1 < len(text):
+                out.append(HIDDEN + ("\n" if text[i + 1] == "\n" else HIDDEN))
+                i += 2
+                continue
+            if c == quote:   # the closing quote stays visible, the content does not
+                quote = ""
+                out.append(c)
+            elif c == "\n":
+                quote = quote if quote == "`" else ""
+                out.append(c)
+            else:
+                out.append(HIDDEN)
+            i += 1
+        elif "//" in marks and text.startswith("/*", i):
+            quote, i = "/*", i + 2
+            out.append(HIDDEN * 2)
+        elif any(text.startswith(m, i) for m in marks):
+            quote, i = "line", i + 1
+            out.append(HIDDEN)
+        else:
+            quote = c if c in "\"'`" else ""
+            out.append(c)
+            i += 1
+    return "".join(out).split("\n")
 
 
-def code(line: str, marks: tuple[str, ...] = ("#", "//")) -> bool:
-    """A line that holds code: not blank, not only a comment."""
+def code(line: str) -> bool:
+    """A line of `unquoted` output that holds code: something beside blanks, strings and comments."""
 
-    return bool(stripped(line, marks).strip())
+    return bool(line.replace(HIDDEN, "").strip())
 
 
 def committed(path: Path, rev: str, file: str) -> str:
@@ -141,12 +150,12 @@ def committed(path: Path, rev: str, file: str) -> str:
     return "" if done.returncode else done.stdout
 
 
-def end_of(lines: list[str], start: int, marks: tuple[str, ...]) -> int:
-    """The 0-based end (exclusive) of the definition at `start`: the next code line no deeper, a closing bracket
-    included."""
+def end_of(lines: list[str], start: int) -> int:
+    """The 0-based end (exclusive) of the definition at `start` in `unquoted` lines: the next code line no deeper,
+    a closing bracket included."""
 
     depth = len(lines[start]) - len(lines[start].lstrip())
-    end = next((j for j in range(start + 1, len(lines)) if code(lines[j], marks)   # a comment does not end it
+    end = next((j for j in range(start + 1, len(lines)) if code(lines[j])   # a comment or a string does not end it
                 and len(lines[j]) - len(lines[j].lstrip()) <= depth), len(lines))
     return end + 1 if end < len(lines) and lines[end].lstrip()[:1] in "})]" else end
 
@@ -175,19 +184,20 @@ def test_span(text: str, parts: list[str], file: str = "") -> tuple[int, int] | 
             nodes = node.body
         if node is not None:
             return node.lineno, node.end_lineno
-    lines, lo, hi, start, depth = text.splitlines(), 0, len(text.splitlines()), None, None
-    marks = marks_of(file)
+    lines = text.replace("\r\n", "\n").split("\n")
+    seen, lo, hi, start, depth = unquoted("\n".join(lines), marks_of(file)), 0, len(lines), None, None
     for part in parts:
         name = re.escape(part.split('[')[0])
         defined = re.compile(rf"^\s*(?:async\s+)?(?:def|class|func|fn|function)\s+{name}\b"
                              rf"|\b(?:test|it|describe)\s*\(\s*[\"'`]{name}[\"'`]")
-        start = next((i for i in range(lo, hi) if any(not quoted(s, m.start()) for s in [stripped(lines[i], marks)]
-                                                      for m in defined.finditer(s))   # a mention in a string is none
+        # A match whose first word is code, not inside a string or a comment, on any line before.
+        start = next((i for i in range(lo, hi) if any(seen[i][m.end() - len(m[0].lstrip())] != HIDDEN
+                                                      for m in defined.finditer(lines[i]))
                       and (depth is None or len(lines[i]) - len(lines[i].lstrip()) == depth)), None)
         if start is None:
             return None
-        lo, hi = start + 1, end_of(lines, start, marks)
-        body = next((lines[i] for i in range(lo, hi) if code(lines[i], marks)), "")
+        lo, hi = start + 1, end_of(seen, start)
+        body = next((lines[i] for i in range(lo, hi) if code(seen[i])), "")
         depth = len(body) - len(body.lstrip())   # the next part is a direct member, at the body's own indent
     return start + 1, hi
 
@@ -208,44 +218,59 @@ def changed_files(path: Path, since: str) -> dict[str, list[tuple[int, int]]]:
 
 def runner_root(o: dict) -> str:
     """The folder the test runner names files from: saved at the contract commit (`runner_root`), or, for a run
-    committed before it was saved, read off a pinned case's file against the contract file it is."""
+    committed before it was saved, the one folder every pinned case's relative file fits against the contract
+    files (an exact path is the root itself); the root itself when none or more than one fits."""
 
     if (root := o.get("runner_root")) is not None:
         return root
+    roots = None
     for _, _, at in o.get("cases") or []:
         at = posixpath.normpath((at or "").replace("\\", "/"))
-        for c in o.get("contract") or []:
-            if at != "." and c != at and c.endswith("/" + at):
-                return c[:-len(at) - 1]
-    return ""   # no file in the old report: the root itself, and `ran` asks for a report that names files
+        if at == "." or Path(at).is_absolute():
+            continue   # no file, or one `oneshot_build.source` reads without a root
+        fits = {"" if c == at else c[:-len(at) - 1] for c in o.get("contract") or [] if c == at or c.endswith("/" + at)}
+        roots = fits if roots is None else roots & fits
+    return roots.pop() if roots and len(roots) == 1 else ""
 
 
-def ran(found: list[tuple[str, str, str, str]], answers: list[dict], root: str = "") -> str:
+def alone(path: Path, file: str, parts: list[str]) -> bool:
+    """Whether `file` is the only file HEAD tracks, of its own name in any folder and language, that defines the
+    test `parts` names: then a case of that name is that test, whatever prefix or root the runner gave it."""
+
+    from . import specs
+
+    stem = posixpath.splitext(posixpath.basename(file))[0]
+    done = specs.sh(["git", "-c", "core.quotePath=false", "ls-files", "-z"], path, 60)
+    return not done.returncode and not any(
+        f != file and posixpath.splitext(posixpath.basename(f))[0] == stem
+        and test_span(committed(path, "HEAD", f), parts, f) for f in done.stdout.split("\0") if f)
+
+
+def ran(found: list[tuple[str, str, str, str]], answers: list[dict], root: str = "",
+        path: Path | None = None) -> str:
     """Why a pinning test an answer names did not run and pass in the build's test run (`oneshot_build.held`'s
     JUnit cases, `(classname, name, file, outcome)`), or empty: a name that only appears in the file is no test.
-    A case that names its file is the selector's only where that file is the answer's, its class name ending in
-    the module's own name and the selector's classes (`path::name` none); one without a file only where its class
-    name is exactly the module and classes, read from the runner's `root`, as the contract tests are. No prefix
-    or suffix is guessed: a runner that adds one names the file (pytest `-o junit_family=xunit1`)."""
+    A case's class name ends in the file's module name and the selector's classes (`path::name` none). One that
+    names its file counts only where that file, read as the contract gate reads it (`oneshot_build.source`, from
+    the runner's `root`), is the answer's; one without a file only while the answer's file is the only file of
+    its name that defines the test (`alone`), so no prefix or root is guessed."""
 
     bad = []
     for a in answers:
         file, _, rest = a["test"].partition("::")
         *classes, name = rest.split("::")
         file = posixpath.normpath(file.replace("\\", "/"))
-        local = posixpath.relpath(file, root) if root else file   # the file as the runner names it
-        module = local.rsplit(".", 1)[0].replace("/", ".")
-        owner = ".".join([module, *classes])
-        same = lambda at: at and posixpath.normpath(posixpath.join(root, at.replace("\\", "/"))) == file   # noqa: E731
-        tail = [module.rsplit(".", 1)[-1], *classes]   # what ends the class name of exactly this case
-        kinds = [kind for cls, case, at, kind in found
-                 if (case == name or case.startswith(name + "["))
-                 and (same(at) and cls.split(".")[-len(tail):] == tail if at else cls == owner
-                      or not classes and posixpath.normpath(posixpath.join(root, cls.replace("\\", "/"))) == file)]
+        tail = [posixpath.splitext(posixpath.basename(file))[0], *classes]   # what ends this case's class name
+        where = (lambda at: oneshot_build.source(path, at, root)) if path else (   # noqa: E731
+            lambda at: posixpath.normpath(posixpath.join(root, at.replace("\\", "/"))))
+        named = [(at, kind) for cls, case, at, kind in found
+                 if (case == name or case.startswith(name + "[")) and cls.split(".")[-len(tail):] == tail]
+        sole = path is not None and any(not at for at, _ in named) and alone(path, file, [*classes, name])
+        kinds = [kind for at, kind in named if (where(at) == file if at else sole)]
         if not kinds or any(k != "passed" for k in kinds):
             bad.append(f"{a['test']}({'돌지 않음' if not kinds else ', '.join(sorted(set(kinds)))})")
-    return ("답에 적은 고정 테스트가 통과하지 못했다: " + ", ".join(bad) + " — 보고서의 사례가 그 파일(`file`)을 적게 하면 "
-            "파일로 맞춘다 (pytest 는 `-o junit_family=xunit1`)") if bad else ""
+    return ("답에 적은 고정 테스트가 통과하지 못했다: " + ", ".join(bad) + " — 같은 이름의 파일이 여럿이면 보고서의 사례가 "
+            "그 파일(`file`)을 적게 한다 (pytest 는 `-o junit_family=xunit1`)") if bad else ""
 
 
 def passed(path: Path, o: dict, answers: list[dict]) -> dict:
