@@ -232,7 +232,7 @@ def env_of(spec: dict, plan: dict) -> tuple[dict, dict[str, str]]:
 # -- Starting the backend ---------------------------------------------------------------------------------
 
 @contextmanager
-def served(command: str, path: Path, env: dict, health: str, seconds: int, halt: threading.Event, log: Path):
+def served(command: str, path: Path, env: dict, health: str, seconds: int, halt, log: Path, hide: dict):
     """The backend started in a job of its own and answering `health` with 200, for the block; `ValueError` with
     the end of its log when it exits, or does not answer in `seconds`. Killed with everything it started after."""
 
@@ -257,13 +257,13 @@ def served(command: str, path: Path, env: dict, health: str, seconds: int, halt:
                 if halt.is_set():
                     raise ValueError("사람이 멈췄다")
                 if proc.poll() is not None:
-                    raise ValueError(f"`serve.command` 가 떠 있지 않고 끝났다 (종료 코드 {proc.returncode}) — {tail(log)}")
+                    raise ValueError(f"`serve.command` 가 떠 있지 않고 끝났다 (종료 코드 {proc.returncode}) — {tail(log, hide)}")
                 if answers(health) == 200:
                     if not owned(proc, health):
                         raise ValueError(f"`{health}` 에 답한 것이 띄운 백엔드가 아니다 — 같은 포트를 쓰는 다른 프로그램을 끈다")
                     break
                 if time.monotonic() > deadline:
-                    raise ValueError(f"백엔드가 {seconds}초 안에 `{health}` 에 200 으로 답하지 않았다 — {tail(log)}")
+                    raise ValueError(f"백엔드가 {seconds}초 안에 `{health}` 에 200 으로 답하지 않았다 — {tail(log, hide)}")
                 time.sleep(1)
             yield
         finally:
@@ -335,9 +335,9 @@ def accepted_by(psutil, server: tuple, client: tuple, seconds: float = 3.0) -> i
         time.sleep(0.1)
 
 
-def tail(log: Path, size: int = 1500) -> str:
+def tail(log: Path, hide: dict, size: int = 1500) -> str:   # masked whole first: the cut never splits a secret
     try:
-        return log.read_text(encoding="utf-8", errors="replace")[-size:].strip() or "(출력 없음)"
+        return masked(log.read_text(encoding="utf-8", errors="replace"), hide)[-size:].strip() or "(출력 없음)"
     except OSError:
         return "(출력 없음)"
 
@@ -351,7 +351,7 @@ def serve_check(path: Path, run, spec: dict) -> str:
         log = Path(tempfile.mkdtemp(prefix="oneshot-serve-")) / "serve.log"
         try:
             with served(oneshot_build.run_as(plan["serve"]["command"], spec["oneshot"], path), path, env,
-                        plan["serve"]["health"], plan["serve"]["seconds"], run.halt, log):
+                        plan["serve"]["health"], plan["serve"]["seconds"], run.halt, log, hide):
                 pass
         finally:
             shutil.rmtree(log.parent, ignore_errors=True)
@@ -423,7 +423,7 @@ def measure(repo: str) -> None:
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}, None
         try:
             with served(oneshot_build.run_as(plan["serve"]["command"], o, tree), tree, env, plan["serve"]["health"],
-                        plan["serve"]["seconds"], halt, raw / "serve.log"):
+                        plan["serve"]["seconds"], halt, raw / "serve.log", hide):
                 limit = plan["measure"]["minutes"] * 60 + 300
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
                     "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,

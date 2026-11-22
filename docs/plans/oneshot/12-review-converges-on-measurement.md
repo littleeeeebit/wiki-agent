@@ -210,8 +210,11 @@ The raw folder itself is checked the same way before anything in it is
 read, `report_of` included, so a linked folder or report supplies nothing.
 The kept folder is made new for each run, and each kept file, a clip
 included, appears only once all of it is written (`staged`). A failed read
-of the report while it is kept stops the run like a failed copy; only
-invalid UTF-8 JSON is left out. Then the raw folder is removed whole, on
+of the report while it is kept, or a failed look at any entry (`plain`
+answers "no" only for a missing one), stops the run like a failed copy, and
+so does any unforeseen error of the keeping; only invalid UTF-8 JSON is left
+out. When the backend fails to start, its log is masked whole before its
+end is cut for the error, so the cut never splits a secret. Then the raw folder is removed whole, on
 every exit, a failed copy included:
 
 - a link or junction at its root is removed and never followed;

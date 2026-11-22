@@ -209,6 +209,11 @@ def test_the_backend_that_never_answers_fails_the_measurement(at_measure):
     assert o()["measures"][-1]["status"] == "failed" and "떠 있지 않고 끝났다" in o()["measures"][-1]["error"]
 
 
+def test_the_end_of_a_startup_log_is_cut_only_after_its_secrets_are_masked(tmp_path):
+    (log := tmp_path / "serve.log").write_text("start sk-secret-value end", encoding="utf-8")
+    assert measure.tail(log, {"sk-secret-value": "[K]"}, size=8) == "[K] end"   # never a fragment of the value
+
+
 def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_never_text(at_measure):
     tree, _ = at_measure
     head = o()["built_head"]
@@ -372,6 +377,21 @@ def test_a_failed_copy_still_removes_the_scripts_folder_and_leaves_no_partial_re
     with patch.object(oneshot_kept.Path, "read_text", lambda *a, **k: (_ for _ in ()).throw(OSError("read fault"))):
         why = measure.kept_from(raw, tmp_path / "m3", {})
     assert "보관하지 못했다" in why   # a failed read is no invalid report: the run stops for the owner
+    looked = oneshot_kept.plain
+
+    def unlooked(p, *a):   # the report's own look fails: never taken for a missing report
+        if p.name == "report.json":
+            raise PermissionError("look")
+        return looked(p, *a)
+
+    raw = wrote(tmp_path, {"report.json": '{"metrics": {}}'})
+    with patch.object(oneshot_kept, "plain", unlooked):
+        why = measure.kept_from(raw, tmp_path / "m5", {})
+    assert "보관하지 못했다" in why and not raw.exists()
+    raw = wrote(tmp_path, {"serve.log": "sk-1"})
+    with patch.object(oneshot_kept, "masked", lambda *a: (_ for _ in ()).throw(MemoryError())):
+        why = measure.kept_from(raw, tmp_path / "m6", {"sk-1": "[K]"})
+    assert "MemoryError" in why and not raw.exists()   # anything unforeseen: the raw folder goes all the same
     (tmp_path / "measure").mkdir()
     with patch.object(oneshot_kept.os, "scandir", lambda *a: (_ for _ in ()).throw(PermissionError("listing"))):
         why = oneshot_kept.fresh(tmp_path / "measure" / "m4", tmp_path / "measure" / "m4.raw")

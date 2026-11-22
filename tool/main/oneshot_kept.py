@@ -79,11 +79,12 @@ def cleaned(value, hide: dict[str, str]):
 
 def plain(p: Path, kind: int = stat.S_IFREG) -> bool:
     """`p` is a file (or, with `stat.S_IFDIR`, a folder) of its own: no symbolic link, junction or other reparse
-    point, and a file with no second hard link. So nothing kept or served is a file the measurement did not write."""
+    point, and a file with no second hard link. So nothing kept or served is a file the measurement did not write.
+    Only a missing entry is "no": any other failed look (`OSError`) is raised, never taken for an absent file."""
 
     try:
         st = os.lstat(p)
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         return False
     return not getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT \
         and stat.S_IFMT(st.st_mode) == kind and (kind == stat.S_IFDIR or st.st_nlink == 1)
@@ -186,6 +187,6 @@ def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
                 for name in names:
                     staged(out / "clips" / name, lambda part, name=name: shutil.copyfile(
                         raw / "clips" / name, part, follow_symlinks=False))
-    except OSError as exc:
+    except Exception as exc:   # a failed disk read or write, or anything unforeseen: `raw` is removed all the same
         why = f"실측 결과를 보관하지 못했다 ({type(exc).__name__}) — 디스크를 확인하고 [실측 시작]을 누른다"
     return removed(raw) or why
