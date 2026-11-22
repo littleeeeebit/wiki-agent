@@ -93,6 +93,13 @@ def test_a_server_turn_moving_the_goal_is_told_to_escalate_then_stopped(task):
     assert len(sent) == 1 and "`escalation`" in sent[0]
     spec = specs.load("proj", sid)
     assert spec["rev"] == 1 and spec["goal"] != moved["goal"] and "상위 판단" in spec["fault"]
+    # A Stop that lands while the refusal is recorded sends no turn telling the implementer to escalate.
+    stopped = Run()
+    with patch.object(specs, "again", side_effect=lambda *a: sent.append("again") or True):
+        then = specs._check(repo, stopped, block("spec-update", moved))
+        stopped.halt.set()
+        then()
+    assert sent == [sent[0]]
 
 
 def test_guidance_keeps_the_spec_and_resumes_the_implementer(task):

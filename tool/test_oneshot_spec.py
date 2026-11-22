@@ -550,6 +550,16 @@ def test_only_the_sheet_that_stands_names_the_designs_author(world):
             sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
     assert o()["design_author"] == accepted
 
+    # The author is the setting the accepted turn ran with, not one changed while its answer was checked.
+    def ran(store, *a):
+        store.put(models={"spec": {"model": "opus", "effort": "high"}})
+        return (answer(DESIGN, fenced("oneshot-spec", {"requirements": changed, "glossary": GLOSSARY})),
+                {"asked": {"model": "sonnet", "effort": "low"}}, False)
+    with patch.object(oneshot, "ask", ran):
+        oneshot_spec.redesign("budget", {"R1": "이번 달이 아니라 오늘"}, sorted(
+            sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
+    assert o()["design_author"] == {"model": "sonnet", "effort": "low"}
+
 
 def test_a_stopped_edit_turn_resumes_to_the_sheet_and_a_cut_turn_is_recovered(world):
     at_r1(world)

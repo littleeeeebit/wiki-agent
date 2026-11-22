@@ -183,7 +183,7 @@ def held_back(path: Path, run, spec: dict, change):
         return lambda: None
     specs.update(spec["repo"], spec["id"], narrow_asked=True)
     specs.note(run, "구현 모델의 명세 변경이 목표·작업 지시를 건드려 반영하지 않았다 — 상위 모델로 넘기라고 알린다")
-    return lambda: specs.again(path, run.chat, why, spec)
+    return lambda: None if run.halt.is_set() else specs.again(path, run.chat, why, spec)
 
 
 # -- Escalation -----------------------------------------------------------------------------------------

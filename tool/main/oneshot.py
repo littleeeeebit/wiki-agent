@@ -242,7 +242,7 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
         chat.close()
     if failed:
         raise Failed(failed, meta)
-    return final, meta, chat.is_codex
+    return final, {**meta, "asked": {"model": cfg["model"], "effort": cfg["effort"]}}, chat.is_codex
 
 
 def prompt(name: str, kind: str = "webapp") -> str:
@@ -273,7 +273,7 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
         if runtime.stopping.is_set():
             store.stop("restart", "서버가 꺼지는 중이라 멈췄다")
             return None
-        codex = codex_role(role, store)
+        codex, asked = codex_role(role, store), role_config(role, store)
         with _lock:
             # Recorded before the turn is sent: a server that dies inside it leaves this for `recover` to charge.
             store.put(inflight={"role": role, "codex": codex, "sent": time.time()})
@@ -299,9 +299,9 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
         except (ValueError, TypeError, KeyError, AttributeError) as exc:   # the answer's shape, refused
             reason = str(exc)
             continue
-        # Who gave the accepted answer, by role, as the provider named it (a role left on the CLI default is still
-        # one model): the caller saves it with what the answer made, `design_author` beside the design.
-        cfg = role_config(role, store)
+        # Who gave the accepted answer, on the setting that turn ran with (`ask` reports it) or as the provider named
+        # a CLI default: the caller saves it with what the answer made, `design_author` beside the design.
+        cfg = meta.get("asked") or asked
         with _lock:
             store.put(answering={**(store.get().get("answering") or {}),
                                  role: {"model": cfg["model"] or str(meta.get("model") or ""), "effort": cfg["effort"]}})
