@@ -463,7 +463,13 @@ order:
    bound, the check ends its job, its exit proven, before the next check
    starts. One round runs on the owner's desktop at a time, whichever
    repository it is for, from its look's start through its proven cleanup.
-   So one window at a time has the fixture's title.
+   A round whose cleanup is not proven keeps the desktop until its own
+   repository's next round proves its windows gone. Every other round
+   stops at once with that reason. Its jobs end with the server, so a
+   restart starts clear. So one window at a time has the fixture's title.
+   Once a round has the desktop, it confirms the approved HEAD and the
+   frozen build again before anything starts. A build changed while it
+   waited sends it back to approval.
 2. The frozen app from a fresh start of the check's scenario, driven without
    a shot (`shoot: false`), so the driver reads and acts but never calls
    `PrintWindow`.

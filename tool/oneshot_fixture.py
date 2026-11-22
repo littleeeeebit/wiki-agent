@@ -127,9 +127,11 @@ def main(argv: list[str] | None = None) -> None:
 
     def named() -> None:
         box, origin, placed = wintypes.RECT(), wintypes.POINT(), wintypes.RECT()   # the client area, all of it
-        user32.GetClientRect(frame, ctypes.byref(box))    # painted, never the frame's borders, which DWM draws
-        user32.ClientToScreen(frame, ctypes.byref(origin))   # partly invisible
-        user32.GetWindowRect(frame, ctypes.byref(placed))
+        # painted, never the frame's borders, which DWM draws partly invisible. A read that fails ends the fixture
+        # before it says it is ready, as a region it cannot make does: the round stops on its own setup.
+        if not (user32.GetClientRect(frame, ctypes.byref(box)) and user32.ClientToScreen(frame, ctypes.byref(origin))
+                and user32.GetWindowRect(frame, ctypes.byref(placed))):
+            raise SystemExit("the fixture could not read where it is")
         # The window's region is exactly its client area, in window coordinates: a shape Windows reports as one
         # rectangle with those bounds, which the helper requires at each check.
         left, top = origin.x - placed.left, origin.y - placed.top

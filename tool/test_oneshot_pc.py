@@ -480,6 +480,7 @@ def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_throug
 
     monkeypatch.setattr(pc, "base", lambda repo: tmp_path / repo)
     monkeypatch.setattr(pc, "unrun", lambda o: [])
+    monkeypatch.setattr(pc, "confirmed", lambda repo, build: True)
     monkeypatch.setattr(owner_round, "helper", lambda folder: Path("helper.exe"))
     monkeypatch.setattr(desktop_session, "look", look)
     monkeypatch.setattr(pc.desktop_look, "Launches", lambda *a, **k: type("R", (), {"due": lambda self: None})())
@@ -503,6 +504,62 @@ def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_throug
         with pytest.raises(RuntimeError, match="기다리다 멈췄다"):
             pc.observe("c", record, lambda: True)
     assert order == ["enter", "cleaned", "enter", "cleaned"] and not pc._desk.locked()
+
+
+def test_an_unproven_cleanup_keeps_the_desktop_until_its_repository_proves_it_and_a_stale_build_starts_nothing(
+        monkeypatch, tmp_path):
+    import contextlib
+
+    import desktop_session
+
+    order, unclean, standing = [], [True], [True]
+
+    @contextlib.contextmanager
+    def look(folder, key, owned):
+        order.append(folder.parent.name)
+        yield object()
+        if unclean[0]:
+            raise desktop_session.Refused("pid 7 is still running")
+
+    monkeypatch.setattr(pc, "base", lambda repo: tmp_path / repo)
+    monkeypatch.setattr(pc, "unrun", lambda o: [])
+    monkeypatch.setattr(pc, "confirmed", lambda repo, build: standing[0])
+    monkeypatch.setattr(owner_round, "helper", lambda folder: Path("helper.exe"))
+    monkeypatch.setattr(desktop_session, "look", look)
+    monkeypatch.setattr(pc.desktop_look, "Launches", lambda *a, **k: type("R", (), {"due": lambda self: None})())
+    monkeypatch.setattr(pc.desktop_look, "size", lambda profile: (960, 540))
+    monkeypatch.setattr(pc.oneshot_desktop, "owner_scripted", lambda o: [])
+    monkeypatch.setattr(pc, "_stuck", {})
+    record = {"desktop_build": {"checks": {}}, "profile": {}}
+    try:
+        with pytest.raises(RuntimeError, match="정리하지 못했다"):
+            pc.observe("a", record, lambda: False)
+        assert pc._desk.locked() and pc._stuck == {"a": "pid 7 is still running"}
+        # Another repository stops at once with the reason, and never opens a look of its own.
+        with pytest.raises(RuntimeError, match="확인되지 않았다 — pid 7 is still running"):
+            pc.observe("b", record, lambda: False)
+        assert order == ["a"]
+        # Its own repository's next round takes the held desktop; still unproven, it keeps it.
+        with pytest.raises(RuntimeError, match="정리하지 못했다"):
+            pc.observe("a", record, lambda: False)
+        assert pc._desk.locked() and pc._stuck == {"a": "pid 7 is still running"}
+        unclean[0] = False   # that round's look proves its windows gone: the desktop is free
+        assert pc.observe("a", record, lambda: False) == {}
+        assert not pc._desk.locked() and pc._stuck == {} and order == ["a", "a", "a"]
+        # A build changed while the round waited: nothing starts, and the desktop is free again.
+        standing[0] = False
+        with pytest.raises(pc.Stale):
+            pc.observe("b", record, lambda: False)
+        assert order == ["a", "a", "a"] and not pc._desk.locked()
+    finally:
+        if pc._desk.locked():
+            pc._desk.release()
+
+
+def test_a_build_changed_while_the_round_waited_goes_back_to_approval(held, monkeypatch):
+    after = ran(monkeypatch, error=pc.Stale("승인한 회차가 지금 빌드와 다르다 — 다시 승인한다"))
+    assert after["stage"] == "pc" and after["pc"]["status"] == "waiting" and "다시 승인한다" in after["pc"]["detail"]
+    assert not pc.passed(after) and not after["working"]
 
 
 def test_a_cleanup_failure_never_passes_the_round(held, monkeypatch):
