@@ -1684,12 +1684,13 @@ def _check(path: Path, run, final: str):
         # A plan goes up through `planning` only; a done report here publishes nothing.
         return None
     from . import oneshot_build, oneshot_needs, refactor_run   # they import this module
-    if handoff.found(blocks(final)[1]):   # a stop condition: the spec's author decides, not the implementer
-        # A turn carrying secrets is scanned first, published or not: one holding a secret is never sent on.
-        if (hide := getattr(run.chat, "hide", None)) and (why := oneshot_needs.leaked(path, spec, hide, final)):
-            return oneshot_build.checked(path, run, spec, final) if oneshot_build.owns(spec) else failed(run, spec, why)
+    owns, found, hide = oneshot_build.owns(spec), handoff.found(blocks(final)[1]), getattr(run.chat, "hide", None)
+    # Scanned before any block sends or saves: carried secrets, published or not, or an unfinished oneshot's holds.
+    if spec.get("oneshot") and (hide or owns) and (found or not owns) and (why := oneshot_needs.leaked(path, spec, hide, final)):
+        return oneshot_build.checked(path, run, spec, final) if owns else failed(run, spec, why)
+    if found:   # a stop condition: the spec's author decides, not the implementer
         return handoff.escalated(repo, path, run, spec, final)
-    if oneshot_build.owns(spec):   # its own checks, and nothing general: no revision, no gate, no pull request
+    if owns:   # its own checks, and nothing general: no revision, no gate, no pull request
         return oneshot_build.checked(path, run, spec, final)
     changes = [b for b in blocks(final)[1] if b["name"] == "spec-update"]
     if changes:
