@@ -112,9 +112,11 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
     folds = _folds(text)
     flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
     taken, chosen = bytearray(len(text)), []
+    # A value inside a label already there is left: masking twice is masking once.
+    labels = [(m.start(), m.end()) for label in {*hide.values()} if label for m in re.finditer(re.escape(label), text)]
 
     def claim(start: int, end: int, label: str) -> None:
-        if not any(taken[start:end]):
+        if not any(taken[start:end]) and not any(s <= start and end <= e for s, e in labels):
             taken[start:end] = b"\x01" * (end - start)
             chosen.append((start, end, label))
 
@@ -135,9 +137,12 @@ class Veil:
     deltas, one command's output) masked as a whole. The tail a value could still be starting in is held until the
     next part of that text, or `rest`, so a value split across parts is never shown in pieces."""
 
-    # The server's own handles at an event's top level: an approval is answered by its `id` as the screen got it,
-    # and its `tool` picks the form the screen draws.
-    IDS = frozenset({"id", "request", "item_id", "tool"})
+    # The handles at the top of an event or a record row, kept as they are: an approval is answered by its `id` as
+    # the screen got it, and a conversation resumes by its `session_id`.
+    IDS = frozenset({"id", "request", "item_id", "session_id", "parent_id", "turn"})
+    # The tags the screen and the record dispatch on, kept wherever they are: constants of this code, so a provider's
+    # own tool name, which is none of them, is masked like any text.
+    TAGS = frozenset({"AskUserQuestion", "requestUserInput", "commandExecution", "command_execution", "tool_result"})
 
     def __init__(self, hide: dict[str, str] | None):
         self.hide, self.held = hide or {}, {}
@@ -148,7 +153,7 @@ class Veil:
         if not self.hide:
             return value
         if isinstance(value, str):
-            return masked(value, self.hide)
+            return value if value in self.TAGS else masked(value, self.hide)
         if isinstance(value, dict):
             return {k: self.deep(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
@@ -158,6 +163,18 @@ class Veil:
     def meta(self, meta: dict) -> dict:
         """An event's meta, every string in it masked but the server's own handles at its top."""
         return {k: v if k in self.IDS and isinstance(v, str) else self.deep(v) for k, v in meta.items()}
+
+    def picks(self, meta: dict) -> list[dict[str, str]]:
+        """An asked question's option labels, as shown → as asked, one map per question."""
+        return [{masked(o["label"], self.hide): o["label"] for o in q.get("options") or []
+                 if isinstance(o, dict) and isinstance(o.get("label"), str)}
+                for q in (meta.get("input") or {}).get("questions") or [] if isinstance(q, dict)]
+
+    @staticmethod
+    def chosen(answers: list[str], picks: list[dict[str, str]]) -> list[str]:
+        """Each answer with the options it picked as asked, so a masked label goes back as the agent wrote it."""
+        return [p.get(a) or ", ".join(p.get(s, s) for s in a.split(", "))
+                for a, p in zip(answers, [*picks, *[{}] * len(answers)])]
 
     def stream(self, key, chunk: str, meta: dict) -> str:
         """What of `key`'s text can be shown now, `chunk` added: all but a tail some value starts with."""

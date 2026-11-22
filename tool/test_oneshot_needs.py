@@ -597,3 +597,23 @@ def test_every_event_a_turn_puts_is_masked_but_the_tags_the_screen_dispatches_on
     monkeypatch.setattr(specs, "update", lambda repo, sid, **k: faults.append(k["fault"]))
     specs.failed(run, {"repo": "r", "id": "s"}, f"push failed: {value}")
     assert [logged, faults, run.events[-1]["text"]] == [["push failed: [N1]"], ["push failed: [N1]"], "push failed: [N1]"]
+
+
+def test_tags_handles_and_labels_survive_masking_and_a_picked_option_goes_back_as_asked():
+    veil = Veil({"Ask": "[N1]", "N": "[N2]", "ab": "[N3]"})
+    meta = {"tool": "AskUserQuestion", "session_id": "ab-1", "input": {"tool": "mcp__Ask", "questions": [
+        {"question": "Ask?", "options": [{"label": "Ask me"}, {"label": "Later"}]}]}}
+    shown = veil.meta(meta)
+    assert shown["tool"] == "AskUserQuestion" and shown["session_id"] == "ab-1"   # what the screen and resume use
+    assert shown["input"]["tool"] == "mcp__[N1]"   # a provider's own tool name is text
+    assert masked(masked("Ask N", veil.hide), veil.hide) == masked("Ask N", veil.hide) == "[N1] [N2]"   # once
+    picks = veil.picks(meta)
+    assert Veil.chosen(["[N1] me, Later"], picks) == ["Ask me, Later"] and Veil.chosen(["typed"], picks) == ["typed"]
+
+
+def test_every_row_of_a_session_holding_secrets_is_masked(at_r1):
+    value = f"key-{uuid.uuid4().hex}"
+    with patch.dict(work._sessions, {str(at_r1): SimpleNamespace(hide={value: "[N1]"})}):
+        work.remember(at_r1, "user", f"{value} 를 써라", turn="t", session_id=f"s-{value}")
+    row = work.recall(at_r1, 0)[-1]
+    assert (row["text"], row["session_id"]) == ("[N1] 를 써라", f"s-{value}")   # the handle resumes as given

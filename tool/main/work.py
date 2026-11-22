@@ -275,7 +275,9 @@ def record(path: Path) -> Path:
 
 
 def remember(path: Path, role: str, text: str, **extra) -> None:
-    memory.append(record(path), {"ts": time.time(), "role": role, "text": text, "path": str(path), **extra})
+    veil = Veil(getattr(_sessions.get(str(path)), "hide", None))   # a session's secrets reach none of its rows
+    memory.append(record(path), {"ts": time.time(), "role": role, "text": masked(text, veil.hide), "path": str(path),
+                                 **veil.meta(extra)})
 
 
 def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:
@@ -650,6 +652,7 @@ class Run:
         self.chat = chat
         self.session_id = chat.id
         self.events: list[dict] = []
+        self.picks: dict[str, list] = {}   # an approval's options by the label shown (`Veil.picks`)
         self.done = False
         self.halt = threading.Event()   # set by a stop; the session reads it too
         self.wake = threading.Condition()
@@ -658,6 +661,8 @@ class Run:
 
     def put(self, payload: dict) -> None:
         if hide := getattr(self.chat, "hide", None):   # every event the screen and the record get, the server's too
+            if payload.get("kind") == "approval":
+                self.picks[str((payload.get("meta") or {}).get("id"))] = Veil(hide).picks(payload.get("meta") or {})
             payload = {**payload, "text": masked(payload.get("text") or "", hide), "meta": Veil(hide).meta(payload.get("meta") or {})}
         if payload.get("kind") == "error" or (payload.get("meta") or {}).get("error"):
             errorlog.record("agent", payload.get("text", "Failed turn"), turn=self.turn, session=self.session_id)
@@ -1160,7 +1165,8 @@ def answer(body: Answer) -> dict:
     # CLI does with it — the record is read from there.
     with run.wake if run else nullcontext():
         try:
-            sent = chat.answer(body.id, body.allow, body.scope, body.answers)
+            picks = run.picks.pop(body.id, []) if run else []   # a picked option goes back as asked
+            sent = chat.answer(body.id, body.allow, body.scope, Veil.chosen(body.answers, picks) if body.answers else None)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         if not sent:
