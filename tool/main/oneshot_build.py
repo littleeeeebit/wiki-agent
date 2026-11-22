@@ -620,7 +620,7 @@ def checked(path: Path, run, spec: dict, final: str):
     if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
     hide = getattr(run.chat, "hide", None)
-    why, run.scanned = oneshot_needs.leaked(path, spec, hide, final), True   # before any check reads it
+    why = oneshot_needs.leaked(path, spec, hide, final)   # before any check reads it; again at the turn's end
     if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
     run.checked = True

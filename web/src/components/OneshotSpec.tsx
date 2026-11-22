@@ -123,7 +123,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
   const resume = !['kind', 'rekind'].includes(view.stopped?.reason ?? '') && (
     <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
-  const leaked = view.needs?.some((n) => n.leaked)
+  const leaked = view.needs?.some((n) => n.leaked || n.unsure)
   const faulted = (fault || !!view.phone_owned?.length || leaked) && (
     <div className="flex flex-col gap-2 px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
       <Fault text={fault} />

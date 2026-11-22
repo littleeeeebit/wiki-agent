@@ -541,9 +541,10 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
                           chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
     build.checked(at_r1, run, spec(), f"키는 {value} 이다")()
     assert "The server refused this build turn: 비밀 값 [N1]" in sent[0] and value.lower() not in sent[0].lower()
-    assert run.scanned   # the stage check scanned it: the turn's end does not again
     # A person's turn, or one that failed or was stopped, moves nothing; its end scans what it made under its mask.
     monkeypatch.setattr(specs, "owner", lambda path: spec())
+    git("commit", "--allow-empty", "-m", f"Stage {value}")   # what a stage check committed after its own scan
+    assert needs.settle(at_r1, run, "끝냈다") and git("rev-parse", "HEAD") in spec()["oneshot"]["tainted"]
     git("commit", "--allow-empty", "-m", f"Person {value}")
     person = SimpleNamespace(halt=threading.Event(), put=notes.append, person=True,
                              chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
@@ -555,7 +556,8 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     oneshot_spec.saved("budget", oneshot={"tainted_needs": {**spec()["oneshot"]["tainted_needs"], person_commit: ["N1", "N9"]}})
     needs.leaked(at_r1, spec(), hide, "끝냈다")
     assert spec()["oneshot"]["tainted_needs"][person_commit] == ["N1", "N9"]
-    # A scan that broke leaves a hold, refused and marked, until a scan with the same values finishes.
+    # A scan that broke leaves a hold for its set of values, refused and shown as unsure, until a scan with the
+    # same values finishes; a second set's failure is held apart.
     git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])
     assert needs.leaked(at_r1, spec(), hide, "끝냈다") == ""
 
@@ -563,11 +565,23 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
         raise RuntimeError("no")
 
     git("commit", "--allow-empty", "-m", "Later")   # with no history after the design commit, nothing is held
+    other = SimpleNamespace(halt=threading.Event(), put=notes.append, person=True,
+                            chat=SimpleNamespace(hide={"x" * 16: "[N2]"}, id="c", parent_id=None))
     with patch.object(needs, "leaked", broke):
-        needs.settle(at_r1, person, "끝냈다")
-    assert spec()["oneshot"]["unscanned"]["needs"] == ["N1"] and mark()
+        assert needs.settle(at_r1, person, "끝냈다") and needs.settle(at_r1, other, "끝냈다")
+    assert sorted(spec()["oneshot"]["unscanned"].values()) == [["N1"], ["N2"]]
+
+    def row():
+        return next(n for n in needs.shown(spec()) if n["id"] == "N1")
+
+    assert row()["unsure"] and not row()["leaked"]   # awaiting a scan, never shown as found
     assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), {}, "끝냈다")   # no values: it cannot clear
-    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == "" and not spec()["oneshot"]["unscanned"] and not mark()
+    assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), hide, "끝냈다")   # the other set is still owed
+    assert list(spec()["oneshot"]["unscanned"].values()) == [["N2"]] and not row()["unsure"]
+    with patch.object(needs, "leaked", broke), patch.object(needs, "unscanned", broke):
+        assert not needs.settle(at_r1, person, "끝냈다")   # not even the hold recorded: no next turn on it
+    git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])   # the history gone and the tree clean
+    assert needs.leaked(at_r1, spec(), {}, "끝냈다") == "" and spec()["oneshot"]["unscanned"] == {}
 
 
 def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_answer_as_given(tmp_path, monkeypatch):

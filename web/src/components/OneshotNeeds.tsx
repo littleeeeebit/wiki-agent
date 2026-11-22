@@ -5,19 +5,26 @@ import type { Need } from '@/lib/oneshot'
 const KIND: Record<Need['kind'], string> = { secret: '비밀 값', account: '계정', tool: '프로그램', file: '파일' }
 const HINT: Partial<Record<Need['kind'], string>> = { secret: '값', tool: '프로그램 이름 또는 경로', file: '파일의 절대 경로' }
 
-/** The needs whose value a build turn left in its answer, commits or files (`oneshot_needs.marked`), shown at any
- *  stage, running or stopped: a refusal names each by its `[id]`, its variable or its row, and here it is found. */
+/** The needs whose value a build turn left in its answer, commits or files (`oneshot_needs.marked`), and apart from
+ *  them those a scan that could not finish carried (`unsure`), shown at any stage, running or stopped: a refusal
+ *  names each by its `[id]`, its variable or its row, and here it is found. */
 export function Leaked({ needs }: { needs: Need[] }) {
-  const hit = needs.map((n, i) => ({ n, row: i + 1 })).filter(({ n }) => n.leaked)
-  if (!hit.length) return null
+  const rows = needs.map((n, i) => ({ n, row: i + 1 }))
+  const lists = [['값이 결과에 들어 있는 항목:', rows.filter(({ n }) => n.leaked)],
+    ['검사를 끝내지 못해 확인을 기다리는 항목:', rows.filter(({ n }) => n.unsure)]] as const
+  if (!lists.some(([, hit]) => hit.length)) return null
   return (
-    <section role="alert" aria-label="결과에 들어 있는 비밀 값" className="flex flex-col gap-1 rounded-md bg-destructive/10 px-3 py-2">
-      <p>값이 결과에 들어 있는 항목:</p>
-      <ul className="flex flex-col gap-0.5">
-        {hit.map(({ n, row }) => (
-          <li key={n.id}>시트의 {row}번째 항목 · <span className="font-mono">{n.id}</span> {n.what}{n.env && <> <code>{n.env}</code></>}</li>
-        ))}
-      </ul>
+    <section role="alert" aria-label="결과에 들어 있을 수 있는 비밀 값" className="flex flex-col gap-1 rounded-md bg-destructive/10 px-3 py-2">
+      {lists.map(([title, hit]) => hit.length > 0 && (
+        <div key={title} className="flex flex-col gap-0.5">
+          <p>{title}</p>
+          <ul className="flex flex-col gap-0.5">
+            {hit.map(({ n, row }) => (
+              <li key={n.id}>시트의 {row}번째 항목 · <span className="font-mono">{n.id}</span> {n.what}{n.env && <> <code>{n.env}</code></>}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </section>
   )
 }
@@ -81,6 +88,7 @@ function Row({ n, busy, give, takeBack }: {
         </span>
         <span role="status" className={n.given ? 'text-st-ready' : 'text-wait'}>{n.given ? '주어짐' : '없음'}</span>
         {n.leaked && <span role="alert" className="text-destructive">값이 결과에 들어 있다</span>}
+        {n.unsure && <span role="status" className="text-wait">검사를 끝내지 못해 확인을 기다린다</span>}
       </div>
       <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void send() }}>
         {n.kind !== 'account' && (

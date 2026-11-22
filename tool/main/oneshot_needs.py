@@ -125,7 +125,7 @@ def shown(spec: dict) -> list[dict]:
     o = spec["oneshot"]
     kept = o.get("given") or {}
     return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid)),
-             "leaked": nid in marked(o)}
+             "leaked": nid in marked(o), "unsure": nid in unsure(o) - marked(o)}
             for nid, (n, calls) in owed(o.get("design") or {}).items()]
 
 
@@ -265,8 +265,9 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         old = o.get("tainted_needs") or {}
         saved(spec["repo"], oneshot={"tainted": sorted({*(o.get("tainted") or []), *hit}), "tainted_needs": {
             **old, **{c: sorted({*old.get(c, []), *ids}) for c, ids in hit.items()}}})
-    if (hold := spec_of(spec["repo"])["oneshot"].get("unscanned")) and hold["digest"] == digest(spec, hide):
-        saved(spec["repo"], oneshot={"unscanned": None})   # the scan a failure left owed, done with the same values
+    if (holds := spec_of(spec["repo"])["oneshot"].get("unscanned") or {}) and (d := digest(spec, hide)) in holds:
+        # The scan a failure left owed, done with the same values: that hold only, each other set still owed.
+        saved(spec["repo"], oneshot={"unscanned": {k: v for k, v in holds.items() if k != d}})
     refused = still_tainted(path, spec_of(spec["repo"]))
     if not found:
         return refused
@@ -305,27 +306,36 @@ def held_in(text: str, hide: dict) -> list[str]:
 def marked(o: dict) -> set[str]:
     """The needs the sheet marks: those a turn's answer, commits or files held when last checked (`leaked`), and those
     a commit still in the history holds (`tainted_needs`), so the mark and the history refusal clear together."""
-    return {*(o.get("leaked") or []), *((o.get("unscanned") or {}).get("needs") or []),
-            *(n for c in o.get("tainted") or [] for n in (o.get("tainted_needs") or {}).get(c, []))}
+    return {*(o.get("leaked") or []), *(n for c in o.get("tainted") or [] for n in (o.get("tainted_needs") or {}).get(c, []))}
 
 
-def settle(path: Path, run, final: str) -> None:
-    """The end of every turn on a oneshot's worktree, while it still holds it: one the stage check did not scan
-    (`run.scanned`), a failed, stopped or person's turn, is scanned under its own mask, or reconciled without one,
-    so a commit it made is recorded however the turn ended. It moves no stage, and never raises: a scan that broke
-    leaves the hold a failed read leaves (`unscanned`)."""
+def unsure(o: dict) -> set[str]:
+    """The needs a scan that could not finish carried (`unscanned`): not found, awaiting a scan that finishes."""
+    return {n for needs in (o.get("unscanned") or {}).values() for n in needs}
+
+
+def settle(path: Path, run, final: str) -> bool:
+    """The end of every turn on a oneshot's worktree, while it still holds it, after the stage check and whatever
+    that check wrote or committed: the tree as it is released is scanned under the turn's own mask, or reconciled
+    without one, however the turn ended. It moves no stage and never raises; a scan that broke leaves the hold a
+    failed read leaves (`unscanned`). `False` when even that could not be recorded: no next turn starts on it."""
 
     from . import specs   # it imports this module
 
-    if getattr(run, "scanned", False) or not ((spec := specs.owner(path)) or {}).get("oneshot"):
-        return
-    hide = getattr(getattr(run, "chat", None), "hide", None)
+    hide, spec = getattr(getattr(run, "chat", None), "hide", None), None
     try:
-        leaked(path, spec, hide, final)
+        if (spec := specs.owner(path)) and spec.get("oneshot"):
+            leaked(path, spec, hide, final)
+        return True
     except Exception as exc:
         errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
-        if hide:
-            unscanned(path, spec, hide, type(exc).__name__)
+        try:
+            if hide and spec:
+                unscanned(path, spec, hide, type(exc).__name__)
+            return bool(hide and spec)
+        except Exception as again:
+            errorlog.record("oneshot-scan", type(again).__name__, path=str(path))
+            return False
 
 
 def digest(spec: dict, hide: dict) -> str:
@@ -338,7 +348,8 @@ def unscanned(path: Path, spec: dict, hide: dict, what: str) -> str:
     """A scan that could not finish leaves a hold (`unscanned`) with the needs it carried: refused and marked until
     a scan with the same values finishes (`leaked`), or the history after the design commit is gone and nothing is
     left uncommitted (`still_tainted`); a value replaced meanwhile can no longer be looked for."""
-    saved(spec["repo"], oneshot={"unscanned": {"digest": digest(spec, hide), "needs": sorted(need_ids(hide.values()))}})
+    holds = spec_of(spec["repo"])["oneshot"].get("unscanned") or {}   # one hold per set of values, each owed alone
+    saved(spec["repo"], oneshot={"unscanned": {**holds, digest(spec, hide): sorted(need_ids(hide.values()))}})
     return " / ".join(filter(None, [still_tainted(path, spec_of(spec["repo"])),
                                     f"비밀 값이 남았는지 확인하지 못했다 — {what}"]))
 
@@ -355,7 +366,7 @@ def still_tainted(path: Path, spec: dict) -> str:
 
     hold, base = spec["oneshot"].get("unscanned"), spec["oneshot"].get("design_head")
     if hold and base and empty("rev-list", f"{base}..HEAD") and empty("status", "--porcelain"):
-        saved(spec["repo"], oneshot={"unscanned": None})
+        saved(spec["repo"], oneshot={"unscanned": {}})
         hold = None
     unsure = "비밀 값 검사를 끝내지 못한 턴이 있다 — 같은 값으로 다시 검사하거나 설계 커밋 뒤의 기록을 지운다" if hold else ""
     tainted = spec["oneshot"].get("tainted") or []

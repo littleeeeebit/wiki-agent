@@ -879,7 +879,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
             errorlog.record("work-record", exc, turn=run.turn, path=str(path))
         finally:
             from . import oneshot_needs   # a failed, stopped or person's turn: its history checked while it holds the tree
-            oneshot_needs.settle(path, run, final)
+            then = then if oneshot_needs.settle(path, run, final) else None   # unrecorded: nothing starts on it
             # Released before the end is told, so a screen that sees the end
             # can send the next instruction at once.
             release()
