@@ -109,8 +109,8 @@ def masked(text: str, hide: dict[str, str] | None) -> str:
 
 def overlaps(value: str, labels) -> bool:
     """Whether `value` could lie inside one of `labels`, hold one, or run into one from either side, read as `masked`
-    reads (`folded`). Such a value cannot be masked by that label, and masking twice could change what masking once
-    showed. No other value can be found in `masked`'s output that it did not leave there, so a second pass is a no-op."""
+    reads (`folded`). Such a label cannot mask that value, and masking twice could change what masking once showed;
+    with labels no value overlaps, a value found in `masked`'s output lies in text it left, so a second pass is a no-op."""
 
     v = folded(value)
     return any(v in f or f in v or any(v.startswith(f[i:]) or v.endswith(f[:i]) for i in range(1, len(f)))
@@ -148,8 +148,9 @@ class Veil:
     # The handles at the top of an event or a record row, kept as they are: an approval is answered by its `id` as
     # the screen got it, and a conversation resumes by its `session_id`.
     IDS = frozenset({"id", "request", "item_id", "session_id", "parent_id", "turn"})
-    # The tags the screen and the record dispatch on, kept only as a `tool` field: constants of this code, so a
-    # provider's own tool name, which is none of them, and any other field that spells one are masked like any text.
+    # The tags the screen and the record dispatch on, kept only as the `tool` string at the top of an event's meta or
+    # of a saved step: constants of this code. A provider's own tool name, which is none of them, and any field of a
+    # tool's arguments, whatever its name, are masked like any text.
     TAGS = frozenset({"AskUserQuestion", "requestUserInput", "commandExecution", "command_execution", "tool_result"})
 
     def __init__(self, hide: dict[str, str] | None):
@@ -163,15 +164,21 @@ class Veil:
         if isinstance(value, str):
             return masked(value, self.hide)
         if isinstance(value, dict):
-            return {k: v if k == "tool" and v in self.TAGS else self.deep(v) for k, v in value.items()}
+            return {k: self.deep(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [self.deep(v) for v in value]
         return value
 
     def meta(self, meta: dict) -> dict:
         """An event's meta, every string in it masked but the server's own handles at its top."""
-        return {k: v if (k in self.IDS and isinstance(v, str)) or (k == "tool" and v in self.TAGS) else self.deep(v)
+        return {k: v if isinstance(v, str) and (k in self.IDS or (k == "tool" and v in self.TAGS)) else self.deep(v)
                 for k, v in meta.items()}
+
+    def row(self, fields: dict) -> dict:
+        """A work-record row's fields: as `meta`, and each saved step as an event's meta."""
+        steps = fields.get("steps")
+        return {**self.meta(fields), **({"steps": [self.meta(s) if isinstance(s, dict) else self.deep(s) for s in steps]}
+                                        if isinstance(steps, list) else {})}
 
     @staticmethod
     def options(meta: dict) -> list[list]:

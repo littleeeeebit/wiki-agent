@@ -189,9 +189,9 @@ def test_a_need_given_wrong_is_refused_naming_nothing_typed_and_nothing_is_kept(
 def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     give("N1", value="k" * 1280)
     assert release.secret_read(needs.name("budget", ENV)) == "k" * 1280
-    with pytest.raises(HTTPException, match="가림 표시와 겹쳐") as e:   # a value no label can mask
-        give("N1", value="n1")
-    assert e.value.status_code == 400 and release.secret_read(needs.name("budget", ENV)) == "k" * 1280
+    give("N1", value="n1")   # a value `[N1]` would show through is kept too: its label is spelled otherwise
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: "n1"})
+    assert hide == {"n1": "■■"} and masked(masked("an1 n1", hide), hide) == masked("an1 n1", hide) == "a■■ ■■"
 
 
 def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
@@ -607,12 +607,17 @@ def test_only_a_tool_field_keeps_its_tag_and_label_shaped_text_is_still_masked()
     meta = {"tool": "AskUserQuestion", "session_id": "N2-1", "answers": ["AskUserQuestion"],
             "input": {"tool": "AskUserQuestion", "steps": [{"tool": "mcp__AskUserQuestion", "text": "AskUserQuestion"}]}}
     shown = veil.meta(meta)
-    assert shown["tool"] == shown["input"]["tool"] == "AskUserQuestion" and shown["session_id"] == "N2-1"
-    assert shown["answers"] == ["[N1]"] and shown["input"]["steps"] == [{"tool": "mcp__[N1]", "text": "[N1]"}]
+    assert shown["tool"] == "AskUserQuestion" and shown["session_id"] == "N2-1"
+    assert shown["answers"] == ["[N1]"] and shown["input"]["tool"] == "[N1]"   # a tool's arguments are text
+    assert shown["input"]["steps"] == [{"tool": "mcp__[N1]", "text": "[N1]"}]
+    assert veil.meta({"tool": {"a": "AskUserQuestion"}, "input": {"tool": ["AskUserQuestion"]}}) == {
+        "tool": {"a": "[N1]"}, "input": {"tool": ["[N1]"]}}   # structured, never a tag
+    row = veil.row({"steps": [{"kind": "approval", "tool": "AskUserQuestion", "input": {"tool": "AskUserQuestion"}}]})
+    assert row["steps"] == [{"kind": "approval", "tool": "AskUserQuestion", "input": {"tool": "[N1]"}}]
     assert masked("see [N2]", veil.hide) == "see [[N2]]"   # what the text spells never stands for the masker's own
 
 
-def test_a_value_that_can_meet_a_label_is_refused_and_any_other_is_masked_once():
+def test_overlaps_finds_a_value_that_can_meet_a_label_and_any_other_is_masked_once():
     labels = ["[N1]", "[N2]"]
     assert all(overlaps(v, labels) for v in ("N2", "n1", "1", "1]x", "x[N", "a[n2]b", "]"))
     assert not any(overlaps(v, labels) for v in ("1234", "N1x", "key-abc", "ab]c"))

@@ -277,7 +277,7 @@ def record(path: Path) -> Path:
 def remember(path: Path, role: str, text: str, **extra) -> None:
     veil = Veil(getattr(_sessions.get(str(path)), "hide", None))   # a session's secrets reach none of its rows
     memory.append(record(path), {"ts": time.time(), "role": role, "text": masked(text, veil.hide), "path": str(path),
-                                 **veil.meta(extra)})
+                                 **veil.row(extra)})
 
 
 def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:

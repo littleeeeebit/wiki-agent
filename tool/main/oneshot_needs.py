@@ -15,6 +15,7 @@ the gate's output shows `[N1]` where it would stand (`hidden`).
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -162,8 +163,20 @@ def hidden(spec: dict, env: dict | None) -> dict[str, str]:
 
     have = {k.upper(): v for k, v in (env or {}).items()}
     # ponytail: the raw and URL-quoted forms only; another encoding of a value (base64, JSON-escaped) still shows
-    return {form: f"[{nid}]" for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))
-            for form in {value, quote(value, safe="")}}
+    forms = {nid: {value, quote(value, safe="")} for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))}
+    every = [form for kept in forms.values() for form in kept]
+    return {form: label(nid, every, i) for i, (nid, kept) in enumerate(forms.items()) for form in kept}
+
+
+def label(nid: str, values: list[str], n: int) -> str:
+    """`[N1]` for need `N1`, or the first other spelling none of `values` meets (`common.overlaps`), so no value
+    shows through a label and masking twice is masking once, for a value given now or kept from before. At last, a
+    run of a character no value holds, one longer for each need."""
+
+    for left, right in ("[]", "⟦⟧", "‹›", "«»"):
+        if not any(overlaps(v, [shown := f"{left}{nid}{right}"]) for v in values):
+            return shown
+    return next(c for c in map(chr, itertools.count(0x25A0)) if not any(folded(c) in folded(v) for v in values)) * (n + 2)
 
 
 def gate_env(spec: dict, env: dict | None) -> dict | None:
@@ -367,8 +380,6 @@ def give(repo: str, nid: str, body: Given) -> dict:
         if n["kind"] == "secret":
             if not value or len(value.encode("utf-16-le")) > MAX_SECRET:
                 raise HTTPException(400, f"값이 비었거나 너무 길다 — 자격 증명 관리자는 {MAX_SECRET}바이트까지 담는다")
-            if overlaps(value, [f"[{i}]" for i, _ in secret_needs(spec_of(repo))]):   # see `common.overlaps`
-                raise HTTPException(400, "값이 [N1] 같은 가림 표시와 겹쳐 가릴 수 없다 — 다른 값을 쓴다")
             stored(repo, n["env"], value)
             return view(spec_of(repo))
         if n["kind"] == "account":

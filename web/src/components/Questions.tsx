@@ -24,7 +24,7 @@ export function Questions({ questions, korean, disabled, onSubmit, onDecline, al
   allowCustom?: boolean
 }) {
   const id = useId()
-  const [picked, setPicked] = useState<string[][]>(() => questions.map(() => []))
+  const [picked, setPicked] = useState<number[][]>(() => questions.map(() => []))   // each option by its index
   const [typed, setTyped] = useState<string[]>(() => questions.map(() => ''))
   const originals = questions.flatMap((q) => [q.header ?? '', q.question,
     ...(q.options ?? []).flatMap((o) => [o.label, o.description ?? '', o.preview ?? ''])])
@@ -32,10 +32,9 @@ export function Questions({ questions, korean, disabled, onSubmit, onDecline, al
   let at = 0
   const translated = questions.map((q) => ({ ...q, header: shown[at++], question: shown[at++],
     options: (q.options ?? []).map((o) => ({ ...o, label: shown[at++], description: shown[at++], preview: shown[at++] })) }))
-  const answers = questions.map((_, i) => typed[i].trim() || picked[i].join(', '))
-  // Picks by index: the server sends the options as asked, even where the screen got them masked.
-  const picks = questions.map((q, i) => typed[i].trim() ? null
-    : picked[i].map((label) => (q.options ?? []).findIndex((o) => o.label === label)))
+  const answers = questions.map((q, i) => typed[i].trim() || picked[i].map((j) => q.options![j].label).join(', '))
+  // Picks by index: the server sends the options as asked, even where the screen got them masked or alike.
+  const picks = questions.map((_, i) => typed[i].trim() ? null : picked[i])
   const count = answers.filter(Boolean).length
   return (
     <form className="question-form space-y-6" onSubmit={(e) => {
@@ -57,9 +56,9 @@ export function Questions({ questions, korean, disabled, onSubmit, onDecline, al
           {q.multiSelect && <p className="text-[14px] text-muted-foreground">여러 개를 고를 수 있다.</p>}
           {q.options.map((o, j) => {
             const original = questions[i].options![j].label
-            const selected = picked[i].includes(original)
+            const selected = picked[i].includes(j)
             const pick = () => setPicked((all) => all.map((now, k) => k !== i ? now : q.multiSelect
-              ? selected ? now.filter((s) => s !== original) : [...now, original] : [original]))
+              ? selected ? now.filter((s) => s !== j) : [...now, j] : [j]))
             // A click on the card or its details picks, and leaves the focus on the input, as the label's click does.
             const choose = () => { if (disabled) return; pick(); document.getElementById(`${id}-${i}-${j}`)?.focus() }
             // The option is the card; only its input and title are the label, since a preview's picture is a
