@@ -31,6 +31,7 @@ from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, deepseek
 from common.process import background_options
 from common.paths import RAW
 from common import Veil, errorlog, masked
+from guard_git import SECRETS_HELD
 from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
@@ -521,7 +522,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
     spec = specs.owner(path)
     # A oneshot's session carries the owner's secrets, and starts again when they change (`oneshot_needs.agent`).
     secrets, hide = oneshot_needs.agent(spec)
-    env = {**release_repair.unshared(spec).get("env", {}), **secrets}
+    env = {**release_repair.unshared(spec).get("env", {}), **secrets, **({SECRETS_HELD: "1"} if hide else {})}
     # A refactoring card's work cell was fixed at its survey's start, a oneshot's at its run's: nothing moves it.
     if any(((spec or {}).get(k) or {}).get(f) for k, f in (("refactor", "roles"), ("oneshot", "models"))):
         model, effort, fast = spec["cell"]["model"], spec["cell"]["effort"], spec["cell"].get("fast", False)

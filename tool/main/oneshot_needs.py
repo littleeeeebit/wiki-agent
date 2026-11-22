@@ -358,14 +358,19 @@ def settle(path: Path, run, final: str, moving: bool = False) -> bool:
     return not (why and moving)
 
 
-def asset(file: Path, spec: dict) -> str:
-    """Why an asset about to be uploaded (the frozen APK) is not sent: a value the store holds, in any entry of it
-    (an APK is a zip: each entry is read decompressed), as UTF-8 or UTF-16 text, in any casing. A file that cannot
-    be read is refused too."""
+# The UTF-16 byte orders an archive's text may take; a value in any of them, or in UTF-8, is found.
+ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be")
+
+
+def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
+    """Why an asset about to be uploaded (the frozen APK) is not sent: a value of `hide` (the store's now, by
+    default) anywhere in it, as UTF-8 or either UTF-16, in any casing. An APK is a zip: each entry is read
+    decompressed, and its names and comments with the archive's own comment, so the whole file the upload sends
+    is read. A file that cannot be read is refused too."""
 
     import zipfile
 
-    hide = agent(spec)[1]
+    hide = agent(spec)[1] if hide is None else hide
     if not hide:
         return ""
     try:
@@ -373,10 +378,10 @@ def asset(file: Path, spec: dict) -> str:
             parts = [file.read_bytes()]
         else:
             with zipfile.ZipFile(file) as z:
-                parts = [z.read(i) for i in z.infolist()]
-    except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
-        return f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})"
-    found = sorted({n for b in parts for enc in ("utf-8", "utf-16-le") for n in held_in(b.decode(enc, "ignore"), hide)})
+                parts = [z.comment, *(b for i in z.infolist() for b in (i.filename.encode(), i.comment, i.extra, z.read(i)))]
+    except (OSError, zipfile.BadZipFile, RuntimeError, ValueError) as exc:
+        return masked(f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})", hide)
+    found = sorted({n for b in parts for enc in ENCODINGS for n in held_in(b.decode(enc, "ignore"), hide)})
     return masked(f"비밀 값 {', '.join(f'[{n}]' for n in found)} 이(가) 올릴 파일에 들어 있다 — 올리지 않는다", hide) \
         if found else ""
 
@@ -386,12 +391,13 @@ def publishable(path: Path, spec: dict) -> str:
     exact state it sends, under the values the store holds now, with every refusal and hold recorded before. A
     check that cannot finish refuses too."""
 
+    hide: dict = {}
     try:
         hide = agent(spec)[1]
         return masked(leaked(path, spec, hide, ""), hide)   # as the stop that keeps it shows it
     except Exception as exc:
         errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
-        return f"비밀 값 검사를 끝내지 못해 게시하지 않는다 ({type(exc).__name__})"
+        return masked(f"비밀 값 검사를 끝내지 못해 게시하지 않는다 ({type(exc).__name__})", hide)
 
 
 def digest(spec: dict, hide: dict) -> str:

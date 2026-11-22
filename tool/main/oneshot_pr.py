@@ -275,7 +275,11 @@ def froze(spec: dict, head: str) -> dict:
     try:
         into.mkdir(parents=True)
         shutil.copyfile(Path(spec["worktree"]) / spec["oneshot"]["device"]["apk"], into / name)
-        return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name)}
+        # Read under the values its build ran with, while they are those: an upload later, after a value changed
+        # or was taken back, still needs this scan, bound to these bytes by their digest.
+        scan = oneshot_needs.asset(into / name, spec, oneshot_needs.hidden(spec, oneshot_build.built_env(spec)))
+        return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name),
+                "scan": scan}
     except OSError:
         shutil.rmtree(into, ignore_errors=True)   # never a partial copy left behind
         raise
@@ -298,7 +302,9 @@ def released(spec: dict) -> dict:
     try:
         if not file.is_file() or android_owned.sha256(file) != frozen["sha256"]:
             raise ValueError("최종 게이트가 고정한 APK 사본이 없거나 바뀌었다")
-        if why := oneshot_needs.asset(file, spec):   # the exact bytes that go up, every entry of them
+        # The exact bytes that go up: clean under the values the build ran with (`froze`) and under today's.
+        if why := ("scan" not in frozen and "최종 게이트가 고정한 APK 를 검사한 기록이 없다") or frozen["scan"] \
+                or oneshot_needs.asset(file, spec):
             raise ValueError(why)
         repo = github_release.slug(release.remote(path))
 

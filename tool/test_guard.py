@@ -893,6 +893,14 @@ def test_a_branch_upstream_given_as_a_url_is_a_destination(tmp_path, monkeypatch
     assert {"network(read.example)", "network(write.example)"} <= found
 
 
+def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, monkeypatch):
+    home_at(monkeypatch, tmp_path / "home")
+    (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n', encoding="utf-8")
+    monkeypatch.setenv(guard_git.SECRETS_HELD, "1")   # the server pushes after its secret check
+    found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
+    assert any("secrets" in e for e in found if e.startswith("top(")), found
+
+
 @pytest.mark.parametrize("command", ["git log --show-signature", 'git log --format="%G?"', "git show --pretty=%GG",
                                      "git log --format tformat:%GK", "git log --pretty=custom-alias"])
 def test_a_log_option_that_runs_a_verifier_is_not_in_the_row(command):

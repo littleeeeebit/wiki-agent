@@ -23,6 +23,7 @@ from fastapi import HTTPException
 
 from agent.chat_session import Event
 from common import Veil, host, masked, overlaps, question_list
+from guard_git import SECRETS_HELD
 
 from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
     oneshot_sheet as sheet, oneshot_spec, prerequisite_review, release, specs, work
@@ -426,7 +427,8 @@ def test_a_build_session_carries_each_given_secret_and_starts_again_when_it_chan
         value = f"key-{uuid.uuid4().hex}"
         give("N1", value=value)
         second = work.session(at_r1, "opus", "low")
-        assert first.closed and made[-1] == {ENV: value} and second.hide == {value: "[N1]"}
+        # A session carrying a value is marked: its agent never pushes; the server does after its secret check.
+        assert first.closed and made[-1] == {ENV: value, SECRETS_HELD: "1"} and second.hide == {value: "[N1]"}
         assert second.session_id is None   # a conversation that held other values never resumes
         work._sessions.clear()   # a restart before the new conversation's first turn: still not resumed
         assert work.session(at_r1, "opus", "low").session_id is None
@@ -617,6 +619,18 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     with patch.object(needs, "agent", lambda s: ({}, hide)):
         why = needs.asset(apk, spec())
         assert "[N1]" in why and value.lower() not in why.lower()
+    # Big-endian text, an entry's name and the archive's comment are read too; the values passed (the build's)
+    # stand in for today's; a file that cannot be read is refused, its reason masked.
+    for name, data, comment in (("a.txt", f"x{value}y".encode("utf-16-be"), b""), (f"{value}.txt", b"c", b""),
+                                ("a.txt", b"c", value.encode())):
+        with zipfile.ZipFile(apk, "w") as z:
+            z.writestr(name, data)
+            z.comment = comment
+        assert "[N1]" in needs.asset(apk, spec(), hide), name
+    assert needs.asset(apk.with_name("gone.apk"), spec(), hide).startswith("올릴 파일을 읽지 못해")
+    with patch.object(needs, "agent", lambda s: ({}, {"OSError": "[N9]"})), patch.object(needs, "leaked", broke := (
+            lambda *a: (_ for _ in ()).throw(OSError()))):
+        assert "OSError" not in needs.publishable(at_r1, spec())   # a failure's reason is masked as well
 
 
 def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_answer_as_given(tmp_path, monkeypatch):
