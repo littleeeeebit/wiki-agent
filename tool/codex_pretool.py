@@ -61,3 +61,4 @@ if __name__ == "__main__":
             json.dump(answer, sys.stdout, ensure_ascii=False)
     except Exception as error:
         print(type(error).__name__, file=sys.stderr)
+        __import__("guard_git").closed_out(error)   # a session carrying a oneshot's secrets runs nothing unchecked

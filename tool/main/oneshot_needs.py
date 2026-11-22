@@ -34,7 +34,7 @@ from .oneshot_spec import VIEWS, idle, saved, spec_of, view
 
 router = APIRouter()
 NID = re.compile(r"N[1-9]\d*")
-ENV = re.compile(r"(?!WIKI_AGENT_)[A-Z][A-Z0-9_]*")   # the server's own markers (`guard_git.SECRETS_HELD`) reserved
+ENV = re.compile(r"[A-Z][A-Z0-9_]*")
 KINDS = {"secret": "비밀 값", "account": "계정", "tool": "프로그램", "file": "파일"}
 MAX_SECRET = 2560   # bytes Credential Manager holds in one credential, as UTF-16
 
@@ -379,7 +379,8 @@ def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
                 parts += [b for i in z.infolist() for b in (i.filename.encode(), z.read(i))]
     except (OSError, zipfile.BadZipFile, RuntimeError, ValueError) as exc:
         return masked(f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})", hide)
-    found = sorted({n for b in parts for enc in ENCODINGS for n in held_in(b.decode(enc, "ignore"), hide)})
+    # UTF-16 pairs may start at an odd byte: each buffer is read from its first and its second byte.
+    found = sorted({n for b in parts for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)})
     return masked(f"비밀 값 {', '.join(f'[{n}]' for n in found)} 이(가) 올릴 파일에 들어 있다 — 올리지 않는다", hide) \
         if found else ""
 
@@ -424,7 +425,8 @@ def still_tainted(path: Path, spec: dict, covered: str | None = None) -> str:
     the same way, until the history after the design commit is gone and nothing is left uncommitted."""
 
     def empty(*args: str) -> bool:   # a read that failed is never empty
-        done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=60)
+        done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60)
         return done.returncode == 0 and not done.stdout.strip()
 
     # `covered`: the hold of the values a scan just finished with, which that scan answers for, kept until its turn's

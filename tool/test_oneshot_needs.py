@@ -632,6 +632,12 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
         z.writestr("a.txt", "c")
     apk.write_bytes(value.encode() + apk.read_bytes())
     assert zipfile.is_zipfile(apk) and "[N1]" in needs.asset(apk, spec(), hide)
+    for enc in ("utf-16-le", "utf-16-be"):   # UTF-16 starting at an odd byte, raw and in an entry
+        apk.write_bytes(b"x" + value.encode(enc))
+        assert "[N1]" in needs.asset(apk, spec(), hide), enc
+        with zipfile.ZipFile(apk, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("a.bin", b"x" + value.encode(enc))
+        assert "[N1]" in needs.asset(apk, spec(), hide), enc
     assert not needs.ENV.fullmatch(SECRETS_HELD)   # the server's marker is never a need's name
     with patch.object(needs, "agent", lambda s: ({}, {"OSError": "[N9]"})), patch.object(needs, "leaked", broke := (
             lambda *a: (_ for _ in ()).throw(OSError()))):

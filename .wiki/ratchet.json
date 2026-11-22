@@ -23,8 +23,8 @@
     },
     "tool/codex_pretool.py": {
       "dup": 9,
-      "lines": 63,
-      "reason": "Passes the shell's dialect to edit_as_diff so PowerShell strings are read as PowerShell. Before that: Runs command_repair first and returns a repair as allow + updatedInput, Codex's only rewrite shape. Before that: Chains both the tool-call guard (#272) and the memory-word check (#276) for Codex, one import each. Before that: Chains the memory-word check for Codex, which takes one PreToolUse hook. Before that: baseline at adoption"
+      "lines": 64,
+      "reason": "Oneshot 11b2a: a hook failure in a session carrying a oneshot's secrets writes its deny (`guard_git.closed_out`, one line). Before that: Passes the shell's dialect to edit_as_diff so PowerShell strings are read as PowerShell. Before that: Runs command_repair first and returns a repair as allow + updatedInput, Codex's only rewrite shape. Before that: Chains both the tool-call guard (#272) and the memory-word check (#276) for Codex, one import each. Before that: Chains the memory-word check for Codex, which takes one PreToolUse hook. Before that: baseline at adoption"
     },
     "tool/declared_continuation.py": {
       "dup": 12,
@@ -78,8 +78,8 @@
     },
     "tool/guard.py": {
       "dup": 0,
-      "lines": 1013,
-      "reason": "Oneshot 11b2a: a session carrying a oneshot's secrets fails closed when the guard cannot find its grant or fails, so its push never slips past the refusal (`guard_git.held_closed`, four lines). Before that: Once spawns pass (PR #279), `export` is read as assignments, so `run` drops the literal of every name an `export` statement's parsed words bind that `literal` could not read (`\"S\"=..`, `S\\=..`, `ex\"port\"`), or a later path is judged against a stale value. Before that: Review rounds added the run-time parts the core table rests on: here documents, ANSI-C and member lexing, bound constants, the first-statement directory rule and the shell-tool payload shapes; spec rev 5 then cut the per-program models out to guard_models.py rows (PR #272). Before that: The effect guard parses Bash, PowerShell and cmd into one effect lattice in a single hook process, which every tool call pays to start; splitting it would add imports to that path (PR #272)."
+      "lines": 1024,
+      "reason": "Oneshot 11b2a round 22: `verdict`, which both installed hooks call, denies on its own failure in a session carrying a oneshot's secrets and raises otherwise (`checked` holds the old body, eleven lines). Before that: a session carrying a oneshot's secrets fails closed when the guard cannot find its grant or fails, so its push never slips past the refusal (`guard_git.held_closed`, four lines). Before that: Once spawns pass (PR #279), `export` is read as assignments, so `run` drops the literal of every name an `export` statement's parsed words bind that `literal` could not read (`\"S\"=..`, `S\\=..`, `ex\"port\"`), or a later path is judged against a stale value. Before that: Review rounds added the run-time parts the core table rests on: here documents, ANSI-C and member lexing, bound constants, the first-statement directory rule and the shell-tool payload shapes; spec rev 5 then cut the per-program models out to guard_models.py rows (PR #272). Before that: The effect guard parses Bash, PowerShell and cmd into one effect lattice in a single hook process, which every tool call pays to start; splitting it would add imports to that path (PR #272)."
     },
     "tool/host_boundary.py": {
       "dup": 10,

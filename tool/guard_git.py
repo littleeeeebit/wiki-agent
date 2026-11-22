@@ -29,7 +29,17 @@ from guard_models import gate, getopt, row, writes
 
 # Set in a session that carries a oneshot's secrets (`main.work.session`): it never pushes itself; the server
 # pushes once its secret check passes (`main.prerequisite_review.push`).
-SECRETS_HELD = "WIKI_AGENT_SECRETS_HELD"
+SECRETS_HELD = "WIKI-AGENT-SECRETS-HELD"   # a hyphen: never a need's name (`oneshot_needs.ENV`)
+
+
+def closed_out(error: Exception) -> None:
+    """A hook process's own failure (`guard`, `claude_pretool`, `codex_pretool`): its deny written out."""
+    import json
+    import sys
+
+    if closed := held_closed(f"훅이 실패했다 ({type(error).__name__})"):
+        sys.stdout.reconfigure(encoding="utf-8")   # the failure may come before the caller's own
+        json.dump(closed, sys.stdout, ensure_ascii=False)
 
 
 def held_closed(why: str) -> dict | None:

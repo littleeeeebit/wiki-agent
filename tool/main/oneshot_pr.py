@@ -163,16 +163,19 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     verdict = oneshot_build.judged(path, run, spec, ran, env, expect=checked)
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    if why := oneshot_build.held(path, run, spec, verdict):
-        return why
-    frozen = None
-    if "android" in kinds_of(o):   # the APK S8 attaches, frozen while the check still holds the tree
-        if why := oneshot_device.built(path, o["device"]) or release_checked(path, spec, verdict["head"], run.halt):
+    frozen, android = None, "android" in kinds_of(o)
+    if android:   # the APK S8 attaches: the gate's own output, frozen before a later command can rebuild it
+        if why := oneshot_device.built(path, o["device"]):
             return why
         try:
             frozen = froze(spec, verdict["head"], oneshot_needs.hidden(spec, env))
         except OSError as exc:   # the attachment is optional: the pull request opens and its body says why
             frozen = {"head": verdict["head"], "error": f"최종 게이트가 만든 APK 를 복사하지 못했다 — {exc}"}
+    if why := oneshot_build.held(path, run, spec, verdict) or android and release_checked(
+            path, spec, verdict["head"], run.halt):
+        if frozen and frozen.get("path"):   # a check after it failed: the copy is never kept
+            shutil.rmtree(Path(frozen["path"]).parent, ignore_errors=True)
+        return why
     report = next(b["value"] for b in specs.blocks(final)[1] if b["name"] == "done-report")
     tail = (verdict.get("tail") or "").strip()
     # The pull request's body reads these as every spec's: the worker's report and the server's gate.
