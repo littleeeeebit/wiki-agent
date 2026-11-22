@@ -530,16 +530,21 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
         return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
     # A value as spelled, or in any casing `text-transform` can draw (`folded`, whose fold of a character can depend
     # on the one before); within one stream, a value broken across lines reads as one
-    def spelling(form):   # every stream and value in one spelling, and each stream with its whitespace gone
-        return form, [form(x) for x in texts + values], ["".join(form(t).split()) for t in texts]
+    def compact(text: str) -> str:
+        return "".join(text.split())
 
-    spellings = [spelling(str), spelling(folded)]
+    def flats(form, text: str) -> set[str]:   # whitespace gone before and after the spelling, since a fold can
+        return {form(compact(text)), compact(form(text))}   # depend on the character a line break stood next to
+
+    spellings = [(form, [form(x) for x in texts + values], [f for t in texts for f in flats(form, t)])
+                 for form in (str, folded)]
 
     def seen(value: str) -> bool:
-        for form, whole, flats in spellings:
+        for form, whole, streams in spellings:
             v = form(value)
-            flat = "".join(v.split())
-            if v and (any(v in t for t in whole) or bool(flat) and any(flat in f for f in flats)):
+            if v and any(v in t for t in whole):
+                return True
+            if any(f and any(f in s for s in streams) for f in flats(form, value)):
                 return True
         return False
 

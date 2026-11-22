@@ -372,3 +372,5 @@ def test_a_secret_that_folds_to_nothing_shows_on_no_page():
     assert secrets_shown(page, {"key-İx": "[N1]"})   # as spelled, broken across lines
     Frame.evaluate = lambda self, _: {"texts": ["key-I", "̇x"], "values": []}
     assert not secrets_shown(page, {"key-İx": "[N1]"})   # never across two streams
+    Frame.evaluate = lambda self, _: {"texts": ["KEY-I\n" + chr(0x307) + "X"], "values": []}
+    assert secrets_shown(page, {"key-" + chr(0x130) + "x": "[N1]"})   # a casing broken where its fold depends

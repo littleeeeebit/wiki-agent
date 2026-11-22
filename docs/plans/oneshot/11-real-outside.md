@@ -210,7 +210,8 @@ as spelled too, since a character's fold can depend on the one before it,
 and a secret that folds to nothing matches only as spelled. Masking claims
 each character once and joins the result in one pass, so a short secret
 in long gate output costs time in proportion to its matches. Within one stream a value broken across lines still matches, as spelled
-and folded alike. A secret in hidden text has reached the browser all the same, so it
+and folded alike, with whitespace removed both before and after the fold,
+since a fold can depend on the character a line break stood next to. A secret in hidden text has reached the browser all the same, so it
 is the app's leak to fix, and whether the browser draws it is never asked. A
 screen whose text carries a secret, or has a frame that cannot be read, is a
 high finding and is never shot. The critic sends its pictures to a model,
