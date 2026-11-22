@@ -388,7 +388,7 @@ def test_a_build_with_a_full_report_a_green_gate_and_every_planned_test_passing_
     assert o()["stage"] == "measure" and o()["built_head"] == git(tree, "rev-parse", "HEAD")
     assert o()["working"] == "publish"   # pull request #1 goes up first
     begun = []
-    with patch("main.oneshot_measure.begin", begun.append):
+    with patch("main.oneshot_publish.begin", begun.append):
         then()
     assert begun == ["budget"]   # the real measurement follows, then the review
 
@@ -426,11 +426,11 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     git(tree, "add", "test_refund.py")
     git(tree, "commit", "-m", "pin the refund")
     check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
-    assert "이번 턴에 커밋한 테스트" in sent[-1][2]
+    assert "더하거나 고친 테스트" in sent[-1][2]
     oneshot_spec.saved("budget", oneshot={"attempts": 0})   # under the attempt cap for the cases below
-    write(tree, "test_ghost.py", "# test_ghost is only named here\n")   # committed, named, never a test
+    write(tree, "test_ghost.py", 'NAME = "test_ghost"\n')   # committed, named, never a test
     check(tree, said.replace("test_refund.py::test_a_refund_is_negative", "test_ghost.py::test_ghost"))()
-    assert "이번 턴에 커밋한 테스트" in sent[-1][2]   # an uncommitted file never counts
+    assert "더하거나 고친 테스트" in sent[-1][2]   # an uncommitted file never counts
     git(tree, "add", "test_ghost.py")
     git(tree, "commit", "-m", "ghost")
     check(tree, said.replace("test_refund.py::test_a_refund_is_negative", "test_ghost.py::test_ghost"))()

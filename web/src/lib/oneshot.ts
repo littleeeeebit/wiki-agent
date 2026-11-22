@@ -88,7 +88,7 @@ export type Metric = {
 }
 /** One real measurement (`oneshot_measure.measure`): `owner` waits for the owner's verdict, recorded in `owner`. */
 export type MeasureRun = {
-  n: number; head: string; ts: number; status: 'owner' | 'failed' | 'input'; code?: number | null
+  n: number; head: string; ts: number; status: 'owner' | 'failed' | 'input' | 'stale'; code?: number | null
   metrics?: (Metric & { value: number | boolean | null; ok: boolean })[]; notes?: string; error?: string
   input_error?: { input: string; why: string }; clips?: string[]; tail?: string
   owner?: { approve: boolean; note: string; ts: number }; comment_error?: string
@@ -180,10 +180,11 @@ export const api = {
     post(`${base(repo)}/pc/approve`, { plan, surface }).then(answer),
   // The real measurement (`oneshot_measure`): an input the owner got by following its steps, then the run.
   // Each names the input as shown (`env`, `kind`): a plan rebuilt since answers 409, never a value in the wrong box.
-  measureGive: (repo: string, x: MeasureInput, value: string) =>
-    post(`${base(repo)}/measure/inputs/${x.id}`, { value, env: x.env, kind: x.kind }).then(answer),
-  measureTakeBack: (repo: string, x: MeasureInput) => post(
-    `${base(repo)}/measure/inputs/${x.id}?${new URLSearchParams({ env: x.env, kind: x.kind })}`, undefined, 'DELETE').then(answer),
+  measureGive: (repo: string, head: string, x: MeasureInput, value: string) =>
+    post(`${base(repo)}/measure/inputs/${x.id}`, { value, head, env: x.env, kind: x.kind }).then(answer),
+  measureTakeBack: (repo: string, head: string, x: MeasureInput) => post(
+    `${base(repo)}/measure/inputs/${x.id}?${new URLSearchParams({ head, env: x.env, kind: x.kind })}`, undefined, 'DELETE')
+    .then(answer),
   measureStart: (repo: string, head: string) => post(`${base(repo)}/measure/start`, { head }).then(answer),
   measureStop: (repo: string) => post(`${base(repo)}/measure/stop`, {}).then(answer),
   measureDecide: (repo: string, run: MeasureRun, approve: boolean, note: string) =>

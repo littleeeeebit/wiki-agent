@@ -676,9 +676,11 @@ _seated = 0
 
 
 def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
-    """Put the spec in `리뷰 대기` and start its loop, unless one runs. A loop
-    that was stopped is waited for first, so two never drive one spec."""
+    """Put the spec in `리뷰 대기` and start its loop, unless one runs or it is an unfinished oneshot run's,
+    whose review is its own. A loop that was stopped is waited for first, so two never drive one spec."""
 
+    if oneshot_profile.in_run(specs.load(repo, sid)):
+        return
     key = (repo, sid)
     with _lock:
         old = _loops.get(key)
@@ -2569,6 +2571,8 @@ def review_again(sid: str) -> dict:
         raise HTTPException(409, "리뷰가 이미 돌고 있다")
     if not spec.get("pr") or spec["state"] != "머지 가능" and not spec["state"].startswith("PR #"):
         raise HTTPException(409, "이 상태에서는 새 리뷰를 시작하지 않는다")
+    if why := oneshot_profile.in_run(spec):
+        raise HTTPException(409, why)
     if spec.get("plan_commit") == "asked":
         raise HTTPException(409, "계획 행 커밋이 아직이다")
     rereview(repo.name, spec)
@@ -2577,8 +2581,10 @@ def review_again(sid: str) -> dict:
 
 def rereview(repo: str, spec: dict) -> None:
     """Another independent round for a `머지 가능` or PR spec; four more rounds when its cap is used up,
-    or the loop ships the new head and stops at the cap before reviewing it."""
+    or the loop ships the new head and stops at the cap before reviewing it. Never an unfinished oneshot run's."""
 
+    if oneshot_profile.in_run(spec):
+        return
     with specs._files:
         specs.update(repo, spec["id"], review_again=True,
                      extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0))

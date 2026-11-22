@@ -375,7 +375,7 @@ def handed(path: Path, run, spec: dict, final: str):
     fresh = specs.load(repo, spec["id"])
     if fresh.get("pr"):
         if (spec["oneshot"].get("pr1") or {}).get("number") == fresh["pr"]["number"]:
-            # The draft the backend opened (`oneshot_measure.published`) is this one: the final text is in, so it
+            # The draft the backend opened (`oneshot_publish.published`) is this one: the final text is in, so it
             # leaves draft. A draft left is no finished run: it stops, and `[재개]` asks again.
             try:
                 ready = specs.sh(["gh", "pr", "ready", str(fresh["pr"]["number"])], path, 60)

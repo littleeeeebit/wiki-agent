@@ -1073,8 +1073,8 @@ def measurement():
         box.fill("123.apps.googleusercontent.com")
         with posting(page):
             page.get_by_role("button", name="M1 Google 데스크톱 클라이언트 ID 넣기").click()
-        assert posted[-1] == ("measure/inputs/M1", {"value": "123.apps.googleusercontent.com", "env": "GOOGLE_CLIENT_ID",
-                                                    "kind": "secret"}), posted
+        assert posted[-1] == ("measure/inputs/M1", {"value": "123.apps.googleusercontent.com", "head": head,
+                                                    "env": "GOOGLE_CLIENT_ID", "kind": "secret"}), posted
         expect(box).to_have_value("")
         with posting(page):
             start.click()

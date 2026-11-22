@@ -14,7 +14,7 @@ import posixpath
 import re
 from pathlib import Path
 
-from . import oneshot_build, specs
+from . import oneshot_build
 
 
 def unchanged(path: Path, o: dict) -> str:
@@ -54,12 +54,10 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
     except ValueError as exc:
         raise ValueError(f"`oneshot-answers` 가 JSON 이 아니다 — {exc}") from None
     areas = {oneshot_review.area_of(f) for f in oneshot_review.blocking(last)}
-    # The files committed since the refusal: an uncommitted file never counts, the clean-tree gate aside.
-    diff = specs.sh(["git", "diff", "--name-only", "-z", last["head"], "HEAD"], path)
-    if diff.returncode:
-        raise ValueError(f"거절한 HEAD 와 지금 HEAD 를 비교하지 못했다 — {specs.said(diff)}")
-    anchors, since = oneshot_review.anchors(spec), set(filter(None, diff.stdout.split("\0")))
-    out = []
+    # The lines committed since the refusal: an uncommitted change never counts, the clean-tree gate aside.
+    if (since := oneshot_review.changed_lines(path, last["head"], "HEAD")) is None:
+        raise ValueError("거절한 HEAD 와 지금 HEAD 를 비교하지 못했다")
+    anchors, out = oneshot_review.anchors(spec), []
     for n, a in enumerate(value if isinstance(value, list) else [None]):
         where = f"`oneshot-answers`[{n}]"
         if not isinstance(a, dict) or not all(isinstance(a.get(k), str) and a[k].strip()
@@ -72,36 +70,77 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
             raise ValueError(f"{where}: `breaks` 는 고치면 깨지는 설계 항목·요구 번호의 목록이다")
         file, _, name = a["test"].partition("::")
         target = (path / file).resolve()
-        if not name or not target.is_relative_to(path.resolve()) or not target.is_file() \
-                or posixpath.normpath(file.replace("\\", "/")) not in since \
-                or name.split("[")[0] not in target.read_text(encoding="utf-8", errors="replace"):
-            raise ValueError(f"{where}: `test` 는 이번 턴에 커밋한 테스트 파일과 그 안의 테스트 이름(`경로::이름`)이다 — {a['test']}")
+        span = test_span(target.read_text(encoding="utf-8", errors="replace"), name.split("::")) \
+            if name and target.is_relative_to(path.resolve()) and target.is_file() else None
+        if not span or not any(lo <= span[1] and span[0] <= hi
+                               for lo, hi in since.get(posixpath.normpath(file.replace("\\", "/")), [])):
+            raise ValueError(f"{where}: `test` 는 이번 턴에 커밋으로 더하거나 고친 테스트다 (`경로::이름`, 클래스 안이면 "
+                             f"`경로::클래스::이름`) — {a['test']}")
         out.append({"round": len(o["reviews"]), "head": last["head"], "area": " ".join(a["area"].split()),
                     **{k: a[k].strip() for k in ("location", "evidence", "test")}, "breaks": a["breaks"]})
     return out
 
 
+COMMENT = ("#", "//", "/*", "*", "--")
+
+
+def test_span(text: str, parts: list[str]) -> tuple[int, int] | None:
+    """The 1-based lines of the test `parts` names (`[Class, …,] name`) in `text`: from the first line outside a
+    comment that names it, after each enclosing class's, to the next line no deeper than it, a closing bracket
+    included. `None` when a part is not found."""
+
+    lines, at = text.splitlines(), 0
+    for part in parts:
+        word = re.compile(rf"\b{re.escape(part.split('[')[0])}\b")
+        at = next((i for i in range(at, len(lines)) if word.search(lines[i])
+                   and not lines[i].lstrip().startswith(COMMENT)), None)
+        if at is None:
+            return None
+        start, at = at, at + 1
+    depth = len(lines[start]) - len(lines[start].lstrip())
+    end = next((j for j in range(start + 1, len(lines))
+                if lines[j].strip() and len(lines[j]) - len(lines[j].lstrip()) <= depth), len(lines))
+    if end < len(lines) and lines[end].lstrip()[:1] in "})]":
+        end += 1
+    return start + 1, end
+
+
 def ran(found: list[tuple[str, str, str, str]], answers: list[dict]) -> str:
     """Why a pinning test an answer names did not run and pass in the build's test run (`oneshot_build.held`'s
-    JUnit cases, `(classname, name, file, outcome)`), or empty: a name that only appears in the file is no test."""
+    JUnit cases, `(classname, name, file, outcome)`), or empty: a name that only appears in the file is no test.
+    A selector with classes (`path::Class::name`) matches only the case of that class."""
 
     bad = []
     for a in answers:
-        file, _, name = a["test"].partition("::")
+        file, _, rest = a["test"].partition("::")
+        *classes, name = rest.split("::")
         file = posixpath.normpath(file.replace("\\", "/"))
         module = file.rsplit(".", 1)[0].replace("/", ".")
+        owner = ".".join([module, *classes])
         kinds = [kind for cls, case, at, kind in found
                  if (case == name or case.startswith(name + "["))
-                 and (posixpath.normpath(at.replace("\\", "/")) == file or cls == module or cls.startswith(module + ".")
-                      or cls.replace("\\", "/") == file)]
+                 and (cls == owner or classes and cls.endswith("." + ".".join(classes))
+                      and posixpath.normpath(at.replace("\\", "/")) == file
+                      or not classes and (posixpath.normpath(at.replace("\\", "/")) == file
+                                          or cls.startswith(module + ".") or cls.replace("\\", "/") == file))]
         if not kinds or any(k != "passed" for k in kinds):
             bad.append(f"{a['test']}({'돌지 않음' if not kinds else ', '.join(sorted(set(kinds)))})")
     return "답에 적은 고정 테스트가 통과하지 못했다: " + ", ".join(bad) if bad else ""
 
 
-def passed(o: dict, answers: list[dict]) -> dict:
-    """What a build that passed its checks records: its answers, and the mechanisms its turn was told to replace
-    (`oneshot_review.replacing`), now replaced."""
+def passed(path: Path, o: dict, answers: list[dict]) -> dict:
+    """What a build that passed its checks records: its answers, and each mechanism its turn was told to replace
+    (`oneshot_review.replacing`) that it did replace: an area it did not answer instead, whose refused lines its
+    commits changed. One it left as it was is not replaced; a later refusal asks for it again."""
 
+    from . import oneshot_review   # it imports `oneshot_build`, which imports this module
+
+    asked, last = o.get("replacing") or [], next((r for r in reversed(o.get("reviews") or [])
+                                                    if r["verdict"] == "refuse"), None)
+    changed = oneshot_review.changed_lines(path, last["head"], "HEAD") if asked and last else None
+    defended = {oneshot_review.area_of(a) for a in answers}
+    done = [area for area in asked if changed and area not in defended and any(
+        oneshot_review.touched(f["location"], changed) for f in oneshot_review.blocking(last)
+        if oneshot_review.area_of(f) == area)]
     return {"answers": [*(o.get("answers") or []), *answers], "replacing": None,
-            "replaced": sorted({*(o.get("replaced") or []), *(o.get("replacing") or [])})}
+            "replaced": sorted({*(o.get("replaced") or []), *done})}

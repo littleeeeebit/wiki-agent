@@ -6,7 +6,9 @@ stand-ins the test commits, started for real by the server; GitHub is not reache
 
 import json
 import os
+import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -17,6 +19,7 @@ from test_main import no_machine_settings  # noqa: F401 — the fixture is autou
 from test_oneshot_build import APP, built_world, check, git, o, report, spec, to_build, write  # noqa: F401
 from test_oneshot_spec import world  # noqa: F401 — `world` is a fixture
 
+APP_ROOT = Path(__file__).resolve().parent.parent
 ENV = f"BUDGET_KEY_{os.getpid()}"   # each test process its own Credential Manager entry
 SCRIPT = '''import json, os, pathlib, sys
 
@@ -52,15 +55,16 @@ def at_measure(built_world):  # noqa: F811 — the imported fixture, by its name
     assert check(tree, "만들었다.\n" + report()) is not None and o()["stage"] == "measure"
     oneshot_spec.saved("budget", oneshot={"working": None})
     pr = {"number": 1, "url": "https://github.test/pull/1", "branch": "b", "base": "main"}
-    with patch.object(measure, "published", lambda repo: oneshot_spec.saved(repo, oneshot={
+    with patch.object(measure.oneshot_publish, "published", lambda repo: oneshot_spec.saved(repo, oneshot={
             "pr1": {**pr, "head": o()["built_head"]}})):
         yield tree, sent
     oneshot_needs.stored("budget", ENV, None)
 
 
 def given(key=KEY, url="https://example.test/live"):
-    measure.give("budget", "M1", measure.Value(value=url, env="BUDGET_URL", kind="text"))
-    measure.give("budget", "M2", measure.Value(value=key, env=ENV, kind="secret"))
+    head = o()["built_head"]
+    measure.give("budget", "M1", measure.Value(value=url, head=head, env="BUDGET_URL", kind="text"))
+    measure.give("budget", "M2", measure.Value(value=key, head=head, env=ENV, kind="secret"))
 
 
 def test_the_plan_names_each_step_its_copied_value_and_every_outside_call(at_measure):
@@ -107,10 +111,6 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=False))
     with pytest.raises(HTTPException, match="판정할 실측이 없다"):   # a screen showing another run
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"] + 1, approve=True))
-    write(tree, "stray.txt", "x")   # the tree moved since it was measured
-    with pytest.raises(HTTPException, match="작업트리가 바뀌었다"):
-        measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=True))
-    (tree / "stray.txt").unlink()
     begun = []
     with patch.object(measure, "commented", lambda *a: "PR #1 에 실측 기록을 달지 못했다 — 401"), \
             patch("main.oneshot_review.begin", begun.append):
@@ -169,10 +169,17 @@ def test_the_backend_that_never_answers_fails_the_measurement(at_measure):
 
 def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_never_text(at_measure):
     tree, _ = at_measure
+    head = o()["built_head"]
     with pytest.raises(HTTPException, match="바뀌었다"):   # a screen from before the plan renamed M2
-        measure.give("budget", "M2", measure.Value(value=KEY, env="BUDGET_URL", kind="text"))
+        measure.give("budget", "M2", measure.Value(value=KEY, head=head, env="BUDGET_URL", kind="text"))
     with pytest.raises(HTTPException, match="바뀌었다"):
-        measure.take_back("budget", "M2", env=ENV, kind="text")
+        measure.take_back("budget", "M2", head=head, env=ENV, kind="text")
+    with pytest.raises(HTTPException, match="바뀌었다"):   # the same box, from the plan of an earlier build
+        measure.give("budget", "M2", measure.Value(value=KEY, head="0" * 40, env=ENV, kind="secret"))
+    # The plan shown is the built HEAD's, whatever the tree holds now.
+    write(tree, ".wiki/measure.json", "{")
+    assert oneshot_spec.view(spec())["measure"]["plan"]["inputs"][1]["env"] == ENV
+    git(tree, "checkout", "--", ".wiki/measure.json")
     assert "measure_given" not in o() or ENV not in o()["measure_given"]
     plan = json.loads((tree / ".wiki/measure.json").read_text(encoding="utf-8"))
     s = spec()
@@ -182,6 +189,63 @@ def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_ne
             measure.checked(text, s, tree)
     with pytest.raises(ValueError, match="목록"):
         measure.checked({**plan, "metrics": {"x": 1}}, s, tree)
+    bad_op = {**plan, "metrics": [{**plan["metrics"][0], "pass": {"op": [], "value": 1}}]}
+    with pytest.raises(ValueError, match="pass"):
+        measure.checked(bad_op, s, tree)
+
+
+def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_strands_the_run(at_measure):
+    tree, sent = at_measure
+    given()
+    measure.measure("budget")
+    assert o()["measures"][-1]["status"] == "owner"
+    given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
+    assert o()["measures"][-1]["status"] == "stale"
+    measure.measure("budget")
+    run = o()["measures"][-1]
+    write(tree, "stray.txt", "x")   # the tree moved since it was measured
+    with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
+        measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=True))
+    assert o()["stage"] == "build" and o()["measures"][-1]["status"] == "stale" and "moved" in sent[-1][2]
+    assert not o()["measures"][-1].get("owner")
+
+
+def test_a_kept_report_and_the_clips_folder_show_no_secret_in_any_spelling(tmp_path):
+    canary = 'sk-"canary\\' + "9" * 12
+    out = tmp_path / "m1"
+    (out / "clips").mkdir(parents=True)
+    (out / "report.json").write_text(json.dumps({"notes": canary}), encoding="utf-8")
+    (out / "clips" / "sk-named.wav").write_bytes(b"RIFF")   # a name that shows a secret's start
+    (out / "clips" / "ok.wav").write_bytes(b"RIFF")
+    (out / "clips" / "debug.txt").write_text(canary, encoding="utf-8")
+    hide = {canary: "[KEY]", "sk-": "[K]"}
+    measure.scrubbed(out, hide)
+    assert canary not in json.loads((out / "report.json").read_text(encoding="utf-8"))["notes"]
+    assert sorted(p.name for p in (out / "clips").iterdir()) == ["ok.wav"]
+
+
+def test_only_the_started_backend_vouches_for_the_health_address():
+    from types import SimpleNamespace as NS
+    import psutil
+    me = NS(pid=10)
+    tree = NS(children=lambda recursive: [NS(pid=11)])
+
+    def listening(*pids_ips):
+        return [NS(status=psutil.CONN_LISTEN, laddr=NS(ip=ip, port=12345), pid=pid) for pid, ip in pids_ips]
+    with patch.object(psutil, "Process", lambda pid: tree):
+        with patch.object(psutil, "net_connections", lambda kind: listening((11, "::1"), (99, "127.0.0.1"))):
+            assert not measure.owned(me, "http://localhost:12345/health")   # another program on IPv4
+            assert not measure.owned(me, "http://127.0.0.1:12345/health")
+        with patch.object(psutil, "net_connections", lambda kind: listening((11, "::1"), (99, "10.0.0.5"))):
+            assert measure.owned(me, "http://localhost:12345/health")
+
+
+def test_the_app_starts_without_psutil_which_the_install_declares():
+    root = APP_ROOT
+    assert "psutil==" in (root / "requirements-chat.txt").read_text(encoding="utf-8")
+    done = subprocess.run([sys.executable, "-c", "import sys; sys.modules['psutil'] = None; from main import app"],
+                          cwd=root / "tool", capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
 
 
 def test_a_port_something_else_answers_is_refused_before_the_backend_starts(at_measure):

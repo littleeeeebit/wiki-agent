@@ -744,7 +744,7 @@ def built(path: Path, run, spec: dict, final: str) -> str:
         return why
     # `working` names PR #1's push before its worker starts: a server that dies in between leaves it for `recover`.
     oneshot_spec.saved(spec["repo"], oneshot={"stage": "measure", "built_head": verdict["head"], "attempts": 0,
-                                              "working": "publish", "fix": None, **sent.passed(o, answers)})
+                                              "working": "publish", "fix": None, **sent.passed(path, o, answers)})
     specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}" + (f" · 답한 발견 {len(answers)}개" if answers else ""))
     return ""
 
@@ -790,8 +790,8 @@ def review_module():
 
 
 def reviewed(repo: str) -> None:
-    from . import oneshot_measure   # PR #1, the real measurement, then the review; it imports this module
-    oneshot_measure.begin(repo)
+    from . import oneshot_publish   # PR #1, the real measurement, then the review; it imports this module
+    oneshot_publish.begin(repo)
 
 
 # A stage's turn: `(check, stop reason after the last refusal, the turn's text, what follows a pass)`.

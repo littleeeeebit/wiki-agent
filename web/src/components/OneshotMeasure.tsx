@@ -50,7 +50,7 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
         {m.plan.inputs.length > 0 && (
           <section aria-label="넣을 값" className="flex flex-col gap-3">
             <h2 className="text-[15px] font-semibold">1. 넣을 값 — 순서대로 따라 한다</h2>
-            {m.plan.inputs.map((x) => <Input key={`${x.id}-${x.env}`} repo={repo} x={x} busy={busy} act={act} />)}
+            {m.plan.inputs.map((x) => <Input key={`${m.head}-${x.id}-${x.env}`} repo={repo} head={m.head} x={x} busy={busy} act={act} />)}
           </section>
         )}
         <section aria-label="실측" className={BOX}>
@@ -116,12 +116,12 @@ function Steps({ steps }: { steps: Step[] }) {
   )
 }
 
-function Input({ repo, x, busy, act }: { repo: string; x: MeasureInput; busy: boolean; act: Act }) {
+function Input({ repo, head, x, busy, act }: { repo: string; head: string; x: MeasureInput; busy: boolean; act: Act }) {
   const [value, setValue] = useState('')
   const [open, setOpen] = useState(!x.given)
   const label = `${x.id} ${x.what}`
   async function send() {
-    if (await act(() => api.measureGive(repo, x, value))) { setValue(''); setOpen(false) }
+    if (await act(() => api.measureGive(repo, head, x, value))) { setValue(''); setOpen(false) }
   }
   return (
     <article className={BOX}>
@@ -140,7 +140,7 @@ function Input({ repo, x, busy, act }: { repo: string; x: MeasureInput; busy: bo
           className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-foreground max-[560px]:text-base" />
         <Btn type="submit" tone="primary" disabled={busy || !value.trim()} aria-label={`${label} 넣기`}>넣기</Btn>
         {x.given && <Btn tone="ghost" disabled={busy} aria-label={`${label} 지우기`}
-          onClick={() => void act(() => api.measureTakeBack(repo, x))}>지우기</Btn>}
+          onClick={() => void act(() => api.measureTakeBack(repo, head, x))}>지우기</Btn>}
       </form>
     </article>
   )
@@ -170,8 +170,9 @@ function Metrics({ run, plan }: { run?: MeasureRun; plan: Metric[] }) {
   )
 }
 
-const said = (r: MeasureRun) => r.owner ? (r.owner.approve ? '주인 승인' : '주인 거절')
-  : r.status === 'owner' ? '판정 기다림' : r.status === 'input' ? '넣은 값이 틀림' : '실패 — 빌드가 고친다'
+const said = (r: MeasureRun) => (r.owner ? (r.owner.approve ? '주인 승인' : '주인 거절')
+  : r.status === 'owner' ? '판정 기다림' : r.status === 'input' ? '넣은 값이 틀림' : r.status === 'stale' ? '판정하지 않음'
+    : '실패 — 빌드가 고친다') + (r.comment_error ? ` · ${r.comment_error}` : '')
 
 function Result({ repo, run, busy, act }: { repo: string; run: MeasureRun; busy: boolean; act: Act }) {
   const [note, setNote] = useState('')

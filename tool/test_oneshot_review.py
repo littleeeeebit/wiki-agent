@@ -499,7 +499,7 @@ def test_an_answered_area_is_rebutted_or_left_out_and_two_answered_rounds_go_to_
 
 
 def test_a_build_resumed_at_the_cap_replaces_a_stuck_mechanism_once_and_remembers_it(reviewed):
-    _, head, _ = reviewed
+    tree, head, _ = reviewed
     oneshot_spec.saved("budget", oneshot={"stage": "build", "reviews": [
         {"verdict": "refuse", "head": h, "findings": [P1]} for h in ("old1", "old2", head)]})
     assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
@@ -507,7 +507,9 @@ def test_a_build_resumed_at_the_cap_replaces_a_stuck_mechanism_once_and_remember
     # A turn that never ran (a crash, a refused turn) is told again: nothing counts as replaced before a pass.
     assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
     from main import oneshot_answers
-    oneshot_spec.saved("budget", oneshot=oneshot_answers.passed(o(), []))
+    (tree / "budget_app.py").write_text("def add(amount):\n    return max(amount, 0)\n", encoding="utf-8")
+    git(tree, "commit", "-am", "the mechanism replaced")   # the build that passes changed the refused line
+    oneshot_spec.saved("budget", oneshot=oneshot_answers.passed(tree, o(), []))
     assert o()["replaced"] == ["amount validation"] and not o().get("replacing")
     assert "replace the mechanism" not in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
 
@@ -523,11 +525,28 @@ def test_no_review_runs_without_the_owner_approving_this_heads_measurement(revie
     assert "원샷" in loop.oneshot_profile.in_run(s)   # nor through Review Loop, which would read PR #1 unmeasured
 
 
+def test_review_loops_own_paths_leave_an_unfinished_oneshot_alone(reviewed):
+    oneshot_spec.saved("budget", pr={"number": 1, "url": "u"}, state="PR #1", oneshot={"stage": "pr", "measures": []})
+    s = specs.load("budget", oneshot.BRANCH)
+    kicked = []
+    with patch.object(loop, "mine", lambda sid: (SimpleNamespace(name="budget"), s)), \
+            patch.object(loop, "_loops", {}), patch.object(loop.threading, "Thread", lambda *a, **k: kicked.append(a)):
+        with pytest.raises(HTTPException, match="원샷"):
+            loop.review_again(s["id"])
+        loop.rereview("budget", s)
+        loop.kick("budget", s["id"])
+    assert not kicked and not specs.load("budget", oneshot.BRANCH).get("review_again")
+
+
 def test_a_ruling_for_the_builder_never_drops_a_p0_and_later_work_survives_every_verdict(reviewed):
     _, head, sent = reviewed
     p0 = {**P1, "severity": "P0", "reason": "합계가 깨진다"}
     o_ = {"rulings": {"amount validation": {"keep": "build"}}}
     assert oneshot_review.ruled_out(o_, P1) and not oneshot_review.ruled_out(o_, p0)
+    handed = {**P1, "later": {"kind": "webapp", "what": "x"}}   # a ruled P1 is not passed on to a later build either
+    with pytest.raises(ValueError, match="빌더 쪽"):
+        oneshot_review.verdict_of({"verdict": "approve", "head": head, "findings": [handed]}, head,
+                                  rules={"ruled": {"amount validation"}, "kinds": {"webapp"}})
     kept = {"kind": "webapp", "what": "자막 창", "location": "x", "reason": "y"}
     oneshot_spec.saved("budget", oneshot={"later": [kept]})
     _, asking = answers(verdict(head, "approve", P2))
@@ -548,6 +567,44 @@ def test_a_head_refused_in_an_earlier_round_is_never_built_on_again(reviewed):
                                [{"test": "test_budget.py::test_pin"}]) == ""
     assert "돌지 않음" in oneshot_answers.ran([], [{"test": "test_budget.py::test_pin"}])
     assert "failed" in oneshot_answers.ran([("test_budget", "test_pin", "", "failed")], [{"test": "test_budget.py::test_pin"}])
+    two = [("test_budget.TestA", "test_pin", "test_budget.py", "failed"), ("test_budget.TestB", "test_pin", "test_budget.py", "passed")]
+    assert oneshot_answers.ran(two, [{"test": "test_budget.py::TestB::test_pin"}]) == ""   # the class it names
+    assert "failed" in oneshot_answers.ran(two, [{"test": "test_budget.py::TestA::test_pin"}])
+
+
+def test_an_answer_names_a_test_its_turn_added_or_changed_never_one_beside_a_comment(reviewed):
+    tree, head, _ = reviewed
+    from main import oneshot_answers
+    (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\n\nclass TestRefund:\n"
+                                      "    def test_value(self):\n        assert True\n", encoding="utf-8")
+    git(tree, "add", "test_pin.py")
+    git(tree, "commit", "-m", "pins")
+    refused = git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={"fix": "review", "reviews": [{"verdict": "refuse", "head": refused,
+                                                                         "findings": [P1]}]})
+    (tree / "test_pin.py").write_text("# a note\ndef test_old():\n    assert True\n\n\nclass TestRefund:\n"
+                                      "    def test_value(self):\n        assert 1 == 1\n", encoding="utf-8")
+    git(tree, "commit", "-am", "note and a changed pin")
+
+    def answer(test):
+        return "```oneshot-answers\n" + __import__("json").dumps([{
+            "area": "amount validation", "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
+            "test": test}]) + "\n```\n"
+    s = specs.load("budget", oneshot.BRANCH)
+    with pytest.raises(ValueError, match="더하거나 고친"):   # only a comment above it changed
+        oneshot_answers.answered(tree, s, answer("test_pin.py::test_old"))
+    assert oneshot_answers.answered(tree, s, answer("test_pin.py::TestRefund::test_value"))[0]["test"].endswith("test_value")
+
+
+def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_did_not_answer(reviewed):
+    tree, head, _ = reviewed
+    from main import oneshot_answers
+    o_ = {"replacing": ["amount validation"], "reviews": [{"verdict": "refuse", "head": head, "findings": [P1]}]}
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []   # nothing changed at budget_app.py:2
+    (tree / "budget_app.py").write_text("def add(amount):\n    return max(amount, 0)\n", encoding="utf-8")
+    git(tree, "commit", "-am", "new mechanism")
+    assert oneshot_answers.passed(tree, o_, [{"area": "Amount validation"}])["replaced"] == []   # answered instead
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == ["amount validation"]
 
 
 def test_an_owner_ruling_for_the_review_goes_to_the_build_with_their_words(reviewed):

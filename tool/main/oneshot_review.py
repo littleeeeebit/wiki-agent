@@ -357,7 +357,7 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
     serious = [f for f in findings if f["severity"] != "P2" and not waits(f)]
     if not all(area_of(f) for f in serious):
         raise ValueError("P0·P1 발견마다 그것이 걸린 동작 방식의 이름 `area` 를 적는다")
-    for f in serious if rules else ():
+    for f in [f for f in findings if f["severity"] != "P2"] if rules else ():   # one handed to a later build too
         held(f, rules)
     if value["verdict"] == "approve" and serious:
         raise ValueError("P0·P1 발견이 있는데 승인했다")
