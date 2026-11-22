@@ -672,6 +672,12 @@ def configure(cid: str, body: Config) -> dict:
     known(cid)
     if channels.repo_for(body.repo) is None:
         raise HTTPException(400, f"그런 저장소가 없다: {body.repo}")
+    # A Codex lookup waits on the CLI: it runs before the lock that also admits work turns, for what the
+    # request looks like now, and the lock checks the request again before anything is applied.
+    asked_for = requested(body.model, body.effort or "") if body.model is not None and body.repo == project() else None
+    hint = _config.get((body.repo, cid)) or {}
+    released_to = picked(body.repo, cid) if body.model is None and body.refactor_mode is not None \
+        and hint.get("refactor_pinned") and body.refactor_mode != hint.get("refactor_mode") else None
 
     with _lock:
         switched = body.repo != project()
@@ -690,29 +696,33 @@ def configure(cid: str, body: Config) -> dict:
             if (body.model, body.effort or "") != (cfg["model"], cfg["effort"]):
                 raise HTTPException(409, f"리팩터링 대화는 조사 모델 `{cfg['model']}` 로 고정됐다 — 모드를 바꾸거나 새로 조사해라")
             given = False
-        want = requested(body.model, body.effort or "") if given else None
+        if given and asked_for is None:   # another window switched the project since this request was checked
+            raise HTTPException(409, "다른 창이 프로젝트를 바꿨다 — 다시 골라 주세요")
+        want = asked_for if given else None
         if want is None and pinned and renewed:   # the pin lets go: the person's own pick, checked as a cold read
-            want = picked(cfg["repo"], cid)
-        # Everything is written before anything is published, the pick and the mode together: a failed write
-        # leaves the focus, its session and a retry's view of the pin as they were.
+            want = released_to or picked(cfg["repo"], cid)
+        # Everything is written before anything is published, and a failed write takes back the ones before it:
+        # the focus, its session, the default project and a retry's view of the pin stay as they were.
         generation = cfg.get("refactor_generation", 0) + renewed
-        before = chosen(cfg["repo"]).get(cid) or {}
+        before, prior = chosen(cfg["repo"]).get(cid) or {}, refactor_mode(cfg["repo"]) if mode is not None else None
         if given:
             chosen(cfg["repo"], cid, want)
-        if mode is not None:
-            try:
-                refactor_mode(cfg["repo"], mode, generation, refactor_mode(cfg["repo"]).get("survey")
-                              if pinned and not renewed else None)
-            except Exception:
-                if given:
-                    chosen(cfg["repo"], cid, before)
-                raise
+        try:
+            if mode is not None:
+                refactor_mode(cfg["repo"], mode, generation, prior.get("survey") if pinned and not renewed else None)
+            if switched:
+                LOGS.mkdir(parents=True, exist_ok=True)
+                path = LOGS / "project.json"
+                temporary = path.with_suffix(".tmp")
+                temporary.write_text(json.dumps(body.repo, ensure_ascii=False) + "\n", encoding="utf-8")
+                temporary.replace(path)
+        except Exception:
+            if given:
+                chosen(cfg["repo"], cid, before)
+            if prior is not None:
+                refactor_mode(cfg["repo"], prior["mode"], prior["generation"], prior.get("survey"))
+            raise
         if switched:
-            LOGS.mkdir(parents=True, exist_ok=True)
-            path = LOGS / "project.json"
-            temporary = path.with_suffix(".tmp")
-            temporary.write_text(json.dumps(body.repo, ensure_ascii=False) + "\n", encoding="utf-8")
-            temporary.replace(path)
             _project = body.repo
             # This request moved the project itself; the rest of it works in
             # the new one. Its screen follows from the answer.

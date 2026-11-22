@@ -314,14 +314,14 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
       setFault('')
       setConfiguring(true)
       try {
-        const { kept } = await api.setConfig(active, { repo: here.repo,
-          ...(here.refactor_mode ? { refactor_mode: here.refactor_mode } : {}), ...cfg })
+        // Only the mode picker sends a mode: a model change from a window that has not seen another window's
+        // new mode and survey would otherwise put the old mode back and release that survey's pin.
+        const { kept } = await api.setConfig(active, { repo: here.repo, ...cfg })
         onChannels(await api.getChannels())
         if (!kept) {
           setMessages([])
           setNote('Claude/Codex 를 바꿔 새 대화를 시작했다. 지난 기록은 그대로 남아 있다.')
         } else {
-          // The toolbar sends the current mode along with a model change.
           setNote(cfg.refactor_mode && cfg.refactor_mode !== here.refactor_mode ? '모드를 바꿨다. 대화는 이어지고, 이전 모드의 시작 전 명세는 이 모드로 다시 조사해야 시작할 수 있다.'
             : '다음 질문부터 적용된다. 지금까지 한 대화는 이어진다.')
         }

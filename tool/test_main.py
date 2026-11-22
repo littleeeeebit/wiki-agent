@@ -454,9 +454,31 @@ def test_a_survey_pin_lets_go_to_a_checked_pick_and_only_once_written(tmp_path):
         with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("down")):
             assert web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "rework"}).status_code == 503
         assert chat.project() == "b" and chat.config("refactor", "a").get("refactor_pinned")
+        # A project file that cannot be written takes back the destination's mode with it.
+        (chat.LOGS / "project.tmp").mkdir()
+        with patch.object(chat_channels, "codex_models", return_value=models), pytest.raises(OSError):
+            web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "rework"})
+        assert chat.refactor_mode("a")["survey"] and chat.project() == "b"
+        (chat.LOGS / "project.tmp").rmdir()
         with patch.object(chat_channels, "codex_models", return_value=models):
             web.post("/api/config/refactor", json={"repo": "a", "refactor_mode": "rework"}).raise_for_status()
             assert (chat.project(), chat.config("refactor", "a")["model"]) == ("a", "codex:test")
+
+        # The Codex list is read outside the lock that also admits work turns.
+        def listed():
+            free = []
+
+            def take():
+                free.append(chat._lock.acquire(timeout=0))
+                if free[-1]:
+                    chat._lock.release()
+            t = threading.Thread(target=take)
+            t.start()
+            t.join()
+            assert free == [True]
+            return models
+        with patch.object(chat_channels, "codex_models", side_effect=listed):
+            web.post("/api/config/next", json={"repo": "a", "model": "codex:test", "effort": "low"}).raise_for_status()
 
 
 def test_project_shared_sessions_and_records_isolated(tmp_path):
