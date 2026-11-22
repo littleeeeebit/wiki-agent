@@ -233,9 +233,27 @@ def test_a_oneshot_escalation_that_goes_nowhere_leaves_the_stage_resumable(task)
     repo, sid = task
     specs.update("proj", sid, oneshot={"stage": "tests", "working": "tests"})
     run = Run()
-    with patch("main.oneshot_spec.store") as store:
+    with patch("main.oneshot_spec.store") as store, patch("main.oneshot_needs.leaked", return_value=""):
         assert specs._check(repo, run, block("escalation", {"conflict": "x"})) is None
     assert store.return_value.stop.call_args[0][0] == "block" and run.checked
+
+
+def test_a_oneshot_escalation_holding_a_secret_never_reaches_the_author_or_the_card(task):
+    repo, sid = task
+    specs.update("proj", sid, oneshot={"stage": "tests", "working": "tests"})
+    run = Run()
+    run.chat.hide = {"tok-31415926": "[N1]"}   # value → label, as `oneshot_needs.hidden` builds it
+    with patch("main.oneshot_needs.leaked", return_value="`API_TOKEN` 이 답에 있다") as leaked, \
+         patch.object(handoff, "ask") as ask, patch("main.oneshot_build.checked", return_value=None) as checked:
+        assert specs._check(repo, run, block("escalation", {**ESCALATION, "question": "tok-31415926?"})) is None
+    assert leaked.called and checked.called and not ask.called
+    assert "tok-31415926" not in json.dumps(specs.load("proj", sid), ensure_ascii=False)
+    # A clean escalation goes on; what the author's turn returns or raises is masked before it is kept.
+    with patch("main.oneshot_needs.leaked", return_value=""), patch("main.oneshot_spec.store"), \
+         patch.object(handoff, "ask", side_effect=RuntimeError("quoted tok-31415926")):
+        specs._check(repo, run, block("escalation", ESCALATION))
+    saved = specs.load("proj", sid)
+    assert "tok-31415926" not in json.dumps(saved, ensure_ascii=False) and "[N1]" in saved["fault"]
 
 
 def test_a_rewritten_goal_carries_the_task_and_a_promoted_range_is_checked_again(task, repo):

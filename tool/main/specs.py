@@ -1683,8 +1683,11 @@ def _check(path: Path, run, final: str):
     if spec.get("planning") and spec["planning"].get("phase") != "handoff" and spec["state"] == "작업 중":
         # A plan goes up through `planning` only; a done report here publishes nothing.
         return None
-    from . import oneshot_build, refactor_run   # they import this module
+    from . import oneshot_build, oneshot_needs, refactor_run   # they import this module
     if handoff.found(blocks(final)[1]):   # a stop condition: the spec's author decides, not the implementer
+        # A oneshot's turn is scanned first: one holding a secret stops at the stage's check, never sent on.
+        if oneshot_build.owns(spec) and oneshot_needs.leaked(path, spec, getattr(run.chat, "hide", None), final):
+            return oneshot_build.checked(path, run, spec, final)
         return handoff.escalated(repo, path, run, spec, final)
     if oneshot_build.owns(spec):   # its own checks, and nothing general: no revision, no gate, no pull request
         return oneshot_build.checked(path, run, spec, final)
