@@ -134,8 +134,15 @@ def main(argv: list[str] | None = None) -> None:
         # rectangle with those bounds, which the helper requires at each check.
         left, top = origin.x - placed.left, origin.y - placed.top
         gdi32.CreateRectRgn.restype = ctypes.c_void_p
+        gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
         user32.SetWindowRgn.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
-        if not user32.SetWindowRgn(frame, gdi32.CreateRectRgn(left, top, left + box.right, top + box.bottom), True):
+        # A null region would clear the shape: no region made, or none set, and the fixture never says it is ready,
+        # so the round stops on its own setup instead of failing the app. Windows owns the region once it is set.
+        shape = gdi32.CreateRectRgn(left, top, left + box.right, top + box.bottom)
+        if not shape:
+            raise SystemExit("the fixture could not make its shape")
+        if not user32.SetWindowRgn(frame, shape, True):
+            gdi32.DeleteObject(shape)
             raise SystemExit("the fixture could not take its shape")
         keep.append(guarded(user32, frame))   # placed, shaped, styled and titled: from here on it refuses changes
         part = args.out.with_suffix(".part")

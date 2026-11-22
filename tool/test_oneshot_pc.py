@@ -461,6 +461,50 @@ def test_a_check_this_desktop_cannot_read_stays_pending_with_r3_closed(held, mon
     assert "O3(창 캡처 항목이 비었다)" in after["pc"]["detail"] and not pc.approved(after) and pc.due(after) == "pc"
 
 
+def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_through_cleanup(monkeypatch, tmp_path):
+    import contextlib
+
+    import desktop_session
+
+    order, release = [], threading.Event()
+
+    @contextlib.contextmanager
+    def look(folder, key, owned):
+        order.append("enter")
+        try:
+            yield object()
+            if not release.is_set():   # the first round's look stays up until the test lets it end
+                release.wait(10)
+        finally:
+            order.append("cleaned")
+
+    monkeypatch.setattr(pc, "base", lambda repo: tmp_path / repo)
+    monkeypatch.setattr(pc, "unrun", lambda o: [])
+    monkeypatch.setattr(owner_round, "helper", lambda folder: Path("helper.exe"))
+    monkeypatch.setattr(desktop_session, "look", look)
+    monkeypatch.setattr(pc.desktop_look, "Launches", lambda *a, **k: type("R", (), {"due": lambda self: None})())
+    monkeypatch.setattr(pc.desktop_look, "size", lambda profile: (960, 540))
+    monkeypatch.setattr(pc.oneshot_desktop, "owner_scripted", lambda o: [])
+    record = {"desktop_build": {"checks": {}}, "profile": {}}
+    first = threading.Thread(target=pc.observe, args=("a", record, lambda: False))
+    first.start()
+    while order != ["enter"]:
+        threading.Event().wait(0.01)
+    second = threading.Thread(target=pc.observe, args=("b", record, lambda: False))
+    second.start()
+    threading.Event().wait(1.5)
+    assert order == ["enter"]   # the second round waits while the first one's windows may stand
+    release.set()
+    first.join(10)
+    second.join(10)
+    assert order == ["enter", "cleaned", "enter", "cleaned"]
+    # A stop while another round holds the desktop: it raises before any look of its own starts.
+    with pc._desk:
+        with pytest.raises(RuntimeError, match="기다리다 멈췄다"):
+            pc.observe("c", record, lambda: True)
+    assert order == ["enter", "cleaned", "enter", "cleaned"] and not pc._desk.locked()
+
+
 def test_a_cleanup_failure_never_passes_the_round(held, monkeypatch):
     after = ran(monkeypatch, error=RuntimeError("주인 화면 회차를 정리하지 못했다 — pid 7 is still running"))
     assert after["stage"] == "pc" and after["pc"]["status"] == "waiting" and "정리하지 못했다" in after["pc"]["detail"]

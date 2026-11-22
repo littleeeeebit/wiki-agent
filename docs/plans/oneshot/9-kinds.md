@@ -457,9 +457,13 @@ order:
    it without activation (`SetWindowPos` with `SWP_NOACTIVATE`), never
    through Tk, whose `deiconify` asks for focus. It reports its handle and
    its client area on screen. Its binding holds its title, its window
-   rectangle and its process. The check ends the fixture's job, its exit
-   proven, before the next check starts, so one window at a time has the
-   fixture's title.
+   rectangle and its process. It says it is ready only once its window
+   region is set; one it cannot make or set ends it first, so the round
+   stops on its own setup and fails no app. Once the fixture is up and
+   bound, the check ends its job, its exit proven, before the next check
+   starts. One round runs on the owner's desktop at a time, whichever
+   repository it is for, from its look's start through its proven cleanup.
+   So one window at a time has the fixture's title.
 2. The frozen app from a fresh start of the check's scenario, driven without
    a shot (`shoot: false`), so the driver reads and acts but never calls
    `PrintWindow`.
@@ -498,9 +502,10 @@ with no stop asked meanwhile, lets it sample.
   colour or the page at some mark's edge, so this proves from the sampled
   pixels themselves that the fixture covered the region in that frame. A
   frame without them leaves the check pending. A failed check of the
-  window fails it. A window region replaced and put back exactly between
-  the blit and the second check would escape both. That needs an app that
-  sets regions on the server's own window with that timing.
+  window fails it. A window region replaced after the first check, still
+  in place during the blit, and put back exactly before the second check
+  would escape both. That needs an app that sets regions on the server's
+  own window with that timing.
 - A report passes only when it holds the fixture's page as it reads: its
   words in order, one after another. A fixed text naming every word the
   server draws from is no capture of this round's page.

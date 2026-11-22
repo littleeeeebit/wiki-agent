@@ -34,11 +34,14 @@ router = APIRouter()
 
 STAGE = "pc"
 FIXTURE = "oneshot-fixture"   # the server's own window of random English words, one for each check
-RECT = [80, 80, 960, 540]   # the fixture's frame on the primary monitor, in physical pixels
+RECT = [80, 80, 960, 540]   # where the fixture is placed on the primary monitor, its client area's size, physical pixels
 JUDGE = "oneshot-owner-judge"
 JUDGE_PROMPT = (ROOT / "tool/prompts/oneshot-owner-judge.md").read_text(encoding="utf-8")
 MAX_REPORT = 1 << 20   # bytes of an app's report file the round reads
 _halts: dict[str, threading.Event] = {}
+# One round on the owner's desktop at a time, whichever repository it is for, from its look's start through its
+# proven cleanup: one window at a time by the fixture's title, and one fixture over its place on screen.
+_desk = threading.Lock()
 
 
 def plan(o: dict) -> dict:
@@ -218,8 +221,9 @@ def reported(report: dict, seen: dict, data: Path) -> str | None:
 def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep: Path) -> dict:
     """One `owner` check: its fixture, then the app from a fresh start of its scenario, then what it observes while
     both still run, each source proven again first. `passed`, `failed` or `pending` with why, or `judge` with the
-    capture copied into `keep` for the critic. The fixture's job is ended, its exit proven, before it returns on
-    every outcome, so the next check's fixture is the only window by that title."""
+    capture copied into `keep` for the critic. Once the fixture is up and bound, its job is ended, its exit proven,
+    before this returns or raises, so the next check's fixture is the only window by that title. A fixture that
+    never came up or could not be bound raises, and the round's look ends it with the rest."""
 
     import owner_round
 
@@ -274,7 +278,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
 
 def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
     """Every check the approval lets run, each by `one` in the round's own look on the owner's desktop, whose
-    cleanup is proven on every exit (RuntimeError when it is not)."""
+    cleanup is proven on every exit (RuntimeError when it is not). One round at a time across repositories
+    (`_desk`), from the look's start through its cleanup; a stop while waiting for another round raises."""
 
     import desktop_session
     import owner_round
@@ -289,6 +294,9 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
     looks = base(repo) / "looks"
     looks.mkdir(parents=True, exist_ok=True)
     results = {}
+    while not _desk.acquire(timeout=1):   # another repository's round is on the owner's desktop
+        if stopped():
+            raise RuntimeError("다른 저장소의 주인 화면 회차를 기다리다 멈췄다")
     try:
         with desktop_session.look(looks, f"round-{uuid.uuid4().hex[:12]}", owned=False) as session:
             runs = desktop_look.Launches(session, build, desktop_look.size(o["profile"]), stopped, shoot=False)
@@ -298,6 +306,8 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
                     results[x["id"]] = one(session, runs, n, x, build["checks"][x["id"]], exe, missing, keep)
     except desktop_session.Refused as exc:
         raise RuntimeError(f"주인 화면 회차를 정리하지 못했다 — {exc}") from exc
+    finally:   # released only once the look's cleanup is proven or has failed: never while its windows may stand
+        _desk.release()
     runs.due()
     return results
 
