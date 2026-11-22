@@ -14,6 +14,8 @@ the gate's output shows `[N1]` where it would stand (`hidden`).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -191,6 +193,8 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
     pushes), or what it has not committed. Matched in any casing; the refusal names the need, never the value, and
     a failed read names only what failed: a Git or file error can quote what it read."""
 
+    if why := still_tainted(path, spec):   # whatever the store holds now: a rotated value is still in those commits
+        return why
     if not hide:
         return ""
     step = ""
@@ -213,7 +217,7 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
     try:   # a tree that cannot be read is refused, never taken as clean
         # ponytail: text diffs and untracked text only; a secret inside a committed binary is not seen
         untracked = [path / f for f in git("ls-files", "--others", "--exclude-standard", "-z").split("\0") if f]
-        log = git("log", "-p", "--format=%an%n%ae%n%cn%n%ce%n%B", f"{base}..HEAD") if base else ""
+        log = git("log", *HISTORY, f"{base}..HEAD") if base else ""
         places = {"답": final, "커밋": log + git("diff", "HEAD"), "커밋하지 않은 파일": "\n".join(map(read, untracked))}
     except (OSError, subprocess.SubprocessError) as exc:
         return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
@@ -225,9 +229,58 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
                 found.setdefault(where, set()).add(label.strip("[]"))
     if not found:
         return ""
+    if "커밋" in found and base:   # the commits that hold it stay refused until the history no longer has them
+        try:
+            hit = [c for c in git("rev-list", f"{base}..HEAD").split() if seen(git("show", *HISTORY, c), hide)]
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
+        saved(spec["repo"], oneshot={"tainted": sorted({*(spec["oneshot"].get("tainted") or []), *hit})})
     ids = sorted(set().union(*found.values()))
     return (f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 적지 "
             "않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")
+
+
+# A commit's names, message and patch; a merge's against its first parent, so a resolution's own text is read.
+HISTORY = ("-p", "--diff-merges=first-parent", "--format=%an%n%ae%n%cn%n%ce%n%B")
+
+
+def seen(text: str, hide: dict) -> bool:
+    flat = folded(text)
+    return any(value in text or folded(value) in flat for value in hide)
+
+
+def still_tainted(path: Path, spec: dict) -> str:
+    """Why a turn is refused while a commit once found holding a secret is still in HEAD's history, or empty,
+    clearing the record once none is. Bound to the commits, never to today's values, so a value the owner
+    replaced or took back is refused until the history is rewritten."""
+
+    tainted = spec["oneshot"].get("tainted") or []
+    left = []
+    for c in tainted:
+        done = subprocess.run(["git", "merge-base", "--is-ancestor", c, "HEAD"], cwd=path, capture_output=True,
+                              timeout=60)
+        if done.returncode == 0 or done.returncode != 1 and not subprocess.run(
+                ["git", "cat-file", "-e", f"{c}^{{commit}}"], cwd=path, capture_output=True, timeout=60).returncode:
+            left.append(c)   # an ancestor, or a commit Git has but could not place: never taken as gone
+    if left:
+        return (f"비밀 값이 들어 있던 커밋 {', '.join(c[:12] for c in left)} 이(가) 아직 기록에 있다 — 설계 커밋 뒤의 "
+                "그 커밋들을 다시 써서 기록에서 지운다")
+    if tainted:
+        saved(spec["repo"], oneshot={"tainted": []})
+    return ""
+
+
+def rotated(spec: dict | None, env: dict) -> bool:
+    """Whether the secrets a oneshot session carries changed since its conversation last ran: that conversation
+    held the old values, so it starts again rather than resuming. Kept as a slow salted digest, never a value."""
+
+    if not (spec or {}).get("oneshot"):
+        return False
+    data = json.dumps(sorted(env.items())).encode()
+    digest = hashlib.pbkdf2_hmac("sha256", data, str(spec["oneshot"].get("run")).encode(), 200_000).hex() if env else ""
+    if digest != (before := spec["oneshot"].get("secret_digest", "")):
+        saved(spec["repo"], oneshot={"secret_digest": digest})
+    return bool(before) and digest != before
 
 
 def told(spec: dict) -> str:

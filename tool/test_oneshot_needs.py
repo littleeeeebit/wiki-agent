@@ -21,7 +21,7 @@ import pytest
 from fastapi import HTTPException
 
 from agent.chat_session import Event
-from common import host
+from common import Veil, host
 
 from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
     oneshot_sheet as sheet, oneshot_spec, release, specs, work
@@ -402,16 +402,23 @@ def test_a_build_session_carries_each_given_secret_and_starts_again_when_it_chan
         def close(self):
             self.closed = True
 
+    monkeypatch.setattr(work, "resumable", lambda *_: "the conversation before")
     with patch.object(work, "ChatSession", Chat), patch.dict(work._sessions, clear=True):
         first = work.session(at_r1, "opus", "low")
         assert made == [{ENV: None}] and first.hide == {}   # not given: the server's own variable is dropped
+        assert first.session_id == "the conversation before"
         value = f"key-{uuid.uuid4().hex}"
         give("N1", value=value)
         second = work.session(at_r1, "opus", "low")
         assert first.closed and made[-1] == {ENV: value} and second.hide == {value: "[N1]"}
+        assert second.session_id is None   # a conversation that held other values never resumes
+        assert value not in json.dumps(specs.load("budget", oneshot.BRANCH))   # only a digest is kept
         assert work.session(at_r1, "opus", "low") is second   # nothing changed: the same session goes on
         assert needs.take_back("budget", "N1", src())
-        assert work.session(at_r1, "opus", "low") is not second and second.closed and made[-1] == {ENV: None}
+        third = work.session(at_r1, "opus", "low")
+        assert third is not second and second.closed and made[-1] == {ENV: None} and third.session_id is None
+        work._sessions.clear()
+        assert work.session(at_r1, "opus", "low").session_id == "the conversation before"   # same values: resumes
     assert ENV not in host.environment({ENV: None})   # `None` drops the variable from the child
 
 
@@ -437,7 +444,27 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     git("commit", "-m", "Remove the key")
     why = needs.leaked(at_r1, spec(), hide, "끝냈다")   # gone from the tree, still in the history the PR pushes
     assert "커밋" in why and "다시 써서" in why and value.lower() not in why.lower()
+    added = git("rev-parse", "HEAD~1")   # the removal's diff quotes the value too
+    assert spec()["oneshot"]["tainted"] == sorted([added, git("rev-parse", "HEAD")])
+    # Taken back or replaced, the value is no longer in the mask, but its commit stays refused.
+    assert added[:12] in needs.leaked(at_r1, spec(), {}, "끝냈다")
+    git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])   # the history rewritten
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == "" and spec()["oneshot"]["tainted"] == []
     assert needs.leaked(at_r1, spec(), {}, value) == ""   # a session that carried no secret is never checked
+    # A merge's resolution: in neither parent, read against the first parent.
+    git("checkout", "-q", "-b", "side")
+    (at_r1 / "side.txt").write_text("side\n", encoding="utf-8")
+    git("add", "side.txt")
+    git("commit", "-q", "-m", "Side")
+    git("checkout", "-q", "-")
+    git("merge", "-q", "--no-ff", "--no-commit", "side")
+    (at_r1 / "side.txt").write_text(f"side {value}\n", encoding="utf-8")
+    git("add", "side.txt")
+    git("commit", "-q", "-m", "Merge side")
+    assert "커밋" in needs.leaked(at_r1, spec(), hide, "끝냈다")
+    git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])
+    git("branch", "-q", "-D", "side")
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == ""
     head = spec()["oneshot"]["design_head"]
     oneshot_spec.saved("budget", oneshot={"design_head": "f" * 40})   # a history git cannot read is never clean
     failed = needs.leaked(at_r1, spec(), hide, "끝냈다")   # named by what failed, never by Git's own words
@@ -445,7 +472,8 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     oneshot_spec.saved("budget", oneshot={"design_head": git("rev-parse", "HEAD")})
     git("commit", "--allow-empty", "-m", f"Use {value.upper()} for the call")   # the message is pushed too
     assert "커밋" in needs.leaked(at_r1, spec(), hide, "끝냈다")
-    oneshot_spec.saved("budget", oneshot={"design_head": git("rev-parse", "HEAD")})
+    git("reset", "-q", "--hard", "HEAD~1")   # rewritten: the message is gone from the history
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == ""
     # A stage check whose reason quotes the value sends it on as its need.
     oneshot_spec.saved("budget", oneshot={"stage": "build", "attempts": 0})
     quoted = []
@@ -457,6 +485,16 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     build.checked(at_r1, run, spec(), "끝냈다")()
     said = json.dumps([quoted, notes], ensure_ascii=False)
     assert "게이트 실패 — [N1]" in quoted[0] and value.lower() not in said.lower()
+
+    def broke(*a):
+        raise KeyError(value)
+
+    monkeypatch.setitem(build.STAGES, "build", (broke, *build.STAGES["build"][1:]))
+    with pytest.raises(RuntimeError) as raised:   # what `specs.check` logs and notes
+        build.checked(at_r1, run, spec(), "끝냈다")
+    assert "[N1]" in str(raised.value) and raised.value.__cause__ is None and raised.value.__suppress_context__
+    assert value not in str(raised.value) and value not in json.dumps(spec()["oneshot"]["stopped"])
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
     oneshot_spec.saved("budget", oneshot={"design_head": head})
     # The stage's own check never reads a refused answer: the turn goes back with the need named.
     oneshot_spec.saved("budget", oneshot={"stage": "build", "attempts": 0})
@@ -466,7 +504,7 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
                                                 *build.STAGES["build"][1:]))
     run = SimpleNamespace(halt=threading.Event(), put=notes.append, person=False,
                           chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
-    build.checked(at_r1, run, spec(), "끝냈다")()
+    build.checked(at_r1, run, spec(), f"키는 {value} 이다")()
     assert "The server refused this build turn: 비밀 값 N1" in sent[0] and value.lower() not in sent[0].lower()
 
 
@@ -477,7 +515,7 @@ def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_
               # A value split across parts of one text, and inside an approval's structured input.
               Event("delta", f"키는 {value[:6]}", {}, "w"), Event("delta", value[6:], {}, "w"),
               Event("tool", f"out {value[:9]}", command, "w"), Event("tool", f"{value[9:]} end", command, "w"),
-              Event("approval", "묻는다", {"id": "q1", "tool": "AskUserQuestion",
+              Event("approval", "묻는다", {"id": f"q-{value}", "tool": "AskUserQuestion",
                                           "input": {"questions": [{"question": f"{value} 를 쓸까?"}]}}, "w"),
               Event("delta", f" 이고 {value[:3]}", {}, "w"),   # a tail that could start the value, then the end
               Event("done", f"끝냈다 — {value}", {"error": False}, "w")]
@@ -491,8 +529,19 @@ def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_
     run = work.Run(chat)
     work.run_turn(tmp_path, run, "Build it", lambda: None)
     assert checked == [f"끝냈다 — {value}"]   # the leak check sees the value, to refuse it
+    # The handle the answer comes back with is the server's own, kept as it was; nothing else holds the value.
+    assert [e["meta"].pop("id") for e in run.events if e["kind"] == "approval"] == [f"q-{value}"]
     kept = json.dumps([run.events, recorded], ensure_ascii=False, default=str)
     assert value not in kept and "x-key: [N1]" in kept and "+KEY=[N1]" in kept and "끝냈다 — [N1]" in kept
     assert value[6:] not in kept and value[9:] not in kept and "[N1] 를 쓸까?" in kept
     shown = lambda kind: "".join(e["text"] for e in run.events if e["kind"] == kind and e["meta"].get("item_id") in (None, "c1"))  # noqa: E731
     assert shown("delta") == f"키는 [N1] 이고 {value[:3]}" and "out [N1] end" in shown("tool")
+
+
+def test_a_streamed_value_in_a_spelling_that_folds_shorter_is_held_until_it_is_whole():
+    value = f"INDI{uuid.uuid4().hex}"
+    spelled = value.replace("I", "I\u0307")   # folds to the same, three characters longer
+    for at in range(1, len(spelled)):
+        veil = Veil({value: "[N1]"})
+        shown = veil.stream("d", f"x {spelled[:at]}", {}) + veil.stream("d", f"{spelled[at:]} y", {})
+        assert shown + "".join(t for _, t, _ in veil.rest()) == "x [N1] y", at

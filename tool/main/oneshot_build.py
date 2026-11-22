@@ -630,7 +630,9 @@ def checked(path: Path, run, spec: dict, final: str):
     except (ValueError, OSError) as exc:
         why = str(exc)
     except Exception as exc:   # an unforeseen failure still stops with a reason, never leaves the stage running
-        oneshot_spec.store(repo).stop("block", masked(f"{type(exc).__name__}: {exc}", hide))
+        oneshot_spec.store(repo).stop("block", why := masked(f"{type(exc).__name__}: {exc}", hide))
+        if hide:   # the caller logs and notes what it catches: it gets the masked reason, never the values
+            raise RuntimeError(why) from None
         raise
     why = masked(why, hide)   # a check's reason can quote what the turn wrote: shown, kept and sent as each need
     if not why:

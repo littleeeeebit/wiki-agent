@@ -542,7 +542,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
                                bypass=bypass, **({"env": env} if env else {}))
             chat._spec_system, chat._spec_env, chat.hide = prompt, env, hide
             chat.settled = SETTLING.search
-            chat.session_id = resumable(recall(path), deepseek.provider(model))
+            chat.session_id = None if oneshot_needs.rotated(spec, secrets) else resumable(recall(path), deepseek.provider(model))
             _sessions[key] = chat
         else:
             if chat.bypass != bypass:

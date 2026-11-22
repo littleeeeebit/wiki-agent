@@ -135,10 +135,13 @@ class Veil:
     deltas, one command's output) masked as a whole. The tail a value could still be starting in is held until the
     next part of that text, or `rest`, so a value split across parts is never shown in pieces."""
 
+    # The server's own handles: an approval is answered by its `id` exactly as the screen got it.
+    IDS = frozenset({"id", "request", "item_id", "session_id", "parent_id"})
+
     def __init__(self, hide: dict[str, str] | None):
         self.hide, self.held = hide or {}, {}
         self.needles = [(v, folded(v)) for v in self.hide if v]
-        self.longest = max((max(len(v), len(n)) for v, n in self.needles), default=0)
+        self.raw, self.flat = (max((len(x[i]) for x in self.needles), default=0) for i in (0, 1))
 
     def deep(self, value):
         if not self.hide:
@@ -146,7 +149,7 @@ class Veil:
         if isinstance(value, str):
             return masked(value, self.hide)
         if isinstance(value, dict):
-            return {k: self.deep(v) for k, v in value.items()}
+            return {k: v if k in self.IDS else self.deep(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [self.deep(v) for v in value]
         return value
@@ -156,7 +159,14 @@ class Veil:
         if not self.hide:
             return chunk
         text = self.held.pop(key, ("", meta))[0] + chunk
-        cut = next((i for i in range(max(0, len(text) - self.longest), len(text)) if self._starts(text[i:])), len(text))
+        # Where a value could still start: within its spelled width, or as many characters back as its folded
+        # width takes, since a character can fold to nothing (a dot above after an `i`).
+        folds, start, need = _folds(text), len(text), self.flat
+        while start > 0 and need > 0:
+            start -= 1
+            need -= len(folds[start])
+        start = min(start, max(0, len(text) - self.raw))
+        cut = next((i for i in range(start, len(text)) if self._starts(text[i:])), len(text))
         for start, end, _ in _spans(text, self.hide):
             if start < cut < end:   # spans never overlap: one at most holds the cut
                 cut = start
