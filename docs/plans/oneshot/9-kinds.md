@@ -376,7 +376,11 @@ source, and the server assigns it:
   The fixture is the server's own, never the build's: a window the round
   starts in its own job, showing a page of English words the server draws at
   random for that round, so neither the builder nor the app knows them
-  beforehand. The independent critic judges a `window` or `composition`
+  beforehand. The fixture reads its page from a file the server writes. The
+  server deletes that file once the fixture's window is up, before the app
+  starts, so no file the app can read holds the words. A report file is read
+  through one open, at most its bound and a byte past it, so a file that
+  grows past the bound is rejected. The independent critic judges a `window` or `composition`
   capture against its `shows` sentence and the fixture's words, as it judges
   a screenshot. The frontend build scripts each `owner` check as it scripts a
   `look` one, its last step the review's `act`.

@@ -369,6 +369,16 @@ def test_a_report_counts_only_as_the_capture_steps_own_from_a_whole_read(held, d
     assert checked(desk, SCREEN, driven())["status"] == "failed"
 
 
+def test_a_report_file_grown_past_its_bound_after_the_size_check_is_no_report(held, desk, monkeypatch):
+    _, root = desk
+    (root / "data" / "seen.txt").write_text("apple river garden", encoding="utf-8")
+    monkeypatch.setattr(pc, "MAX_REPORT", 10)   # the file's 18 bytes pass a size check that read 10 or fewer
+    size = Path.stat
+    monkeypatch.setattr(Path, "stat", lambda p, *a, **k: os.stat_result((*size(p, *a, **k)[:6], 0, 0, 0, 0))
+                        if p.name == "seen.txt" else size(p, *a, **k))
+    assert checked(desk, SCREEN, driven())["status"] == "failed"
+
+
 def test_an_owned_report_window_counts_absent_before_the_step_only_when_there_was_none(held, desk):
     page, owned = "apple river garden", {**REPORT, "observe": {"report": {"id": "seen", "in": "owned", "from": "fixture"}}}
 

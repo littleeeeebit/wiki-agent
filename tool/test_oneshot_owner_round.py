@@ -231,10 +231,12 @@ def test_a_fixture_already_titled_on_the_desktop_starts_no_other(monkeypatch, tm
 
         def start(self, key, argv, cwd, halt=None):
             started.append(key)
+            read.append((tmp_path / key / "words.txt").read_text(encoding="utf-8"))   # as the fixture reads it
 
         def observe(self):
             pass
 
+    read = []
     monkeypatch.setattr(owner_round, "fixtures", lambda: titled.pop(0))
     monkeypatch.setattr(owner_round, "_waited", lambda out, seconds, halt: {"hwnd": 42, "rect": [1, 2, 3, 4]})
     monkeypatch.setattr(owner_round, "bind", lambda job, hwnd, members, title=None: {"job": job, "hwnd": hwnd})
@@ -247,6 +249,8 @@ def test_a_fixture_already_titled_on_the_desktop_starts_no_other(monkeypatch, tm
     titled[:] = [[], [42]]
     binding, rect = owner_round.fixture(Look(), "fixture1", ["apple"], [0, 0, 640, 360], threading.Event())
     assert binding["hwnd"] == 42 and rect == [1, 2, 3, 4] and started == ["fixture1", "fixture1"]
+    # The fixture had its page; once it is up, no file the app could read holds the words.
+    assert read[-1] == "apple" and not (tmp_path / "fixture1" / "words.txt").exists()
 
 
 def test_the_fixtures_marks_run_along_every_edge_inside_it_in_fresh_colours():

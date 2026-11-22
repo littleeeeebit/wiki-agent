@@ -306,6 +306,12 @@ def fixture(session, key: str, page: list[str], rect: list[int], halt) -> tuple[
     named = _waited(out, FIXTURE_SECONDS, halt)
     if named is None:
         raise RuntimeError("고정 창이 제때 뜨지 않았다")
+    # The fixture read its page before it named its window: gone before the app starts, so no file the app can
+    # read holds the words, and a report holding them came from the fixture's window.
+    try:
+        (folder / "words.txt").unlink()
+    except OSError as exc:
+        raise RuntimeError(f"고정 창의 낱말 파일을 지우지 못했다 — {exc}") from exc
     session.observe()
     try:
         binding = bind(key, named["hwnd"], session.record["jobs"][key]["members"], FIXTURE)

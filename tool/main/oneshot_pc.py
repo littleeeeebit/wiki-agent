@@ -258,9 +258,13 @@ def reported(report: dict, seen: dict, data: Path, page: list[str]) -> str | Non
         was = (report.get("steps") or [{}])[-1].get("baseline") or {}
         fresh = was.get("absent") is True or isinstance(was.get("text"), str) and not owner_round.contains(
             was["text"], page)   # the page it held before the step is no capture of the step's
-        try:   # strict: a file that is not UTF-8 is no report, never one read with replacements
-            return file.read_bytes().decode("utf-8") if fresh else None
-        except UnicodeDecodeError:
+        if not fresh:
+            return None
+        try:   # one open, read to the bound and a byte past it; strict, so a file that is not UTF-8 is no report
+            with open(file, "rb") as f:
+                raw = f.read(MAX_REPORT + 1)
+            return raw.decode("utf-8") if len(raw) <= MAX_REPORT else None
+        except (OSError, UnicodeDecodeError):
             return None
 
     unknown = object()
