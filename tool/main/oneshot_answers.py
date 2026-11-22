@@ -17,18 +17,23 @@ from pathlib import Path
 from . import oneshot_build
 
 
+class Again(str):
+    """A refusal that goes back to the builder without counting against `oneshot_build.MAX_ATTEMPTS`: a turn
+    that ended without a commit is a bug of the turn, never a stop (owner decision)."""
+
+
 def unchanged(path: Path, o: dict) -> str:
-    """Why the build ended on a HEAD the review refused, or one whose measurement failed or the owner refused, or
-    empty. Any such HEAD, the last or an earlier one gone back to, is never read again: the turn commits its fix,
-    or the tests that pin what it answered with evidence."""
+    """Why the build ended on a HEAD the review refused, or one whose measurement failed or the owner refused, as
+    an `Again`, or empty. Any such HEAD, the last or an earlier one gone back to, is never read again: the turn
+    commits its fix, or the tests that pin what it answered with evidence."""
 
     now = oneshot_build.head(path)
     if now in {r["head"] for r in o.get("reviews") or [] if r["verdict"] == "refuse"}:
-        return (f"리뷰가 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 고친 코드를 커밋하거나, 고치지 않고 "
-                "증거로 답한 발견마다 그 동작을 고정하는 테스트를 커밋하고 `oneshot-answers` 에 적는다")
+        return Again(f"리뷰가 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 고친 코드를 커밋하거나, 고치지 않고 "
+                     "증거로 답한 발견마다 그 동작을 고정하는 테스트를 커밋하고 `oneshot-answers` 에 적는다")
     if now in {m["head"] for m in o.get("measures") or []
                if m["status"] == "failed" or (m.get("owner") or {}).get("approve") is False}:
-        return f"실측이 실패했거나 주인이 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 원인을 고쳐 커밋한다"
+        return Again(f"실측이 실패했거나 주인이 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 원인을 고쳐 커밋한다")
     return ""
 
 
@@ -69,12 +74,22 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
         file = posixpath.normpath(file.replace("\\", "/"))
         # The test's file is one this turn's commits changed: an uncommitted file never counts. That the test is
         # new is read after the gate, from the test run itself (`ran`), never from parsing its source.
-        if not name or oneshot_review.canonical(file) not in (changed := changed or changed_files(path, last["head"])):
+        if not name or oneshot_review.canonical(file) not in (changed := changed or changed_files(path, last["head"])) \
+                or not committed(path, "HEAD", file):   # changed, and still there: a deleted file pins nothing
             raise ValueError(f"{where}: `test` 는 이번 턴에 커밋으로 새로 더한 테스트다 (`경로::이름`, 클래스 안이면 "
-                             f"`경로::클래스::이름`) — 그 파일이 이번 턴 커밋에서 바뀌지 않았다: {a['test']}")
+                             f"`경로::클래스::이름`) — 그 파일이 이번 턴 커밋에서 바뀌지 않았거나 HEAD 에 없다: {a['test']}")
         out.append({"round": len(o["reviews"]), "head": last["head"], "area": " ".join(a["area"].split()),
                     **{k: a[k].strip() for k in ("location", "evidence", "test")}, "breaks": a["breaks"]})
     return out
+
+
+def committed(path: Path, rev: str, file: str) -> str:
+    """`file` as `rev` holds it, or empty when it does not."""
+
+    from . import specs
+
+    done = specs.sh(["git", "show", f"{rev}:{file}"], path)
+    return "" if done.returncode else done.stdout
 
 
 def changed_files(path: Path, since: str) -> dict[str, list[tuple[int, int]]]:
@@ -91,15 +106,20 @@ def changed_files(path: Path, since: str) -> dict[str, list[tuple[int, int]]]:
     return {oneshot_review.canonical(f): [(1, 10 ** 9)] for f in files if f}
 
 
-def runner_root(o: dict) -> str:
+def runner_root(o: dict, path: Path | None = None) -> str:
     """The folder the test runner names files from: saved at the contract commit (`runner_root`), or, for a run
-    committed before it was saved, the one folder from which every pinned case's relative file is a contract
-    file (`../` included, as `oneshot_build.source` reads it); the root itself when none or more than one fits."""
+    committed before it was saved, the one folder, of every folder HEAD tracks a file in, from which every
+    pinned case's relative file is a contract file (`../` included, as `oneshot_build.source` reads it); the
+    root itself when none or more than one fits."""
+
+    from . import specs
 
     if (root := o.get("runner_root")) is not None:
         return root
     contract = set(o.get("contract") or [])
-    folders = {""} | {"/".join(c.split("/")[:n]) for c in contract for n in range(1, c.count("/") + 1)}
+    done = specs.sh(["git", "-c", "core.quotePath=false", "ls-files", "-z"], path, 60) if path else None
+    tracked = [*contract, *(done.stdout.split("\0") if done and not done.returncode else [])]
+    folders = {""} | {"/".join(f.split("/")[:n]) for f in tracked if f for n in range(1, f.count("/") + 1)}
     roots = None
     for _, _, at in o.get("cases") or []:
         at = (at or "").replace("\\", "/")
@@ -119,17 +139,19 @@ def ran(found: list[tuple[str, str, str, str]], answers: list[dict], o: dict, pa
     run's cases go on `o` as `run_cases`, which `passed` saves for the next round. ponytail: a report without
     files is matched by name and classes, and a run from before `run_cases` was saved has no newness check."""
 
-    root, before = runner_root(o), o.get("run_cases")
-    o["run_cases"] = sorted({tuple(c[:3]) for c in found})
-    old = {tuple(c) for c in before} if before is not None else set()
+    root, before = runner_root(o, path), o.get("run_cases")
+
+    def where(at: str) -> str:   # a report's file as a worktree path, every spelling of one file alike
+        return oneshot_build.source(path or Path.cwd(), at, root) if at else ""
+
+    o["run_cases"] = sorted({tuple(c[:3]) for c in found})   # as reported; both runs are read through `where`
+    old = {(c[0], c[1], where(c[2])) for c in before} if before is not None else set()
     bad = []
     for a in answers:
         file, _, rest = a["test"].partition("::")
         *classes, name = rest.split("::")
         file = posixpath.normpath(file.replace("\\", "/"))
-        where = (lambda at: oneshot_build.source(path, at, root)) if path else (   # noqa: E731
-            lambda at: posixpath.normpath(posixpath.join(root, at.replace("\\", "/"))))
-        named = [(tuple(c[:3]) in old, c[3]) for c in found
+        named = [((c[0], c[1], where(c[2])) in old, c[3]) for c in found
                  if (c[1] == name or c[1].startswith(name + "[")) and (not c[2] or where(c[2]) == file)
                  and set(classes) <= set(re.split(r"\W+", c[0]))]   # a class it names is a word of the class name
         kinds = [kind for was, kind in named if not was]

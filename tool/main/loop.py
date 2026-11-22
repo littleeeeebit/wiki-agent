@@ -2721,10 +2721,10 @@ def prs() -> dict:
                      "number,title,headRefName,headRefOid,headRepositoryOwner,isCrossRepository,url"], repo, 60)
     if done.returncode:
         return {"project": name, "rows": [], "error": specs.said(done)}
-    known = by_pr(name)
-    rows = []
+    known, rows = by_pr(name), []
     for row in json.loads(done.stdout):
-        if oneshot_profile.in_run(spec := known.get(row["number"]) or unlinked(repo, row["headRefName"])):
+        if oneshot_profile.in_run(spec := known.get(row["number"]) or (   # a fork's same-named branch is not ours
+                None if row.get("isCrossRepository") else unlinked(repo, row["headRefName"]))):
             continue   # an unfinished Oneshot's PR is not listed at all; dispatch checks it again
         why = refusal(row, spec if spec and spec.get("pr") else None) or ("" if spec else clash(name, row["headRefName"]))
         rows.append({"number": row["number"], "title": row["title"], "branch": row["headRefName"],

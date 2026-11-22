@@ -144,7 +144,7 @@ def test_a_failed_measurement_or_a_refusal_goes_back_to_the_build_agent_which_mu
     assert sent[-1][1] == "build" and "total_ok=False" in sent[-1][2] and "measure.json" in sent[-1][2]
     # The same HEAD comes back with no commit: refused before any gate.
     then = check(tree, "고쳤다.\n" + report())
-    assert o()["stage"] == "build" and o()["attempts"] == 1 and then is not None
+    assert o()["stage"] == "build" and not o()["attempts"] and then is not None   # sent back, never counted
     then()
     assert "커밋이 하나도 늘지 않았다" in sent[-1][2]
     git(tree, "commit", "--allow-empty", "-m", "fix")

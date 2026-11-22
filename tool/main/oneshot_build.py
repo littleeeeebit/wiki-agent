@@ -638,7 +638,7 @@ def checked(path: Path, run, spec: dict, final: str):
             return None
         return unless_stopped(run, repo, lambda: after(repo))
     specs.note(run, why)
-    attempts = int(spec["oneshot"].get("attempts") or 0) + 1
+    attempts = int(spec["oneshot"].get("attempts") or 0) + (type(why) is str)   # a no-commit `Again` is not counted
     store = oneshot_spec.store(repo)
     if attempts >= MAX_ATTEMPTS or run.halt.is_set():
         store.put(attempts=attempts)
@@ -646,8 +646,8 @@ def checked(path: Path, run, spec: dict, final: str):
         return None
     store.put(attempts=attempts)   # `working` stays until the turn goes: a restart in between is recovered
     return unless_stopped(run, repo, lambda: send(
-        repo, stage, f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again "
-                     f"(attempt {attempts + 1} of {MAX_ATTEMPTS})."))
+        repo, stage, f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
+                     + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else ".")))
 
 
 def unless_stopped(run, repo: str, then):

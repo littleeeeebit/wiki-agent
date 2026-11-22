@@ -585,6 +585,13 @@ def test_review_loops_own_paths_leave_an_unfinished_oneshot_alone(reviewed):
             patch.object(loop.specs, "sh", lambda *a, **k: subprocess.CompletedProcess(a, 0, listed, "")), \
             patch.object(loop, "by_pr", lambda name: {1: s}):
         assert loop.prs()["rows"] == []   # the picker never shows an unfinished Oneshot's PR
+    fork = json.dumps([{"number": 2, "title": "포크", "headRefName": oneshot.BRANCH, "headRefOid": "b" * 40,
+                        "url": "u2", "isCrossRepository": True, "headRepositoryOwner": {"login": "x"}}])
+    with patch.object(loop, "project", lambda: "budget"), patch.object(loop, "current_repo", lambda: Path(".")), \
+            patch.object(loop.specs, "sh", lambda *a, **k: subprocess.CompletedProcess(a, 0, fork, "")), \
+            patch.object(loop, "by_pr", lambda name: {}), patch.object(loop, "unlinked", lambda *a: s):
+        rows = loop.prs()["rows"]   # a fork's branch of the same name is listed, and refused as a fork
+    assert [r["number"] for r in rows] == [2] and not rows[0]["pickable"] and rows[0]["why"].startswith("포크")
 
 
 def test_a_ruling_for_the_builder_never_drops_a_p0_and_later_work_survives_every_verdict(reviewed):
@@ -642,6 +649,10 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     s = specs.load("budget", oneshot.BRANCH)
     with pytest.raises(ValueError, match="새로 더한"):
         oneshot_answers.answered(tree, s, answer("test_other.py::test_late"))
+    git(tree, "rm", "-q", "--cached", "test_other.py")
+    git(tree, "commit", "-m", "the other file deleted")
+    with pytest.raises(ValueError, match="HEAD 에 없다"):   # in the diff, but not in the commit the review reads
+        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
     assert oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
 
 
@@ -663,6 +674,8 @@ def test_a_pin_is_a_case_the_refused_run_did_not_report_in_the_answers_file(revi
     old = ("suite.test_pin", "test_new", "test_pin.py")
     o_ = {"run_cases": [list(old)]}   # the refused build's run reported this case already
     assert "이전 실행에도" in ran([(*old, "passed")], pin, o_, tree)   # an old test is not new
+    for spelt in ("./test_pin.py", str(tree / "test_pin.py")):   # another spelling of the same file is the same case
+        assert "이전 실행에도" in ran([(old[0], old[1], spelt, "passed")], pin, {"run_cases": [list(old)]}, tree)
     assert o_["run_cases"] == [list(old)] or o_["run_cases"] == [old]   # this run's cases, for the next round
     o_ = {"run_cases": []}
     for case in [("suite.refund.test", "test_new", "test_pin.py"), ("x", "test_new", ""),   # any naming, or no file
@@ -679,6 +692,13 @@ def test_a_pin_is_a_case_the_refused_run_did_not_report_in_the_answers_file(revi
     parent = {"contract": ["web/tests/test_budget.py", "shared/test_support.py"],
               "cases": [["a", "x", "tests/test_budget.py"], ["b", "y", "../shared/test_support.py"]]}
     assert runner_root(parent) == "web"   # `../` read from the root, as `oneshot_build.source` reads it
+    (tree / "tools" / "web").mkdir(parents=True)
+    (tree / "tools" / "web" / "run.py").write_text("", encoding="utf-8")
+    git(tree, "add", "tools/web/run.py")
+    git(tree, "commit", "-m", "a runner folder that holds no contract file")
+    deep = {"contract": ["test_budget.py", "tools/test_support.py"],
+            "cases": [["a", "x", "../../test_budget.py"], ["b", "y", "../test_support.py"]]}
+    assert runner_root(deep, tree) == "tools/web" and runner_root(deep) == ""   # any folder HEAD tracks a file in
 
 
 def test_a_replacement_counts_once_the_findings_file_is_not_what_the_refusal_read(reviewed):

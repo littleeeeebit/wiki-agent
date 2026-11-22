@@ -420,8 +420,10 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     answer = {"area": "Amount validation", "location": "app.py:2", "evidence": "음수는 환불이다", "breaks": ["R1"],
               "test": "test_refund.py::test_a_refund_is_negative"}
     said = "답했다.\n" + report() + fenced("oneshot-answers", [answer])
-    check(tree, said)()
-    assert "커밋이 하나도 늘지 않았다" in sent[-1][2]   # the refused HEAD itself
+    for _ in range(oneshot_build.MAX_ATTEMPTS + 1):   # no-commit turns go back uncounted, never to a stop
+        check(tree, said)()
+        assert "커밋이 하나도 늘지 않았다" in sent[-1][2] and "attempt" not in sent[-1][2]   # the refused HEAD itself
+    assert not o().get("attempts") and o()["stage"] == "build" and not o().get("stopped")
     write(tree, "test_refund.py", "def test_a_refund_is_negative():\n    from app import add\n    assert add(-1) == -1\n")
     git(tree, "add", "test_refund.py")
     git(tree, "commit", "-m", "pin the refund")

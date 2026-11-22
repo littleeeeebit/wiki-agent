@@ -65,7 +65,7 @@ and the test that pins the defended behaviour, as `path::name`. The build
 check (`oneshot_answers.answered`) refuses an entry whose area the refusal
 did not name, whose `breaks` are not design items or requirements, or whose
 test (`path::name`, or `path::Class::name` inside a class) lies in a file
-this turn's commits did not change. No source is parsed: whether the test is
+this turn's commits did not change, or one HEAD no longer holds. No source is parsed: whether the test is
 new is read from the test runs themselves. After the gate, that test must
 have run and passed in the build's own test run as a new case
 (`oneshot_answers.ran`):
@@ -76,13 +76,14 @@ have run and passed in the build's own test run as a new case
   contract gate reads it (`oneshot_build.source`: an absolute path inside the
   worktree, or a relative one from the runner's root);
 - the refused build's own run did not report it, so an old test edited is
-  not new.
+  not new. Both runs' files are read through the same rule, so `./a.py`,
+  `a.py` and an absolute path are one file.
 
 Each build's run leaves its cases on the spec (`run_cases`) for the next
 round to compare with. The root is saved at the contract commit, or
-recovered as the one folder from which every pinned case's file is a
-contract file (`runner_root`; `../` included, an exact path being the root
-itself). The stated limits:
+recovered as the one folder, of every folder HEAD tracks a file in, from
+which every pinned case's file is a contract file (`runner_root`; `../`
+included, an exact path being the root itself). The stated limits:
 
 - a report without files matches by name and classes;
 - a run committed before `run_cases` was saved has no newness check;
@@ -99,9 +100,11 @@ the verdict is refused and the reviewer is asked again (`held`).
 The build check reads HEAD first (`oneshot_answers.unchanged`). When HEAD
 is any HEAD a review refused, or whose measurement failed or the owner
 refused, the last one or an earlier one gone back to, the turn is refused
-and sent back to the build agent with that reason. It counts against `MAX_ATTEMPTS`, as a failed
-gate does. `[재개]` at the round cap marks the turn as sent back by the
-refusal (`fix`), so the same check holds there.
+and sent back to the build agent with that reason (`oneshot_answers.Again`).
+Per the owner decision it never counts against `MAX_ATTEMPTS` and never
+stops the run; only the owner's `[멈춤]` ends such a loop. `[재개]` at the
+round cap marks the turn as sent back by the refusal (`fix`), so the same
+check holds there.
 
 ### A conflict goes to the owner
 
