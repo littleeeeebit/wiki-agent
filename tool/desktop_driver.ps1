@@ -64,6 +64,7 @@ $out = $ask.out
 $report = [ordered]@{ phase = "starting"; main = $null; size = $null; states = @(); steps = @(); refusal = $null; error = $null }
 $UTILITY = @("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator", "IME", "MSCTFIME UI")
 $MAX_ITEMS = 2000   # a list's items counted at most: more is an unknown count, so its tree is not taken as whole
+$MAX_REPORT = 1048576   # a report file's bytes read before a step at most: the server's own MAX_REPORT
 $MAX_VALUE = 1000   # a control's value recorded at most, in characters: a check's expected value is no longer
 $script:seq = 0
 
@@ -127,11 +128,20 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
 
 function Rid($element) { ($element.GetRuntimeId()) -join "." }   # the element's identity while it lives
 
-function Baseline([string]$path) {   # a report file as a step begins: its SHA-256, proven absent, or why unknown
+function Baseline([string]$path) {   # a report file just before a step acts: its text, proven absent, or why unknown
   try {
     $s = [System.IO.File]::OpenRead($path)
-    try { $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($s) } finally { $s.Dispose() }
-    return [ordered]@{ sha256 = ([System.BitConverter]::ToString($hash) -replace "-", "").ToLower() }
+    try {
+      if ($s.Length -gt $MAX_REPORT) { return [ordered]@{ error = "larger than $MAX_REPORT bytes" } }
+      $bytes = New-Object byte[] $s.Length
+      $got = 0
+      while ($got -lt $bytes.Length) {
+        $n = $s.Read($bytes, $got, $bytes.Length - $got)
+        if ($n -le 0) { return [ordered]@{ error = "the file shrank while it was read" } }
+        $got += $n
+      }
+    } finally { $s.Dispose() }
+    return [ordered]@{ text = [System.Text.Encoding]::UTF8.GetString($bytes) }   # as the server decodes it
   } catch {
     $x = $_.Exception
     if ($x -is [System.Management.Automation.MethodInvocationException]) { $x = $x.InnerException }
@@ -344,6 +354,8 @@ try {
     Enter "find $($step.name)"
     $found = Target $step
     if ($found.error) { $done.error = $found.error; Save; continue }
+    # What the step's report is weighed against, read with its target found, just before it acts.
+    if ($step.before) { $done.before = (State "before-$($step.name)").id }
     if ($step.baseline) { Enter "baseline $($step.name)"; $done.baseline = Baseline ([string]$step.baseline) }
     Enter "act $($step.name)"
     try { Act $found.element $step; $done.acted = $true } catch { $done.error = "$($_.Exception.Message)"; Save; continue }

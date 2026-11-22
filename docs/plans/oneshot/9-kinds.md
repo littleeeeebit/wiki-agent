@@ -338,17 +338,26 @@ source, and the server assigns it:
     element (`id`, with `in: owned` in the window the main window owns) or a
     UTF-8 file under `{data}` (`file`), which must contain the fixture's text.
     The report must be the capture step's own, measured against what was
-    proven just before that step.
+    proven just before that step. The driver reads it with the step's target
+    found, just before the step acts: a whole state for an element, and the
+    file's text for a file.
     - An element counts only when its window was read whole, without any
-      unread items, both in the state after the step and in the one before
-      it. There must be exactly one element by its id, with a value that was
-      neither unread nor cut.
+      unread items, both in the state after the step and in the one read
+      just before it. There must be exactly one element by its id, offering
+      a value that was neither unread nor cut.
     - Before the step, the element must be proven absent, or proven to hold
       a value without the page. An owned window counts as absent only when
       the main window owned none. An ambiguous window, two elements by the
-      id, or an unread value is unknown, and the report counts for nothing.
-    - A file counts only when the driver, reading it just before the step
-      acted, proved it absent or found other bytes there (its SHA-256).
+      id, or a value unread, cut or not offered is unknown, and the report
+      counts for nothing.
+    - A file counts only when the driver proved it absent then, or read
+      text without the page. Rewriting the page an earlier capture left is
+      no capture of the step's.
+
+    A known limit, accepted by the owner: an app that finishes a capture of
+    its own in the milliseconds between that read and the step's action is
+    not told apart from the step's. The fixture's words are drawn at random
+    for each check, so even then the app did capture the fixture.
   - `window`: the round's window-bound capture of the app's main window, or
     with `in: owned` the one it owns, which must show what `shows` says.
   - `composition`: the round's surface capture of the fixture's region, which
