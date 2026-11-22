@@ -478,7 +478,9 @@ at the build's HEAD. A HEAD that cannot be read confirms nothing.
 R3 has one guarded entry for every device round. When a run has both a phone
 round and an owner's desktop round due, R3 opens only when both passed on the
 current HEAD and build. Neither round's pass opens it alone. A run with no
-pending `owner` check skips the round.
+pending `owner` check skips the round. R3's approval asks the same guard
+again: a sheet that opened before a pass was cleared sends the run to that
+round, never to the pull request.
 
 #### R3 and S8
 

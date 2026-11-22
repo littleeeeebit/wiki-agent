@@ -137,3 +137,15 @@ def test_a_run_an_earlier_version_stopped_before_r3_opens_its_sheet(at_r3):
     oneshot_spec.recover()
     assert o()["stage"] == "r3" and not o().get("stopped") and o()["r3"]["round"] == 1
     assert "r3_sheet" in oneshot_spec.view(oneshot_spec.spec_of("budget"))
+
+
+def test_r3s_approval_while_a_device_round_is_due_goes_to_that_round_never_the_pull_request(at_r3):
+    _, sent = at_r3
+    # An earlier version's open sheet: start-up gives its accepted build a generation no phone pass names.
+    oneshot_spec.saved("budget", oneshot={"front_build": None})
+    oneshot_spec.recover()
+    assert o()["stage"] == "r3" and o()["front_build"] and o()["r3"]   # the sheet stays open
+    before = len(sent)
+    critique.decide("budget", on_r3(decisions={"S1": {"approve": True}, "S2": {"approve": True}}))
+    assert o()["stage"] == "phone" and o()["phone"]["status"] == "waiting" and not o().get("working")
+    assert len(sent) == before   # no README turn: the pull request waits for the phone

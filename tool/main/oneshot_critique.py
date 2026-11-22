@@ -401,8 +401,12 @@ def decide(repo: str, body: Decisions) -> dict:
         decisions, comments = oneshot_spec.decided(items, o["r3"]["decisions"], given)
         reading = oneshot_spec.read(o, "r3", body.reading, comments, briefed)
         if not comments:
+            from . import oneshot_pc   # it imports this module
             oneshot_spec.saved(repo, oneshot={"r3": {**o["r3"], "decisions": decisions}, "reading": reading})
-            approved(repo)
+            if oneshot_pc.due(o):   # a device pass cleared since the sheet opened (a new build's generation)
+                oneshot_pc.onward(repo, {})
+            else:
+                approved(repo)
         else:
             # `working` and `fix` are saved with the decisions: a server that dies before the turn is sent, or a
             # session that cannot open, leaves a `[재개]` that sends the owner's edits again.

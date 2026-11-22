@@ -119,11 +119,21 @@ def onward(repo: str, fields: dict):
 
     from . import oneshot_critique, oneshot_phone   # they import this module
     o = {**oneshot_spec.spec_of(repo)["oneshot"], **fields}
-    if "android" in kinds_of(o) and not phoned(o):
+    if (round_ := due(o)) == "phone":
         return oneshot_phone.waits(repo, fields)
-    if oneshot_desktop.owner_owed(o) and not passed(o):
+    if round_:
         return waits(repo, fields)
     return oneshot_spec.briefing(repo, "r3", {**fields, "stage": "r3", "r3": oneshot_critique.opening(o)})
+
+
+def due(o: dict) -> str | None:
+    """The device round R3 still waits on, in the guard's order: `phone` for an Android app's phone round not passed
+    on its current build, `pc` for a PC app's pending `owner` checks; None once neither is. R3's approval asks it
+    again, so a sheet open before a pass was cleared never reaches the pull request."""
+
+    if "android" in kinds_of(o) and not phoned(o):
+        return "phone"
+    return STAGE if oneshot_desktop.owner_owed(o) and not passed(o) else None
 
 
 def fresh(detail: str = "") -> dict:
