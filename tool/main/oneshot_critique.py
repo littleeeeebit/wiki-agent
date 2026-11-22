@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from common import masked
 
-from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_device as device, \
+from . import oneshot, oneshot_brief as brief, oneshot_build, oneshot_desktop, oneshot_device as device, \
     oneshot_front_build as front_build, oneshot_needs, oneshot_pr, oneshot_review as review, \
     oneshot_screens as screens, oneshot_spec
 from .oneshot_profile import kinds_of, shape
@@ -31,7 +31,7 @@ SEVERITIES = ("high", "medium", "low")
 STATES = ("full", "empty", "error", "loading")   # the order the critic sees them in
 MAX_ROUNDS = 6
 MAX_IMAGES = 24
-SHOT = re.compile(r"S[1-9]\d*-(desktop|phone)-(empty|full|loading|error)\.png")
+SHOT = re.compile(r"S[1-9]\d*-(desktop|phone|window)-(empty|full|loading|error)\.png")
 
 router = APIRouter()
 
@@ -111,6 +111,9 @@ def critique(repo: str) -> None:
     def body(store, spec, tree):
         o = spec["oneshot"]
         look = o["looks"][-1]
+        if why := stale(o):
+            review.rebuild(repo, store, why, front_build.STAGE)
+            return None
         # Several kinds: one kind a round, the critic seeing only that kind's shots and the harness's findings on them.
         kind = (critic_kind(o) or kinds_of(o)[-1]) if shape(o) == "kinds" else None
         one = front_build.as_kind(spec, kind) if kind else spec
@@ -139,11 +142,27 @@ def critique(repo: str) -> None:
     review.holding(repo, "화면 비평", body, "front_built_head", front_build.STAGE)
 
 
-def passed(rounds: list[dict], head: str | None = None) -> bool:
-    """Two clean critiques in a row, the last two of these; with `head`, of those on the HEAD the look passed
-    (several kinds: a kind that passed before a fix is judged again on the fix)."""
+def stale(o: dict) -> str:
+    """Why the last look is no evidence for a critique or the phone round after it: it ran none of the PC app's
+    owed `look` checks, or names no freeze, or another than the run's (an earlier version's look); empty when
+    it is evidence."""
 
-    on = [r for r in rounds if head is None or r["head"] == head]
+    look = (o.get("looks") or [{}])[-1]
+    proven = look.get("proven") or [] if look.get("proof") == front_build.oneshot_desktop_look.PROOF else []
+    if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in proven]:
+        return f"PC 앱에서 확인할 {', '.join(unproven)} 을 마지막 화면 검사가 돌리지 않았다"
+    if look.get("build") and (not look.get("freeze") or look["freeze"] != (o.get("desktop_build") or {}).get("freeze")):
+        return "마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다"
+    return ""
+
+
+def passed(rounds: list[dict], head: str | None = None, freeze: str | None = None) -> bool:
+    """Two clean critiques in a row, the last two of these; with `head`, of those on the HEAD the look passed
+    (several kinds: a kind that passed before a fix is judged again on the fix). Only rounds of the look's
+    `freeze` of the PC app count: any freeze, even of the same files under the same HEAD and whichever kind's
+    round came between, clears every kind's clean rounds, and a build seen before never brings them back."""
+
+    on = [r for r in rounds if (head is None or r["head"] == head) and r.get("freeze") == freeze]
     return len(on) >= 2 and on[-1]["clean"] and on[-2]["clean"]
 
 
@@ -159,8 +178,8 @@ def critic_kind(o: dict) -> str | None:
     """Several kinds: the first kind, in the owner's order, without two clean critiques on the HEAD the last look
     passed. A new HEAD has none, so every kind that passed before is judged again."""
 
-    rounds, head = o.get("critiques") or [], o["looks"][-1]["head"]
-    return next((k for k in kinds_of(o) if not passed(counted(o, rounds, k), head)), None)
+    rounds, look = o.get("critiques") or [], o["looks"][-1]
+    return next((k for k in kinds_of(o) if not passed(counted(o, rounds, k), look["head"], look.get("freeze"))), None)
 
 
 def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: str | None = None):
@@ -170,9 +189,10 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
     o = spec["oneshot"]
     rounds = [*(o.get("critiques") or []), {"look": look["round"], "head": look["head"], "findings": found,
                                             "clean": not any(f["severity"] == "high" for f in found + look["findings"]),
-                                            "ts": time.time(), **({"kind": kind} if kind else {})}]
+                                            "ts": time.time(), **({"kind": kind} if kind else {}),
+                                            **({k: look[k] for k in ("build", "freeze") if look.get(k)})}]
     mine = counted(o, rounds, kind)   # the cap counts each kind's own
-    done = passed(mine, look["head"] if kind else None)
+    done = passed(mine, look["head"] if kind else None, look.get("freeze"))
     if done and kind and critic_kind({**o, "critiques": rounds}):   # the next kind's turn, on the same shots
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
         return lambda: oneshot_spec.handoff(repo, "critique") or True
@@ -183,9 +203,11 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
         return oneshot_phone.waits(repo, rounds)   # the owner's phone comes before R3
     if done:
         return oneshot_spec.briefing(repo, "r3", {"critiques": rounds, "stage": "r3", "r3": opening(o)})
-    if len(mine) >= MAX_ROUNDS:
-        detail = f"{KIND_NAMES[kind] + ' ' if kind else ''}{MAX_ROUNDS}회차에도 높은 발견이 남았다 — " + " / ".join(
-            f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high")
+    # A clean round at the cap earns the one confirming it (a new freeze may have cleared the earlier ones).
+    if len(mine) >= MAX_ROUNDS and not (rounds[-1]["clean"] and len(mine) == MAX_ROUNDS):
+        high = [f"{f['route']} {f['viewport']} {f['state']}: {f['what']}" for f in found if f["severity"] == "high"]
+        detail = f"{KIND_NAMES[kind] + ' ' if kind else ''}{MAX_ROUNDS}회차에도 " + (
+            "높은 발견이 남았다 — " + " / ".join(high) if high else "깨끗한 회차가 두 번 이어지지 않았다")
         with oneshot._lock:   # one write; `[재개]` starts a fresh count, and the stop keeps the count it reached
             # (`counted`), so the screen tells a cap stop from a failed critique, which leaves no critique behind
             restart = {"critique_bases": {**(o.get("critique_bases") or {}), kind: len(rounds)}} if kind \
@@ -193,7 +215,9 @@ def judged(repo: str, store, spec: dict, look: dict, found: list[dict], kind: st
             store.put(critiques=rounds, **restart, working=None, stopped={
                 "reason": "critique", "detail": detail, "state": store.get()[store.state], "counted": len(mine)})
         return None
-    if rounds[-1]["clean"] and not found:   # nothing to fix: a second look at the same shots, `working` still set
+    # Nothing to fix, or a clean round at the cap, whose lesser findings a rebuild would only trade for a new freeze
+    # with no room left to pass: a second look at the same shots, `working` still set.
+    if rounds[-1]["clean"] and (not found or len(mine) == MAX_ROUNDS):
         oneshot_spec.saved(repo, oneshot={"critiques": rounds})
         return lambda: oneshot_spec.handoff(repo, "critique") or True   # the next look holds the tree itself
     todo = found + [f for f in look["findings"] if f["severity"] == "high"]   # a mechanical high outranks a clean critique
@@ -329,7 +353,7 @@ class Decisions(BaseModel):
 
 def extra(spec: dict) -> dict:
     o = spec["oneshot"]
-    if o.get("stage") != "r3":
+    if o.get("stage") != "r3" or oneshot_spec.held(o):   # a run held before R3 has no sheet
         return {"critiques": o.get("critiques") or []} if o.get("critiques") else {}
     phone_shot = (lambda n, name: f"/api/oneshot/spec/{spec['repo']}/phone/shot/{n}/{name}") \
         if "android" in kinds_of(o) else None

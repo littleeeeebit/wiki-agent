@@ -22,7 +22,7 @@ from unittest.mock import patch
 import pytest
 
 import debt
-from agent import chat_session, read_tools
+from agent import chat_session, deepseek, read_tools
 from agent.chat_session import Event
 from main import channels as chat_channels
 from main import app as main_app
@@ -1365,7 +1365,7 @@ def test_a_handoff_carries_the_answer_and_never_a_failed_result(tmp_path, monkey
          patch.object(work, "steps", return_value=[]), patch.object(work, "dispatch"), \
          patch.object(work, "notice"), patch.object(work.errorlog, "record"), patch.object(specs, "check"):
         work.run_turn(tmp_path, work.Run(cell), "Complete the sample task.", lambda: None)
-    context = work.handoff(rows)
+    context = work.handoff(rows, "claude")
     assert "stop_reason" not in context and "Reason:" not in context and "Potentially" not in context
     assert ("- Answered: " + QUOTING in context) if not failed else ("safety" not in context)
 
@@ -1502,11 +1502,17 @@ def test_a_refused_review_goes_once_more_in_a_new_review_conversation_from_its_h
     Worker.replies = [fixed((finding, "fixed"))]
     assert looped(spec["id"])["state"] == "머지 가능" and len(calls) == 3
     assert calls[2] == calls[1], "the round's own instruction, in the new conversation"
-    handoff = (loop.folder("proj", 7) / "handoff.md").read_text(encoding="utf-8")
-    assert "safety" not in handoff and f'"id": "{spec["id"]}"' in handoff and finding in handoff
     first, fresh = Reviewer.made[0], Reviewer.made[-1]
-    assert fresh is not first and handoff in fresh.system and fresh.heard == [calls[2]]
+    stamp, handoff = (loop.folder("proj", 7) / "handoff.md").read_text(encoding="utf-8").split("\n", 1)
+    assert stamp == f"<!-- provider: {deepseek.of(first)} -->"
+    assert "safety" not in handoff and f'"id": "{spec["id"]}"' in handoff and finding in handoff
+    assert fresh is not first and handoff in fresh.system and stamp not in fresh.system and fresh.heard == [calls[2]]
     assert (fresh.model, fresh.effort) == (first.model, first.effort)
+    # The same file stamped for another provider never reaches this reviewer: its excerpts stay with whoever refused.
+    (loop.folder("proj", 7) / "handoff.md").write_text(f"<!-- provider: other -->\n{handoff}", encoding="utf-8")
+    later = specs.load("proj", spec["id"])
+    loop.close_cell("proj", 7)   # a fresh conversation reads the file again
+    assert handoff not in loop.cell(later, Path(later["worktree"])).system
 
 
 def test_a_reviewer_lost_on_retry_keeps_the_requested_re_review(world, monkeypatch):

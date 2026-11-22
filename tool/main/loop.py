@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agent import ChatSession, read_tools
+from agent import ChatSession, deepseek, read_tools
 from common import errorlog, worktree_home
 from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
@@ -546,8 +546,11 @@ def cell(spec: dict, path: Path) -> ChatSession:
                "implementation, committing, pushing, or accessing production. Return the verdict as the final "
                "answer. Do not read or print .env or secrets; tests may load the prepared environment."
                if verify_dir is not None else "")
-    try:   # a refused review conversation's successor starts from it (`refused_cell`)
-        context += "\n\n" + (folder(*key) / "handoff.md").read_text(encoding="utf-8")
+    try:   # a refused review conversation's successor on the same provider starts from it (`refused_cell`)
+        told = (folder(*key) / "handoff.md").read_text(encoding="utf-8")
+        stamp = re.match(r"<!-- provider: (\w+) -->\n", told)
+        if (stamp.group(1) if stamp else "claude") == deepseek.provider(model):
+            context += "\n\n" + told[stamp.end() if stamp else 0:]
     except OSError:
         pass
     chat = ChatSession(path, tools=CLOUD_TOOLS if verify_dir is not None else REVIEW_TOOLS,
@@ -555,7 +558,7 @@ def cell(spec: dict, path: Path) -> ChatSession:
                        **({"verification": verify_dir, "env": env} if verify_dir is not None else {}))
     try:
         saved = json.loads((folder(*key) / "session.json").read_text(encoding="utf-8"))
-        if (saved.get("provider") == ("codex" if chat.is_codex else "claude")
+        if (saved.get("provider") == deepseek.provider(model)
                 and (saved.get("tools_profile") == tools_profile if verify_dir is not None or chat.is_codex else True)):
             chat.session_id = saved.get("session_id")
     except (OSError, ValueError, AttributeError):
@@ -591,7 +594,7 @@ def restated(spec: dict, path: Path, text: str, instruction: str = "") -> str:
             + "\n" + before + report)
 
 
-def refused_cell(spec: dict) -> None:
+def refused_cell(spec: dict, provider: str) -> None:
     """A review conversation the provider refused cannot be continued: the cell
     and its saved session go, and the next one starts from a handoff — the spec,
     the rounds so far, why it is new and what to do (`work.handoff` for the
@@ -601,11 +604,14 @@ def refused_cell(spec: dict) -> None:
     close_cell(*key)
     lines = []
     for r in counted(spec):
+        if deepseek.provider((r.get("reviewer") or {}).get("model")) != provider:   # another provider's words stay
+            lines.append(f"- Round {r['n']} at {r['head'][:7]}: {r.get('verdict')} — reviewed on another provider")
+            continue
         lines.append(f"- Round {r['n']} at {r['head'][:7]}: {r.get('verdict')} — {str(r.get('said') or '')[:300]}")
         lines += [f"  - {f['head'][:200]} → {f.get('disposition') or 'no disposition yet'}" for f in r.get("items") or []]
     (folder(*key) / "session.json").unlink(missing_ok=True)
     (folder(*key) / "handoff.md").write_text(
-        "## Why this conversation is new\n"
+        f"<!-- provider: {provider} -->\n## Why this conversation is new\n"
         # Never the refusal itself: a classifier that reads the whole context flags talk of an earlier flag.
         "The previous review conversation stopped before it finished and cannot be continued, so this review "
         "starts fresh. The pull request and its "
@@ -920,7 +926,7 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
                     kept.parent.mkdir(parents=True, exist_ok=True)
                     kept.write_text(json.dumps({"session_id": ev.meta["session_id"],
                                                 "tools_profile": CLOUD_PROFILE if verification.cloud(spec) else READ_PROFILE,
-                                                "provider": "codex" if chat.is_codex else "claude"}) + "\n",
+                                                "provider": deepseek.of(chat)}) + "\n",
                                     encoding="utf-8")
             elif ev.kind == "error":
                 failed = ev.text
@@ -939,7 +945,7 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
             release()
             run.finish()
     if work.REFUSED.search(failed):
-        refused_cell(specs.load(loop.repo, loop.sid) or spec)
+        refused_cell(specs.load(loop.repo, loop.sid) or spec, deepseek.of(chat))
         if answered.strip():   # it went on to an answer: the round judges that, and never asks again
             loop.refused = True
             return answered

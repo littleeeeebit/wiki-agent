@@ -317,7 +317,7 @@ def test_question_and_finished_run_publish_global_notices(tmp_path, monkeypatch)
 
 def test_an_empty_terminal_answer_is_recorded_as_failure_and_skips_completion(tmp_path, monkeypatch):
     recorded, released = [], []
-    chat = SimpleNamespace(id="empty-worker", parent_id=None, is_codex=False, path=tmp_path,
+    chat = SimpleNamespace(id="empty-worker", parent_id=None, is_codex=False, model="opus", path=tmp_path,
                            say=lambda *_: iter([Event("done", "", {"error": False}, "empty-worker")]))
     run = work.Run(chat)
     monkeypatch.setattr(work, "feed", work.Feed())

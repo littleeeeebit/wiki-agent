@@ -93,6 +93,19 @@ def test_the_build_text_names_every_kind_and_only_the_android_apps_scenarios(kin
     assert "an Android app and a web app" in text and "PC app" not in text and "oneshot-desktop" not in text
 
 
+def test_the_reviews_pc_check_reaches_the_builder_as_written_after_the_android_substitutions(kinds_build):
+    owed = {"id": "O1", "kind": "desktop", "source": "look", "requirement": "R1", "check": "c", "location": "a.rs:1",
+            "reason": "r", "act": {"action": "set_value", "id": "q", "value": "{device}"},
+            "expect": {"id": "q", "value": "{device}"}}
+    oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kinds": ["android", "desktop"]}, "owed": [owed],
+                                          "profile": {**o()["profile"], "window": "1280x800"},
+                                          "first_screen": {**o()["first_screen"], "desktop": "번역을 켠다"}})
+    with patch.object(oneshot_build.oneshot_android, "build_env",
+                      lambda: dict.fromkeys(oneshot_build.TOOLCHAIN, "C:/app/sdk")):
+        text = front_build.build_front_text(spec())
+    assert 'expect `{"id": "q", "value": "{device}"}`' in text and '"value": "{device}"}` · expect' in text
+
+
 @pytest.mark.parametrize("kinds", [["webapp", "desktop"], ["android", "desktop"], ["webapp", "android", "desktop"]])
 def test_with_a_pc_app_the_build_text_has_its_section_and_its_look(kinds):
     text = front_build.for_kinds(oneshot.prompt(front_build.STAGE, "kinds"), kinds)

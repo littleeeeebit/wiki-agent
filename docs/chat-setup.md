@@ -184,6 +184,15 @@ To use it in a browser without a window, run `python tool/main` and open `http:/
 Only the terminal is omitted, and the rest is the same. To exit, use `Ctrl+C`.
 If only Codex is installed, the actual model queried during installation is selected by default. If both are installed, Claude is the default.
 To select a different CLI on the screen, that CLI must also be installed and logged in.
+DeepSeek Flash (DeepSeek V4.1 Flash) runs on the Claude CLI and reaches DeepSeek's Anthropic-compatible endpoint
+through a loopback relay in the app server. It needs the Claude CLI and a `DEEPSEEK_API_KEY` in the hub's `.env`. Only
+the relay reads the key. The CLI's endpoint is the relay, and its key is a token from `apiKeyHelper` that only the relay
+accepts. So the commands and hooks the CLI starts never see the key. If a managed policy (managed settings, an MDM
+profile, a signed-in gateway) sets where the Claude CLI sends its requests, a DeepSeek turn goes where the policy
+sends it. That follows the administrator's choice, and only the token travels there, never the key. The relay forwards only DeepSeek's own headers, so a credential a policy adds
+never reaches DeepSeek. With no effort chosen it thinks at `max`, and the
+screen shows no account quota or cost for it, since both would be the Claude login's. Switching a conversation between
+Claude and DeepSeek starts a new one: neither provider resumes the other's transcript.
 
 ### Source updates
 

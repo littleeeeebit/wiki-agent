@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from agent import ChatSession, explain
+from agent import ChatSession, deepseek, explain
 from common import errorlog
 from common.paths import PACKAGED, RAW
 from search import refresh
@@ -194,7 +194,7 @@ def session(cid: str) -> ChatSession:
                                effort=cfg["effort"], choices=cid in ("next", "refactor"))
             # Restarting the server is not clearing the conversation either.
             # Only the same CLI, after an explicit reset, is resumed.
-            chat.session_id = resumable(recall(cid, include_context=True), chat.is_codex)
+            chat.session_id = resumable(recall(cid, include_context=True), deepseek.provider(cfg["model"]))
             _sessions[key] = chat
         # ponytail: swept when someone asks, after all that can fail here, not on a timer (an unasked server keeps them).
         idle = [k for k, c in _sessions.items() if c.alive and k not in _busy and now - _used.get(k, now) > IDLE_SECONDS]
@@ -245,15 +245,15 @@ def asked_first(cid: str, found: list[dict], model: str) -> list[dict]:
     return held + [{"name": "spec", "error": ASK_FIRST}]
 
 
-def resumable(rows: list[dict], codex: bool) -> str | None:
-    """The CLI session id the last conversation left, if it was this CLI's."""
+def resumable(rows: list[dict], provider: str) -> str | None:
+    """The CLI session id the last conversation left, if it was this provider's."""
 
     for row in reversed(rows):
         if row.get("role") == "context":
             return None
         if row.get("session_id"):
-            provider = row.get("provider") or ("claude" if str(row.get("model", "")).startswith("claude-") else "codex")
-            return row["session_id"] if provider == ("codex" if codex else "claude") else None
+            left = deepseek.row_provider(row) or ("claude" if str(row.get("model", "")).startswith("claude-") else "codex")
+            return row["session_id"] if left == provider else None
     return None
 
 
@@ -649,7 +649,7 @@ def configure(cid: str, body: Config) -> dict:
             held = cfg.get("refactor_pinned") and body.refactor_mode in (None, cfg.get("refactor_mode"))
             if held and (body.model, body.effort) != (cfg["model"], cfg["effort"]):
                 raise HTTPException(409, f"리팩터링 대화는 조사 모델 `{cfg['model']}` 로 고정됐다 — 모드를 바꾸거나 새로 조사해라")
-        moved = not switched and body.model.startswith("codex:") != cfg["model"].startswith("codex:")
+        moved = not switched and deepseek.provider(body.model) != deepseek.provider(cfg["model"])
         if not switched and not held:   # a pinned one keeps its survey's effort, an empty one too
             cfg.update(model=body.model, effort=body.effort or selected.get("default_effort", ""))
         if cid == "refactor" and body.refactor_mode is not None:
@@ -973,7 +973,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             if reply or failed:
                 keep(cid, "assistant", "".join(reply), failed, repo=run.repo,
                          simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
-                         provider="codex" if cfg["model"].startswith("codex:") else "claude", run_id=run.id,
+                         provider=deepseek.provider(cfg["model"]), run_id=run.id,
                          **({"cancelled": True} if code == "cancelled" else {}),
                          **({"blocks": shown} if shown else {}),
                          **({"verification": verification} if verification else {}), **metadata)

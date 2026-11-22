@@ -37,7 +37,7 @@ from common.process import SUSPENDED, contained, killed, resumed, terminated
 
 from .chat_events import Event, _claude_hook, _hook, _patch_meta, _result_meta, _tool_brief, _tool_meta, _user, merged
 from .chat_local import claude_usage, cli_command, codex_usage, end_servers, quota_windows, reopen_servers
-from . import chat_busy, read_tools
+from . import chat_busy, deepseek, read_tools
 
 # Something opened in a browser that edits files is not a chat, it is a remote
 # shell. So `Edit` and `Write` are not on the list.
@@ -289,7 +289,8 @@ class ChatSession:
                     if self.is_codex:
                         self._quota_at = self._quota_poll_at
                     try:
-                        self.quota = codex_usage(env=self._env, cwd=self.repo) if self.is_codex else claude_usage(env=self._env)
+                        self.quota = (codex_usage(env=self._env, cwd=self.repo) if self.is_codex else []
+                                      if self.model == deepseek.MODEL else claude_usage(env=self._env))
                         self._quota_at = time.monotonic()
                         self._quota_error = ""
                     except Exception:
@@ -360,17 +361,17 @@ class ChatSession:
         if self.isolated:
             # `--bare` would skip the subscription login too. The sign-in is
             # kept; only the settings, hooks and tools are isolated.
-            cmd += ["--setting-sources", "", "--settings", json.dumps({"disableAllHooks": True, "fastMode": self.fast}),
-                    "--strict-mcp-config", "--no-session-persistence"]
+            flags = deepseek.flags(self.model, {"disableAllHooks": True, "fastMode": self.fast})
+            cmd += ["--setting-sources", "", "--settings", json.dumps(flags), "--strict-mcp-config", "--no-session-persistence"]
         else:
             # Shared user skills can carry the previous desktop host's routing
             # instructions. Native hooks and the app's prompts own this workflow.
             cmd += ["--disable-slash-commands"]
-            cmd += ["--settings", json.dumps({"fastMode": self.fast})]
+            cmd += ["--settings", json.dumps(deepseek.flags(self.model, {"fastMode": self.fast}))]
         if self.model:
             cmd += ["--model", self.model]
-        if self.effort:
-            cmd += ["--effort", self.effort]
+        if effort := deepseek.effort(self.model, self.effort):
+            cmd += ["--effort", effort]
         if self._resume:
             cmd += ["--resume", self._resume]
         if self.app:
@@ -429,7 +430,7 @@ class ChatSession:
                 cmd += ["--system-prompt-file" if self.isolated else "--append-system-prompt-file", prompt]
             cmd = [*cli_command(cmd[0]), *cmd[1:]]
             proc = subprocess.Popen(
-                cmd, cwd=str(self.repo), env=self._env,
+                cmd, cwd=str(self.repo), env=deepseek.environment(self.model, self._env),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, encoding="utf-8",
                 errors="replace", bufsize=1, creationflags=SUSPENDED, start_new_session=os.name != "nt",
@@ -804,6 +805,9 @@ class ChatSession:
         fast = self.fast if fast is None else fast
         if (model or None) == self.model and (effort or None) == self.effort and fast == self.fast:
             return
+        if deepseek.provider(model) != deepseek.provider(self.model):
+            # Another provider's transcript and limits: neither carries, and the next status polls at once.
+            self.session_id, self.quota, self._quota_at, self._quota_poll_at, self._quota_error = None, [], 0.0, 0.0, ""
         self.model = model or None
         self.effort = effort or None
         self.fast = fast
@@ -1150,7 +1154,7 @@ class ChatSession:
                 self.model_name = str(ev.get("model") or "")
                 self.connection_ms = round((time.monotonic() - self._boot_at) * 1000)
 
-            elif kind == "rate_limit_event":
+            elif kind == "rate_limit_event" and self.model != deepseek.MODEL:   # no Claude account behind it
                 info = ev.get("rate_limit_info") or ev.get("rateLimitInfo") or {}
                 name = info.get("rateLimitType") or info.get("rate_limit_type") or "현재 한도"
                 utilization = info.get("utilization")
@@ -1324,7 +1328,7 @@ class ChatSession:
                     self.close()
                 usage = ev.get("usage") or {}
                 self.usage = {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
-                              "cost_usd": ev.get("total_cost_usd"), "scope": "turn"}
+                              "cost_usd": deepseek.cost(self.model, ev), "scope": "turn"}
                 # Worded to match `work.REFUSED`: never resent, the next turn opens a new conversation.
                 # What the turn went on to answer rides apart, for the review loop to judge; a failed result is no answer (PR #275).
                 answer = str(ev.get("result") or "")
@@ -1340,7 +1344,7 @@ class ChatSession:
                      # This wiki is cost-sensitive enough to draw injected
                      # character counts as node sizes. What an effort level
                      # costs has to be visible here too.
-                     "cost_usd": ev.get("total_cost_usd"),
+                     "cost_usd": deepseek.cost(self.model, ev),
                      "tokens": {
                          "in": usage.get("input_tokens"),
                          "out": usage.get("output_tokens"),

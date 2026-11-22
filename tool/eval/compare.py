@@ -788,6 +788,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 1 <= args.k <= knowledge.MAX_K or args.repeat < 1:
         parser.error(f"--k is 1..{knowledge.MAX_K} and --repeat at least 1")
+    if "deepseek-flash" in (args.model, args.grader):   # the ceiling counts dollars, and its turns have no price
+        parser.error("DeepSeek has no per-turn price, so this experiment's --usd ceiling cannot count it")
     for name, limit in (("minutes", CEILING["minutes"]), ("usd", CEILING["usd"])):
         if getattr(args, name) > limit:
             parser.error(f"--{name} may not exceed stage 1's ceiling of {limit}")

@@ -19,6 +19,10 @@ RESULT = "result.json"   # the server's final report: the driver's report, its l
 INTERACTIVE = {"Button", "CheckBox", "ComboBox", "Edit", "Hyperlink", "ListItem", "MenuItem", "RadioButton",
                "Slider", "Spinner", "SplitButton", "TabItem", "TreeItem"}
 ACTING = {"Invoke", "Toggle", "SelectionItem", "ExpandCollapse", "Value"}
+ACTIONS = ("invoke", "set_value", "toggle", "select", "expand", "collapse", "scroll_into_view")   # the driver's `Act`
+PROPERTIES = ("id", "name", "value", "toggle")   # what a postcondition reads on an element
+TOGGLES = ("On", "Off", "Indeterminate")
+MAX_VALUE = 1000   # the driver's `$MAX_VALUE`: a longer value is recorded as null
 SMALLEST = 24   # physical pixels, each side
 
 
@@ -111,12 +115,43 @@ def expectation(expect) -> tuple[str, str] | None:
     return None
 
 
-def holds(state: dict, expect: dict) -> bool:
-    """A step's postcondition, read off the state it left: an element of the app with the expected id or name. A
-    node of another process, an embedded fragment, never satisfies one."""
+def units(text: str) -> int:
+    """`text`'s length as Windows counts it, in UTF-16 code units: the driver's `$MAX_VALUE` counts these."""
 
-    key, value = expectation(expect)
-    return any(not node.get("foreign") and node.get(key) == value for node in state["nodes"])
+    return len(text.encode("utf-16-le")) // 2
+
+
+def wanted(expect: dict) -> dict:
+    """What a postcondition reads on one element: its non-blank `id` and `name`, and its `value` and `toggle` state."""
+
+    return {k: v for k, v in expect.items() if k in PROPERTIES and isinstance(v, str)
+            and (v.strip() or k in ("value", "toggle"))}
+
+
+def holds(state: dict, expect: dict, window: int | None = None) -> bool:
+    """A step's postcondition, read off the state it left: one element of the app with every property it names, an
+    id or a name among them. A node of another process, an embedded fragment, never satisfies one. With `window`,
+    the element is the one node in that window its id or name names, so a same-named control elsewhere never
+    stands in for it."""
+
+    want, key = wanted(expect), expectation(expect)
+    if not key:
+        return False
+    nodes = [n for n in state["nodes"] if not n.get("foreign") and (window is None or n.get("window") == window)]
+    if window is not None:
+        nodes = [n for n in nodes if n.get(key[0]) == key[1]]
+        return len(nodes) == 1 and all(nodes[0].get(k) == v for k, v in want.items())
+    return any(all(node.get(k) == v for k, v in want.items()) for node in nodes)
+
+
+def scope(report: dict, state: dict, where: str) -> int | None:
+    """The window an expectation reads in `state`: the main window, or with `owned` the one window it owns."""
+
+    main = (report.get("main") or {}).get("hwnd")
+    if where != "owned" or main is None:
+        return main
+    owned = [w["hwnd"] for w in state.get("windows") or [] if w.get("owner") == main]
+    return owned[0] if len(owned) == 1 else None
 
 
 def findings(report: dict) -> list[str]:

@@ -105,6 +105,90 @@ def test_the_critic_sees_each_screenshot_and_two_clean_rounds_open_r3(judged):
     assert len(images) == 12 and "S3-desktop-loading.png" in text
 
 
+def pc_look(n: int, build: str, freeze: str) -> dict:
+    """A PC app's passed look on `build` as frozen by `freeze`, now the run's: each screen's window shot in each
+    state."""
+
+    shots = critique.folder("budget", n)
+    shots.mkdir(parents=True, exist_ok=True)
+    for s in FRONT["screens"]:
+        for state in critique.STATES:
+            (shots / f"{s['id']}-window-{state}.png").write_bytes(PNG)
+    oneshot_spec.saved("budget", oneshot={"desktop_build": {"identity": build, "freeze": freeze}})
+    return {"round": n, "head": "a" * 40, "findings": [], "build": build, "freeze": freeze}
+
+
+def pc_run(owed: list[dict], freeze: str = "f1") -> None:
+    screens = [{**{k: v for k, v in s.items() if k != "route"}, "surface": "window"} for s in FRONT["screens"]]
+    oneshot_spec.saved("budget", oneshot={"intent": {"restated": "가계부", "kind": "desktop"}, "owed": owed,
+                                          "front": {**FRONT, "screens": screens}, "looks": [pc_look(1, "a" * 64, freeze)],
+                                          "profile": {**o()["profile"], "window": "1280x800"}})
+
+
+def test_a_pc_apps_two_clean_rounds_on_one_freeze_wait_before_r3_with_its_owner_checks_pending(judged):
+    pc_run([{"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처에 글이 있다"}])
+    heard, asking = critic(said(), said(), said())
+    with asking:
+        critique.critique("budget")
+        # The same files frozen again under the same HEAD: the first freeze's clean round is cleared.
+        oneshot_spec.saved("budget", oneshot={"looks": [*o()["looks"], pc_look(2, "a" * 64, "f2")]})
+        critique.critique("budget")
+        assert o()["stage"] == "critique" and not o().get("stopped")
+        critique.critique("budget")
+    assert [p.name for p in heard[0][2]][:1] == ["S1-window-full.png"] and o()["stage"] == "r3"
+    assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"] and not o().get("working")
+    assert not o().get("r3") and [c.get("freeze") for c in o()["critiques"]] == ["f1", "f2", "f2"]
+    assert "r3_sheet" not in critique.extra(oneshot_spec.spec_of("budget"))   # a held run opens no review state
+
+
+def test_a_look_whose_proof_came_from_another_version_of_the_check_proves_nothing():
+    owed = {"id": "O1", "kind": "desktop", "source": "look", "act": {"action": "toggle", "id": "t"},
+            "expect": {"id": "t", "toggle": "On"}}
+    look = {"build": "a" * 64, "freeze": "f1", "proven": ["O1"]}
+    run = {"owed": [owed], "desktop_build": {"freeze": "f1"}}
+    assert "O1" in critique.stale({**run, "looks": [look]})   # an earlier revision's look: no `proof`
+    assert critique.stale({**run, "looks": [{**look, "proof": critique.front_build.oneshot_desktop_look.PROOF}]}) == ""
+
+
+def test_a_look_of_another_freeze_than_the_runs_goes_back_to_the_build(judged):
+    pc_run([])
+    oneshot_spec.saved("budget", oneshot={"desktop_build": {"identity": "a" * 64}})   # an earlier version's record
+    heard, asking = critic(said())
+    with asking, patch.object(critique.review, "rebuild", lambda repo, store, why, stage: heard.append((why, stage))):
+        critique.critique("budget")
+    assert heard == [("마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다", "build-front")]
+
+
+@pytest.mark.parametrize("lesser", [False, True])
+def test_a_clean_round_at_the_cap_earns_its_confirming_round_on_the_same_freeze(judged, lesser):
+    pc_run([])
+    high = {"severity": "high", "route": "/", "viewport": "window", "state": "full", "what": "x"}
+    oneshot_spec.saved("budget", oneshot={"critiques": [{"look": 1, "head": "a" * 40, "findings": [high], "clean": False,
+                                                         "freeze": "f0", "ts": 1}] * (critique.MAX_ROUNDS - 1)})
+    medium = {**high, "severity": "medium", "route": FRONT["screens"][0]["id"], "fix": "여백을 넓힌다"}
+    _, asking = critic(said(*([medium] if lesser else [])), said())
+    with asking:
+        critique.critique("budget")   # the cap's round, clean on the new freeze: never a rebuild, a medium aside
+        assert not o().get("stopped") and o()["working"] == "critique" and o()["stage"] == "critique"
+        critique.critique("budget")   # its confirmation on the same freeze
+    assert o()["stage"] == "r3" and o()["stopped"]["reason"] == "kind"
+
+
+def test_a_look_that_ran_none_of_the_pc_apps_owed_look_checks_goes_back_to_the_build(judged):
+    pc_run([{"id": "O1", "kind": "desktop", "source": "look", "requirement": "R1", "check": "켜짐",
+             "act": {"action": "toggle", "id": "translate-on"}, "expect": {"id": "translate-on", "toggle": "On"}}])
+    heard, asking = critic(said())
+    with asking, patch.object(critique.review, "rebuild", lambda repo, store, why, stage: heard.append((why, stage))):
+        critique.critique("budget")
+    assert heard == [("PC 앱에서 확인할 O1 을 마지막 화면 검사가 돌리지 않았다", "build-front")]
+
+
+def test_a_build_frozen_again_never_brings_back_its_clean_rounds_whatever_the_clock_says():
+    rounds = [{"head": "h", "clean": True, "freeze": "f1", "ts": 110}, {"head": "h", "clean": True, "freeze": "f3", "ts": 95}]
+    assert not critique.passed(rounds, "h", "f3")   # the same files frozen again as f3, the clock moved back
+    assert critique.passed([*rounds, {**rounds[-1], "ts": 96}], "h", "f3")
+
+
 def test_a_high_finding_goes_to_the_builder_and_a_clean_round_after_a_fix_counts(judged):
     _, sent = judged
     _, asking = critic(said(HIGH, LOW), said(LOW), said())

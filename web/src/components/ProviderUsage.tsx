@@ -56,7 +56,7 @@ export function ProviderUsage() {
       </summary>
       <div className="mt-2 space-y-3">
         {rows.map((data) => <div key={data.provider}>
-          <p className="font-semibold">{data.provider === 'codex' ? 'Codex' : 'Claude'}</p>
+          <p className="font-semibold">{{ codex: 'Codex', deepseek: 'DeepSeek', claude: 'Claude' }[data.provider]}</p>
           {data.quota.map((q) => <div key={q.name} className="mt-1 flex flex-wrap items-center gap-x-2">
             <span>{NAMES[q.name] ?? (q.window_minutes ? `${q.window_minutes >= 1440 ? `${q.window_minutes / 1440}일` : `${q.window_minutes / 60}시간`}` : q.name)}</span>
             <span>{q.used_percent == null ? STATES[q.status ?? ''] ?? '사용률 미제공' : `${Math.round(q.used_percent)}% 사용`}</span>
