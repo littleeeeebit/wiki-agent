@@ -337,6 +337,10 @@ source, and the server assigns it:
   - `report`: the app's own report of what it captured, the value of an
     element (`id`, with `in: owned` in the window the main window owns) or a
     UTF-8 file under `{data}` (`file`), which must contain the fixture's text.
+    The report holds the page when its words appear in order, case and
+    punctuation aside. A word is a run of letters and digits of any script,
+    so a misread word such as `appleé`, or words joined into one token, is
+    no match.
     The report must be the capture step's own, measured against what was
     proven just before that step. The driver reads it with the step's target
     found, just before the step acts: a whole state for an element, and the
@@ -369,7 +373,10 @@ source, and the server assigns it:
     and written out by the step. Proving the link would need the app to
     report a mark of the step's own.
   - `window`: the round's window-bound capture of the app's main window, or
-    with `in: owned` the one it owns, which must show what `shows` says.
+    with `in: owned` the one it owns, which must show what `shows` says. A
+    frame whose content size differs from the surface the capture was set
+    up with is not read. A window resized meanwhile would be cut off or
+    padded with pixels nobody drew.
   - `composition`: the round's surface capture of the fixture's region, which
     must show what `shows` says over the fixture.
 

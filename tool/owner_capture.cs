@@ -125,7 +125,8 @@ public static class Program {
       hr = CreateDirect3D11DeviceFromDXGIDevice(dxgi, out raw);
       if (hr != 0) return Not("CreateDirect3D11DeviceFromDXGIDevice " + hr.ToString("X"));
       device = (IDirect3DDevice)Marshal.GetObjectForIUnknown(raw);
-      pool = Direct3D11CaptureFramePool.CreateFreeThreaded(device, DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
+      var sized = item.Size;   // the pool's surface keeps this size whatever the window does
+      pool = Direct3D11CaptureFramePool.CreateFreeThreaded(device, DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, sized);
       session = pool.CreateCaptureSession(item);
       session.StartCapture();
       for (int waited = 0; waited < FRAME_MS && frame == null && !Closed(); waited += 50) {
@@ -134,6 +135,11 @@ public static class Program {
       }
       // A frame the pool returned as the item closed is never copied, nor one whose item closed during the copy.
       if (frame == null || Closed()) return Not(Closed() ? "the window was destroyed: its item closed" : "no frame within 5 s");
+      // A window resized since: a larger one is cut to the surface, a smaller leaves pixels nobody drew. Neither is
+      // the window whole, so neither is read.
+      if (frame.ContentSize.Width != sized.Width || frame.ContentSize.Height != sized.Height)
+        return Not("the window's size changed while it was captured: " + frame.ContentSize.Width + "x" +
+                   frame.ContentSize.Height + " in a " + sized.Width + "x" + sized.Height + " surface");
       byte[] bytes;
       using (var bitmap = Wait(SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface)))
       using (var stream = new InMemoryRandomAccessStream()) {

@@ -84,7 +84,8 @@ def contains(text: str | None, page: list[str]) -> bool:
     breaks between them aside. A fixed text naming every word of `WORDS` holds none of the 12-word orders but
     the few it happens to spell, so only a capture of this round's page passes."""
 
-    found = re.findall(r"[a-z]+", (text or "").lower())
+    # Words as runs of any letter or digit: `appleé` or `apple1river` is no `apple` (an OCR slip, a join).
+    found = re.findall(r"[^\W_]+", (text or "").lower())
     return bool(page) and any(found[i:i + len(page)] == page for i in range(len(found) - len(page) + 1))
 
 
