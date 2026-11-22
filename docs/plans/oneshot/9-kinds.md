@@ -468,9 +468,11 @@ order:
    from its look's start through its cleanup. A look whose cleanup was not
    proven leaves its record held on disk. Before any round starts, every
    repository's look records are read through the looks' own recovery,
-   whichever run of the server wrote them. A held one keeps every round
-   off the desktop until that recovery settles it, which takes a
-   completed proof, a new boot or the end of its logon session. Before each fixture
+   whichever run of the server wrote them, under the lock a stage
+   folder's move takes, so no record moves past the read. A held one, or
+   a folder that cannot be listed, keeps every round off the desktop
+   until that recovery settles it, which takes a completed proof, a new
+   boot or the end of its logon session. Before each fixture
    starts, no top-level window on the desktop may have the fixture's
    title. Once it is bound, its own must be the only one. The round
    confirms the approved HEAD and the frozen build once it has the
@@ -484,7 +486,11 @@ order:
    that last check and the resume is not seen before the app runs. The
    check after the app's run finds a changed freeze and sends it back to
    the build, and the worktree check finds a moved HEAD, so such a round
-   never passes.
+   never passes. The frozen copy is read once more as a pass is taken,
+   after the critic's verdicts; a copy changed since sends it back to the
+   build. A second known limit, accepted by the owner: an app that changes
+   its own frozen files while it runs and puts them back before the check
+   after its run is not seen.
 2. The frozen app from a fresh start of the check's scenario, driven without
    a shot (`shoot: false`), so the driver reads and acts but never calls
    `PrintWindow`.

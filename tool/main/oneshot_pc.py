@@ -16,6 +16,7 @@ the current HEAD and build.
 
 from __future__ import annotations
 
+import os
 import shutil
 import threading
 import time
@@ -49,13 +50,28 @@ _desk = threading.Lock()
 def _held() -> list[str]:
     """Why an earlier round's look, any repository's and from any run of the server, is not settled: every
     record under each repository's `looks`, through `desktop_session.recover`. That clears one only once its proof
-    completed, or once a new boot or the end of its logon session proved its processes ended."""
+    completed, or once a new boot or the end of its logon session proved its processes ended. Read under
+    `oneshot._lock`, which a stage folder's move between the roots takes, so none moves past the read; a folder
+    that cannot be listed is a reason too."""
 
     import desktop_session
 
-    roots = {oneshot.RUNS, oneshot.WORK or oneshot.RUNS}   # a folder that could not move stays where it was
-    return [why for root in sorted(roots) for looks in sorted(root.glob(f"spec-*/{STAGE}/looks"))
-            for why in desktop_session.recover_all(looks)]
+    def listed(folder: Path) -> list[Path]:   # never `glob`, which passes over a folder it cannot read
+        try:
+            return sorted(Path(entry.path) for entry in os.scandir(folder))
+        except FileNotFoundError:
+            return []
+
+    reasons = []
+    with oneshot._lock:
+        for root in sorted({oneshot.RUNS, oneshot.WORK or oneshot.RUNS}):   # one that could not move stays there
+            try:
+                for looks in (f / STAGE / "looks" for f in listed(root) if f.name.startswith("spec-")):
+                    if listed(looks):
+                        reasons += desktop_session.recover_all(looks)
+            except OSError as exc:
+                reasons.append(f"{root}: 읽지 못했다 — {exc}")
+    return reasons
 
 
 class Stale(Exception):
@@ -418,7 +434,7 @@ def owner_round(repo: str) -> None:
                 results[cid] = {**result, **verdict}
         if stopped():   # a stop accepted before the round ended: never its outcome
             return lambda: settled(repo, {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"})
-        return lambda: settled(repo, outcome(o, results))
+        return lambda: settled(repo, outcome(o, results), store)
 
     # A tree moved meanwhile goes back to the build's checks as an overrun does: decided against a stop, under the lock.
     review.holding(repo, "주인 화면 회차", body, "front_built_head", front_build.STAGE,
@@ -435,8 +451,14 @@ def settled(repo: str, result: dict, store=None):
         if _halts.setdefault(repo, threading.Event()).is_set() or runtime.stopping.is_set():
             result = {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"}
         o = oneshot_spec.spec_of(repo)["oneshot"]
-        if result["status"] == "passed":
-            return onward(repo, {"pc": {**(o.get("pc") or {}), **result}})
+        if result["status"] == "passed":   # the frozen copy read once more as the pass is taken: changed, rebuilt
+            try:
+                why = oneshot_desktop.altered(o["desktop_build"])
+            except (OSError, ValueError) as exc:
+                why = f"얼린 PC 앱 빌드를 다시 읽지 못했다 — {exc}"
+            if not why:
+                return onward(repo, {"pc": {**(o.get("pc") or {}), **result}})
+            result = {"status": "rebuild", "detail": f"주인 화면 회차 — {why}"}
         if result["status"] == "rebuild":
             oneshot_spec.saved(repo, oneshot={"pc": {**fresh(), "last": (o.get("pc") or {}).get("last")}})
             review.rebuild(repo, store, result["detail"], front_build.STAGE)

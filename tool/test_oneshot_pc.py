@@ -5,6 +5,7 @@ round (plan 9e5), on stand-ins: nothing starts on the owner's desktop here. The 
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -445,6 +446,14 @@ def test_a_round_that_passes_every_owner_check_opens_r3_held_at_this_versions_st
     assert pc.due(after) is None
 
 
+def test_a_pass_whose_frozen_copy_changed_since_the_run_goes_back_to_the_build_never_to_r3(held, monkeypatch):
+    def changed():   # after the app's own post-run check, before the pass is taken
+        (Path(o()["desktop_build"]["folder"]) / "dropped.dll").write_bytes(b"x")
+
+    after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "passed"}}, during=changed)
+    assert after["stage"] == pc.front_build.STAGE and not pc.passed(after) and after["pc"].get("status") != "passed"
+
+
 def test_a_failed_check_goes_to_the_build_as_a_finding(held, monkeypatch):
     sent = []
     monkeypatch.setattr(oneshot_build, "send", lambda *a: sent.append(a))
@@ -533,11 +542,17 @@ def test_any_repositorys_held_look_record_keeps_every_round_off_the_desktop_rest
     monkeypatch.setattr(pc.desktop_look, "Launches", lambda *a, **k: made.append(k) or SimpleNamespace(due=lambda: None))
     # The records on disk are all there is to go by: what a restarted server finds is what this one finds.
     monkeypatch.setattr(desktop_session, "recover_all", lambda root: read.append(root) or held.get(root.parent.parent.name, []))
-    (tmp_path / "spec-a" / pc.STAGE / "looks").mkdir(parents=True)   # repository a's earlier round, held
+    (tmp_path / "spec-a" / pc.STAGE / "looks" / "round-1").mkdir(parents=True)   # repository a's earlier round
     with pytest.raises(RuntimeError, match="정리가 확인되지 않았다 — round-1: pid 7 is still running"):
         pc.observe("b", record, lambda: False)
     assert order == [] and not pc._desk.locked() and tmp_path / "spec-a" / pc.STAGE / "looks" in read
     held.clear()   # recovery settled it
+    scan = os.scandir
+    monkeypatch.setattr(pc.os, "scandir", lambda folder: (_ for _ in ()).throw(PermissionError("denied"))
+                        if Path(folder) == tmp_path else scan(folder))
+    with pytest.raises(RuntimeError, match="읽지 못했다 — denied"):   # a root it cannot list holds the desktop
+        pc.observe("b", record, lambda: False)
+    monkeypatch.setattr(pc.os, "scandir", scan)
     assert pc.observe("b", record, lambda: False) == {} and order == ["spec-b"]
     assert callable(made[0]["ready"]) and made[0]["gate"] is pc.oneshot._lock
     standing[0] = False   # changed while the round waited: no look opens, and the desktop is free again
