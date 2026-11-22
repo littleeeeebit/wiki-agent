@@ -198,7 +198,11 @@ class Launches:
             halted(lambda: True)
         if failed is not None:
             raise failed
-        if why := oneshot_desktop.altered(self.build):
+        try:
+            why = oneshot_desktop.altered(self.build)
+        except OSError as exc:   # unreadable as settlement finds it: the build's to fix, never a new approval
+            raise ValueError(f"얼린 PC 앱 빌드를 다시 읽지 못했다 — {exc}") from exc
+        if why:
             raise ValueError(why)
         return report
 

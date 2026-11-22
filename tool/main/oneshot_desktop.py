@@ -550,19 +550,20 @@ def frozen(tree: Path, desktop: dict, into: Path) -> dict:
 def altered(build: dict) -> str:
     """`held`'s reason, the files let go once it is read."""
 
-    with held(build) as why:
+    with held(build) as (why, _):
         return why
 
 
 @contextlib.contextmanager
 def held(build: dict):
-    """Why the frozen copy is no longer the build its identity names, or empty, the manifest and every file kept
-    open for reading only until the block ends: Windows refuses anyone a write, a rename or a delete of them
-    meanwhile, so what the block decides on is what stays on disk. Changed: the manifest's files and the saved
-    launch settings no longer digest to the run's saved identity, or a file the manifest records was changed or
-    removed, or one was added, as the files are read or once they all are. The program runs inside its copy, so
-    each start is checked after it. A file that cannot be opened so (one another holds open for writing too), or a
-    folder that cannot be listed, raises OSError: it is not shown changed."""
+    """`(why, moved)`: why the frozen copy is no longer the build its identity names, or empty, the manifest and
+    every file kept open for reading only until the block ends, and `moved()`, whether any name, size or write
+    under the copy changed since before it was first listed. Windows refuses anyone a write, a rename or a delete
+    of a held file; a file added beside them is what `moved` reports, so a block that asks it last decides on what
+    stays on disk. Changed: the manifest's files and the saved launch settings no longer digest to the run's saved
+    identity, or a file the manifest records was changed or removed, or one was added. The program runs inside its
+    copy, so each start is checked after it. A file that cannot be opened so (one another holds open for writing
+    too), or a folder that cannot be listed or watched, raises OSError: it is not shown changed."""
 
     import msvcrt
     from ctypes import wintypes as w
@@ -570,7 +571,16 @@ def held(build: dict):
     k = ctypes.WinDLL("kernel32", use_last_error=True)
     k.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE]
     k.CreateFileW.restype = w.HANDLE
-    app = Path(build["folder"])
+    k.FindFirstChangeNotificationW.argtypes = [w.LPCWSTR, w.BOOL, w.DWORD]
+    k.FindFirstChangeNotificationW.restype = w.HANDLE
+    k.FindCloseChangeNotification.argtypes = [w.HANDLE]
+    k.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
+    k.CloseHandle.argtypes = [w.HANDLE]
+    app, invalid = Path(build["folder"]), w.HANDLE(-1).value
+
+    def refused(path: Path) -> OSError:
+        error = ctypes.WinError(ctypes.get_last_error())   # a sharing violation is a PermissionError
+        return type(error)(error.errno, error.strerror, str(path), error.winerror)
 
     def unlisted(error: OSError):   # never `rglob`, which passes over a folder it cannot list
         raise error
@@ -580,23 +590,40 @@ def held(build: dict):
                       for folder, _, names in os.walk(app, onerror=unlisted) for name in names)
 
     with contextlib.ExitStack() as files_held:
+        # Every name, folder name, size and last-write change in the whole tree, from here until the block ends.
+        watch = k.FindFirstChangeNotificationW(str(app), True, 0x1 | 0x2 | 0x8 | 0x10)
+        if watch in (None, invalid):
+            raise refused(app)
+        files_held.callback(k.FindCloseChangeNotification, watch)
+
+        def moved() -> bool:
+            return k.WaitForSingleObject(watch, 0) != 0x102   # anything but WAIT_TIMEOUT: changed, or unknown
+
         def read(path: Path) -> bytes:   # GENERIC_READ, FILE_SHARE_READ only, an existing file
             handle = k.CreateFileW(str(path), 0x80000000, 0x1, None, 3, 0, None)
-            if handle in (None, w.HANDLE(-1).value):
-                error = ctypes.WinError(ctypes.get_last_error())   # a sharing violation is a PermissionError
-                raise type(error)(error.errno, error.strerror, str(path), error.winerror)
-            f = files_held.enter_context(os.fdopen(msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY), "rb"))
-            return f.read()
+            if handle in (None, invalid):
+                raise refused(path)
+            try:   # the handle is closed however its wrapping fails
+                fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+            except BaseException:
+                k.CloseHandle(handle)
+                raise
+            try:
+                f = os.fdopen(fd, "rb")
+            except BaseException:
+                os.close(fd)
+                raise
+            return files_held.enter_context(f).read()
 
         manifest = json.loads(read(app.parent / "manifest.json").decode("utf-8"))
         files = manifest.get("files") if isinstance(manifest, dict) else None   # `[]` is no manifest: damaged
         if not isinstance(files, dict) or hashlib.sha256(json.dumps(
                 {"files": files, "launch": build.get("launch")}, sort_keys=True).encode()).hexdigest() != build.get("identity"):
-            yield "얼린 PC 앱 빌드의 매니페스트가 그 빌드의 식별자와 맞지 않는다 — 다시 빌드한다"
+            yield "얼린 PC 앱 빌드의 매니페스트가 그 빌드의 식별자와 맞지 않는다 — 다시 빌드한다", moved
             return
         there = listed()
         changed = sorted(set(there) ^ set(files)) or [
             n for n in there if hashlib.sha256(read(app / n)).hexdigest() != files[n]] or \
-            sorted(set(listed()) ^ set(there))   # one added while the others were read
-        yield f"PC 앱이 얼린 사본의 `{changed[0]}` 를 바꿨다 — 실행은 사본을 읽기만 하고, 앱의 데이터는 `{DATA}` 에 쓴다" \
-            if changed else ""
+            (["(읽는 사이 바뀐 이름)"] if moved() else [])   # one added while the others were read
+        yield (f"PC 앱이 얼린 사본의 `{changed[0]}` 를 바꿨다 — 실행은 사본을 읽기만 하고, 앱의 데이터는 `{DATA}` 에 "
+               "쓴다" if changed else ""), moved
