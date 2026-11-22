@@ -205,10 +205,23 @@ copies out of it into the kept folder only those three:
   a secret's value included), and written once; one that is not UTF-8 JSON is
   not kept.
 
-Then the raw folder is removed whole, a read-only file made writable first.
-If it cannot be removed, the run stops for the owner with that reason and
-records no result. The next start removes every leftover raw folder before
-it runs, and stops again if one remains. The plan and the report are
+The raw folder itself is checked the same way before anything in it is
+read, `report_of` included, so a linked folder or report supplies nothing.
+The kept folder is made new for each run, and each kept file appears only
+once all of it is written. Then the raw folder is removed whole, on every
+exit, a failed copy included:
+
+- a link or junction at its root is removed and never followed;
+- inside, only a failed removal is retried, once, with the entry made
+  writable;
+- success is read from the disk.
+
+If the copy fails or the folder remains, the run stops for the owner with
+that reason, an unforeseen error of the run included, and records no
+result. The next start removes every leftover raw folder before it runs,
+and stops again if one remains. ponytail: these checks run after the script
+and the backend have ended; a process that outlives the run and changes the
+folder between a check and its read is not guarded against. The plan and the report are
 read strictly: `NaN`, `Infinity`, an overflowing float or a lone surrogate
 escape is refused. A metric equal to a secret's value, in any numeric
 spelling, never counts as a measurement. An integer is compared exactly; a

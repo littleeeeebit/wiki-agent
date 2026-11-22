@@ -339,11 +339,41 @@ def test_a_measurement_keeps_no_linked_file_and_one_read_only_file_never_stops_t
     for name in ("a-debug.txt", "z-debug.txt"):
         os.chmod(raw / name, stat.S_IREAD)
     assert (kept(raw, {"sk-1": "[K]"}) / "serve.log").read_text(encoding="utf-8") == "key=[K]"
+    raw = wrote(tmp_path, {})
+    raw.mkdir()
+    os.link(outside / "theirs.wav", raw / "report.json")   # the report too is never read through a second name
+    assert "error" in measure.report_of(raw, {"metrics": []}, {})
+    shutil.rmtree(raw)
+    if sys.platform == "win32":   # the script's whole folder a junction: never read through, the link removed
+        (outside / "report.json").write_text('{"metrics": {}}', encoding="utf-8")
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(raw), str(outside)], check=True, capture_output=True)
+        assert "error" in measure.report_of(raw, {"metrics": []}, {})
+        assert not (kept(raw, {}) / "report.json").exists() and (outside / "report.json").exists()
     held = tmp_path / "served" / "clips"
     held.mkdir(parents=True)
     (held / "ok.wav").write_bytes(b"RIFF")
     os.link(outside / "theirs.wav", held / "other.wav")
     assert measure.plain(held / "ok.wav") and not measure.plain(held / "other.wav")   # what the clip route serves
+
+
+def test_a_failed_copy_still_removes_the_scripts_folder_and_leaves_no_partial_report(tmp_path):
+    from main import oneshot_kept
+    raw = wrote(tmp_path, {"report.json": '{"metrics": {}}', "serve.log": "sk-1", "clips/ok.wav": b"RIFF"})
+    with patch.object(oneshot_kept.shutil, "copyfile", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))):
+        why = measure.kept_from(raw, tmp_path / "m1", {"sk-1": "[K]"})
+    assert "보관하지 못했다" in why and not raw.exists()   # the copy failed: the raw folder goes all the same
+    raw = wrote(tmp_path, {"report.json": '{"metrics": {}}'})
+    with patch.object(oneshot_kept.os, "replace", lambda *a: (_ for _ in ()).throw(OSError("disk full"))):
+        why = measure.kept_from(raw, tmp_path / "m2", {})
+    assert why and sorted(p.name for p in (tmp_path / "m2").iterdir()) == []   # no report and no `.part` left
+
+
+def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_measure):
+    given()
+    with patch.object(measure, "served", lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))), \
+            patch.object(measure, "kept_from", lambda *a: "실측 원본 폴더 `x` 를 지우지 못했다"):
+        measure.measure("budget")
+    assert "지우지 못했다" in o()["stopped"]["detail"] and not o().get("measures")
 
 
 def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):

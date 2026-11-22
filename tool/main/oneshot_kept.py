@@ -99,41 +99,81 @@ def clips_of(out: Path, hide: dict[str, str]) -> list[str]:
 
 
 def removed(folder: Path) -> str:
-    """`folder` and everything in it gone, a read-only file made writable first, links removed and never
-    followed; or why not."""
+    """`folder` and everything in it gone, or why not. A link or junction at `folder` itself is removed, never
+    followed; inside, `shutil.rmtree` removes links without following them, and a read-only entry it failed to
+    remove is made writable and removed once more. Success is read from the disk: nothing is left at `folder`."""
 
-    def again(func, path, _exc):
+    def again(func, path, exc):
+        if func not in (os.unlink, os.remove, os.rmdir) or os.path.islink(path):
+            raise exc   # only a removal is retried, and never through a link
         os.chmod(path, stat.S_IWRITE)
         func(path)
 
     try:
-        shutil.rmtree(folder, onexc=again)
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        return f"실측 원본 폴더 `{folder.name}` 를 지우지 못했다 ({type(exc).__name__}) — 그 폴더를 지우고 [실측 시작]을 누른다"
+        if os.path.lexists(folder) and not plain(folder, stat.S_IFDIR) and os.path.isdir(folder):
+            try:   # a linked folder: the link goes, its target stays
+                os.unlink(folder)
+            except OSError:
+                os.rmdir(folder)
+        elif os.path.lexists(folder):
+            shutil.rmtree(folder, onexc=again) if os.path.isdir(folder) else os.unlink(folder)
+    except OSError:
+        pass   # what is left says it below
+    if os.path.lexists(folder):
+        return f"실측 원본 폴더 `{folder.name}` 를 지우지 못했다 — 그 폴더를 지우고 [실측 시작]을 누른다"
     return ""
+
+
+def fresh(out: Path, raw: Path) -> str:
+    """Every leftover raw folder beside `out`, and `out`, removed, then `raw` made empty for the script; or why
+    not."""
+
+    for old in [*out.parent.glob("*.raw"), out]:   # an earlier run's leftover first
+        if why := removed(old):
+            return why
+    raw.mkdir(parents=True)
+    return ""
+
+
+def written(p: Path, text: str) -> None:
+    """`text` at `p` only once all of it is written: a failed write leaves no partial file there."""
+
+    part = p.with_name(p.name + ".part")
+    try:
+        part.write_text(text, encoding="utf-8")
+        os.replace(part, p)
+    finally:
+        part.unlink(missing_ok=True)
 
 
 def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
     """What a measurement keeps, copied from the folder the script wrote (`raw`) into a new one (`out`): the
     report, decoded strictly, each field masked, written once (one that is not UTF-8 JSON is not kept); the
     backend's log, masked as text in each spelling JSON escaping gives too; and the clips `clips_of` accepts.
-    Nothing else is copied, and `raw` is removed. Returns why `raw` could not be removed, or empty."""
+    Nothing else is copied, a linked `raw` is never read through, and `raw` is removed on every exit, a failed
+    copy included. Returns why the run cannot keep its result (the copy failed, or `raw` is still there), or
+    empty."""
 
     hide = {**hide, **{form: label for value, label in hide.items()
                        for form in (json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1])}}
-    out.mkdir(parents=True, exist_ok=True)
+    why = ""
     try:
-        if plain(report := raw / "report.json"):
-            text = json.dumps(cleaned(strict(report.read_text(encoding="utf-8")), hide), ensure_ascii=False, indent=1)
-            (out / "report.json").write_text(text, encoding="utf-8")
-    except (OSError, ValueError, RecursionError):   # a decoding error is a `ValueError`: `report_of` said so too
-        pass
-    if plain(log := raw / "serve.log"):
-        (out / "serve.log").write_text(masked(log.read_text(encoding="utf-8", errors="replace"), hide), encoding="utf-8")
-    if names := clips_of(raw, hide):
-        (out / "clips").mkdir(exist_ok=True)
-        for name in names:
-            shutil.copyfile(raw / "clips" / name, out / "clips" / name, follow_symlinks=False)
-    return removed(raw)
+        out.mkdir(parents=True)   # new: the run removed any earlier one, so nothing placed there is kept
+        if plain(raw, stat.S_IFDIR):
+            if plain(report := raw / "report.json"):
+                try:
+                    text = json.dumps(cleaned(strict(report.read_text(encoding="utf-8")), hide), ensure_ascii=False,
+                                      indent=1)
+                except (OSError, ValueError, RecursionError):   # not UTF-8 JSON: `report_of` said so too
+                    text = None
+                if text is not None:
+                    written(out / "report.json", text)
+            if plain(log := raw / "serve.log"):
+                written(out / "serve.log", masked(log.read_text(encoding="utf-8", errors="replace"), hide))
+            if names := clips_of(raw, hide):
+                (out / "clips").mkdir()
+                for name in names:
+                    shutil.copyfile(raw / "clips" / name, out / "clips" / name, follow_symlinks=False)
+    except OSError as exc:
+        why = f"실측 결과를 보관하지 못했다 ({type(exc).__name__}) — 디스크를 확인하고 [실측 시작]을 누른다"
+    return removed(raw) or why

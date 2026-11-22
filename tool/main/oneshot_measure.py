@@ -40,7 +40,7 @@ from pydantic import BaseModel
 from common import masked, process, shell
 
 from . import oneshot, oneshot_build, oneshot_needs, oneshot_publish, oneshot_spec, release, runtime, specs, work
-from .oneshot_kept import CLIPS, MAX_CLIPS, clips_of, kept_from, label_of, plain, removed, strict  # noqa: F401 — kept here too
+from .oneshot_kept import CLIPS, MAX_CLIPS, clips_of, fresh, kept_from, label_of, plain, strict  # noqa: F401 — kept here too
 from .query import _lock as work_lock, hold
 
 router = APIRouter()
@@ -370,6 +370,8 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
     the script says was wrong, and its notes, none of them showing a secret."""
 
     try:
+        if not plain(out, stat.S_IFDIR) or not plain(out / "report.json"):   # never read through a link
+            raise OSError("링크이거나 일반 파일이 아니다")
         value = strict((out / "report.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError) as exc:
         return {"error": f"실측 명령이 `{{out}}/report.json` 을 쓰지 않았거나 JSON 이 아니다 — {masked(str(exc), hide)}"}
@@ -407,12 +409,10 @@ def measure(repo: str) -> None:
             return None
         n = len(o.get("measures") or []) + 1
         out = store.folder / "measure" / f"m{n}-{o['built_head'][:12]}"
-        raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept` copies leave it
-        for old in [*out.parent.glob("*.raw"), out]:   # an earlier run's leftover first
-            if why := removed(old):
-                store.stop("measure", why)
-                return None
-        raw.mkdir(parents=True)
+        raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept_from` copies leave it
+        if why := fresh(out, raw):
+            store.stop("measure", why)
+            return None
         with oneshot._lock:   # every stored-value change counts under this lock: the values and the count agree
             now = oneshot_spec.spec_of(repo)   # what the owner gave by now, a value taken back since included
             if missing := [x["id"] for x in plan["inputs"] if not has(now, x)]:
@@ -420,7 +420,7 @@ def measure(repo: str) -> None:
                 return None
             env, hide = env_of(now, plan)
             since = CHANGES.get(repo, 0)
-        record = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}
+        record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}, None
         try:
             with served(oneshot_build.run_as(plan["serve"]["command"], o, tree), tree, env, plan["serve"]["health"],
                         plan["serve"]["seconds"], halt, raw / "serve.log"):
@@ -430,14 +430,18 @@ def measure(repo: str) -> None:
                     idle=limit, hide=hide)
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
+        except Exception as exc:   # unforeseen: raised again once the folder is dealt with
+            failed = exc
         finally:
             try:
                 found = report_of(raw, plan, hide)
             finally:
                 left = kept_from(raw, out, hide)   # every exit, a stop or a failed read included, keeps no secret
-        if left:   # the script's own folder is still there: the owner removes it, then measures again
+        if left:   # the copy failed, or the script's own folder is still there: the owner's reason, before any other
             store.stop("measure", left)
             return None
+        if failed:
+            raise failed
         record["tail"] = (text or "").strip()[-3000:]
         if halt.is_set():
             store.stop("measure", "사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
@@ -754,7 +758,7 @@ def clip(repo: str, n: int, name: str) -> FileResponse:
     if not record or name not in (record.get("clips") or []):
         raise HTTPException(404, "그런 클립이 없다")
     file = oneshot_spec.store(repo).folder / "measure" / record["folder"] / "clips" / name
-    if not plain(file) or not plain(file.parent, stat.S_IFDIR):   # never a link, junction or second hard link
+    if not plain(file) or not all(plain(d, stat.S_IFDIR) for d in (file.parent, file.parent.parent)):   # no link
         raise HTTPException(404, "클립 파일이 없다")
     return FileResponse(file, media_type=CLIPS[file.suffix.lower()])
 
