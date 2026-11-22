@@ -259,15 +259,16 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         except (OSError, subprocess.SubprocessError) as exc:
             return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
         saved(spec["repo"], oneshot={"tainted": sorted({*(spec_of(spec["repo"])["oneshot"].get("tainted") or []), *hit})})
-    every, sheet = list(hide), dict(secret_needs(spec))
+    every, rows = list(hide), list(owed(spec["oneshot"].get("design") or {}).items())
 
     def ref(label: str) -> str:
-        """The need as the sheet names it: the first of `[id]`, its variable and its description that no value
-        meets (`overlaps` reads across whatever text is around it), so no mask of this text or of a prompt around it
-        rewrites the reference; at last its label, which no value meets either."""
+        """The need as the sheet names it, each one unique there: the first of `[id]`, its variable and its row
+        (`시트의 k번째 항목`, the sheet's order) that no value meets (`overlaps` reads across whatever text is around
+        it), so no mask of this text or of a prompt around it rewrites the reference. Its label only when a value
+        meets all three, which takes a value spelling part of that row's words."""
         nid = getattr(label, "need", None) or str(label).strip("[]")
-        n = sheet.get(nid) or {}
-        return next((r for r in (f"[{nid}]", n.get("env"), n.get("what")) if isinstance(r, str) and r
+        k, n = next(((k, n) for k, (i, (n, _)) in enumerate(rows, 1) if i == nid), (0, {}))
+        return next((r for r in (f"[{nid}]", n.get("env"), k and f"시트의 {k}번째 항목") if isinstance(r, str) and r
                      and not any(overlaps(v, [r]) for v in every)), str(label))
 
     ids = sorted(ref(lab) for lab in set().union(*found.values()))

@@ -275,10 +275,18 @@ class Veil:
         return out
 
 
-def question_list(value) -> list[dict]:
-    """A question tool's batch as the adapters, their replies and the screen all read it: a list of mappings, any
-    other entry as a question of its text (`text`); no list, no question."""
-    return [q if isinstance(q, dict) else {"question": text(q)} for q in value] if isinstance(value, list) else []
+def question_list(value, keys=("question",)) -> list[dict]:
+    """A question tool's batch as the adapters, their replies and the screen all read it: a list of mappings, each
+    with every reply key in `keys` a non-empty string no other entry repeats. Any other batch holds no question and
+    can only be declined, so no answer is lost to a key two entries share, and nothing is made text before masking."""
+
+    if not isinstance(value, list) or not all(isinstance(q, dict) for q in value):
+        return []
+    for k in keys:
+        got = [q.get(k) for q in value]
+        if not all(isinstance(g, str) and g for g in got) or len(set(got)) != len(got):
+            return []
+    return value
 
 
 def text(value) -> str:

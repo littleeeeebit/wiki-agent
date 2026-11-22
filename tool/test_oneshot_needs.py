@@ -200,6 +200,9 @@ def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     assert "비밀 값 [N1] 이(가) 답 에" in why and masked(why, hide) == why
     wrapped = masked(f"The server refused this build turn: {why}\n\nFix it", hide)   # as `checked` sends it
     assert "비밀 값 [N1] 이(가) 답 에" in wrapped and "N1 이(가)" not in wrapped.replace("[N1] 이(가)", "")
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: f"{ENV}[n1"})   # meets both `[N1]` and the variable
+    why = needs.leaked(at_r1, needs.spec_of("budget"), hide, f"키는 {ENV}[n1 이다")
+    assert "비밀 값 시트의 1번째 항목 이(가) 답 에" in why and masked(why, hide) == why   # its row on the sheet
 
 
 def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
@@ -633,20 +636,23 @@ def test_a_question_keeps_its_schema_and_drops_what_the_provider_added(monkeypat
     monkeypatch.setattr(work, "notice", lambda *a: None)
     veil = Veil({"options": "[N3]", "secret": "[N4]"})
     given = {"questions": [{"question": "options?", "header": 7, "multiSelect": True, "secret": "secret",
-                            "options": [{"label": "a secret", "extra": "secret"}, "not an option"]}, "nor a question"],
+                            "options": [{"label": "a secret", "extra": "secret"}, "not an option"]}, {"question": "two"}],
              "secret": {"options": "secret"}}
     shown = veil.meta({"kind": "approval", "tool": "AskUserQuestion", "input": given})
     assert shown["input"] == {"questions": [
         {"question": "[N3]?", "multiSelect": True, "options": [{"label": "a [N4]"}, {"label": "not an option"}]},
-        {"question": "nor a question", "options": []}]}
+        {"question": "two", "options": []}]}
     assert Veil.options({"input": given}) == [["a secret", "not an option"], []]   # the options as asked
-    assert Veil.options({"input": {"questions": 1}}) == [] and Veil.options({"input": {"questions": [{"options": 1}]}}) == [[]]
-    # Every question and option asked keeps its entry, as text, so answers and indices line up with the provider's.
-    assert Veil.questions({"questions": [{"options": [{"label": 3}, "plain"]}, 5]}) == [
-        {"question": "", "options": [{"label": "3"}, {"label": "plain"}]}, {"question": "5", "options": []}]
+    assert Veil.options({"input": {"questions": [{"question": "?", "options": 1}]}}) == [[]]
+    # Every option asked keeps its entry, as text, so the indices line up with the provider's.
+    assert Veil.questions({"questions": [{"question": "q", "options": [{"label": 3}, "plain"]}]}) == [
+        {"question": "q", "options": [{"label": "3"}, {"label": "plain"}]}]
+    # A batch its reply cannot key one answer per entry holds no question: it is only declined.
+    for batch in (1, [{"question": "q"}, "plain"], [{"question": "q"}, {"question": "q"}], [{"question": {"q": 1}}]):
+        assert Veil.questions({"questions": batch}) == [] and Veil.options({"input": {"questions": batch}}) == []
     assert veil.meta({"tokens": {"in": 3, "out": None, "reasoning": 2, "secret": 1, "cache_read": "secret"}}) == {
         "tokens": {"in": 3, "out": None, "cache_read": "[N4]", "reasoning": 2}}   # the counts by their names
-    structured = {"questions": [{"question": {"q": 'say "secret"'}, "options": [{"label": ['a"secret']}]}]}
+    structured = {"questions": [{"question": "q", "options": [{"label": ['a"secret']}, {"label": {"k": 'say "secret"'}}]}]}
     assert "secret" not in json.dumps(veil.meta({"tool": "AskUserQuestion", "input": structured}))   # masked, then text
     run = work.Run(SimpleNamespace(id="w", parent_id=None, hide={"x": "[N1]"}))
     run.put({"kind": "approval", "text": "실행할까?", "meta": {"id": "b", "tool": "Bash", "input": {"questions": 1}}})

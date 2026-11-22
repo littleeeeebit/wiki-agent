@@ -277,38 +277,42 @@ def test_codex_hooks_show_and_a_question_is_answered_by_its_id(tree):
     assert json.loads(events[-1].text) == {"fruit": {"answers": ["A"]}}
 
 
-def test_a_malformed_question_batch_is_still_shown_answered_or_declined(tree):
-    """An entry that is not a question is asked as its text; a batch that is not a list asks nothing, and is
-    declined. Neither adapter fails on either."""
+def test_a_batch_its_reply_cannot_key_is_only_declined(tree):
+    """Codex answers by id and Claude by question text: a batch with an entry that is no question, or a key missing or
+    shared, would lose an answer, so it asks nothing and is declined. Neither adapter fails on one."""
 
-    codex = CODEX_START + '''say({"id": 7, "method": "item/tool/requestUserInput", "params": {"questions": [
-     {"id": "fruit", "question": "Pick", "options": [{"label": "A"}]}, "plain"]}})
-say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": json.dumps(read()["result"])}}})
-say({"id": 8, "method": "item/tool/requestUserInput", "params": {"questions": 5}})
-say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": json.dumps(read()["result"])}}})
+    codex = CODEX_START + '''for rid, batch in ((7, [{"id": "a", "question": "Pick"}, {"question": "Plain"}]), (8, 5),
+                   (9, [{"id": "a", "question": "Pick"}, {"id": "b", "question": "Plain"}])):
+    say({"id": rid, "method": "item/tool/requestUserInput", "params": {"questions": batch}})
+    say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": json.dumps(read()["result"])}}})
 say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
 sys.stdin.read()
 '''
     session = ChatSession(tree, model="codex:m", write=True)
 
     def reply(event):
-        if event.meta["input"]["questions"]:
-            assert [q["question"] for q in event.meta["input"]["questions"]] == ["Pick", "plain"]
-            assert session.answer(event.meta["id"], True, answers=["A", "typed"])
-        else:
+        if not event.meta["input"]["questions"]:
             with pytest.raises(ValueError):   # nothing to answer: only declining is left
-                session.answer(event.meta["id"], True, answers=["x"])
+                session.answer(event.meta["id"], True, answers=["x", "y"])
             assert session.answer(event.meta["id"], False)
+        else:
+            assert session.answer(event.meta["id"], True, answers=["A", "typed"])
 
     _, events = run(session, codex, tree, reply)
-    said = [json.loads(e.text) for e in events if e.text.startswith('{"answers"')]
-    assert {"answers": {"fruit": {"answers": ["A"]}, "None": {"answers": ["typed"]}}} in said
-    assert {"answers": {}} in said
+    said = [json.loads(e.text) for e in events if e.kind == "progress" and e.text.startswith('{"answers"')]
+    assert said == [{"answers": {}}, {"answers": {}}, {"answers": {"a": {"answers": ["A"]}, "b": {"answers": ["typed"]}}}]
 
-    claude = CLAUDE_QUESTION.replace('"input": {"questions": [q]}', '"input": {"questions": [q, "plain"]}')
+    claude = CLAUDE_QUESTION.replace('"input": {"questions": [q]}', '"input": {"questions": [q, q]}').replace(
+        'json.dumps(got["updatedInput"]["answers"])', 'json.dumps(got["behavior"])')
     session = ChatSession(tree, write=True, bypass=True)
-    _, events = run(session, claude, tree, lambda e: session.answer(e.meta["id"], True, answers=["B", "typed"]))
-    assert json.loads(events[-1].text) == {"Pick": "B", "plain": "typed"}
+
+    def decline(event):
+        with pytest.raises(ValueError):
+            session.answer(event.meta["id"], True, answers=["A", "B"])
+        assert session.answer(event.meta["id"], False)
+
+    _, events = run(session, claude, tree, decline)
+    assert json.loads(events[-1].text) == "deny"
 
 
 def test_a_tool_line_shows_the_command_beside_what_it_is_for():

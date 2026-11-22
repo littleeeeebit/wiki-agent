@@ -734,7 +734,7 @@ class ChatSession:
         request, key = key, uuid.uuid4().hex
         self._pending[key] = (self._proc, reply, rule)
         if tool in QUESTIONS:
-            self._asks[key] = len(asked) if isinstance(asked := args.get("questions"), list) else 0   # none: decline
+            self._asks[key] = len(question_list(args.get("questions")))   # none: decline
         return Event("approval", text, {"id": key, "request": request, "tool": tool, "input": args,
                                         "session": rule is not None})
 
@@ -770,7 +770,7 @@ class ChatSession:
             self._send({"id": rid, "result": {"permissions": {}, "scope": "turn"}})
             return Event("tool", "리뷰 셀은 설정된 범위 밖의 추가 권한을 요청하지 않는다.")
         if method == "item/tool/requestUserInput":
-            questions = question_list(params.get("questions"))   # one batch for the summary, reply and screen
+            questions = question_list(params.get("questions"), ("question", "id"))   # its reply keys them by id
 
             def said(allow, answers=(), rid=rid):
                 # Declined, no question has an answer; the model reads that.
