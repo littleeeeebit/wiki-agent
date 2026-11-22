@@ -260,8 +260,8 @@ def reported(report: dict, seen: dict, data: Path, page: list[str]) -> str | Non
             was["text"], page)   # the page it held before the step is no capture of the step's
         if not fresh:
             return None
-        try:   # one open, read to the bound and a byte past it; strict, so a file that is not UTF-8 is no report
-            with open(file, "rb") as f:
+        try:   # one open no one may write meanwhile, read to the bound and a byte past it; strict UTF-8
+            with oneshot_desktop.read_only(file) as f:
                 raw = f.read(MAX_REPORT + 1)
             return raw.decode("utf-8") if len(raw) <= MAX_REPORT else None
         except (OSError, UnicodeDecodeError):

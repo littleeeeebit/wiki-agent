@@ -344,6 +344,21 @@ def test_a_report_file_that_is_not_utf8_has_no_baseline_text(tmp_path):
     assert set(report["steps"][0]["baseline"]) == {"error"}, report
 
 
+def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
+    script = tmp_path / "form.ps1"
+    # The app holds a lone surrogate itself: a request's JSON would carry one only as U+FFFD.
+    script.write_text(WPF_FORM.replace('$A::SetName($box, "원문")',
+                                       '$A::SetName($box, "원문"); $box.Text = "apple " + [char]0xD800 + "river"'),
+                      encoding="utf-8")
+    with desktop_session.look(tmp_path, "surrogate") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [
+            {"name": "one", "action": "toggle", "id": "translate-on"}], wait=30, settle_ms=300)
+    box = [n for n in report["states"][-1]["nodes"] if n.get("id") == "source"]
+    assert [(n.get("value"), n.get("unvalued")) for n in box] == [(None, True)], report
+
+
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
     state = {"nodes": [{"id": "a", "name": "번역", "value": "", "toggle": "On"}, {"id": "b", "value": "x"},
                        {"id": "c", "toggle": "On", "foreign": True}]}

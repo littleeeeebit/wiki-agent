@@ -88,7 +88,8 @@ def contains(text: str | None, page: list[str]) -> bool:
     # first: `appleé`, `apple` with a combining accent, or `apple1river` is no `apple` (an OCR slip, a join).
     found, word = [], []
     for ch in unicodedata.normalize("NFC", text or "").lower() + " ":
-        if unicodedata.category(ch)[0] in "LNM":
+        # A joiner or other format character breaks no word (Unicode WB4); a zero-width space does.
+        if unicodedata.category(ch)[0] in "LNM" or unicodedata.category(ch) == "Cf" and ch != "​":
             word.append(ch)
         elif word:
             found.append("".join(word))

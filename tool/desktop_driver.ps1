@@ -208,8 +208,11 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
         $node.value = $null; $node.unvalued = $true
       } else {
         $v = [string]$raw
-        $node.value = if ($v.Length -gt $MAX_VALUE) { $null } else { $v }
-        if ($v.Length -gt $MAX_VALUE) { $node.unvalued = $true }
+        # A string that is not whole UTF-16 (a lone surrogate) would reach the report with a replacement: unknown.
+        try { [void](New-Object System.Text.UTF8Encoding($false, $true)).GetByteCount($v); $whole = $true }
+        catch { $whole = $false }
+        $node.value = if ($v.Length -gt $MAX_VALUE -or -not $whole) { $null } else { $v }
+        if ($v.Length -gt $MAX_VALUE -or -not $whole) { $node.unvalued = $true }
       }
     } catch { $node.value = $null; $node.unvalued = $true }   # unread or cut: what it held is unknown, not empty
   }

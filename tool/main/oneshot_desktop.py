@@ -554,6 +554,34 @@ def altered(build: dict) -> str:
         return why
 
 
+def read_only(path: Path):
+    """An existing file opened for reading with FILE_SHARE_READ only, as a binary file object: while it is open,
+    Windows refuses anyone a write, a rename or a delete of it, so what is read is one version of it. A file another
+    holds open for writing cannot be opened so: PermissionError, as any other refusal is an OSError."""
+
+    import msvcrt
+    from ctypes import wintypes as w
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE]
+    k.CreateFileW.restype = w.HANDLE
+    k.CloseHandle.argtypes = [w.HANDLE]
+    handle = k.CreateFileW(str(path), 0x80000000, 0x1, None, 3, 0, None)   # GENERIC_READ, OPEN_EXISTING
+    if handle in (None, w.HANDLE(-1).value):
+        error = ctypes.WinError(ctypes.get_last_error())   # a sharing violation is a PermissionError
+        raise type(error)(error.errno, error.strerror, str(path), error.winerror)
+    try:   # the handle is closed however its wrapping fails
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        k.CloseHandle(handle)
+        raise
+    try:
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 @contextlib.contextmanager
 def held(build: dict):
     """Why the frozen copy is no longer the build its identity names, or empty, the manifest and every file kept
@@ -565,18 +593,7 @@ def held(build: dict):
     not shown changed. Out of scope, as the plan says: another process of the owner's racing the server's own
     files, which could as well write the server's records."""
 
-    import msvcrt
-    from ctypes import wintypes as w
-
-    k = ctypes.WinDLL("kernel32", use_last_error=True)
-    k.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE]
-    k.CreateFileW.restype = w.HANDLE
-    k.CloseHandle.argtypes = [w.HANDLE]
-    app, invalid = Path(build["folder"]), w.HANDLE(-1).value
-
-    def refused(path: Path) -> OSError:
-        error = ctypes.WinError(ctypes.get_last_error())   # a sharing violation is a PermissionError
-        return type(error)(error.errno, error.strerror, str(path), error.winerror)
+    app = Path(build["folder"])
 
     def unlisted(error: OSError):   # never `rglob`, which passes over a folder it cannot list
         raise error
@@ -586,21 +603,8 @@ def held(build: dict):
                       for folder, _, names in os.walk(app, onerror=unlisted) for name in names)
 
     with contextlib.ExitStack() as files_held:
-        def read(path: Path) -> bytes:   # GENERIC_READ, FILE_SHARE_READ only, an existing file
-            handle = k.CreateFileW(str(path), 0x80000000, 0x1, None, 3, 0, None)
-            if handle in (None, invalid):
-                raise refused(path)
-            try:   # the handle is closed however its wrapping fails
-                fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
-            except BaseException:
-                k.CloseHandle(handle)
-                raise
-            try:
-                f = os.fdopen(fd, "rb")
-            except BaseException:
-                os.close(fd)
-                raise
-            return files_held.enter_context(f).read()
+        def read(path: Path) -> bytes:
+            return files_held.enter_context(read_only(path)).read()
 
         manifest = json.loads(read(app.parent / "manifest.json").decode("utf-8"))
         files = manifest.get("files") if isinstance(manifest, dict) else None   # `[]` is no manifest: damaged

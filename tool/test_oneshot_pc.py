@@ -379,6 +379,15 @@ def test_a_report_file_grown_past_its_bound_after_the_size_check_is_no_report(he
     assert checked(desk, SCREEN, driven())["status"] == "failed"
 
 
+def test_a_report_file_still_open_for_writing_is_never_read_as_one_version(held, desk):
+    _, root = desk
+    seen = root / "data" / "seen.txt"
+    seen.write_text("apple river garden", encoding="utf-8")
+    with open(seen, "r+b"):   # the app could still be rewriting it
+        assert checked(desk, SCREEN, driven())["status"] == "failed"
+    assert checked(desk, SCREEN, driven())["status"] == "passed"
+
+
 def test_an_owned_report_window_counts_absent_before_the_step_only_when_there_was_none(held, desk):
     page, owned = "apple river garden", {**REPORT, "observe": {"report": {"id": "seen", "in": "owned", "from": "fixture"}}}
 
