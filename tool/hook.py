@@ -29,10 +29,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+# Before anything that touches the disk: imported, it arms a PreToolUse wrapper's credential-session deny
+# (`hook_deadline.PRETOOL`). The project lookup and the data paths load inside `main`, after it.
 import hook_deadline  # noqa: E402
-
-from common import layout  # noqa: E402
-from common.paths import RAW  # noqa: E402
 
 # The scripts that read a target repository and need to be told which one.
 PROJECT = {"inject.py", "session_state.py", "sync.py"}
@@ -57,6 +56,8 @@ def project_for(cwd: Path) -> tuple[Path, Path] | None:
         cwd = cwd.resolve()
         # git could not start in a folder that is missing or refuses listing, and the hooks passed.
         os.scandir(cwd).close()
+        from common import layout
+
         found = layout(cwd)
     except OSError:
         return None
@@ -112,7 +113,7 @@ def main(argv: list[str]) -> int:
     # would be ended by the timer.
     pre = len(argv) > 1 and argv[1] in hook_deadline.PRETOOL
     timed = len(argv) > 1 and (argv[1] in hook_deadline.LIMITS or pre) and Path(sys.argv[0]).name == "hook.py"
-    if timed:
+    if timed and not (pre and hook_deadline._armed):   # imported as the host's process, it is armed already
         try:   # a wrapper's deny is in place from here, before stdin and the project are read
             hook_deadline.arm(hook_deadline.PRETOOL[argv[1]] if pre else hook_deadline.LIMITS[argv[1]][0],
                               hook_deadline.pretool() if pre else None)
@@ -221,6 +222,8 @@ def probed(nonce: str, host: str, script: str, raw: bytes, printed: str) -> None
             context = json.loads(printed)["hookSpecificOutput"]["additionalContext"]
         except (ValueError, KeyError, TypeError):
             context = ""
+        from common.paths import RAW
+
         folder = Path(os.environ["WIKI_PROBE_ROOT"]) if os.environ.get("WIKI_PROBE_ROOT") else RAW / "connect/probe"
         folder.mkdir(parents=True, exist_ok=True)
         with open(folder / f"{nonce}.jsonl", "a", encoding="utf-8") as fh:

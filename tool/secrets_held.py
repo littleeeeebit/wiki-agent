@@ -29,6 +29,8 @@ def closed_out(error: Exception) -> None:
     if closed := held_closed(f"훅이 실패했다 ({type(error).__name__})"):
         sys.stdout.reconfigure(encoding="utf-8")   # the failure may come before the caller's own
         try:   # through the deadline's once-only writer, standard library only too
-            __import__("hook_deadline").send(closed)
+            deadline = __import__("hook_deadline")
         except Exception:  # noqa: BLE001 -- it could not load: written directly, as nothing else writes
             json.dump(closed, sys.stdout, ensure_ascii=False)
+            return
+        deadline.send(closed)   # nothing when an answer already began: a broken stream gets no second one

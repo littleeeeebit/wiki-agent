@@ -75,11 +75,16 @@ def send(answer: dict) -> bool:
     with lock:
         if _sent:
             return False
-        json.dump(answer, sys.stdout, ensure_ascii=False)
-        sys.stdout.flush()
-        # Once per armed process. Unarmed — a test calling `main` again — it
-        # writes every time.
+        # Serialised and encoded whole first: a failure there writes nothing.
+        text = json.dumps(answer, ensure_ascii=False)
+        text.encode(sys.stdout.encoding or "utf-8")
+        # Once per armed process, counted from the first byte: a write that
+        # fails partway is a broken pipe, and no second answer is appended to
+        # what it left. Unarmed — a test calling `main` again — it writes
+        # every time.
         _sent = _armed
+        sys.stdout.write(text)
+        sys.stdout.flush()
         return True
 
 
@@ -139,13 +144,17 @@ def arm(seconds: float, fallback: dict | None) -> None:
 
 # Run directly by the host. Through `hook.py` the dispatcher arms instead, and
 # earlier: resolving the project counts against the host's limit too.
-if Path(sys.argv[0]).name in LIMITS:
+# Through the dispatcher (`hook.py <host> <wrapper>`), armed at its first import too: what it does before `main` is
+# watched as well.
+_ran = Path(sys.argv[0]).name
+_wrapper = sys.argv[2] if _ran == "hook.py" and len(sys.argv) > 2 and sys.argv[2] in PRETOOL else _ran
+if _wrapper in PRETOOL:
+    try:
+        arm(PRETOOL[_wrapper], pretool())
+    except Exception:  # noqa: BLE001 — a deadline that fails to arm leaves the hook as it was
+        pass
+elif _ran in LIMITS:
     try:
         arm(LIMITS[Path(sys.argv[0]).name][0], stalled(Path(sys.argv[0]).name))
     except Exception:  # noqa: BLE001 — a deadline that fails to arm leaves the hook as it was
-        pass
-elif Path(sys.argv[0]).name in PRETOOL:   # a per-project install runs the wrapper itself
-    try:
-        arm(PRETOOL[Path(sys.argv[0]).name], pretool())
-    except Exception:  # noqa: BLE001
         pass

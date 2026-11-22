@@ -979,6 +979,46 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
     done = subprocess.run([sys.executable, "-c", probe], cwd=Path(guard.__file__).parent, capture_output=True,
                           text=True, encoding="utf-8", env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
     assert done.stdout.split() == ["True", "True"], done.stderr
+    # Through the dispatcher, its very first import arms it, before the dispatcher loads anything that reads the disk.
+    probe = ("import sys; sys.argv = ['hook.py', 'codex', 'codex_pretool.py']; import hook_deadline as d; "
+             "import hook; print(d._armed, d.best is not None, 'common.paths' in sys.modules)")
+    done = subprocess.run([sys.executable, "-c", probe], cwd=Path(guard.__file__).parent, capture_output=True,
+                          text=True, encoding="utf-8", env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
+    assert done.stdout.split() == ["True", "True", "False"], done.stderr
+    import secrets_held
+
+    captured = sys.stdout
+
+    class Broken(io.StringIO):
+        def write(self, text):
+            super().write(text[:5])
+            raise OSError("pipe")
+
+        def reconfigure(self, **kwargs):
+            pass
+
+    class Whole(io.StringIO):
+        def reconfigure(self, **kwargs):
+            pass
+
+    # A write that fails partway leaves the stream as it broke: the failure's deny adds no second answer to it.
+    monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
+    monkeypatch.setattr(deadline, "_armed", True)
+    monkeypatch.setattr(sys, "stdout", broken := Broken())
+    with pytest.raises(OSError):
+        deadline.send({"hookSpecificOutput": {"permissionDecision": "allow"}})
+    secrets_held.closed_out(OSError("pipe"))
+    assert broken.getvalue() == '{"hoo'
+    # An answer that cannot be encoded writes nothing, and the deny goes out whole instead.
+    monkeypatch.setattr(deadline, "_sent", False)
+    monkeypatch.setattr(sys, "stdout", whole := Whole())
+    with pytest.raises(UnicodeEncodeError):
+        deadline.send({"x": "\ud800"})
+    secrets_held.closed_out(UnicodeEncodeError("utf-8", "", 0, 1, "surrogate"))
+    assert json.loads(whole.getvalue())["hookSpecificOutput"]["permissionDecision"] == "deny"
+    monkeypatch.setattr(sys, "stdout", captured)
+    monkeypatch.setattr(deadline, "_armed", False)
+    monkeypatch.setattr(deadline, "_sent", False)
     monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
     monkeypatch.setattr(hook, "HERE", tmp_path)   # a wrapper that is not there at all
     assert real_main(["claude", "claude_pretool.py"]) == 0
