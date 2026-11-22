@@ -666,9 +666,9 @@ class Loop:
         if chat is not None:
             chat.stop(self.halt)
         if run is not None and not run.done:
-            with run.saving:   # as `work.stop`: a save this turn decided on is never cut halfway
-                run.halt.set()
-            run.chat.stop(run.halt)
+            run.halt.set()
+            with run.saving:   # as `work.stop`: a save already past its stop check lands before this returns
+                run.chat.stop(run.halt)
 
 
 _loops: dict[tuple[str, str], Loop] = {}

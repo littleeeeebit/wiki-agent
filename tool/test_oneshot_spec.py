@@ -481,7 +481,7 @@ def test_a_submission_with_any_item_undecided_is_refused(world):
 def test_approving_every_item_writes_and_commits_the_design_and_moves_to_tests(world):
     at_r1(world)
     answered = {"model": "claude-sonnet-4-6", "effort": ""}   # the design turn, on the CLI default
-    oneshot_spec.store("budget").put(answered={"design": answered})
+    oneshot_spec.saved("budget", oneshot={"design_author": answered})
     oneshot_spec.decide("budget", on_sheet(decisions=everything()))
     assert o()["stage"] == "tests" and o()["design_head"]
     assert (world / "docs/design/backend.md").read_text(encoding="utf-8").startswith("# 백엔드 설계")
@@ -529,13 +529,26 @@ def test_an_edited_scenario_may_change_the_requirements_in_the_same_turn(world):
     assert o()["r1"]["marks"]["R1"] == "edited" and o()["r1"]["marks"]["T1"] == "again"
 
 
-def test_a_refused_redesign_leaves_the_accepted_designs_author(world):
+def test_only_the_sheet_that_stands_names_the_designs_author(world):
     at_r1(world)
     accepted = {"model": "claude-sonnet-4-6", "effort": ""}
-    oneshot_spec.store("budget").put(answered={"design": accepted})
+    oneshot_spec.saved("budget", oneshot={"design_author": accepted})
     with patch.object(oneshot, "ask", lambda *a: ("no block here", {"model": "claude-opus-4-6"}, False)):
         oneshot_spec.redesign("budget", {"R1": "이번 달이 아니라 오늘"}, ["R1"])
-    assert o()["stopped"] and o()["answered"]["design"] == accepted
+    assert o()["stopped"] and o()["design_author"] == accepted
+    # A valid redesign cut before its sheet is saved leaves the standing sheet's author too.
+    oneshot_spec.resume("budget")
+    real, changed = oneshot_spec.saved, [{**REQS[0], "text": "지출을 적으면 오늘 합계에 더해진다"}, REQS[1]]
+
+    def cut(repo, **fields):
+        if "design" in (fields.get("oneshot") or {}):
+            raise OSError("cut at the sheet's save")
+        return real(repo, **fields)
+    with replies(answer(DESIGN, fenced("oneshot-spec", {"requirements": changed, "glossary": GLOSSARY}))), \
+         patch.object(oneshot_spec, "saved", side_effect=cut), pytest.raises(OSError):
+        oneshot_spec.redesign("budget", {"R1": "이번 달이 아니라 오늘"}, sorted(
+            sheet.dependents(sheet.parsed(DESIGN), REQS, {"R1"})))
+    assert o()["design_author"] == accepted
 
 
 def test_a_stopped_edit_turn_resumes_to_the_sheet_and_a_cut_turn_is_recovered(world):

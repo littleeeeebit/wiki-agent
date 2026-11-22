@@ -302,7 +302,8 @@ def design(repo: str) -> None:
     if found is None:
         return
     made, _, _, warnings = found
-    saved(repo, oneshot={"design": made, "stage": "r1", "working": "brief",
+    saved(repo, oneshot={"design": made, "design_author": store(repo).get()["answering"]["design"],
+                         "stage": "r1", "working": "brief",
                          "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": warnings}})
     briefed(repo)
 
@@ -347,7 +348,7 @@ def redesign(repo: str, comments: dict[str, str], reach: list[str]) -> None:
     r1 = spec["oneshot"]["r1"]
     marks, decisions = marked(sheet.decidable(made, reqs), comments, reach, old, new, r1["decisions"])
     saved(repo, requirements=reqs, oneshot={
-        "design": made, "glossary": glossary, "working": "brief",
+        "design": made, "design_author": store(repo).get()["answering"]["design"], "glossary": glossary, "working": "brief",
         "r1": {"round": r1["round"] + 1, "decisions": decisions, "marks": marks, "warnings": warnings}})
     briefed(repo)
 
@@ -381,7 +382,7 @@ def approved(repo: str) -> None:
         # wrote it answers the builder's escalations.
         saved(repo, task={"kind": "feature", "what": spec["goal"]},
               precedence=[{"ref": f, "role": "current", "why": "the approved design"} for f in files], escalate=[],
-              author=(store(repo).get().get("answered") or {}).get("design") or oneshot.role_config("design", store(repo)),
+              author=o.get("design_author") or oneshot.role_config("design", store(repo)),
               oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 

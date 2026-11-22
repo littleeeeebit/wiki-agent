@@ -337,8 +337,8 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         elif oneshot:   # a oneshot's contract is its committed design: only the person changes it mid-build
             return person(spec, run, history, f"상위 모델이 원샷 설계를 바꾸자고 답했다 ({name}) — 사람이 정한다")
         elif name == "spec-update":
-            # Stop waits for a revision already past this check, validation included; a Stop before it owns
-            # the result (`work.stop` sets the halt under `run.saving`).
+            # A Stop sets the halt, then waits on `run.saving`: one before this check owns the result, one after
+            # it answers once the revision, validation included, is saved, and no follow-up starts.
             with specs._files, run.saving:
                 current = specs.load(spec["repo"], spec["id"])
                 if run.halt.is_set():
@@ -355,7 +355,7 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
             gate = specs.gate_of(repo)
             if not gate:
                 raise ValueError("저장소의 gate_cmd 가 없어 선행 작업 카드를 만들 수 없다")
-            with run.saving:   # as the revision: the card is made whole before a Stop, or not at all
+            with specs._files, run.saving:   # as the revision, in its order: the card is made whole, or not at all
                 if run.halt.is_set():
                     return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
                 sid = specs.card(repo, value["spec"], gate, {"focus": "escalation", "turn": time.time(),

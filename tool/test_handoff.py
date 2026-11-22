@@ -181,8 +181,9 @@ def test_a_stop_during_validation_returns_only_after_the_save(task):
     update = {"rev": 1, "reason": "r", "goal": "Another goal", "out": [], "done": ["x"]}
 
     def stop():   # as `work.stop`
+        run.halt.set()
         with run.saving:
-            run.halt.set()
+            pass
         order.append(("stopped", specs.load("proj", sid)["rev"]))
 
     def validating(*a, **k):   # the Stop is pressed while the revision is being checked
@@ -193,8 +194,10 @@ def test_a_stop_during_validation_returns_only_after_the_save(task):
     stopper = threading.Thread(target=stop)
     with patch.object(handoff, "ask", side_effect=lambda *a: block("spec-update", update)), \
          patch.object(handoff, "checked", side_effect=validating), patch.object(specs, "again") as again:
-        specs._check(repo, run, block("escalation", ESCALATION))
-    stopper.join(5)
+        then = specs._check(repo, run, block("escalation", ESCALATION))
+        stopper.join(5)
+        if then:   # the follow-up `work` runs once the worktree is released
+            then()
     # Stop answered after the save it waited for, and the follow-up was skipped.
     assert order == ["validated", ("stopped", 2)] and not again.called
 
