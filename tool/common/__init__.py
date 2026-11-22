@@ -100,6 +100,15 @@ def masked(text: str, hide: dict[str, str] | None) -> str:
     all of it. Each character is claimed once, so the work grows with the matches, never with their square."""
     if not hide:
         return text
+    out, last = [], 0
+    for start, end, label in _spans(text, hide):
+        out += [text[last:start], label]
+        last = end
+    return "".join(out + [text[last:]])
+
+
+def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
+    """Where `masked` puts each label in `text`, as `(start, end, label)` in order, none overlapping."""
     folds = _folds(text)
     flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
     taken, chosen = bytearray(len(text)), []
@@ -118,11 +127,52 @@ def masked(text: str, hide: dict[str, str] | None) -> str:
         while needle and (at := flat.find(needle, at)) >= 0:
             claim(owner[at], owner[at + len(needle) - 1] + 1, hide[value])
             at += 1
-    out, last = [], 0
-    for start, end, label in sorted(chosen):
-        out += [text[last:start], label]
-        last = end
-    return "".join(out + [text[last:]])
+    return sorted(chosen)
+
+
+class Veil:
+    """`masked` over a stream: every string in an event, however nested, and each running text (an answer's
+    deltas, one command's output) masked as a whole. The tail a value could still be starting in is held until the
+    next part of that text, or `rest`, so a value split across parts is never shown in pieces."""
+
+    def __init__(self, hide: dict[str, str] | None):
+        self.hide, self.held = hide or {}, {}
+        self.needles = [(v, folded(v)) for v in self.hide if v]
+        self.longest = max((max(len(v), len(n)) for v, n in self.needles), default=0)
+
+    def deep(self, value):
+        if not self.hide:
+            return value
+        if isinstance(value, str):
+            return masked(value, self.hide)
+        if isinstance(value, dict):
+            return {k: self.deep(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self.deep(v) for v in value]
+        return value
+
+    def stream(self, key, chunk: str, meta: dict) -> str:
+        """What of `key`'s text can be shown now, `chunk` added: all but a tail some value starts with."""
+        if not self.hide:
+            return chunk
+        text = self.held.pop(key, ("", meta))[0] + chunk
+        cut = next((i for i in range(max(0, len(text) - self.longest), len(text)) if self._starts(text[i:])), len(text))
+        for start, end, _ in _spans(text, self.hide):
+            if start < cut < end:   # spans never overlap: one at most holds the cut
+                cut = start
+        if cut < len(text):
+            self.held[key] = (text[cut:], meta)
+        return masked(text[:cut], self.hide)
+
+    def _starts(self, tail: str) -> bool:
+        flat = folded(tail)
+        return any(v.startswith(tail) or n.startswith(flat) for v, n in self.needles)
+
+    def rest(self) -> list[tuple[str, str, dict]]:
+        """Every held tail as `(kind, text, meta)`, masked: the stream ended, so no value completes it."""
+        out = [(key[0], masked(text, self.hide), self.deep(meta)) for key, (text, meta) in self.held.items()]
+        self.held.clear()
+        return out
 
 
 def python_environment(env: dict | None = None) -> dict:

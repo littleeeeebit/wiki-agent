@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, deepseek, output_of
 from common.process import background_options
 from common.paths import RAW
-from common import errorlog, masked
+from common import Veil, errorlog, masked
 from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
@@ -796,7 +796,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
 
     chat, final, failed, meta, then = run.chat, "", "", {}, None
     hide = getattr(chat, "hide", None) or {}   # a oneshot's secrets: shown and kept as `[N1]`, checked as given
-    veiled = lambda d: {k: masked(v, hide) if isinstance(v, str) else v for k, v in d.items()} if hide and d else d  # noqa: E731
+    veil = Veil(hide)
     try:
         events = None
         if replay is not None:
@@ -828,8 +828,12 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                     failed = final or "완료된 답이 없다"
             elif ev.kind == "error":
                 failed = ev.text = "사람이 멈춤" if run.halt.is_set() else ev.text
-            run.put({"kind": ev.kind, "text": masked(ev.text, hide), "meta": veiled(ev.meta),
-                     "session_id": ev.session_id, "parent_id": ev.parent_id})
+            key = ("delta",) if ev.kind == "delta" else ("tool", item) if (item := output_of(ev.kind, ev.meta)) else None
+            for kind, held, m in veil.rest() if ev.kind in ("done", "error") else ():   # the texts ended: held tails first
+                run.put({"kind": kind, "text": held, "meta": m, "session_id": ev.session_id, "parent_id": ev.parent_id})
+            if (said := veil.stream(key, ev.text, ev.meta) if key else masked(ev.text, hide)) or not key or not hide:
+                run.put({"kind": ev.kind, "text": said, "meta": veil.deep(ev.meta),
+                         "session_id": ev.session_id, "parent_id": ev.parent_id})
         if not failed and not final.strip():
             failed = "완료된 답이 없다"
             run.put({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})
@@ -840,9 +844,10 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
 
             then = specs.check(path, run, final if replay is None else replay)
     except Exception as exc:  # a turn that broke still owes the screen a reason
-        errorlog.record("agent-exception", exc, turn=run.turn, path=str(path))
+        errorlog.record("agent-exception", masked(f"{type(exc).__name__}: {exc}", hide) if hide else exc,
+                        turn=run.turn, path=str(path))
         # A stop while the process started breaks the start, not the turn.
-        failed = "사람이 멈춤" if run.halt.is_set() else f"{type(exc).__name__}: {exc}"
+        failed = "사람이 멈춤" if run.halt.is_set() else masked(f"{type(exc).__name__}: {exc}", hide)
         run.put({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})
     finally:
         try:
@@ -854,7 +859,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
             remember(path, "assistant", masked(final, hide), error=masked(failed, hide), steps=made,
                      turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
-                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **veiled(meta))
+                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **veil.deep(meta))
             if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
                          handoff=handoff(recall(path), deepseek.of(chat)), provider=deepseek.of(chat))

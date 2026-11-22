@@ -187,29 +187,36 @@ def agent(spec: dict | None) -> tuple[dict, dict]:
 
 def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
     """Why a build turn is refused when what it leaves holds a secret its session carried (`hide`, from `agent`):
-    its answer, every commit since the design commit (the history the pull request pushes), or what it has not
-    committed. Matched in any casing; the refusal names the need, never the value."""
+    its answer, every commit since the design commit with its message and names (the history the pull request
+    pushes), or what it has not committed. Matched in any casing; the refusal names the need, never the value, and
+    a failed read names only what failed: a Git or file error can quote what it read."""
 
     if not hide:
         return ""
+    step = ""
 
     def git(*args: str) -> str:
+        nonlocal step
+        step = f"git {args[0]}"
         done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=120)
         if done.returncode:
-            raise OSError(f"git {args[0]}: {(done.stderr or done.stdout).strip()[-200:]}")
+            raise OSError(done.returncode)
         return done.stdout
+
+    def read(file: Path) -> str:
+        nonlocal step
+        step = "커밋하지 않은 파일 읽기"
+        return file.read_bytes().decode("utf-8", "ignore") if file.is_file() else ""
 
     base = spec["oneshot"].get("design_head")
     try:   # a tree that cannot be read is refused, never taken as clean
         # ponytail: text diffs and untracked text only; a secret inside a committed binary is not seen
         untracked = [path / f for f in git("ls-files", "--others", "--exclude-standard", "-z").split("\0") if f]
-        places = {"답": final,
-                  "커밋": (git("log", "-p", "--format=", f"{base}..HEAD") if base else "") + git("diff", "HEAD"),
-                  "커밋하지 않은 파일": "\n".join(f.read_bytes().decode("utf-8", "ignore") for f in untracked
-                                         if f.is_file())}
+        log = git("log", "-p", "--format=%an%n%ae%n%cn%n%ce%n%B", f"{base}..HEAD") if base else ""
+        places = {"답": final, "커밋": log + git("diff", "HEAD"), "커밋하지 않은 파일": "\n".join(map(read, untracked))}
     except (OSError, subprocess.SubprocessError) as exc:
-        return f"비밀 값이 남았는지 확인하지 못했다 — {exc}"
+        return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
     found: dict[str, set[str]] = {}
     for where, text in places.items():
         flat = folded(text)

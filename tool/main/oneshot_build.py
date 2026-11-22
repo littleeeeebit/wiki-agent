@@ -24,6 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
+from common import masked
 from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
@@ -618,7 +619,8 @@ def checked(path: Path, run, spec: dict, final: str):
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
     if getattr(run, "person", False) or stage not in STAGES:
         return None
-    why = oneshot_needs.leaked(path, spec, getattr(run.chat, "hide", None), final)   # before any check reads it
+    hide = getattr(run.chat, "hide", None)
+    why = oneshot_needs.leaked(path, spec, hide, final)   # before any check reads it
     if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
     run.checked = True
@@ -628,8 +630,9 @@ def checked(path: Path, run, spec: dict, final: str):
     except (ValueError, OSError) as exc:
         why = str(exc)
     except Exception as exc:   # an unforeseen failure still stops with a reason, never leaves the stage running
-        oneshot_spec.store(repo).stop("block", f"{type(exc).__name__}: {exc}")
+        oneshot_spec.store(repo).stop("block", masked(f"{type(exc).__name__}: {exc}", hide))
         raise
+    why = masked(why, hide)   # a check's reason can quote what the turn wrote: shown, kept and sent as each need
     if not why:
         if kind_held(oneshot_spec.spec_of(repo)["oneshot"]):   # the pass left the run at its kind's stop: no next
             return None

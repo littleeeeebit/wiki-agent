@@ -440,7 +440,23 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     assert needs.leaked(at_r1, spec(), {}, value) == ""   # a session that carried no secret is never checked
     head = spec()["oneshot"]["design_head"]
     oneshot_spec.saved("budget", oneshot={"design_head": "f" * 40})   # a history git cannot read is never clean
-    assert needs.leaked(at_r1, spec(), hide, "끝냈다").startswith("비밀 값이 남았는지 확인하지 못했다 — git log")
+    failed = needs.leaked(at_r1, spec(), hide, "끝냈다")   # named by what failed, never by Git's own words
+    assert failed == "비밀 값이 남았는지 확인하지 못했다 — git log 이(가) 실패했다 (OSError)"
+    oneshot_spec.saved("budget", oneshot={"design_head": git("rev-parse", "HEAD")})
+    git("commit", "--allow-empty", "-m", f"Use {value.upper()} for the call")   # the message is pushed too
+    assert "커밋" in needs.leaked(at_r1, spec(), hide, "끝냈다")
+    oneshot_spec.saved("budget", oneshot={"design_head": git("rev-parse", "HEAD")})
+    # A stage check whose reason quotes the value sends it on as its need.
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "attempts": 0})
+    quoted = []
+    monkeypatch.setattr(build, "send", lambda repo, stage, text: quoted.append(text))
+    monkeypatch.setitem(build.STAGES, "build", (lambda *a: f"게이트 실패 — {value}", *build.STAGES["build"][1:]))
+    notes = []
+    run = SimpleNamespace(halt=threading.Event(), put=notes.append, person=False,
+                          chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
+    build.checked(at_r1, run, spec(), "끝냈다")()
+    said = json.dumps([quoted, notes], ensure_ascii=False)
+    assert "게이트 실패 — [N1]" in quoted[0] and value.lower() not in said.lower()
     oneshot_spec.saved("budget", oneshot={"design_head": head})
     # The stage's own check never reads a refused answer: the turn goes back with the need named.
     oneshot_spec.saved("budget", oneshot={"stage": "build", "attempts": 0})
@@ -456,7 +472,14 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
 
 def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_answer_as_given(tmp_path, monkeypatch):
     value = f"key-{uuid.uuid4().hex}"
+    command = {"tool": "commandExecution", "item_id": "c1"}
     events = [Event("tool", f"curl -H 'x-key: {value}'", {"tool": "Bash", "diff": f"+KEY={value}"}, "w"),
+              # A value split across parts of one text, and inside an approval's structured input.
+              Event("delta", f"키는 {value[:6]}", {}, "w"), Event("delta", value[6:], {}, "w"),
+              Event("tool", f"out {value[:9]}", command, "w"), Event("tool", f"{value[9:]} end", command, "w"),
+              Event("approval", "묻는다", {"id": "q1", "tool": "AskUserQuestion",
+                                          "input": {"questions": [{"question": f"{value} 를 쓸까?"}]}}, "w"),
+              Event("delta", f" 이고 {value[:3]}", {}, "w"),   # a tail that could start the value, then the end
               Event("done", f"끝냈다 — {value}", {"error": False}, "w")]
     chat = SimpleNamespace(id="w", parent_id=None, is_codex=False, model="opus", path=tmp_path,
                            hide={value: "[N1]"}, say=lambda *_: iter(events))
@@ -470,3 +493,6 @@ def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_
     assert checked == [f"끝냈다 — {value}"]   # the leak check sees the value, to refuse it
     kept = json.dumps([run.events, recorded], ensure_ascii=False, default=str)
     assert value not in kept and "x-key: [N1]" in kept and "+KEY=[N1]" in kept and "끝냈다 — [N1]" in kept
+    assert value[6:] not in kept and value[9:] not in kept and "[N1] 를 쓸까?" in kept
+    shown = lambda kind: "".join(e["text"] for e in run.events if e["kind"] == kind and e["meta"].get("item_id") in (None, "c1"))  # noqa: E731
+    assert shown("delta") == f"키는 [N1] 이고 {value[:3]}" and "out [N1] end" in shown("tool")
