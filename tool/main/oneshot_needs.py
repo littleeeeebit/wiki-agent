@@ -26,7 +26,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from common import folded
+from common import folded, overlaps
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
 from .oneshot_spec import VIEWS, idle, saved, spec_of, view
@@ -367,6 +367,8 @@ def give(repo: str, nid: str, body: Given) -> dict:
         if n["kind"] == "secret":
             if not value or len(value.encode("utf-16-le")) > MAX_SECRET:
                 raise HTTPException(400, f"값이 비었거나 너무 길다 — 자격 증명 관리자는 {MAX_SECRET}바이트까지 담는다")
+            if overlaps(value, [f"[{i}]" for i, _ in secret_needs(spec_of(repo))]):   # see `common.overlaps`
+                raise HTTPException(400, "값이 [N1] 같은 가림 표시와 겹쳐 가릴 수 없다 — 다른 값을 쓴다")
             stored(repo, n["env"], value)
             return view(spec_of(repo))
         if n["kind"] == "account":

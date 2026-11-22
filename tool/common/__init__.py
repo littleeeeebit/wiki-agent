@@ -107,16 +107,24 @@ def masked(text: str, hide: dict[str, str] | None) -> str:
     return "".join(out + [text[last:]])
 
 
+def overlaps(value: str, labels) -> bool:
+    """Whether `value` could lie inside one of `labels`, hold one, or run into one from either side, read as `masked`
+    reads (`folded`). Such a value cannot be masked by that label, and masking twice could change what masking once
+    showed. No other value can be found in `masked`'s output that it did not leave there, so a second pass is a no-op."""
+
+    v = folded(value)
+    return any(v in f or f in v or any(v.startswith(f[i:]) or v.endswith(f[:i]) for i in range(1, len(f)))
+               for f in map(folded, labels))
+
+
 def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
     """Where `masked` puts each label in `text`, as `(start, end, label)` in order, none overlapping."""
     folds = _folds(text)
     flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
     taken, chosen = bytearray(len(text)), []
-    # A value inside a label already there is left: masking twice is masking once.
-    labels = [(m.start(), m.end()) for label in {*hide.values()} if label for m in re.finditer(re.escape(label), text)]
 
     def claim(start: int, end: int, label: str) -> None:
-        if not any(taken[start:end]) and not any(s <= start and end <= e for s, e in labels):
+        if not any(taken[start:end]):
             taken[start:end] = b"\x01" * (end - start)
             chosen.append((start, end, label))
 
@@ -140,8 +148,8 @@ class Veil:
     # The handles at the top of an event or a record row, kept as they are: an approval is answered by its `id` as
     # the screen got it, and a conversation resumes by its `session_id`.
     IDS = frozenset({"id", "request", "item_id", "session_id", "parent_id", "turn"})
-    # The tags the screen and the record dispatch on, kept wherever they are: constants of this code, so a provider's
-    # own tool name, which is none of them, is masked like any text.
+    # The tags the screen and the record dispatch on, kept only as a `tool` field: constants of this code, so a
+    # provider's own tool name, which is none of them, and any other field that spells one are masked like any text.
     TAGS = frozenset({"AskUserQuestion", "requestUserInput", "commandExecution", "command_execution", "tool_result"})
 
     def __init__(self, hide: dict[str, str] | None):
@@ -153,28 +161,36 @@ class Veil:
         if not self.hide:
             return value
         if isinstance(value, str):
-            return value if value in self.TAGS else masked(value, self.hide)
+            return masked(value, self.hide)
         if isinstance(value, dict):
-            return {k: self.deep(v) for k, v in value.items()}
+            return {k: v if k == "tool" and v in self.TAGS else self.deep(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [self.deep(v) for v in value]
         return value
 
     def meta(self, meta: dict) -> dict:
         """An event's meta, every string in it masked but the server's own handles at its top."""
-        return {k: v if k in self.IDS and isinstance(v, str) else self.deep(v) for k, v in meta.items()}
-
-    def picks(self, meta: dict) -> list[dict[str, str]]:
-        """An asked question's option labels, as shown → as asked, one map per question."""
-        return [{masked(o["label"], self.hide): o["label"] for o in q.get("options") or []
-                 if isinstance(o, dict) and isinstance(o.get("label"), str)}
-                for q in (meta.get("input") or {}).get("questions") or [] if isinstance(q, dict)]
+        return {k: v if (k in self.IDS and isinstance(v, str)) or (k == "tool" and v in self.TAGS) else self.deep(v)
+                for k, v in meta.items()}
 
     @staticmethod
-    def chosen(answers: list[str], picks: list[dict[str, str]]) -> list[str]:
-        """Each answer with the options it picked as asked, so a masked label goes back as the agent wrote it."""
-        return [p.get(a) or ", ".join(p.get(s, s) for s in a.split(", "))
-                for a, p in zip(answers, [*picks, *[{}] * len(answers)])]
+    def options(meta: dict) -> list[list]:
+        """An asked question's option labels as asked, one list per question."""
+        return [[o.get("label") if isinstance(o, dict) else None for o in q.get("options") or []]
+                if isinstance(q, dict) else [] for q in (meta.get("input") or {}).get("questions") or []]
+
+    @staticmethod
+    def chosen(answers: list[str], picks: list | None, options: list[list]) -> list[str]:
+        """Each answer: picked options by their indices, as asked and in the screen's `, ` join; typed text as typed.
+        An index the question does not have raises `ValueError`."""
+        out = []
+        for i, a in enumerate(answers):
+            p = (picks or [])[i] if i < len(picks or []) else None
+            if p and not all(isinstance(j, int) and 0 <= j < len(row := options[i] if i < len(options) else [])
+                             and isinstance(row[j], str) for j in p):
+                raise ValueError("고른 선택지가 그 질문에 없다")
+            out.append(", ".join(options[i][j] for j in p) if p else a)
+        return out
 
     def stream(self, key, chunk: str, meta: dict) -> str:
         """What of `key`'s text can be shown now, `chunk` added: all but a tail some value starts with."""

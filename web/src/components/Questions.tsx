@@ -19,7 +19,7 @@ export function Questions({ questions, korean, disabled, onSubmit, onDecline, al
   questions: Asked[]
   korean: boolean
   disabled: boolean
-  onSubmit: (answers: string[]) => void
+  onSubmit: (answers: string[], picks: (number[] | null)[]) => void
   onDecline?: () => void
   allowCustom?: boolean
 }) {
@@ -33,11 +33,14 @@ export function Questions({ questions, korean, disabled, onSubmit, onDecline, al
   const translated = questions.map((q) => ({ ...q, header: shown[at++], question: shown[at++],
     options: (q.options ?? []).map((o) => ({ ...o, label: shown[at++], description: shown[at++], preview: shown[at++] })) }))
   const answers = questions.map((_, i) => typed[i].trim() || picked[i].join(', '))
+  // Picks by index: the server sends the options as asked, even where the screen got them masked.
+  const picks = questions.map((q, i) => typed[i].trim() ? null
+    : picked[i].map((label) => (q.options ?? []).findIndex((o) => o.label === label)))
   const count = answers.filter(Boolean).length
   return (
     <form className="question-form space-y-6" onSubmit={(e) => {
       e.preventDefault()
-      if (!disabled && count === questions.length && count > 0) onSubmit(answers)
+      if (!disabled && count === questions.length && count > 0) onSubmit(answers, picks)
     }}>
       {questions.length > 1 && <nav aria-label="질문 챕터" className="flex flex-wrap gap-2">
         {translated.map((q, i) => <a key={i} href={`#${id}-${i}`} className="rounded-md border border-border px-3 py-2 text-[14px] hover:bg-secondary">

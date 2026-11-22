@@ -125,7 +125,7 @@ function Log({ path }: { path: string }) {
       ) : (
         <div key={t.key} className="rounded-md border border-border bg-card px-3 py-2.5">
           <Reply turn={t} on={mode !== 'off'} progressOn={mode === 'full'} onPeek={() => {}}
-            onAnswer={(turn, id, allow, scope, answers) => work.answer(path, turn, id, allow, scope, answers)} />
+            onAnswer={(turn, id, allow, scope, answers, picks) => work.answer(path, turn, id, allow, scope, answers, picks)} />
         </div>
       ))}
       <div ref={end} />

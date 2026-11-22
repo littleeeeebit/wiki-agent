@@ -21,7 +21,7 @@ import pytest
 from fastapi import HTTPException
 
 from agent.chat_session import Event
-from common import Veil, host, masked
+from common import Veil, host, masked, overlaps
 
 from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
     oneshot_sheet as sheet, oneshot_spec, release, specs, work
@@ -189,6 +189,9 @@ def test_a_need_given_wrong_is_refused_naming_nothing_typed_and_nothing_is_kept(
 def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     give("N1", value="k" * 1280)
     assert release.secret_read(needs.name("budget", ENV)) == "k" * 1280
+    with pytest.raises(HTTPException, match="가림 표시와 겹쳐") as e:   # a value no label can mask
+        give("N1", value="n1")
+    assert e.value.status_code == 400 and release.secret_read(needs.name("budget", ENV)) == "k" * 1280
 
 
 def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
@@ -599,16 +602,57 @@ def test_every_event_a_turn_puts_is_masked_but_the_tags_the_screen_dispatches_on
     assert [logged, faults, run.events[-1]["text"]] == [["push failed: [N1]"], ["push failed: [N1]"], "push failed: [N1]"]
 
 
-def test_tags_handles_and_labels_survive_masking_and_a_picked_option_goes_back_as_asked():
-    veil = Veil({"Ask": "[N1]", "N": "[N2]", "ab": "[N3]"})
-    meta = {"tool": "AskUserQuestion", "session_id": "ab-1", "input": {"tool": "mcp__Ask", "questions": [
-        {"question": "Ask?", "options": [{"label": "Ask me"}, {"label": "Later"}]}]}}
+def test_only_a_tool_field_keeps_its_tag_and_label_shaped_text_is_still_masked():
+    veil = Veil({"AskUserQuestion": "[N1]", "N2": "[N2]"})
+    meta = {"tool": "AskUserQuestion", "session_id": "N2-1", "answers": ["AskUserQuestion"],
+            "input": {"tool": "AskUserQuestion", "steps": [{"tool": "mcp__AskUserQuestion", "text": "AskUserQuestion"}]}}
     shown = veil.meta(meta)
-    assert shown["tool"] == "AskUserQuestion" and shown["session_id"] == "ab-1"   # what the screen and resume use
-    assert shown["input"]["tool"] == "mcp__[N1]"   # a provider's own tool name is text
-    assert masked(masked("Ask N", veil.hide), veil.hide) == masked("Ask N", veil.hide) == "[N1] [N2]"   # once
-    picks = veil.picks(meta)
-    assert Veil.chosen(["[N1] me, Later"], picks) == ["Ask me, Later"] and Veil.chosen(["typed"], picks) == ["typed"]
+    assert shown["tool"] == shown["input"]["tool"] == "AskUserQuestion" and shown["session_id"] == "N2-1"
+    assert shown["answers"] == ["[N1]"] and shown["input"]["steps"] == [{"tool": "mcp__[N1]", "text": "[N1]"}]
+    assert masked("see [N2]", veil.hide) == "see [[N2]]"   # what the text spells never stands for the masker's own
+
+
+def test_a_value_that_can_meet_a_label_is_refused_and_any_other_is_masked_once():
+    labels = ["[N1]", "[N2]"]
+    assert all(overlaps(v, labels) for v in ("N2", "n1", "1", "1]x", "x[N", "a[n2]b", "]"))
+    assert not any(overlaps(v, labels) for v in ("1234", "N1x", "key-abc", "ab]c"))
+    hide = {"abc1": "[N1]", "N1x": "[N2]"}
+    once = masked("abc1N1x and N1X", hide)
+    assert once == "[N1][N2] and [N2]" and masked(once, hide) == once
+
+
+def test_a_picked_option_goes_back_as_asked_by_index_and_typed_text_as_typed():
+    options = Veil.options({"input": {"questions": [{"question": "?", "options": [{"label": "Ask me"}, {"label": "Later"}]}]}})
+    assert Veil.chosen(["[N3] me, Later"], [[0, 1]], options) == ["Ask me, Later"]
+    assert Veil.chosen(["[N3] me, plus a comment"], [None], options) == ["[N3] me, plus a comment"]
+    with pytest.raises(ValueError):
+        Veil.chosen(["x"], [[5]], options)
+
+
+def test_a_refused_answer_keeps_the_options_for_the_corrected_one(monkeypatch):
+    value = f"key-{uuid.uuid4().hex}"
+    monkeypatch.setattr(work, "feed", work.Feed())
+    monkeypatch.setattr(work, "notice", lambda *a: None)
+
+    class Chat:
+        id, parent_id, hide, sent = "w", None, {value: "[N1]"}, []
+
+        def answer(self, rid, allow, scope, answers):
+            if len(answers) != 1:
+                raise ValueError("질문 1개에 답이 하나씩 있어야 한다")
+            self.sent.append(answers)
+            return True
+
+    chat = Chat()
+    run = work.Run(chat)
+    run.put({"kind": "approval", "text": "묻는다", "meta": {"id": "q", "tool": "AskUserQuestion", "input": {
+        "questions": [{"question": "?", "options": [{"label": f"{value} 로"}]}]}}})
+    ask = dict(path="p", session_id="w", id="q", allow=True)
+    with patch.dict(work._sessions, {"p": chat}), patch.dict(work._runs, {"p": run}):
+        with pytest.raises(HTTPException):
+            work.answer(work.Answer(**ask, answers=["[N1] 로", "more"], picks=[[0], None]))
+        work.answer(work.Answer(**ask, answers=["[N1] 로"], picks=[[0]]))
+    assert chat.sent == [[f"{value} 로"]] and value not in json.dumps(run.events) and not run.asked
 
 
 def test_every_row_of_a_session_holding_secrets_is_masked(at_r1):

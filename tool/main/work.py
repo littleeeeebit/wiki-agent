@@ -505,6 +505,7 @@ class Answer(BaseModel):
     allow: bool
     scope: Literal["once", "session"] = "once"
     answers: list[str] | None = None   # a question's, one per question
+    picks: list[list[int] | None] | None = None   # each question's picked options by index; `None` where typed
 
 
 def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSession:
@@ -652,7 +653,7 @@ class Run:
         self.chat = chat
         self.session_id = chat.id
         self.events: list[dict] = []
-        self.picks: dict[str, list] = {}   # an approval's options by the label shown (`Veil.picks`)
+        self.asked: dict[str, list] = {}   # a question's options as asked (`Veil.options`), until it is answered
         self.done = False
         self.halt = threading.Event()   # set by a stop; the session reads it too
         self.wake = threading.Condition()
@@ -662,7 +663,7 @@ class Run:
     def put(self, payload: dict) -> None:
         if hide := getattr(self.chat, "hide", None):   # every event the screen and the record get, the server's too
             if payload.get("kind") == "approval":
-                self.picks[str((payload.get("meta") or {}).get("id"))] = Veil(hide).picks(payload.get("meta") or {})
+                self.asked[str((payload.get("meta") or {}).get("id"))] = Veil.options(payload.get("meta") or {})
             payload = {**payload, "text": masked(payload.get("text") or "", hide), "meta": Veil(hide).meta(payload.get("meta") or {})}
         if payload.get("kind") == "error" or (payload.get("meta") or {}).get("error"):
             errorlog.record("agent", payload.get("text", "Failed turn"), turn=self.turn, session=self.session_id)
@@ -1165,13 +1166,15 @@ def answer(body: Answer) -> dict:
     # CLI does with it — the record is read from there.
     with run.wake if run else nullcontext():
         try:
-            picks = run.picks.pop(body.id, []) if run else []   # a picked option goes back as asked
-            sent = chat.answer(body.id, body.allow, body.scope, Veil.chosen(body.answers, picks) if body.answers else None)
+            asked = run.asked.get(body.id) if run else None   # a picked option goes back as asked, by its index
+            given = Veil.chosen(body.answers, body.picks, asked) if asked is not None and body.answers else body.answers
+            sent = chat.answer(body.id, body.allow, body.scope, given)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         if not sent:
             raise HTTPException(409, "이미 답했거나, 물은 프로세스가 내려갔다")
         if run:
+            run.asked.pop(body.id, None)   # kept until now: a refused answer can be corrected and sent again
             # Another window, and a reattached one, draw the card as answered.
             run.put({"kind": "answered", "text": "", "meta": {"id": body.id, "allow": body.allow, "by": "person",
                                                               **({"answers": body.answers} if body.answers else {})},

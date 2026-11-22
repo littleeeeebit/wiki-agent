@@ -689,7 +689,7 @@ export function useWork() {
 
   const answer = useCallback(
     async (path: string, turn: Turn, id: string, allow: boolean, scope: 'once' | 'session' = 'once',
-      answers?: string[]) => {
+      answers?: string[], picks?: (number[] | null)[]) => {
       const step = (fn: (s: Extract<Step, { kind: 'approval' }>) => Step) =>
         patch(path, turn.key, (t) => ({
           ...t,
@@ -697,7 +697,7 @@ export function useWork() {
         }))
       step((s) => ({ ...s, sending: true, error: undefined }))
       try {
-        await api.workAnswer({ path, session_id: turn.sessionId ?? '', id, allow, scope, answers })
+        await api.workAnswer({ path, session_id: turn.sessionId ?? '', id, allow, scope, answers, picks })
         step((s) => ({ ...s, sending: false, answer: allow, by: 'person', answers }))
         if (scope === 'session') readRules(path)
       } catch (err) {
