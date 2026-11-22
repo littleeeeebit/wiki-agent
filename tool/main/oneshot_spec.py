@@ -54,14 +54,21 @@ def spec_of(repo: str) -> dict:
 
 
 def saved(repo: str, **fields) -> dict:
-    """Top-level spec fields and `oneshot` fields (`oneshot={...}` merges) written in one save."""
+    """Top-level spec fields and `oneshot` fields (`oneshot={...}` merges) written in one save. Going back from the
+    critique or past it, or dropping the frozen PC build, retires the look: no critique reads its shots again, so
+    their secrets leave memory (`oneshot_front_build.MASKS`)."""
 
     with oneshot._lock:
         spec = spec_of(repo)
-        merged = {**spec["oneshot"], **fields.pop("oneshot", {})}
+        before, changes = spec["oneshot"].get("stage"), fields.pop("oneshot", {})
+        merged = {**spec["oneshot"], **changes}
         spec.update(fields, oneshot=merged)
         specs.save(spec)
-        return spec
+    at = [STAGE_ORDER.index(s) if s in STAGE_ORDER else -1 for s in (before, merged.get("stage"))]
+    if 0 <= at[1] < STAGE_ORDER.index("critique") <= at[0] or changes.get("desktop_build", ()) is None:
+        from . import oneshot_front_build   # it imports this module
+        oneshot_front_build.MASKS.pop(repo, None)
+    return spec
 
 
 # -- S2 the spec conversation --------------------------------------------------------

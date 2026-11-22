@@ -224,8 +224,9 @@ critic writes, its findings and the reason it stopped, is kept with `[N1]`
 in each secret's place, from the first write on (`oneshot.turned` takes
 `hide`). The mask is the one the look's web app was started with
 (`oneshot_front_build.MASKS`), held in memory only. It is released once no
-critique reads those shots again, whether R3 opens or the fixes go back to
-the builder. A server started since has none, and a run with a secret takes
+critique reads those shots again: R3 opens, the run saves itself back to a
+stage before the critique, or it drops its frozen PC build. A server started
+since has none, and a run with a secret takes
 those shots again before any critique.
 
 11b1 stops there. The build agent's own shell does not have the secrets yet,

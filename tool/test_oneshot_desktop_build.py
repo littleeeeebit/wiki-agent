@@ -394,8 +394,10 @@ def test_a_frozen_build_whose_copy_is_gone_or_whose_head_moved_is_built_again(pc
         write(pc_build, "strings.txt", "번역 끄기")
         git(pc_build, "commit", "-am", "moved on")
     oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "critique", "detail": "x"}})
+    front_build.MASKS["budget"] = (1, {"key-9f2": "[N1]"})   # the look's, kept for `[재개]` on its shots
     oneshot_spec.recover()   # held at the critique with nothing to hold: back to the build, resumable
     assert not o()["desktop_build"] and o()["stage"] == "build-front" and not oneshot_profile.held(o())
+    assert "budget" not in front_build.MASKS   # those shots are never critiqued: their secrets leave memory
     assert o()["stopped"]["reason"] == "restart" and "다시 빌드한다" in o()["stopped"]["detail"]
 
 
