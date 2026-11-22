@@ -621,23 +621,16 @@ def start(repo: str, body: Start) -> dict:
                                                      "working": "build", "stopped": None})
             text = fixing(spec)
             then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
-        else:
+        else:   # the same lock scope decides and launches: no other request's result slips in between
+            if missing := [x["id"] for x in plan["inputs"] if not has(spec, x)]:
+                raise HTTPException(400, f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")
+            if last and last["head"] == o["built_head"] and last["status"] == "owner" and not last.get("owner"):
+                raise HTTPException(409, "이 빌드의 실측이 판정을 기다린다 — 듣고 승인하거나 거절한다")
+            HALTS[repo] = Halted()   # before the worker: a stop pressed as it starts is kept
+            oneshot.start_worker(oneshot_spec.store(repo), "measure", measure, (repo,), {})
             then = None
-    if then:
+    if then:   # the build agent's turn goes after the lock is let go
         then()
-        return oneshot_spec.view(oneshot_spec.spec_of(repo))
-    with oneshot._lock:
-        spec, plan, _ = measuring(repo)
-        o = spec["oneshot"]
-        if body.head != o.get("built_head"):
-            raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
-        if missing := [x["id"] for x in plan["inputs"] if not has(spec, x)]:
-            raise HTTPException(400, f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")
-        last = (o.get("measures") or [None])[-1]
-        if last and last["head"] == o["built_head"] and last["status"] == "owner" and not last.get("owner"):
-            raise HTTPException(409, "이 빌드의 실측이 판정을 기다린다 — 듣고 승인하거나 거절한다")
-        HALTS[repo] = Halted()   # before the worker: a stop pressed as it starts is kept
-        oneshot.start_worker(oneshot_spec.store(repo), "measure", measure, (repo,), {})
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 

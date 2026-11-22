@@ -26,7 +26,8 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
   const last = m.runs.at(-1)
   const current = last && last.head === m.head ? last : undefined
   const waiting = current?.status === 'owner' && !current.owner
-  const missing = m.plan?.inputs.filter((x) => !x.given) ?? []
+  const failed = current?.status === 'failed'   // stopped at the cap: the button hands it to the build agent, no input needed
+  const missing = failed ? [] : m.plan?.inputs.filter((x) => !x.given) ?? []
   return (
     <div className={PAD}>
       <header className="flex flex-col gap-1">
@@ -65,7 +66,7 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
           <Metrics run={current} plan={m.plan.metrics} />
           <div className="flex flex-wrap items-center gap-3">
             <Btn tone="wait" disabled={busy || !!view.working || missing.length > 0 || waiting}
-              onClick={() => void act(() => api.measureStart(repo, m.head))}>실측 시작</Btn>
+              onClick={() => void act(() => api.measureStart(repo, m.head))}>{failed ? '빌드 에이전트에게 고치게 하기' : '실측 시작'}</Btn>
             {missing.length > 0 && <span className="text-wait">아직 넣지 않은 값: {missing.map((x) => x.id).join(', ')}</span>}
           </div>
         </section>

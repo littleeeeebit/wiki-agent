@@ -149,6 +149,15 @@ def test_a_failure_at_the_round_cap_goes_to_the_build_agent_when_the_owner_start
     assert len(o()["measures"]) == runs, "the failed HEAD is never measured again as it is"
     assert o()["stage"] == "build" and o()["fix"] == "measure" and o()["measure_fails"] == 0 and not o()["stopped"]
     assert sent[-1][1] == "build" and "total_ok=False" in sent[-1][2]
+    # Back at the measurement with that failure still last and an input taken back: the one lock scope that would
+    # launch a worker reads the failure first, so Start hands it to the build agent and measures nothing.
+    oneshot_spec.saved("budget", oneshot={"stage": "measure", "working": None, "stopped": None})
+    measure.take_back("budget", "M1", head=o()["built_head"], env="BUDGET_URL", kind="text")   # an input taken back
+    started = []
+    with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)), \
+            patch.object(measure.oneshot, "start_worker", lambda *a, **k: started.append(a)):
+        measure.start("budget", measure.Start(head=o()["built_head"]))
+    assert not started and o()["stage"] == "build"
 
 
 def test_a_failed_measurement_or_a_refusal_goes_back_to_the_build_agent_which_must_commit(at_measure):

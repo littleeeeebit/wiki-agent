@@ -216,7 +216,9 @@ back to the build agent from the same button. A failed metric, a missing report 
 that does not come up sends the result back to the build agent. At the
 review's round cap it stops for the owner instead; their [실측 시작] then
 sends that failure to the build agent with a fresh budget, and never
-measures the failed HEAD again as it is. An input the
+measures the failed HEAD again as it is. That choice and the worker's
+launch are made in one lock scope. The button reads "빌드 에이전트에게
+고치게 하기" there and needs no input, since nothing is measured. An input the
 script calls wrong stops for the owner, who fixes it and presses
 [실측 시작] again. A run of passed metrics waits for the owner. They listen to
 the clips, then approve, which comments the record on the pull request and
