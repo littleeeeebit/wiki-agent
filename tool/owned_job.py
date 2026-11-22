@@ -75,7 +75,21 @@ def _kernel():
     k.GetExitCodeProcess.argtypes = (w.HANDLE, ctypes.POINTER(w.DWORD))
     k.CloseHandle.argtypes = (w.HANDLE,)
     k.GetTickCount64.restype = ctypes.c_uint64
+    k.OpenJobObjectW.argtypes, k.OpenJobObjectW.restype = (w.DWORD, w.BOOL, w.LPCWSTR), w.HANDLE
     return k
+
+
+def present(name: str) -> bool | None:
+    """Whether the job named `name` still exists. Windows keeps a job until its last handle is closed and every
+    process in it has exited, whether or not anyone followed or could read that process, so False proves them
+    all gone. None when Windows answers anything but that no such job exists."""
+
+    k = _kernel()
+    job = k.OpenJobObjectW(0x0004, False, name)   # JOB_OBJECT_QUERY
+    if job:
+        k.CloseHandle(job)
+        return True
+    return False if ctypes.get_last_error() == 2 else None   # ERROR_FILE_NOT_FOUND
 
 
 class Job:

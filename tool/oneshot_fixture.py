@@ -40,12 +40,13 @@ class STYLESTRUCT(ctypes.Structure):
     _fields_ = [("old", wintypes.DWORD), ("new", wintypes.DWORD)]
 
 
-def guarded(user32, frame: int):
-    """The frame's window procedure wrapped so that it keeps its place, size, topmost flag, visibility, title and
-    styles: each request for a change is turned into none. What comes without a request (a minimize by another
-    process's `ShowWindow`, a move, hide or lost topmost flag sent with `SWP_NOSENDCHANGING`) is put back as soon
-    as Windows reports it, without activation; until then the helper finds the fixture changed or its marks
-    missing. Its order among other topmost windows is not kept. The callback, which must outlive the window."""
+def guarded(user32, frame: int, placed: wintypes.RECT):
+    """The frame's window procedure wrapped so that it keeps its place (`placed`, the frame as the caller read
+    it), size, topmost flag, visibility, title and styles: each request for a change is turned into none. What
+    comes without a request (a minimize by another process's `ShowWindow`, a move, hide or lost topmost flag sent
+    with `SWP_NOSENDCHANGING`) is put back as soon as Windows reports it, without activation; until then the
+    helper finds the fixture changed or its marks missing. Its order among other topmost windows is not kept. The
+    callback, which must outlive the window; SystemExit when Windows would not install it."""
 
     user32.SetWindowLongPtrW.restype = ctypes.c_void_p
     user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
@@ -53,8 +54,6 @@ def guarded(user32, frame: int):
     user32.CallWindowProcW.argtypes = [ctypes.c_void_p, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
     user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                                     ctypes.c_int, ctypes.c_uint]
-    placed = wintypes.RECT()
-    user32.GetWindowRect(frame, ctypes.byref(placed))
     before = []
 
     def undone(hwnd) -> None:
@@ -85,6 +84,8 @@ def guarded(user32, frame: int):
 
     callback = WNDPROC(proc)
     before.append(user32.SetWindowLongPtrW(frame, GWLP_WNDPROC, ctypes.cast(callback, ctypes.c_void_p)))
+    if not before[0]:   # Tk's own procedure is never null: nothing was installed
+        raise SystemExit("the fixture could not guard itself")
     return callback
 
 
@@ -156,7 +157,7 @@ def main(argv: list[str] | None = None) -> None:
         if not user32.SetWindowRgn(frame, shape, True):
             gdi32.DeleteObject(shape)
             raise SystemExit("the fixture could not take its shape")
-        keep.append(guarded(user32, frame))   # placed, shaped, styled and titled: from here on it refuses changes
+        keep.append(guarded(user32, frame, placed))   # placed, shaped, styled and titled: it refuses changes
         # What it says is read again once the guard holds it: a change before then, setting the region included,
         # ends it before it is ready.
         def at(box, origin, placed) -> tuple:

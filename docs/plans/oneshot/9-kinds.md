@@ -458,22 +458,26 @@ order:
    through Tk, whose `deiconify` asks for focus. It reports its handle and
    its client area on screen. Its binding holds its title, its window
    rectangle and its process. It says it is ready only once it is shown,
-   it has read where it is, and its window region is set, all read again
-   once its guard holds it. A show, read or region that fails, or one
-   that changed before the guard held it, ends it first, so the round
-   stops on its own setup and fails no app. Once the fixture is up and
-   bound, the check ends its job, its exit proven, before the next check
-   starts. One round runs on the owner's desktop at a time, whichever
-   repository it is for, from its look's start through its cleanup. Every
-   process the round's jobs held that still runs once its look ends,
-   whatever its cleanup reported, keeps every later round off the desktop
-   until it is gone; its jobs end with the server, so a restart starts
+   it has read where it is, its window region is set and its guard is
+   installed on that same frame, all read again once the guard holds it.
+   A show, read, region or guard that fails, or a state that changed
+   before the guard held it, ends it first, so the round stops on its own
+   setup and fails no app. Once the fixture is up and bound, the check
+   ends its job, its exit proven, before the next check starts. One round
+   runs on the owner's desktop at a time, whichever repository it is for,
+   from its look's start through its cleanup. Every job the round started
+   is kept by name once its look ends, whatever its cleanup reported.
+   Each keeps every later round off the desktop until Windows has no job
+   by that name: a job lasts until every process in it exited, whether or
+   not the round followed or could read that process. An unknown answer
+   keeps it held. The jobs end with the server, so a restart starts
    clear. Before each fixture starts, no top-level window on the desktop
    may have the fixture's title. Once it is bound, its own must be the
-   only one. Once a round has the desktop, and again before each fixture
-   and each app starts, it confirms the approved HEAD and the frozen
-   build. A moved HEAD goes back to the build. A changed freeze with the
-   worktree unchanged goes back to approval.
+   only one. The round confirms the approved HEAD and the frozen build
+   once it has the desktop, before each fixture starts, and with each
+   app's process made but not yet run. A moved HEAD goes back to the
+   build. A changed freeze with the worktree unchanged goes back to
+   approval.
 2. The frozen app from a fresh start of the check's scenario, driven without
    a shot (`shoot: false`), so the driver reads and acts but never calls
    `PrintWindow`.

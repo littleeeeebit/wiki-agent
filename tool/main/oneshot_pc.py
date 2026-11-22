@@ -40,17 +40,12 @@ JUDGE_PROMPT = (ROOT / "tool/prompts/oneshot-owner-judge.md").read_text(encoding
 MAX_REPORT = 1 << 20   # bytes of an app's report file the round reads
 _halts: dict[str, threading.Event] = {}
 # One round on the owner's desktop at a time, whichever repository it is for, from its look's start through its
-# cleanup. Every process a round's jobs held that still runs once its look ends, whatever its cleanup proved, is
-# kept (`_left`, by identity) and keeps every later round off the desktop until it is gone. The jobs end with the
-# server (KILL_ON_JOB_CLOSE), so a restart starts clear.
+# cleanup. Every job a round started is kept by name (`_left`) once its look ends, whatever its cleanup proved,
+# and keeps every later round off the desktop until Windows proves it gone (`owned_job.present`): a job lasts
+# until every process in it exited, followed or not. The jobs end with the server (KILL_ON_JOB_CLOSE), so a
+# restart starts clear.
 _desk = threading.Lock()
-_left: list[dict] = []
-
-
-def _running(members) -> list[dict]:
-    import native_process
-
-    return [m for m in members if native_process.same(m, native_process.identity(m["pid"]))]
+_left: list[str] = []
 
 
 class Stale(Exception):
@@ -237,7 +232,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
     capture copied into `keep` for the critic. Once the fixture is up and bound, its job is ended, its exit proven,
     before this returns or raises, so the next check's fixture is the only window by that title. A fixture that
     never came up or could not be bound raises, and the round's look ends it with the rest. `standing` raises
-    Stale once the approved build no longer stands: called before the fixture starts and again before the app."""
+    Stale once the approved build no longer stands: called before the fixture starts, and by `runs` with the app's
+    process made but not yet run."""
 
     import owner_round
 
@@ -285,7 +281,6 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
         return {"status": "judge", "file": str(file), "shows": seen["shows"], "page": page}
 
     try:
-        standing()   # its HEAD or its frozen copy changed while the fixture came up: the app never starts
         report = runs.drive(scenario["screen"], scenario["state"], steps, then)
     finally:   # each check's fixture gone, its end proven, before the next one shows: one window by that title
         owner_round.ended(session, fixture_key, "고정 창을")
@@ -295,11 +290,12 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
 def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
     """Every check the approval lets run, each by `one` in the round's own look on the owner's desktop, whose
     cleanup is proven on every exit (RuntimeError when it is not). One round at a time across repositories
-    (`_desk`), from the look's start through its cleanup, and none while an earlier one's processes still run
-    (`_left`); the build is confirmed again once the round has the desktop, and before each fixture and each app
-    starts (Stale when it no longer stands)."""
+    (`_desk`), from the look's start through its cleanup, and none while an earlier one's jobs are not proven gone
+    (`_left`); the build is confirmed again once the round has the desktop, before each fixture starts, and with
+    each app's process made but not yet run (Stale when it no longer stands)."""
 
     import desktop_session
+    import owned_job
     import owner_round
 
     build, skip = o["desktop_build"], set(unrun(o))
@@ -322,13 +318,13 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
             raise Stale("승인한 회차가 지금 빌드와 다르다 — 다시 승인한다")
 
     try:
-        _left[:] = _running(_left)   # an earlier round's processes, any still running
+        _left[:] = [name for name in _left if owned_job.present(name) is not False]   # unknown stays held
         if _left:
-            raise RuntimeError("앞선 주인 화면 회차의 프로세스가 아직 남아 있다 — pid "
-                               + ", ".join(str(m["pid"]) for m in _left))
+            raise RuntimeError("앞선 주인 화면 회차의 작업이 끝났는지 확인되지 않았다 — " + ", ".join(_left))
         standing()
         with desktop_session.look(looks, f"round-{uuid.uuid4().hex[:12]}", owned=False) as session:
-            runs = desktop_look.Launches(session, build, desktop_look.size(o["profile"]), stopped, shoot=False)
+            runs = desktop_look.Launches(session, build, desktop_look.size(o["profile"]), stopped, shoot=False,
+                                         ready=standing)
             for n, x in enumerate(oneshot_desktop.owner_scripted(o), 1):
                 if x["id"] not in skip:
                     runs.due()
@@ -337,8 +333,8 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
     except desktop_session.Refused as exc:
         raise RuntimeError(f"주인 화면 회차를 정리하지 못했다 — {exc}") from exc
     finally:
-        if session is not None:   # read whatever the cleanup proved: what still runs holds the desktop
-            _left.extend(_running(m for job in session.record["jobs"].values() for m in job["members"]))
+        if session is not None:   # whatever the cleanup proved: the next round asks Windows itself
+            _left.extend(job["name"] for job in session.record["jobs"].values())
         _desk.release()
     runs.due()
     return results

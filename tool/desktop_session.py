@@ -258,10 +258,11 @@ class Look:
         save(self.folder, self.record)
         return self.folder / name
 
-    def start(self, key: str, argv: list[str], cwd, extra: dict | None = None, halt=None) -> dict:
+    def start(self, key: str, argv: list[str], cwd, extra: dict | None = None, halt=None, ready=None) -> dict:
         """Start `argv` in a job of its own on the look's desktop, its data folders inside a disposable folder
         the record names first, its output in `evidence/<key>.log`. The root's identity. A `halt` set by the
-        time the suspended root is recorded ends it before it runs (`Halted`)."""
+        time the suspended root is recorded ends it before it runs (`Halted`), as does whatever `ready`, called
+        then, raises."""
 
         self._open_for_more()
         self.check_key(key)
@@ -289,6 +290,8 @@ class Look:
             save(self.folder, self.record)
             if halt is not None and halt.is_set():   # still suspended: the job rolls it back, never run
                 raise Halted(f"halted before {argv[0]} ran")
+            if ready is not None:
+                ready()
 
         with (self.folder / "evidence" / f"{key}.log").open("ab") as log:
             return job.start(argv, cwd, env, self.record["desktop"], log, before_resume=recorded)

@@ -134,9 +134,10 @@ def mine(report: dict, state: dict) -> set[int]:
 class Launches:
     """The frozen build's starts inside one look: each a job of its own, ended before the next starts."""
 
-    def __init__(self, look, build: dict, window: tuple[int, int], stopped, shoot: bool = True):
+    def __init__(self, look, build: dict, window: tuple[int, int], stopped, shoot: bool = True, ready=None):
         self.look, self.build, self.window, self.stopped, self.n = look, build, window, stopped, 0
         self.shoot = shoot   # false on the owner's desktop: no PrintWindow there
+        self.ready = ready   # called with each start's process made but not yet run: raising never runs it
         self.began = time.monotonic()
         # The start and the driver end at once on the owner's stop, and once the whole look is past its deadline:
         # each operation has its own, and this bounds their sum.
@@ -172,7 +173,7 @@ class Launches:
                     if k.upper() not in oneshot_desktop.LOOK_ENV}, "ONESHOT_SCREEN": sid, "ONESHOT_STATE": state}
         report, failed = {}, None
         try:
-            self.look.start(key, argv, folder / launch["cwd"], extra, halt=self.halt)
+            self.look.start(key, argv, folder / launch["cwd"], extra, halt=self.halt, ready=self.ready)
             report = desktop_driver.drive(self.look, key, self.window, steps, settle_ms=SETTLE_MS,
                                           key=f"driver{self.n}", halt=self.halt, shoot=self.shoot)
             if then is not None:

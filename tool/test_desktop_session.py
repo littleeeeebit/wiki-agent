@@ -134,6 +134,24 @@ def test_a_halt_while_the_root_is_recorded_ends_it_before_it_runs(tmp_path, monk
     assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
 
 
+def test_a_start_whose_ready_check_refuses_ends_the_root_before_it_runs(tmp_path):
+    class Moved(Exception):
+        pass
+
+    def ready():
+        raise Moved("the build moved")
+
+    marker = tmp_path / "ran"
+    with desktop_session.look(tmp_path, "ready") as look:
+        with pytest.raises(Moved):
+            look.start("app", python(f"open({str(marker)!r}, 'w').close()"), tmp_path, ready=ready)
+        assert look.record["jobs"]["app"]["root"]   # recorded, suspended, then rolled back
+
+    time.sleep(0.5)
+    record = desktop_session.load(tmp_path / "ready")
+    assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
+
+
 def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("EXTRA", "inherited")   # a setting spelt in another case still replaces it
     with desktop_session.look(tmp_path, "data") as look:

@@ -42,6 +42,19 @@ def settled(job, count):
     return job.members()
 
 
+def test_a_job_is_present_by_its_name_until_its_handles_close_and_every_member_exited(job, tmp_path):
+    started(job, tmp_path, TREE)
+    settled(job, 2)
+    assert owned_job.present(job.name) is True
+    job.end()
+    job.close()
+    deadline = time.monotonic() + 10
+    while owned_job.present(job.name) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert owned_job.present(job.name) is False
+    assert owned_job.present("Local\\wiki-oneshot-never-made") is False
+
+
 def test_the_root_is_in_its_job_before_it_runs_and_every_member_is_proven_gone(job, tmp_path):
     early = []
     root = started(job, tmp_path, TREE, before_resume=lambda identity: early.append(job.members()))

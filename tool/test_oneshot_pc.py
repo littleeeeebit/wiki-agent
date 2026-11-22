@@ -515,59 +515,57 @@ def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_throug
     assert order == ["enter", "cleaned", "enter", "cleaned"] and not pc._desk.locked()
 
 
-def test_a_process_an_earlier_round_left_running_keeps_every_round_off_the_desktop_until_it_is_gone(
-        monkeypatch, tmp_path):
+@pytest.mark.parametrize("answer", [True, None])   # the job still there, or Windows' answer unknown
+def test_a_job_of_an_earlier_round_not_proven_gone_keeps_every_round_off_the_desktop(monkeypatch, tmp_path, answer):
     import contextlib
 
     import desktop_session
-    import native_process
+    import owned_job
 
-    order, unclean, standing, alive = [], [True], [True], {7}
-    app = {"pid": 7, "created": 11, "exe": "c:/build/app.exe"}
+    order, unclean, standing, there, made = [], [True], [True], {"Local\\job-a"}, []
 
     @contextlib.contextmanager
     def look(folder, key, owned):
         order.append(folder.parent.name)
-        yield SimpleNamespace(record={"jobs": {"app1": {"members": [dict(app)]}}})
+        yield SimpleNamespace(record={"jobs": {"app1": {"name": "Local\\job-a", "members": []}}})
         if unclean[0]:
             raise desktop_session.Refused("pid 7 is still running")
 
     record = empty_rounds(monkeypatch, tmp_path, look, lambda: standing[0])
+    monkeypatch.setattr(pc.desktop_look, "Launches", lambda *a, **k: made.append(k) or SimpleNamespace(due=lambda: None))
     monkeypatch.setattr(pc, "_left", [])
-    monkeypatch.setattr(native_process, "identity", lambda pid: dict(app) if pid in alive else None)
+    monkeypatch.setattr(owned_job, "present", lambda name: answer if name in there else False)
     with pytest.raises(RuntimeError, match="정리하지 못했다 — pid 7 is still running"):
         pc.observe("a", record, lambda: False)
-    assert not pc._desk.locked() and pc._left == [app]
-    # Another repository's round stops at once, its look never opened, while that process runs.
-    with pytest.raises(RuntimeError, match="프로세스가 아직 남아 있다 — pid 7"):
+    assert not pc._desk.locked() and pc._left == ["Local\\job-a"] and callable(made[0]["ready"])
+    # Another repository's round stops at once, its look never opened, while that job may still hold a process.
+    with pytest.raises(RuntimeError, match="작업이 끝났는지 확인되지 않았다 — Local\\\\job-a"):
         pc.observe("b", record, lambda: False)
     assert order == ["a"] and not pc._desk.locked()
-    alive.clear()   # it exited: the next round runs, whatever the earlier cleanup reported
+    there.clear()   # Windows has no such job: every process in it exited, whatever the cleanup reported
     unclean[0] = False
-    assert pc.observe("b", record, lambda: False) == {} and pc._left == [] and order == ["a", "b"]
-    alive.add(7)   # a cleanup reported proven with its process still running holds the desktop too
-    pc.observe("b", record, lambda: False)
-    assert pc._left == [app]
-    alive.clear()
+    assert pc.observe("b", record, lambda: False) == {} and order == ["a", "b"]
+    there.add("Local\\job-a")   # a cleanup reported proven with its job still there holds the desktop too
+    with pytest.raises(RuntimeError, match="확인되지 않았다"):
+        pc.observe("b", record, lambda: False)
+    there.clear()
     standing[0] = False   # changed while the round waited: no look opens, and the desktop is free again
     with pytest.raises(pc.Stale):
         pc.observe("a", record, lambda: False)
-    assert order == ["a", "b", "b"] and not pc._desk.locked()
+    assert order == ["a", "b"] and not pc._desk.locked()
 
 
-def test_a_build_changed_while_the_fixture_came_up_never_starts_the_app(held, desk):
+def test_a_build_changed_before_a_check_starts_neither_its_fixture_nor_its_app(held, desk, monkeypatch):
     reads, root = desk
-    calls = []
+    monkeypatch.setattr(owner_round, "fixture", lambda *a: pytest.fail("no fixture from a stale build"))
 
-    def standing():   # stands for the fixture's start, no longer for the app's
-        calls.append(len(calls))
-        if len(calls) > 1:
-            raise pc.Stale("승인한 회차가 지금 빌드와 다르다 — 다시 승인한다")
+    def standing():
+        raise pc.Stale("승인한 회차가 지금 빌드와 다르다 — 다시 승인한다")
 
     runs = Runs(driven(), root / "data")
     with pytest.raises(pc.Stale, match="다시 승인한다"):
         pc.one(Session(), runs, 1, REPORT, SCENARIO, "helper.exe", "", root / "keep", standing)
-    assert runs.drove == [] and reads["ended"] == ["fixture1"]   # the fixture still ended, its exit proven
+    assert runs.drove == [] and reads["ended"] == []
 
 
 def test_a_build_changed_while_the_round_waited_goes_back_to_approval(held, monkeypatch):

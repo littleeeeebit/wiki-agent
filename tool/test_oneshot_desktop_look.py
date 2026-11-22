@@ -244,9 +244,11 @@ class Desk:
         (self.folder / name).mkdir(exist_ok=True)
         return self.folder / name
 
-    def start(self, key, argv, cwd, extra=None, halt=None):
+    def start(self, key, argv, cwd, extra=None, halt=None, ready=None):
         if self.refuse:
             raise self.refuse
+        if ready is not None:   # the process made, not yet run
+            ready()
         self.started.append(extra)
         self.jobs[key] = type("Job", (), {"end": lambda job, s: {"clean": self.clean, "reasons": ["pid 9 runs"]}})()
 
@@ -289,6 +291,22 @@ def test_a_start_the_deadline_halts_says_so_and_any_other_halt_is_a_stop(tmp_pat
         monkeypatch.setattr(pc_look, "LOOK_SECONDS", 0)
         with pytest.raises(ValueError, match="0분 안에 끝나지 않았다"):   # the deadline's, after the end is read
             runs.drive("S1", "full", [])
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_a_start_whose_ready_check_refuses_never_runs_and_raises_what_it_raised(tmp_path):
+    class Moved(Exception):
+        pass
+
+    def ready():
+        raise Moved("HEAD moved")
+
+    desk = Desk(tmp_path)
+    runs, driving, kept = launches(tmp_path, desk)
+    runs.ready = ready
+    with driving, kept, pytest.raises(Moved, match="HEAD moved"):
+        runs.drive("S1", "full", [])
+    assert desk.started == []
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
