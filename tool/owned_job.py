@@ -75,21 +75,27 @@ def _kernel():
     k.GetExitCodeProcess.argtypes = (w.HANDLE, ctypes.POINTER(w.DWORD))
     k.CloseHandle.argtypes = (w.HANDLE,)
     k.GetTickCount64.restype = ctypes.c_uint64
-    k.OpenJobObjectW.argtypes, k.OpenJobObjectW.restype = (w.DWORD, w.BOOL, w.LPCWSTR), w.HANDLE
     return k
 
 
-def present(name: str) -> bool | None:
-    """Whether the job named `name` still exists. Windows keeps a job until its last handle is closed and every
-    process in it has exited, whether or not anyone followed or could read that process, so False proves them
-    all gone. None when Windows answers anything but that no such job exists."""
+def active(handle: int, end: bool = False) -> int | None:
+    """How many processes the job `handle` holds are still running, by the job's own count, which includes
+    every process in it, whether or not anyone followed or could read that process. With `end`, Windows is first
+    asked once more to end them. None when the count cannot be read."""
 
     k = _kernel()
-    job = k.OpenJobObjectW(0x0004, False, name)   # JOB_OBJECT_QUERY
-    if job:
-        k.CloseHandle(job)
-        return True
-    return False if ctypes.get_last_error() == 2 else None   # ERROR_FILE_NOT_FOUND
+    if end:
+        k.TerminateJobObject(handle, 1)
+    accounting = _Accounting()
+    if k.QueryInformationJobObject(handle, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None):
+        return accounting.active
+    return None
+
+
+def release(handle: int) -> bool:
+    """Close a handle `Job.kept` gave; closing a job's last handle ends what is still in it."""
+
+    return bool(_kernel().CloseHandle(handle))
 
 
 class Job:
@@ -352,6 +358,15 @@ class Job:
         return (len(getattr(self, "stray", [])) + len(getattr(self, "roots", []))
                 + sum(1 for entry in getattr(self, "joined", []) if entry["handle"])
                 + sum(1 for name in ("port", "job") if getattr(self, name, None)))
+
+    def kept(self) -> int | None:
+        """A handle of its own to this job, which keeps the job and its count readable after `close` (`active`,
+        `release`); None when Windows would not give one."""
+
+        copy, here = w.HANDLE(), self.k.GetCurrentProcess()
+        if self.job and self.k.DuplicateHandle(here, self.job, here, ctypes.byref(copy), 0, False, 2):
+            return copy.value   # DUPLICATE_SAME_ACCESS
+        return None
 
     def close(self) -> None:
         """Close every handle the job holds. A handle Windows will not close stays held, so a later call retries

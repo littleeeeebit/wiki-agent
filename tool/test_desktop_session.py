@@ -7,8 +7,10 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -134,22 +136,38 @@ def test_a_halt_while_the_root_is_recorded_ends_it_before_it_runs(tmp_path, monk
     assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
 
 
-def test_a_start_whose_ready_check_refuses_ends_the_root_before_it_runs(tmp_path):
+@pytest.mark.parametrize("stop", [False, True])   # `ready` refuses, or a stop comes while it reads
+def test_a_start_whose_ready_check_refuses_or_is_stopped_ends_the_root_before_it_runs(tmp_path, stop):
     class Moved(Exception):
         pass
 
+    halt = threading.Event()
+
     def ready():
-        raise Moved("the build moved")
+        if not stop:
+            raise Moved("the build moved")
+        halt.set()
 
     marker = tmp_path / "ran"
     with desktop_session.look(tmp_path, "ready") as look:
-        with pytest.raises(Moved):
-            look.start("app", python(f"open({str(marker)!r}, 'w').close()"), tmp_path, ready=ready)
+        with pytest.raises(desktop_session.Halted if stop else Moved):
+            look.start("app", python(f"open({str(marker)!r}, 'w').close()"), tmp_path, halt=halt, ready=ready)
         assert look.record["jobs"]["app"]["root"]   # recorded, suspended, then rolled back
 
     time.sleep(0.5)
     record = desktop_session.load(tmp_path / "ready")
     assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
+
+
+@pytest.mark.parametrize("owned, clean, kept", [(False, False, {"app": 41}), (False, True, {}), (True, False, {})])
+def test_on_the_owners_desktop_a_job_whose_end_is_not_proven_leaves_a_handle_taken_before_its_close(
+        owned, clean, kept):
+    order = []
+    job = SimpleNamespace(end=lambda s: {"clean": clean, "reasons": [] if clean else ["pid 7 runs"], "members": []},
+                          kept=lambda: order.append("kept") or 41, close=lambda: order.append("closed"))
+    look = SimpleNamespace(owned=owned, unresolved={}, record={"jobs": {"app": {}}}, _learn=lambda key, members: None)
+    desktop_session.Look._ended(look, "app", job, 1)
+    assert look.unresolved == kept and order == (["kept", "closed"] if kept else ["closed"])
 
 
 def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path, monkeypatch):

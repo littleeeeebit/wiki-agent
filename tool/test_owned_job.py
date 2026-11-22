@@ -42,17 +42,21 @@ def settled(job, count):
     return job.members()
 
 
-def test_a_job_is_present_by_its_name_until_its_handles_close_and_every_member_exited(job, tmp_path):
+def test_a_kept_handle_reads_the_jobs_own_count_after_it_closed_and_can_end_it_again(job, tmp_path):
     started(job, tmp_path, TREE)
     settled(job, 2)
-    assert owned_job.present(job.name) is True
-    job.end()
-    job.close()
-    deadline = time.monotonic() + 10
-    while owned_job.present(job.name) and time.monotonic() < deadline:
-        time.sleep(0.1)
-    assert owned_job.present(job.name) is False
-    assert owned_job.present("Local\\wiki-oneshot-never-made") is False
+    kept = job.kept()
+    try:
+        assert owned_job.active(kept) >= 2   # the root and its sleeping child
+        job.close()   # the job's own handles gone: the kept one still holds it, and what runs in it
+        assert owned_job.active(kept) >= 2
+        deadline = time.monotonic() + 10
+        while owned_job.active(kept, end=True) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert owned_job.active(kept) == 0
+    finally:
+        assert owned_job.release(kept)
+    job.ended = True   # ended through the kept handle
 
 
 def test_the_root_is_in_its_job_before_it_runs_and_every_member_is_proven_gone(job, tmp_path):

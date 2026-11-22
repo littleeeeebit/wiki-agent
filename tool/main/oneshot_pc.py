@@ -40,12 +40,22 @@ JUDGE_PROMPT = (ROOT / "tool/prompts/oneshot-owner-judge.md").read_text(encoding
 MAX_REPORT = 1 << 20   # bytes of an app's report file the round reads
 _halts: dict[str, threading.Event] = {}
 # One round on the owner's desktop at a time, whichever repository it is for, from its look's start through its
-# cleanup. Every job a round started is kept by name (`_left`) once its look ends, whatever its cleanup proved,
-# and keeps every later round off the desktop until Windows proves it gone (`owned_job.present`): a job lasts
-# until every process in it exited, followed or not. The jobs end with the server (KILL_ON_JOB_CLOSE), so a
-# restart starts clear.
+# cleanup. Each job whose end a round's look did not prove is held (`_left`, its key and a handle of the server's
+# own, from `Look.unresolved`) and keeps every later round off the desktop. Each admission asks Windows once more
+# to end it and reads the job's own count of running processes, which takes in every process in it, followed or
+# not: zero lets it go. A count it cannot read, or a job Windows gave no handle to, stays held. The handles go
+# with the server, and the jobs with them (KILL_ON_JOB_CLOSE), so a restart starts clear.
 _desk = threading.Lock()
-_left: list[str] = []
+_left: list[tuple[str, int | None]] = []
+
+
+def _settled(handle: int | None) -> bool:
+    import owned_job
+
+    if handle is None or owned_job.active(handle, end=True) != 0:
+        return False
+    owned_job.release(handle)
+    return True
 
 
 class Stale(Exception):
@@ -87,14 +97,17 @@ def at_head(repo: str, head) -> bool:
 
 def confirmed(repo: str, build: dict) -> bool:
     """The frozen build stands, every part of it read: the worktree at its HEAD, its copy there and still what its
-    manifest and identity record. Unlike `oneshot_spec.standing`, a read that fails confirms nothing."""
+    manifest and identity record. Unlike `oneshot_spec.standing`, a read that fails confirms nothing. HEAD is read
+    again last, so it held through every other read."""
 
     if not at_head(repo, build.get("head")) or not oneshot_spec.standing(repo, build):
         return False
     try:
-        return not oneshot_desktop.altered(build)
+        if oneshot_desktop.altered(build):
+            return False
     except (OSError, ValueError):
         return False
+    return at_head(repo, build.get("head"))
 
 
 def approved(o: dict) -> dict | None:
@@ -295,7 +308,6 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
     each app's process made but not yet run (Stale when it no longer stands)."""
 
     import desktop_session
-    import owned_job
     import owner_round
 
     build, skip = o["desktop_build"], set(unrun(o))
@@ -318,9 +330,11 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
             raise Stale("승인한 회차가 지금 빌드와 다르다 — 다시 승인한다")
 
     try:
-        _left[:] = [name for name in _left if owned_job.present(name) is not False]   # unknown stays held
+        _left[:] = [(key, handle) for key, handle in _left if not _settled(handle)]
         if _left:
-            raise RuntimeError("앞선 주인 화면 회차의 작업이 끝났는지 확인되지 않았다 — " + ", ".join(_left))
+            raise RuntimeError("앞선 주인 화면 회차의 작업이 끝났는지 확인되지 않았다 — "
+                               + ", ".join(key if handle else f"{key} (서버를 다시 시작해야 풀린다)"
+                                           for key, handle in _left))
         standing()
         with desktop_session.look(looks, f"round-{uuid.uuid4().hex[:12]}", owned=False) as session:
             runs = desktop_look.Launches(session, build, desktop_look.size(o["profile"]), stopped, shoot=False,
@@ -333,8 +347,8 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
     except desktop_session.Refused as exc:
         raise RuntimeError(f"주인 화면 회차를 정리하지 못했다 — {exc}") from exc
     finally:
-        if session is not None:   # whatever the cleanup proved: the next round asks Windows itself
-            _left.extend(job["name"] for job in session.record["jobs"].values())
+        if session is not None:   # every job whose end it did not prove, whatever else the cleanup reported
+            _left.extend(session.unresolved.items())
         _desk.release()
     runs.due()
     return results

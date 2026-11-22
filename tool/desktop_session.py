@@ -197,9 +197,12 @@ class Look:
 
     def __init__(self, root: Path, name: str, owned: bool = True):
         """`owned` false is the owner's desktop round (plan 9e5): its jobs start on the desktop the server runs on,
-        the owner's, and the look creates and closes no desktop of its own; its record and proof are the same."""
+        the owner's, and the look creates and closes no desktop of its own; its record and proof are the same.
+        There, each job whose end the look did not prove leaves a handle of its own in `unresolved` (None when
+        Windows gave none), for the server to keep the desktop with until the job's own count is zero."""
 
         self.root = Path(root).absolute()   # a child starts elsewhere: its data paths must not be relative
+        self.owned, self.unresolved = owned, {}
         self.folder = self.root / name
         self.result = None   # the teardown's reasons, kept until its proof is saved
         self.closing = False
@@ -292,6 +295,8 @@ class Look:
                 raise Halted(f"halted before {argv[0]} ran")
             if ready is not None:
                 ready()
+                if halt is not None and halt.is_set():   # a stop that came while `ready` read: still never run
+                    raise Halted(f"halted before {argv[0]} ran")
 
         with (self.folder / "evidence" / f"{key}.log").open("ab") as log:
             return job.start(argv, cwd, env, self.record["desktop"], log, before_resume=recorded)
@@ -480,6 +485,7 @@ class Look:
         return reasons, interrupted
 
     def _ended(self, key: str, job, seconds: float) -> list[str]:
+        proof = None
         try:
             proof = job.end(seconds)
             # Members first heard of while the job ended: recorded before any handle closes, so recovery names
@@ -487,6 +493,8 @@ class Look:
             self._learn(key, proof["members"])
             self.record["jobs"][key]["proof"] = proof
         finally:
+            if not self.owned and not (proof and proof["clean"]) and key not in self.unresolved:
+                self.unresolved[key] = job.kept()   # taken before the close, which would end the job's name
             job.close()
         return [f"{key}: {reason}" for reason in proof["reasons"]]
 
