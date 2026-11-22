@@ -96,9 +96,10 @@ HIDDEN = "\0"
 
 
 def unquoted(text: str, marks: tuple[str, ...] = ("#", "//")) -> list[str]:
-    """`text`'s lines with every string literal's content and every comment replaced by `HIDDEN`, columns kept:
-    the state carries across lines, so a template literal (`` ` ``) or a block comment (`/* */`, where `//`
-    marks comments) spans them, while `'` and `"` end at their line. ponytail: a regex literal reads as code."""
+    """`text`'s lines with every string literal's content and every comment replaced by `HIDDEN`, columns kept.
+    The state carries across lines, so a template literal (`` ` ``) or a block comment spans them.
+    A block comment (`/* */`) counts only where `//` marks comments; `'` and `"` end at their line.
+    ponytail: a regex literal reads as code."""
 
     out, quote, i = [], "", 0
     while i < len(text):
