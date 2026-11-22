@@ -35,8 +35,10 @@ from .oneshot_spec import VIEWS, idle, saved, spec_of, view
 router = APIRouter()
 NID = re.compile(r"N[1-9]\d*")
 ENV = re.compile(r"[A-Z][A-Z0-9_]*")
-# What `common.host.environment` sets or drops for every agent: a need of that name would never reach it.
-LAUNCH = re.compile(r"WIKI_AGENT_.*|ORCA_.*|RELEASE_KEY_PASSWORD")
+# What the agent's launch sets or drops (`common.host.environment`, `agent.deepseek.environment`), and what an
+# agent CLI reads as its own login: a need of that name would never reach the agent as given.
+LAUNCH = re.compile(r"WIKI_AGENT_.*|ORCA_.*|RELEASE_KEY_PASSWORD|ANTHROPIC_.*|CLAUDE_.*|DEEPSEEK_API_KEY|"
+                    r"OPENAI_API_KEY|CODEX_.*")
 KINDS = {"secret": "비밀 값", "account": "계정", "tool": "프로그램", "file": "파일"}
 MAX_SECRET = 2560   # bytes Credential Manager holds in one credential, as UTF-16
 

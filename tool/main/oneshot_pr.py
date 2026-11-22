@@ -160,11 +160,8 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
     ran = [backend, gate] if gate != backend else [gate]
     android = "android" in kinds_of(o)
-    if android and specs.sh(["git", "ls-files", "--error-unmatch", "--", o["device"]["apk"]], path).returncode:
-        try:   # an earlier build's output Git does not track: the gate makes its own, frozen below
-            (path / o["device"]["apk"]).unlink(missing_ok=True)
-        except OSError as exc:
-            return f"이전 빌드가 남긴 APK 를 지우지 못했다 — {exc}"
+    if android and (why := oneshot_device.cleared(path, o["device"])):   # the gate makes the APK frozen below
+        return why
     env = oneshot_build.built_env(spec)   # read once: the freeze scan below looks for exactly these values
     verdict = oneshot_build.judged(path, run, spec, ran, env, expect=checked)
     if not verdict["ok"]:

@@ -224,12 +224,16 @@ def probed(nonce: str, host: str, script: str, raw: bytes, printed: str) -> None
         pass
 
 
-if __name__ == "__main__":
+def run(argv: list[str]) -> int:
+    script = argv[1] if len(argv) > 1 else ""   # read first: `main` hands `sys.argv` to the script it runs
     try:
-        _code = main(sys.argv[1:])
+        return main(argv)
     except SystemExit:
         raise
-    except Exception as _error:  # noqa: BLE001
-        print(f"hook skipped: {type(_error).__name__}", file=sys.stderr)
-        _code = closed(sys.argv[2] if len(sys.argv) > 2 else "", f"훅이 실패했다 ({type(_error).__name__})")
-    raise SystemExit(_code)
+    except Exception as error:  # noqa: BLE001
+        print(f"hook skipped: {type(error).__name__}", file=sys.stderr)
+        return closed(script, f"훅이 실패했다 ({type(error).__name__})")
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(sys.argv[1:]))

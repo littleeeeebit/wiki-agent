@@ -132,16 +132,42 @@ def declared(tree: Path, final: str, needs_fixture: bool, ending: str = "") -> d
     return out
 
 
+def inside(tree: Path, apk: str) -> bool:
+    """`apk` is reached through plain folders of the tree: no link or junction on the way, nowhere outside it."""
+    parts = Path(apk).parts
+    steps = [tree.joinpath(*parts[:i]) for i in range(1, len(parts) + 1)]
+    return not any(p.is_symlink() or is_junction(p) for p in steps) and (tree / apk).resolve().is_relative_to(tree.resolve())
+
+
 def built(tree: Path, device: dict) -> str:
     """Why an APK the block names is not a plain file in the tree after the gate, or empty."""
 
-    root = tree.resolve()
     for apk in [device["apk"], device["tests"]["apk"], *([device["fixture"]["apk"]] if "fixture" in device else [])]:
-        parts = Path(apk).parts
-        steps = [tree.joinpath(*parts[:i]) for i in range(1, len(parts) + 1)]
-        if any(p.is_symlink() or is_junction(p) for p in steps) or not (tree / apk).resolve().is_relative_to(root) \
-                or not (tree / apk).is_file():
+        if not inside(tree, apk) or not (tree / apk).is_file():
             return f"게이트 뒤에 `{apk}` 가 작업트리 안의 파일로 없다 — `gate_cmd` 가 그 APK 를 빌드해야 한다"
+    return ""
+
+
+def cleared(tree: Path, device: dict) -> str:
+    """Before the final gate: the app's APK an earlier build left is removed, so the one frozen after is the gate's
+    own, built with the values the gate carries. Refused, touching nothing, when Git cannot say whether it tracks
+    it, when it does (a build output is never committed), or when the way to it is not plain folders of the tree."""
+
+    import subprocess
+
+    apk = device["apk"]
+    listed = subprocess.run(["git", "ls-files", "--", apk], cwd=tree, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=60)
+    if listed.returncode:
+        return f"`{apk}` 를 Git 이 추적하는지 읽지 못했다 — 최종 게이트를 시작하지 않는다"
+    if listed.stdout.strip():
+        return f"`{apk}` 가 커밋돼 있다 — 빌드 결과는 커밋하지 않는다. 지우고 무시 목록에 넣으면 게이트가 새로 만든다"
+    if not inside(tree, apk):
+        return f"`{apk}` 로 가는 길에 링크나 작업트리 밖이 있다 — 작업트리 안의 보통 폴더에 빌드한다"
+    try:
+        (tree / apk).unlink(missing_ok=True)
+    except OSError as exc:
+        return f"이전 빌드가 남긴 `{apk}` 를 지우지 못했다 ({type(exc).__name__})"
     return ""
 
 

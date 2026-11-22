@@ -893,7 +893,7 @@ def test_a_branch_upstream_given_as_a_url_is_a_destination(tmp_path, monkeypatch
     assert {"network(read.example)", "network(write.example)"} <= found
 
 
-def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, monkeypatch):
+def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, monkeypatch, capsys):
     home_at(monkeypatch, tmp_path / "home")
     (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n', encoding="utf-8")
     monkeypatch.setenv(guard_git.SECRETS_HELD, "1")   # the server pushes after its secret check
@@ -925,6 +925,15 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
                               timeout=60)
         got = json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"] if done.stdout.strip() else None
         assert done.returncode == 0 and got == wanted, done.stderr
+    # A wrapper that fails once the dispatcher has handed `sys.argv` to it still names the wrapper it ran.
+    import hook
+
+    monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
+    monkeypatch.setattr(hook, "main", lambda argv: (sys.argv.__setitem__(slice(None), ["child"]), 1 / 0))
+    for wrapper in ("claude_pretool.py", "codex_pretool.py"):
+        assert hook.run(["claude", wrapper]) == 0
+        assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny", wrapper
 
 
 @pytest.mark.parametrize("command", ["git log --show-signature", 'git log --format="%G?"', "git show --pretty=%GG",

@@ -16,7 +16,8 @@ import pytest
 
 import android_owned
 from main import github_release as gh
-from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_pr, oneshot_spec, pr_text, release, specs
+from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_device, oneshot_pr, oneshot_spec, pr_text
+from main import release, specs
 from test_github_release import FakeGitHub
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_critique import on_r3
@@ -298,10 +299,12 @@ def android(finished, monkeypatch):
         return verdict
 
     monkeypatch.setattr(oneshot_build, "judged", building)
-    for apk in (DEVICE["apk"], DEVICE["tests"]["apk"]):
+    for apk in (DEVICE["apk"], DEVICE["tests"]["apk"]):   # as a real Android build leaves them: ignored outputs
         write(tree, apk, "apk")
-    git(tree, "add", "-A")
-    git(tree, "commit", "-m", "apks")
+    (tree.parent / "built.apk").write_text("apk", encoding="utf-8")   # what the gate builds
+    write(tree, ".gitignore", "__pycache__/\nartifacts/\n*.apk\n")
+    git(tree, "add", ".gitignore")
+    git(tree, "commit", "-m", "ignore built APKs")
     head = git(tree, "rev-parse", "HEAD")
     oneshot_spec.saved("budget", oneshot={"tests_head": head, "front_built_head": head})
     return tree, sent
@@ -385,20 +388,9 @@ def test_nothing_goes_out_while_the_secret_check_refuses(android, github):
         assert pushed.returncode == 1 and pushed.stderr.startswith("비밀 값 [N1]") and not remote.calls
 
 
-def untracked_apks(tree):
-    """The APKs as a real Android build leaves them: outputs Git ignores."""
-
-    write(tree, ".gitignore", "__pycache__/\nartifacts/\n*.apk\n")
-    git(tree, "rm", "-q", "--cached", "--", DEVICE["apk"], DEVICE["tests"]["apk"])
-    git(tree, "add", ".gitignore")
-    git(tree, "commit", "-m", "ignore built APKs")
-    (tree.parent / "built.apk").write_text("apk", encoding="utf-8")   # what the gate builds
-    readme(tree)
-
-
 def test_the_release_holds_the_apk_the_final_gate_passed_even_when_the_tree_rebuilds_it_after(android, github):
     tree, _ = android
-    untracked_apks(tree)
+    readme(tree)
     passed = android_owned.sha256(tree / DEVICE["apk"])
     then = check(tree, answer(report()))
     write(tree, DEVICE["apk"], "another build after the final gate")   # Git sees nothing: the APK is ignored
@@ -409,7 +401,7 @@ def test_the_release_holds_the_apk_the_final_gate_passed_even_when_the_tree_rebu
 
 def test_a_same_head_rebuild_the_resumed_final_gate_passes_replaces_the_released_apk(android, github):
     tree, _ = android
-    untracked_apks(tree)
+    readme(tree)
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
         first = o()["apk"]
@@ -425,7 +417,7 @@ def test_a_same_head_rebuild_the_resumed_final_gate_passes_replaces_the_released
 
 def test_an_apk_that_cannot_be_copied_still_opens_the_pull_request_and_leaves_no_partial_copy(android, github):
     tree, sent = android
-    untracked_apks(tree)
+    readme(tree)
     copies = []
 
     def broken(source, target):
@@ -487,27 +479,25 @@ def test_a_transient_upload_failure_is_tried_again_and_a_landed_one_is_not_sent_
 
 
 def test_only_the_apk_the_final_gate_makes_is_frozen_and_a_failed_later_check_keeps_no_copy(android):
-    """An untracked APK an earlier build left is gone before the gate: a gate that makes none is sent back. A
-    pinned check that raises after the freeze leaves no copy behind."""
+    """An APK an earlier build left is gone before the gate: a gate that makes none is sent back, and a committed
+    one is refused untouched. A pinned check that raises after the freeze leaves no copy behind."""
 
     tree, sent = android
-    untracked_apks(tree)
+    readme(tree)
     (tree.parent / "built.apk").unlink()   # this gate builds nothing; the earlier build's APK is still there
     check(tree, answer(report()))()
     assert sent[-1][1] == "pr" and f"`{DEVICE['apk']}`" in sent[-1][2] and "final_head" not in o()
+    write(tree, DEVICE["apk"], "apk")
+    git(tree, "add", "-f", DEVICE["apk"])
+    git(tree, "commit", "-m", "a committed build output")
+    assert "커밋돼 있다" in oneshot_device.cleared(tree, DEVICE) and (tree / DEVICE["apk"]).is_file()
+    git(tree, "rm", "-q", "--cached", DEVICE["apk"])
+    git(tree, "commit", "-m", "not tracked")
     (tree.parent / "built.apk").write_text("apk", encoding="utf-8")
     with patch.object(oneshot_build, "held", lambda *a: (_ for _ in ()).throw(ValueError("no report"))):
         check(tree, answer(report()))()
     release_dir = oneshot_spec.store("budget").folder / "release"
     assert "final_head" not in o() and not [p for p in release_dir.rglob("*") if p.is_file()]
-
-
-def test_an_android_app_without_its_apk_after_the_final_gate_is_sent_back(android):
-    tree, sent = android
-    git(tree, "rm", "-q", DEVICE["apk"])
-    readme(tree)
-    check(tree, answer(report()))()
-    assert sent[-1][1] == "pr" and f"`{DEVICE['apk']}`" in sent[-1][2] and "final_head" not in o()
 
 
 RELEASE_CHECKED = oneshot_pr.release_checked
