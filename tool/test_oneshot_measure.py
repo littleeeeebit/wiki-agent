@@ -7,6 +7,7 @@ stand-ins the test commits, started for real by the server; GitHub is not reache
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -101,6 +102,7 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
     assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY
     folder = oneshot_spec.store("budget").folder / "measure" / run["folder"]   # what is kept shows no secret
     assert sorted(p.name for p in folder.iterdir()) == ["clips", "report.json", "serve.log"]
+    assert sorted(p.name for p in folder.parent.iterdir()) == [run["folder"]]   # the script's own folder is gone
     assert not any(KEY in p.read_text(encoding="utf-8", errors="replace") for p in folder.rglob("*.json"))
     assert o()["measure_given"]["BUDGET_URL"]["value"] == "https://example.test/live"
     assert str(measure.clip("budget", run["n"], "sample.wav").path).endswith("sample.wav")
@@ -280,58 +282,94 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     assert not o()["measures"][-1].get("owner")
 
 
+def wrote(tmp_path, files: dict) -> Path:
+    """A script's own folder holding `files` (a path and its text or bytes)."""
+
+    raw = tmp_path / "m1.raw"
+    for name, data in files.items():
+        (raw / name).parent.mkdir(parents=True, exist_ok=True)
+        (raw / name).write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
+    return raw
+
+
+def kept(raw: Path, hide: dict) -> Path:
+    """What a measurement keeps of `raw`, in a new folder; `raw` is gone."""
+
+    out = raw.with_name("m1")
+    shutil.rmtree(out, ignore_errors=True)
+    assert measure.kept_from(raw, out, hide) == "" and not raw.exists()
+    return out
+
+
 def test_a_kept_report_and_the_clips_folder_show_no_secret_in_any_spelling(tmp_path):
     canary = 'sk-"canary\\' + "9" * 12
-    out = tmp_path / "m1"
-    (out / "clips").mkdir(parents=True)
-    (out / "report.json").write_text(json.dumps({"notes": canary}), encoding="utf-8")
-    (out / "clips" / "sk-named.wav").write_bytes(b"RIFF")   # a name that shows a secret's start
-    (out / "clips" / "ok.wav").write_bytes(b"RIFF")
-    (out / "clips" / "debug.txt").write_text(canary, encoding="utf-8")
     hide = {canary: "[KEY]", "sk-": "[K]"}
-    measure.scrubbed(out, hide)
+    out = kept(wrote(tmp_path, {"report.json": json.dumps({"notes": canary}), "clips/sk-named.wav": b"RIFF",
+                                "clips/ok.wav": b"RIFF", "clips/debug.txt": canary, "debug.txt": canary,
+                                "serve.log": f"key={json.dumps(canary)}"}), hide)
     assert canary not in json.loads((out / "report.json").read_text(encoding="utf-8"))["notes"]
-    assert sorted(p.name for p in (out / "clips").iterdir()) == ["ok.wav"]
+    assert sorted(p.relative_to(out).as_posix() for p in out.rglob("*")) == ["clips", "clips/ok.wav", "report.json",
+                                                                            "serve.log"]   # nothing else is copied
+    assert json.dumps(canary)[1:-1] not in (out / "serve.log").read_text(encoding="utf-8")   # its JSON spelling too
     spelled = "".join(f"\\u{ord(c):04x}" for c in canary)   # every character escaped: decoding brings it back
-    (out / "report.json").write_text('{"notes": "' + spelled + '"}', encoding="utf-8")
-    measure.scrubbed(out, hide)
+    out = kept(wrote(tmp_path, {"report.json": '{"notes": "' + spelled + '"}'}), hide)
     assert canary not in json.loads((out / "report.json").read_text(encoding="utf-8"))["notes"]
-    (out / "report.json").write_text("[" * 5000 + "]" * 5000, encoding="utf-8")   # too deep for the reader
-    assert "error" in measure.report_of(out, {"metrics": []}, hide)
-    measure.scrubbed(out, hide)
-    assert not (out / "report.json").exists()
-    shutil.rmtree(out / "clips")
-    (out / "clips").write_text(canary, encoding="utf-8")   # a file at the clips folder's path is no clip
-    measure.scrubbed(out, hide)
-    assert not (out / "clips").exists()
+    raw = wrote(tmp_path, {"report.json": "[" * 5000 + "]" * 5000})   # too deep for the reader
+    assert "error" in measure.report_of(raw, {"metrics": []}, hide)
+    assert not (kept(raw, hide) / "report.json").exists()
+    raw = wrote(tmp_path, {"report.json": b'{"metrics": {}, "notes": "\xb0C"}'})   # a code page, not UTF-8
+    assert "error" in measure.report_of(raw, {"metrics": []}, hide)
+    assert not (kept(raw, hide) / "report.json").exists()   # never kept after a repair the reader refused
+    assert not (kept(wrote(tmp_path, {"clips": canary}), hide) / "clips").exists()   # a file at the folder's path
+
+
+def test_a_measurement_keeps_no_linked_file_and_one_read_only_file_never_stops_the_cleanup(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "theirs.wav").write_bytes(b"RIFF")
+    raw = wrote(tmp_path, {"clips/x": b""})
+    (raw / "clips" / "x").unlink()
+    os.link(outside / "theirs.wav", raw / "clips" / "linked.wav")   # a second name for a file it did not write
+    assert not (kept(raw, {}) / "clips").exists() and (outside / "theirs.wav").exists()
+    if sys.platform == "win32":   # a junction needs no privilege on Windows
+        raw = wrote(tmp_path, {"report.json": "{}"})
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(raw / "clips"), str(outside)], check=True, capture_output=True)
+        assert not (kept(raw, {}) / "clips").exists() and (outside / "theirs.wav").exists()   # never followed
+    raw = wrote(tmp_path, {"a-debug.txt": "x", "z-debug.txt": "x", "serve.log": "key=sk-1"})
+    for name in ("a-debug.txt", "z-debug.txt"):
+        os.chmod(raw / name, stat.S_IREAD)
+    assert (kept(raw, {"sk-1": "[K]"}) / "serve.log").read_text(encoding="utf-8") == "key=[K]"
+    held = tmp_path / "served" / "clips"
+    held.mkdir(parents=True)
+    (held / "ok.wav").write_bytes(b"RIFF")
+    os.link(outside / "theirs.wav", held / "other.wav")
+    assert measure.plain(held / "ok.wav") and not measure.plain(held / "other.wav")   # what the clip route serves
 
 
 def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):
-    out = tmp_path / "m1"
-    out.mkdir()
     hide = {"424242": "[PIN]", '"}': "[P]"}
-    (out / "report.json").write_text(json.dumps({"metrics": {"rate": 424242}, "notes": 'a"}b'}), encoding="utf-8")
     plan = {"metrics": [{"id": "rate", "pass": {"op": ">=", "value": 1}}]}
-    assert measure.report_of(out, plan, hide)["metrics"][0]["value"] is None   # never shown as a measurement
-    measure.scrubbed(out, hide)
-    kept = json.loads((out / "report.json").read_text(encoding="utf-8"))
-    assert kept == {"metrics": {"rate": "[PIN]"}, "notes": "a[P]b"}
-    (out / "report.json").write_text(json.dumps({"metrics": {"rate": 424242.0}}), encoding="utf-8")
-    assert measure.report_of(out, plan, hide)["metrics"][0]["value"] is None   # the same number, spelled as a float
-    measure.scrubbed(out, hide)
-    assert json.loads((out / "report.json").read_text(encoding="utf-8")) == {"metrics": {"rate": "[PIN]"}}
-    (out / "report.json").write_text(f'{{"metrics": {{"rate": {2 ** 53 + 3}}}}}', encoding="utf-8")
-    assert measure.report_of(out, plan, {str(2 ** 53 + 4): "[S]"})["metrics"][0]["value"] == 2 ** 53 + 3   # distinct
-    (out / "report.json").write_text('{"metrics": {"rate": 1e309}}', encoding="utf-8")
-    assert "1e309" not in json.dumps(measure.report_of(out, plan, {"1e309": "[S]"}))   # refused, its token not shown
-    big = {str(2 ** 53 + 1): "[BIG]"}   # past a float's precision: kept exact as an integer, rounded as a float
+
+    def masked_report(raw, h=hide):
+        return json.loads((kept(raw, h) / "report.json").read_text(encoding="utf-8"))
+
+    raw = wrote(tmp_path, {"report.json": json.dumps({"metrics": {"rate": 424242}, "notes": 'a"}b'})})
+    assert measure.report_of(raw, plan, hide)["metrics"][0]["value"] is None   # never shown as a measurement
+    assert masked_report(raw) == {"metrics": {"rate": "[PIN]"}, "notes": "a[P]b"}
+    raw = wrote(tmp_path, {"report.json": json.dumps({"metrics": {"rate": 424242.0}})})
+    assert measure.report_of(raw, plan, hide)["metrics"][0]["value"] is None   # the same number, spelled as a float
+    assert masked_report(raw) == {"metrics": {"rate": "[PIN]"}}
+    raw = wrote(tmp_path, {"report.json": f'{{"metrics": {{"rate": {2 ** 53 + 3}}}}}'})
+    assert measure.report_of(raw, plan, {str(2 ** 53 + 4): "[S]"})["metrics"][0]["value"] == 2 ** 53 + 3   # distinct
+    raw = wrote(tmp_path, {"report.json": '{"metrics": {"rate": 1e309}}'})
+    assert "1e309" not in json.dumps(measure.report_of(raw, plan, {"1e309": "[S]"}))   # refused, its token not shown
+    big = {str(2 ** 53 + 1): "[BIG]"}   # past a float's precision: exact as an integer, rounded as a float
     for text in (f'{{"metrics": {{"rate": {2 ** 53 + 1}}}}}', f'{{"metrics": {{"rate": {2 ** 53 + 1}.0}}}}'):
-        (out / "report.json").write_text(text, encoding="utf-8")
-        assert measure.report_of(out, plan, big)["metrics"][0]["value"] is None
-        measure.scrubbed(out, big)
-        assert json.loads((out / "report.json").read_text(encoding="utf-8")) == {"metrics": {"rate": "[BIG]"}}
-    (out / "report.json").write_text('{"metrics": {}, "notes": "\\ud800"}', encoding="utf-8")   # a lone surrogate
-    assert "error" in measure.report_of(out, plan, hide)
+        raw = wrote(tmp_path, {"report.json": text})
+        assert measure.report_of(raw, plan, big)["metrics"][0]["value"] is None
+        assert masked_report(raw, big) == {"metrics": {"rate": "[BIG]"}}
+    raw = wrote(tmp_path, {"report.json": '{"metrics": {}, "notes": "\\ud800"}'})   # a lone surrogate
+    assert "error" in measure.report_of(raw, plan, hide)
 
 
 def test_a_number_that_is_not_finite_is_refused_in_a_report_and_a_plan(tmp_path):

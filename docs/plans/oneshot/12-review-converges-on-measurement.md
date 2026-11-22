@@ -195,19 +195,28 @@ plan rebuilt since answers 409. A result waiting for the owner's verdict is
 set aside (`stale`) when an input changes. [실측 시작] holds the worktree,
 starts `serve`, runs the script with the inputs in its environment and every
 secret masked from its output, and keeps only the clips it accepts, the
-report and the backend's log, masked (`oneshot_kept`). The `clips` folder
-stays only while it holds an accepted clip; a file at that path is removed
-like any other. The report is
-decoded, each field masked (a number that is a secret's value included), and
-written once; one that is not JSON is removed. The plan and the report are
+report and the backend's log, masked (`oneshot_kept`). The script and the
+backend write into a folder of their own (`m<n>-<head>.raw`). `kept_from`
+copies out of it into the kept folder only those three:
+
+- a file or folder that is a link, a junction or a second hard link is never
+  read, copied or served (`plain`, checked again by the clip route);
+- the report is decoded as strict UTF-8, each field masked (a number that is
+  a secret's value included), and written once; one that is not UTF-8 JSON is
+  not kept.
+
+Then the raw folder is removed whole, a read-only file made writable first.
+If it cannot be removed, the run stops for the owner with that reason and
+records no result. The next start removes every leftover raw folder before
+it runs, and stops again if one remains. The plan and the report are
 read strictly: `NaN`, `Infinity`, an overflowing float or a lone surrogate
 escape is refused. A metric equal to a secret's value, in any numeric
 spelling, never counts as a measurement. An integer is compared exactly; a
 float, already rounded by the reader, is compared with the secret rounded the
 same way. A refused report's error never quotes its token, and is masked. The inputs are checked again under
 that lock right before the run, so one taken back meanwhile stops for the
-owner without a failed run. The folder
-is cleaned on every exit, a failed read of the report included. A stored
+owner without a failed run. The copy and the removal run on every exit,
+a failed read of the report included. A stored
 value changed at any moment of the run sets that result aside: the values
 and the change count are read together, and compared and saved together,
 under the lock every change takes. The run then stops for the owner to

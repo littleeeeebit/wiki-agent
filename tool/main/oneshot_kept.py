@@ -1,8 +1,8 @@
 """oneshot step 12: what a measurement keeps, and how it is read.
 
 `docs/plans/oneshot/12-review-converges-on-measurement.md` is the design. A measurement's folder keeps the clips it
-accepts, its report and the backend's log, masked (`scrubbed`); the plan and the report are read strictly
-(`strict`), so a record built from them always serializes again.
+accepts, its report and the backend's log, masked and copied out of the folder the script wrote (`kept_from`); the plan
+and the report are read strictly (`strict`), so a record built from them always serializes again.
 """
 
 from __future__ import annotations
@@ -10,7 +10,9 @@ from __future__ import annotations
 import decimal
 import json
 import math
+import os
 import shutil
+import stat
 from pathlib import Path
 
 from common import masked
@@ -18,7 +20,6 @@ from common import masked
 CLIPS = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".ogg": "audio/ogg", ".opus": "audio/ogg",
          ".flac": "audio/flac", ".mp4": "video/mp4", ".webm": "video/webm"}
 MAX_CLIPS, MAX_CLIP = 12, 64 * 1024 * 1024
-KEPT = ("report.json", "serve.log")   # what a measurement's folder keeps besides its clips, masked
 
 
 def strict(text: str):
@@ -76,35 +77,63 @@ def cleaned(value, hide: dict[str, str]):
     return (label_of(value, hide) or value) if isinstance(value, (int, float)) else value
 
 
+def plain(p: Path, kind: int = stat.S_IFREG) -> bool:
+    """`p` is a file (or, with `stat.S_IFDIR`, a folder) of its own: no symbolic link, junction or other reparse
+    point, and a file with no second hard link. So nothing kept or served is a file the measurement did not write."""
+
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    return not getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT \
+        and stat.S_IFMT(st.st_mode) == kind and (kind == stat.S_IFDIR or st.st_nlink == 1)
+
+
 def clips_of(out: Path, hide: dict[str, str]) -> list[str]:
     folder = out / "clips"
-    if not folder.is_dir():
+    if not plain(folder, stat.S_IFDIR):
         return []
-    found = sorted(p.name for p in folder.iterdir() if p.is_file() and p.suffix.lower() in CLIPS
+    found = sorted(p.name for p in folder.iterdir() if plain(p) and p.suffix.lower() in CLIPS
                    and p.stat().st_size <= MAX_CLIP and masked(p.name, hide) == p.name)
     return found[:MAX_CLIPS]
 
 
-def scrubbed(out: Path, hide: dict[str, str]) -> None:
-    """A measurement's folder as it is kept: the report and the backend's log masked, the clips `clips_of`
-    accepts, nothing else. Whatever else the script wrote may hold a value it was given, so it goes. The report
-    is decoded, each field masked, and written once; the log is masked as text, in each spelling JSON escaping
-    gives too."""
+def removed(folder: Path) -> str:
+    """`folder` and everything in it gone, a read-only file made writable first, links removed and never
+    followed; or why not."""
+
+    def again(func, path, _exc):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+
+    try:
+        shutil.rmtree(folder, onexc=again)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        return f"실측 원본 폴더 `{folder.name}` 를 지우지 못했다 ({type(exc).__name__}) — 그 폴더를 지우고 [실측 시작]을 누른다"
+    return ""
+
+
+def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
+    """What a measurement keeps, copied from the folder the script wrote (`raw`) into a new one (`out`): the
+    report, decoded strictly, each field masked, written once (one that is not UTF-8 JSON is not kept); the
+    backend's log, masked as text in each spelling JSON escaping gives too; and the clips `clips_of` accepts.
+    Nothing else is copied, and `raw` is removed. Returns why `raw` could not be removed, or empty."""
 
     hide = {**hide, **{form: label for value, label in hide.items()
                        for form in (json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1])}}
-    clips = {out / "clips" / name for name in clips_of(out, hide)}
-    for p in sorted(out.rglob("*"), reverse=True):   # files before the folders that hold them
-        if p in clips or (p == out / "clips" and p.is_dir() and clips):   # a file at that path, or an empty one, goes
-            continue
-        if p.parent == out and p.name in KEPT and p.is_file():
-            text = p.read_text(encoding="utf-8", errors="replace")
-            if p.suffix == ".json":   # no escape spells a value differently, and no mask breaks the syntax
-                try:
-                    p.write_text(json.dumps(cleaned(strict(text), hide), ensure_ascii=False, indent=1), encoding="utf-8")
-                except (ValueError, RecursionError):
-                    p.unlink()   # `report_of` already said it is not JSON; nothing reads it again
-            elif (clean := masked(text, hide)) != text:
-                p.write_text(clean, encoding="utf-8")
-            continue
-        shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        if plain(report := raw / "report.json"):
+            text = json.dumps(cleaned(strict(report.read_text(encoding="utf-8")), hide), ensure_ascii=False, indent=1)
+            (out / "report.json").write_text(text, encoding="utf-8")
+    except (OSError, ValueError, RecursionError):   # a decoding error is a `ValueError`: `report_of` said so too
+        pass
+    if plain(log := raw / "serve.log"):
+        (out / "serve.log").write_text(masked(log.read_text(encoding="utf-8", errors="replace"), hide), encoding="utf-8")
+    if names := clips_of(raw, hide):
+        (out / "clips").mkdir(exist_ok=True)
+        for name in names:
+            shutil.copyfile(raw / "clips" / name, out / "clips" / name, follow_symlinks=False)
+    return removed(raw)

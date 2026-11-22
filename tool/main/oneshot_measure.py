@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import tempfile
 import threading
@@ -39,7 +40,7 @@ from pydantic import BaseModel
 from common import masked, process, shell
 
 from . import oneshot, oneshot_build, oneshot_needs, oneshot_publish, oneshot_spec, release, runtime, specs, work
-from .oneshot_kept import CLIPS, KEPT, MAX_CLIPS, clips_of, label_of, scrubbed, strict  # noqa: F401 — kept here too
+from .oneshot_kept import CLIPS, MAX_CLIPS, clips_of, kept_from, label_of, plain, removed, strict  # noqa: F401 — kept here too
 from .query import _lock as work_lock, hold
 
 router = APIRouter()
@@ -406,8 +407,12 @@ def measure(repo: str) -> None:
             return None
         n = len(o.get("measures") or []) + 1
         out = store.folder / "measure" / f"m{n}-{o['built_head'][:12]}"
-        shutil.rmtree(out, ignore_errors=True)
-        out.mkdir(parents=True)
+        raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept` copies leave it
+        for old in [*out.parent.glob("*.raw"), out]:   # an earlier run's leftover first
+            if why := removed(old):
+                store.stop("measure", why)
+                return None
+        raw.mkdir(parents=True)
         with oneshot._lock:   # every stored-value change counts under this lock: the values and the count agree
             now = oneshot_spec.spec_of(repo)   # what the owner gave by now, a value taken back since included
             if missing := [x["id"] for x in plan["inputs"] if not has(now, x)]:
@@ -418,18 +423,21 @@ def measure(repo: str) -> None:
         record = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}
         try:
             with served(oneshot_build.run_as(plan["serve"]["command"], o, tree), tree, env, plan["serve"]["health"],
-                        plan["serve"]["seconds"], halt, out / "serve.log"):
+                        plan["serve"]["seconds"], halt, raw / "serve.log"):
                 limit = plan["measure"]["minutes"] * 60 + 300
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
-                    "{out}", oneshot_build.literal(out.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
+                    "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
                     idle=limit, hide=hide)
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
         finally:
             try:
-                found = report_of(out, plan, hide)
+                found = report_of(raw, plan, hide)
             finally:
-                scrubbed(out, hide)   # every exit, a stop or a failed read included, keeps nothing that shows a secret
+                left = kept_from(raw, out, hide)   # every exit, a stop or a failed read included, keeps no secret
+        if left:   # the script's own folder is still there: the owner removes it, then measures again
+            store.stop("measure", left)
+            return None
         record["tail"] = (text or "").strip()[-3000:]
         if halt.is_set():
             store.stop("measure", "사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
@@ -746,7 +754,7 @@ def clip(repo: str, n: int, name: str) -> FileResponse:
     if not record or name not in (record.get("clips") or []):
         raise HTTPException(404, "그런 클립이 없다")
     file = oneshot_spec.store(repo).folder / "measure" / record["folder"] / "clips" / name
-    if not file.is_file():
+    if not plain(file) or not plain(file.parent, stat.S_IFDIR):   # never a link, junction or second hard link
         raise HTTPException(404, "클립 파일이 없다")
     return FileResponse(file, media_type=CLIPS[file.suffix.lower()])
 
