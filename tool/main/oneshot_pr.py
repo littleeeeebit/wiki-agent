@@ -159,11 +159,17 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
     ran = [backend, gate] if gate != backend else [gate]
+    android = "android" in kinds_of(o)
+    if android and specs.sh(["git", "ls-files", "--error-unmatch", "--", o["device"]["apk"]], path).returncode:
+        try:   # an earlier build's output Git does not track: the gate makes its own, frozen below
+            (path / o["device"]["apk"]).unlink(missing_ok=True)
+        except OSError as exc:
+            return f"이전 빌드가 남긴 APK 를 지우지 못했다 — {exc}"
     env = oneshot_build.built_env(spec)   # read once: the freeze scan below looks for exactly these values
     verdict = oneshot_build.judged(path, run, spec, ran, env, expect=checked)
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    frozen, android = None, "android" in kinds_of(o)
+    frozen = None
     if android:   # the APK S8 attaches: the gate's own output, frozen before a later command can rebuild it
         if why := oneshot_device.built(path, o["device"]):
             return why
@@ -171,10 +177,14 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
             frozen = froze(spec, verdict["head"], oneshot_needs.hidden(spec, env))
         except OSError as exc:   # the attachment is optional: the pull request opens and its body says why
             frozen = {"head": verdict["head"], "error": f"최종 게이트가 만든 APK 를 복사하지 못했다 — {exc}"}
-    if why := oneshot_build.held(path, run, spec, verdict) or android and release_checked(
-            path, spec, verdict["head"], run.halt):
-        if frozen and frozen.get("path"):   # a check after it failed: the copy is never kept
+    why = "raised"   # until the later checks answer: a raise keeps it, and the copy goes with it
+    try:
+        why = oneshot_build.held(path, run, spec, verdict) or android and release_checked(
+            path, spec, verdict["head"], run.halt)
+    finally:
+        if why and frozen and frozen.get("path"):   # failed or raised: the copy is never kept
             shutil.rmtree(Path(frozen["path"]).parent, ignore_errors=True)
+    if why:
         return why
     report = next(b["value"] for b in specs.blocks(final)[1] if b["name"] == "done-report")
     tail = (verdict.get("tail") or "").strip()

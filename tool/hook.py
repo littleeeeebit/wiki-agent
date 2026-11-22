@@ -39,6 +39,15 @@ PROJECT = {"inject.py", "session_state.py", "sync.py"}
 LEGACY = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
 
 
+def closed(script: str, why: str) -> int:
+    """A PreToolUse check (`claude_pretool`, `codex_pretool`) that never ran: denied in a session carrying a
+    oneshot's secrets (`guard_git.held_closed`), passed as before in any other."""
+    if script in ("claude_pretool.py", "codex_pretool.py") and (out := __import__("guard_git").held_closed(why)):
+        sys.stdout.reconfigure(encoding="utf-8")
+        json.dump(out, sys.stdout, ensure_ascii=False)
+    return 0
+
+
 def project_for(cwd: Path) -> tuple[Path, Path] | None:
     """`(project, checkout)` for a directory, or `None` when it is not attached.
 
@@ -119,7 +128,7 @@ def main(argv: list[str]) -> int:
         cwd = Path.cwd()
     found = project_for(cwd)
     if found is None:
-        return 0
+        return closed(script, "훅이 이 작업의 프로젝트를 찾지 못했다")
     project, top = found
     if legacy(top, host, script):
         return 0
@@ -222,5 +231,5 @@ if __name__ == "__main__":
         raise
     except Exception as _error:  # noqa: BLE001
         print(f"hook skipped: {type(_error).__name__}", file=sys.stderr)
-        _code = 0
+        _code = closed(sys.argv[2] if len(sys.argv) > 2 else "", f"훅이 실패했다 ({type(_error).__name__})")
     raise SystemExit(_code)

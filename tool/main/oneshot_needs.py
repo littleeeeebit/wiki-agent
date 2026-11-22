@@ -35,6 +35,8 @@ from .oneshot_spec import VIEWS, idle, saved, spec_of, view
 router = APIRouter()
 NID = re.compile(r"N[1-9]\d*")
 ENV = re.compile(r"[A-Z][A-Z0-9_]*")
+# What `common.host.environment` sets or drops for every agent: a need of that name would never reach it.
+LAUNCH = re.compile(r"WIKI_AGENT_.*|ORCA_.*|RELEASE_KEY_PASSWORD")
 KINDS = {"secret": "비밀 값", "account": "계정", "tool": "프로그램", "file": "파일"}
 MAX_SECRET = 2560   # bytes Credential Manager holds in one credential, as UTF-16
 
@@ -57,6 +59,8 @@ def parsed(value, where: str) -> list[dict]:
         env = n.get("env")
         if n["kind"] == "secret" and not (isinstance(env, str) and ENV.fullmatch(env)):
             raise ValueError(f"{where} {n['id']}: 비밀 값은 `env` 에 대문자 환경 변수 이름을 적는다")
+        if n["kind"] == "secret" and LAUNCH.fullmatch(env):
+            raise ValueError(f"{where} {n['id']}: `{env}` 는 서버가 에이전트를 띄울 때 정하는 이름이다 — 다른 이름을 적는다")
         if n["kind"] != "secret" and env is not None:
             raise ValueError(f"{where} {n['id']}: `env` 는 비밀 값에만 붙는다")
         out.append({"id": n["id"], "what": " ".join(n["what"].split()), "kind": n["kind"], **({"env": env} if env else {})})

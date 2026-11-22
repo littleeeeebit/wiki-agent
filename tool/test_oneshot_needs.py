@@ -103,6 +103,10 @@ def test_every_design_prompt_asks_for_needs_in_the_shape_the_server_takes(prompt
     text = (Path(__file__).parent / "prompts" / f"{prompt}.md").read_text(encoding="utf-8")
     example = json.loads(re.search(r"- `oneshot-outside`: `(\[.*?\])`\n", text)[1])
     assert needs.parsed(example[0]["needs"], "X1") == [{"id": "N1", "what": "…", "kind": "secret", "env": "SERVICE_API_KEY"}]
+    for launch in ("WIKI_AGENT_MANAGED", "ORCA_TOKEN", "RELEASE_KEY_PASSWORD"):   # the agent's launch sets these
+        with pytest.raises(ValueError, match="에이전트를 띄울 때"):
+            needs.parsed([{"id": "N1", "what": "x", "kind": "secret", "env": launch}], "X1")
+    assert needs.ENV.fullmatch("WIKI_AGENT_MANAGED")   # a saved need of that name can still be removed by it
     assert all(f"`{k}`" in text for k in needs.KINDS) and "for it to run for real" in text
 
 

@@ -289,6 +289,15 @@ def android(finished, monkeypatch):
     monkeypatch.setattr(oneshot_build, "toolchain", lambda spec: None)   # the gate runs as the test's own Python
     monkeypatch.setattr(oneshot_build, "built_env", lambda spec: None)
     monkeypatch.setattr(oneshot_pr, "release_checked", lambda *a: "")   # its own tests below build it
+    real = oneshot_build.judged
+
+    def building(path, *a, **k):   # the gate builds the APK, as a real Android gate does, from `built.apk`
+        verdict = real(path, *a, **k)
+        if not (Path(path) / DEVICE["apk"]).exists() and (out := Path(path).parent / "built.apk").exists():
+            (Path(path) / DEVICE["apk"]).write_bytes(out.read_bytes())   # not `copyfile`, which tests break
+        return verdict
+
+    monkeypatch.setattr(oneshot_build, "judged", building)
     for apk in (DEVICE["apk"], DEVICE["tests"]["apk"]):
         write(tree, apk, "apk")
     git(tree, "add", "-A")
@@ -383,6 +392,7 @@ def untracked_apks(tree):
     git(tree, "rm", "-q", "--cached", "--", DEVICE["apk"], DEVICE["tests"]["apk"])
     git(tree, "add", ".gitignore")
     git(tree, "commit", "-m", "ignore built APKs")
+    (tree.parent / "built.apk").write_text("apk", encoding="utf-8")   # what the gate builds
     readme(tree)
 
 
@@ -404,8 +414,8 @@ def test_a_same_head_rebuild_the_resumed_final_gate_passes_replaces_the_released
         check(tree, answer(report()))()
         first = o()["apk"]
         oneshot_pr.restart(spec())
-        write(tree, DEVICE["apk"], "a rebuild at the same commit")
-        rebuilt = android_owned.sha256(tree / DEVICE["apk"])
+        (tree.parent / "built.apk").write_text("a rebuild at the same commit", encoding="utf-8")
+        rebuilt = android_owned.sha256(tree.parent / "built.apk")
         check(tree, answer(report()))()
     rel, digests = held(github, o()["final_head"])
     assert len(made(github)) == 1 and digests == [rebuilt]   # S8's own policy: the asset of that name replaced
@@ -474,6 +484,22 @@ def test_a_transient_upload_failure_is_tried_again_and_a_landed_one_is_not_sent_
     uploads = [c for c in github.calls if c[0] == "POST" and c[1].endswith("/assets")]
     assert digests == [o()["apk"]["sha256"]] and "error" not in o()["apk"]
     assert len(uploads) == {"502": 2, "lost": 1, "last lost": oneshot_pr.TRIES}[trouble]
+
+
+def test_only_the_apk_the_final_gate_makes_is_frozen_and_a_failed_later_check_keeps_no_copy(android):
+    """An untracked APK an earlier build left is gone before the gate: a gate that makes none is sent back. A
+    pinned check that raises after the freeze leaves no copy behind."""
+
+    tree, sent = android
+    untracked_apks(tree)
+    (tree.parent / "built.apk").unlink()   # this gate builds nothing; the earlier build's APK is still there
+    check(tree, answer(report()))()
+    assert sent[-1][1] == "pr" and f"`{DEVICE['apk']}`" in sent[-1][2] and "final_head" not in o()
+    (tree.parent / "built.apk").write_text("apk", encoding="utf-8")
+    with patch.object(oneshot_build, "held", lambda *a: (_ for _ in ()).throw(ValueError("no report"))):
+        check(tree, answer(report()))()
+    release_dir = oneshot_spec.store("budget").folder / "release"
+    assert "final_head" not in o() and not [p for p in release_dir.rglob("*") if p.is_file()]
 
 
 def test_an_android_app_without_its_apk_after_the_final_gate_is_sent_back(android):

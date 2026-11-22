@@ -915,6 +915,16 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
                               capture_output=True, text=True, encoding="utf-8",
                               env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
         assert json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny", hook
+    # The user-level dispatcher in front of both: a PreToolUse check it cannot reach denies too.
+    unattached = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": {"command": "git status"}})
+    for marked, wanted in ((True, "deny"), (False, None)):
+        env = {k: v for k, v in os.environ.items() if k != guard_git.SECRETS_HELD}
+        done = subprocess.run([sys.executable, str(Path(guard.__file__).with_name("hook.py")), "claude",
+                               "claude_pretool.py"], input=unattached, capture_output=True, text=True,
+                              encoding="utf-8", env={**env, **({guard_git.SECRETS_HELD: "1"} if marked else {})},
+                              timeout=60)
+        got = json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"] if done.stdout.strip() else None
+        assert done.returncode == 0 and got == wanted, done.stderr
 
 
 @pytest.mark.parametrize("command", ["git log --show-signature", 'git log --format="%G?"', "git show --pretty=%GG",
