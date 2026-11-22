@@ -40,7 +40,7 @@ from pydantic import BaseModel
 from common import masked, process, shell
 
 from . import oneshot, oneshot_build, oneshot_needs, oneshot_publish, oneshot_spec, release, runtime, specs, work
-from .oneshot_kept import CLIPS, MAX_CLIPS, clips_of, fresh, kept_from, label_of, plain, strict  # noqa: F401 — kept here too
+from .oneshot_kept import CLIPS, MAX_CLIPS, clips_of, fresh, kept_from, label_of, plain, spelled, strict  # noqa: F401
 from .query import _lock as work_lock, hold
 
 router = APIRouter()
@@ -337,7 +337,7 @@ def accepted_by(psutil, server: tuple, client: tuple, seconds: float = 3.0) -> i
 
 def tail(log: Path, hide: dict, size: int = 1500) -> str:   # masked whole first: the cut never splits a secret
     try:
-        return masked(log.read_text(encoding="utf-8", errors="replace"), hide)[-size:].strip() or "(출력 없음)"
+        return masked(log.read_text(encoding="utf-8", errors="replace"), spelled(hide))[-size:].strip() or "(출력 없음)"
     except OSError:
         return "(출력 없음)"
 

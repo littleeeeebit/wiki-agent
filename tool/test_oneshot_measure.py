@@ -212,6 +212,8 @@ def test_the_backend_that_never_answers_fails_the_measurement(at_measure):
 def test_the_end_of_a_startup_log_is_cut_only_after_its_secrets_are_masked(tmp_path):
     (log := tmp_path / "serve.log").write_text("start sk-secret-value end", encoding="utf-8")
     assert measure.tail(log, {"sk-secret-value": "[K]"}, size=8) == "[K] end"   # never a fragment of the value
+    log.write_text(json.dumps({"key": 'sk-"q\\uote'}), encoding="utf-8")   # logged as JSON: its escaped spelling
+    assert "uote" not in measure.tail(log, {'sk-"q\\uote': "[K]"}) and "[K]" in measure.tail(log, {'sk-"q\\uote': "[K]"})
 
 
 def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_never_text(at_measure):
@@ -392,6 +394,20 @@ def test_a_failed_copy_still_removes_the_scripts_folder_and_leaves_no_partial_re
     with patch.object(oneshot_kept, "masked", lambda *a: (_ for _ in ()).throw(MemoryError())):
         why = measure.kept_from(raw, tmp_path / "m6", {"sk-1": "[K]"})
     assert "MemoryError" in why and not raw.exists()   # anything unforeseen: the raw folder goes all the same
+    raw = wrote(tmp_path, {"serve.log": "sk-1"})
+    with patch.object(oneshot_kept, "spelled", lambda *a: (_ for _ in ()).throw(MemoryError())):
+        why = measure.kept_from(raw, tmp_path / "m7", {"sk-1": "[K]"})
+    assert "MemoryError" in why and not raw.exists()   # the mask's own setup too
+    raw = wrote(tmp_path, {"serve.log": "sk-1"})
+    real = oneshot_kept.os.lstat
+
+    def denied(p, *a, **k):   # the raw folder cannot be looked at: never taken for gone
+        if Path(p) == raw:
+            raise PermissionError("look")
+        return real(p, *a, **k)
+
+    with patch.object(oneshot_kept.os, "lstat", denied), patch.object(oneshot_kept.shutil, "rmtree", lambda *a, **k: None):
+        assert "지우지 못했다" in oneshot_kept.removed(raw)
     (tmp_path / "measure").mkdir()
     with patch.object(oneshot_kept.os, "scandir", lambda *a: (_ for _ in ()).throw(PermissionError("listing"))):
         why = oneshot_kept.fresh(tmp_path / "measure" / "m4", tmp_path / "measure" / "m4.raw")

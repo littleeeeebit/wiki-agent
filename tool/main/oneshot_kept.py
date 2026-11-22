@@ -110,17 +110,26 @@ def removed(folder: Path) -> str:
         os.chmod(path, stat.S_IWRITE)
         func(path)
 
+    def there() -> bool:   # only a missing entry is gone: one that cannot be looked at is still there
+        try:
+            os.lstat(folder)
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+        except OSError:
+            return True
+        return True
+
     try:
-        if os.path.lexists(folder) and not plain(folder, stat.S_IFDIR) and os.path.isdir(folder):
+        if there() and not plain(folder, stat.S_IFDIR) and os.path.isdir(folder):
             try:   # a linked folder: the link goes, its target stays
                 os.unlink(folder)
             except OSError:
                 os.rmdir(folder)
-        elif os.path.lexists(folder):
+        elif there():
             shutil.rmtree(folder, onexc=again) if os.path.isdir(folder) else os.unlink(folder)
     except OSError:
         pass   # what is left says it below
-    if os.path.lexists(folder):
+    if there():
         return f"실측 원본 폴더 `{folder.name}` 를 지우지 못했다 — 그 폴더를 지우고 [실측 시작]을 누른다"
     return ""
 
@@ -158,6 +167,13 @@ def written(p: Path, text: str) -> None:
     staged(p, lambda part: part.write_text(text, encoding="utf-8"))
 
 
+def spelled(hide: dict[str, str]) -> dict[str, str]:
+    """`hide` with each value also in the spellings JSON escaping gives it, for text a backend may log as JSON."""
+
+    return {**hide, **{form: label for value, label in hide.items()
+                       for form in (json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1])}}
+
+
 def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
     """What a measurement keeps, copied from the folder the script wrote (`raw`) into a new one (`out`): the
     report, decoded strictly, each field masked, written once (one that is not UTF-8 JSON is not kept); the
@@ -166,10 +182,9 @@ def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
     copy included. Returns why the run cannot keep its result (the copy failed, or `raw` is still there), or
     empty."""
 
-    hide = {**hide, **{form: label for value, label in hide.items()
-                       for form in (json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1])}}
     why = ""
     try:
+        hide = spelled(hide)   # inside: even this failing still removes `raw`
         out.mkdir(parents=True)   # new: the run removed any earlier one, so nothing placed there is kept
         if plain(raw, stat.S_IFDIR):
             if plain(report := raw / "report.json"):
