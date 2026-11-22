@@ -218,7 +218,8 @@ def reported(report: dict, seen: dict, data: Path) -> str | None:
 def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep: Path) -> dict:
     """One `owner` check: its fixture, then the app from a fresh start of its scenario, then what it observes while
     both still run, each source proven again first. `passed`, `failed` or `pending` with why, or `judge` with the
-    capture copied into `keep` for the critic."""
+    capture copied into `keep` for the critic. The fixture's job is ended, its exit proven, before it returns on
+    every outcome, so the next check's fixture is the only window by that title."""
 
     import owner_round
 
@@ -264,7 +265,10 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
         shutil.copyfile(got["file"], file)   # the session's folders go with its cleanup
         return {"status": "judge", "file": str(file), "shows": seen["shows"], "page": page}
 
-    report = runs.drive(scenario["screen"], scenario["state"], steps, then)
+    try:
+        report = runs.drive(scenario["screen"], scenario["state"], steps, then)
+    finally:   # each check's fixture gone, its end proven, before the next one shows: one window by that title
+        owner_round.ended(session, fixture_key, "고정 창을")
     return report.get("observed") or {"status": "failed", "why": "검사를 끝내지 못했다"}
 
 

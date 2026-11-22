@@ -295,10 +295,12 @@ u.SendMessageW.argtypes = [w.HWND, ctypes.c_uint, w.WPARAM, ctypes.c_void_p]
 hwnd, marks = int(sys.argv[1]), [line.split() for line in open(sys.argv[2], encoding="utf-8") if line.strip()]
 
 def state():
-    box, title = w.RECT(), ctypes.create_unicode_buffer(64)
+    box, title, shape = w.RECT(), ctypes.create_unicode_buffer(64), w.RECT()
     u.GetWindowRect(hwnd, ctypes.byref(box))
     u.GetWindowTextW(hwnd, title, 64)
+    kind = u.GetWindowRgnBox(hwnd, ctypes.byref(shape))
     return {"rect": [box.left, box.top, box.right - box.left, box.bottom - box.top], "title": title.value,
+            "shape": [kind, shape.left, shape.top, shape.right - shape.left, shape.bottom - shape.top],
             "visible": bool(u.IsWindowVisible(hwnd)), "iconic": bool(u.IsIconic(hwnd)), "ex": u.GetWindowLongW(hwnd, -20)}
 
 before = state()
@@ -367,6 +369,9 @@ def test_the_fixture_refuses_every_change_paints_its_marks_and_the_helper_reads_
         assert seen["marks"] == len(owner_round.marks(640, 360)) and seen["wrong"] == []
         # What the round reads is the client area, all of it painted: never the frame's invisible borders.
         assert named["rect"] == seen["client"] and named["rect"][2:] == [640, 360]
+        # Its window region, set by itself, is one rectangle (SIMPLEREGION) of exactly the client area.
+        frame = seen["before"]["rect"]
+        assert seen["before"]["shape"] == [2, named["rect"][0] - frame[0], named["rect"][1] - frame[1], 640, 360]
 
         def surface(key: str) -> dict:
             out = session.reserve(key)

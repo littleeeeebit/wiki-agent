@@ -199,11 +199,14 @@ def _waited(file: Path, seconds: float, halt) -> dict | None:
     return None
 
 
-def _ended(session, key: str) -> None:
+def ended(session, key: str, what: str = "캡처 도우미를") -> None:
+    """Job `key` ended with every member's exit proven: RuntimeError, naming `what` (its object phrase), when it
+    is not."""
+
     session.observe()
     proof = session.jobs[key].end(10)
     if not proof["clean"]:
-        raise RuntimeError(f"캡처 도우미를 끝내지 못했다 — {'; '.join(proof['reasons'])}")
+        raise RuntimeError(f"{what} 끝내지 못했다 — {'; '.join(proof['reasons'])}")
 
 
 def _read(session, key: str, argv: list[str], binding: dict, members, halt, name: str, gate) -> dict:
@@ -247,7 +250,7 @@ def _read(session, key: str, argv: list[str], binding: dict, members, halt, name
             raise Unavailable(f"캡처 도우미가 이 자리에서 읽을 수 없다 — {result.get('why')}")
         return {**result, "file": str(folder / name)} if result.get("read") else result
     finally:
-        _ended(session, key)
+        ended(session, key)
 
 
 def window_read(session, key: str, exe: Path, binding: dict, members, halt, gate=None) -> dict:
@@ -261,9 +264,9 @@ def window_read(session, key: str, exe: Path, binding: dict, members, halt, gate
 
 def surface_read(session, key: str, exe: Path, binding: dict, rect: list[int], members, halt, gate=None) -> dict:
     """A surface read of exactly `rect`, the fixture's client area as it reports it in physical pixels, whatever
-    is composed there when sampled. The fixture's binding is proven again before the `go`. The fixture refuses
-    every change to itself, and the helper keeps the frame only when every pixel of every one of the fixture's
-    marks is in it, where the fixture paints it: proof drawn from the sampled pixels themselves that the fixture
+    is composed there when sampled. The fixture's binding is proven again before the `go`. The helper requires the
+    fixture's own window region at each check, and keeps the frame only when every pixel of every one of the
+    fixture's marks is in it, where the fixture paints it: proof drawn from the sampled pixels themselves that the fixture
     covered the region then. The helper's job is ended on every outcome."""
 
     argv = [str(exe), "surface", str(binding["hwnd"]), str(binding["pid"]), *(str(v) for v in rect), binding["marks"]]
@@ -272,7 +275,7 @@ def surface_read(session, key: str, exe: Path, binding: dict, rect: list[int], m
 
 def fixture(session, key: str, page: list[str], rect: list[int], halt) -> tuple[dict, list[int]]:
     """The check's fixture started in a job of its own over `rect`, showing `page` within fresh marks: its binding,
-    naming the marks' file, and its frame in physical pixels, as it reports them. RuntimeError, never the build's
+    naming the marks' file, and its client area on screen in physical pixels, as it reports them. RuntimeError, never the build's
     to fix, when it names no window of its job in time; its job ends with the round's."""
 
     folder = session.reserve(key)

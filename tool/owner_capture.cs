@@ -12,12 +12,12 @@
 //   owner_capture surface <hwnd> <pid> <x> <y> <width> <height> <marks> <dir>   A surface read of exactly that
 //       region, the fixture's client area, which it paints whole. It makes its bitmap before it says it is ready.
 //       On `go` it checks the fixture right before and right after the blit: the window `hwnd`, visible, not
-//       minimized, with no window region, of process `pid`, titled `oneshot-fixture`, its client area exactly
-//       that region. The frame is kept only when every pixel of every one of `<marks>` (the server's random
+//       minimized, of process `pid`, titled `oneshot-fixture`, its client area exactly that region and its window
+//       region, which the fixture sets itself, one rectangle of exactly that client area. The frame is kept only when every pixel of every one of `<marks>` (the server's random
 //       colours, which the fixture paints along its client edges) is there: proof from the sampled pixels
 //       themselves that the fixture covered the region in that frame, however it was moved or put back around
 //       it, by a pixel included. Marks missing leave the check pending;
-//       a check of the window failing fails it. The fixture also refuses every change to itself (oneshot_fixture.py).
+//       a check of the window failing fails it. The fixture also keeps itself steady (oneshot_fixture.py).
 //       The blit is GDI's BitBlt with CAPTUREBLT, so layered windows over the fixture are composed in.
 //   owner_capture --check   Builds, starts, reads marks off a memory bitmap and blits between two memory bitmaps
 //       with the same flags; reads no screen.
@@ -43,6 +43,7 @@ public static class Program {
   [DllImport("user32")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
   [DllImport("user32", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr hwnd, StringBuilder text, int max);
   [DllImport("user32")] static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+  [DllImport("user32")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
   [DllImport("user32")] static extern IntPtr GetDC(IntPtr hwnd);
   [DllImport("user32")] static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
   [DllImport("gdi32")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
@@ -55,6 +56,7 @@ public static class Program {
   [DllImport("user32")] static extern bool IsIconic(IntPtr hwnd);
   [DllImport("user32")] static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
   [DllImport("user32")] static extern int GetWindowRgnBox(IntPtr hwnd, out RECT box);
+  const int SIMPLEREGION = 2;
   const int TOLERANCE = 8;   // per channel: what the composition may change in a solid colour
 
   static int closed;   // set by the item's Closed event on another thread, read with a barrier
@@ -172,9 +174,8 @@ public static class Program {
   }
 
   // Why the sampled frame does not carry every mark where the fixture paints it, its client area starting at
-  // (ox, oy) in the frame, or empty: each mark's middle pixel within TOLERANCE of its colour.
-  // Every pixel of every mark, `ox, oy` being where the client area starts in the frame. The server keeps each
-  // mark's colour away from every other's and from the page's, so a fixture displaced by a pixel fails here.
+  // (ox, oy) in the frame, or empty: every pixel of every mark within TOLERANCE of its colour. The server keeps
+  // each mark's colour away from every other's and from the page's, so a fixture displaced by a pixel fails here.
   static string Marked(Bitmap frame, int[][] marks, int ox, int oy) {
     foreach (int[] m in marks) {
       if (ox + m[0] < 0 || oy + m[1] < 0 || ox + m[0] + m[2] > frame.Width || oy + m[1] + m[3] > frame.Height)
@@ -191,16 +192,20 @@ public static class Program {
 
   // Why the fixture's client area, what it paints, is not exactly the region x, y, w, h now, or "".
   static string Fixture(IntPtr hwnd, uint pid, int x, int y, int w, int h) {
-    uint owner; RECT r, box; var title = new StringBuilder(64); var origin = new POINT();
+    uint owner; RECT r, box, frame; var title = new StringBuilder(64); var origin = new POINT();
     if (!IsWindow(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return "the fixture is gone, hidden or minimized";
-    // GetWindowRgnBox copies no region, so it needs nothing made: ERROR (0) with the window still there, as the
-    // checks below find it, is a window with no region, the whole of it the fixture's.
-    if (GetWindowRgnBox(hwnd, out box) != 0) return "the fixture's shape changed";
     GetWindowThreadProcessId(hwnd, out owner);
     GetWindowTextW(hwnd, title, title.Capacity);
     if (owner != pid || title.ToString() != FIXTURE) return "the handle names another window";
-    if (!GetClientRect(hwnd, out r) || !ClientToScreen(hwnd, ref origin)) return "the fixture is gone";
+    if (!GetClientRect(hwnd, out r) || !ClientToScreen(hwnd, ref origin) || !GetWindowRect(hwnd, out frame))
+      return "the fixture is gone";
     if (origin.X != x || origin.Y != y || r.Right != w || r.Bottom != h) return "the fixture moved";
+    // The fixture gives itself a window region of exactly its client area. Only Windows saying so, one rectangle
+    // with those bounds, proves its shape: ERROR, which is also what a failed query gives, never does.
+    int shape = GetWindowRgnBox(hwnd, out box);
+    int left = origin.X - frame.Left, top = origin.Y - frame.Top;
+    if (shape != SIMPLEREGION || box.Left != left || box.Top != top || box.Right != left + w || box.Bottom != top + h)
+      return "the fixture's shape changed";
     return "";
   }
 

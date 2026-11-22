@@ -452,10 +452,14 @@ It stays pending, and R3 stays closed.
 The approval starts the round at once. For each check it runs, in this
 order:
 
-1. The fixture (`tool/oneshot_fixture.py`) in a job of its own, opaque,
-   topmost and never activated, over a fixed frame on the primary monitor.
-   It reports its handle and frame, and its binding holds its title and
-   frame as well as its process.
+1. The fixture (`tool/oneshot_fixture.py`) in a job of its own, opaque and
+   topmost, placed at a fixed corner of the primary monitor. Windows shows
+   it without activation (`SetWindowPos` with `SWP_NOACTIVATE`), never
+   through Tk, whose `deiconify` asks for focus. It reports its handle and
+   its client area on screen. Its binding holds its title, its window
+   rectangle and its process. The check ends the fixture's job, its exit
+   proven, before the next check starts, so one window at a time has the
+   fixture's title.
 2. The frozen app from a fresh start of the check's scenario, driven without
    a shot (`shoot: false`), so the driver reads and acts but never calls
    `PrintWindow`.
@@ -478,22 +482,25 @@ with no stop asked meanwhile, lets it sample.
   marks. The marks are cells of random colours the server draws for the
   check, which the fixture paints along its client area's edges, 8 pixels
   deep. No two colours, and no colour and the page's white or black, lie
-  within twice the helper's tolerance of each other. The fixture refuses
-  every change to itself in its own window procedure: a move, a resize, a
-  change of z-order, a hide, a new title or style, a close. It undoes at
-  once what Windows changes without asking it: a minimize, or a move, hide
-  or loss of topmost sent past its guard. The helper checks the fixture
+  within twice the helper's tolerance of each other. The fixture gives
+  itself a window region of exactly its client area. To keep the page
+  steady for the reading, its own window procedure turns requests to
+  move, resize, restack, hide, retitle, restyle or close it into none. It
+  puts back at once a minimize, and a move, hide or lost topmost flag that
+  came without that request. It does not keep its order among other
+  topmost windows; the marks cover that. The helper checks the fixture
   right before and after the blit: the same window, visible, not
-  minimized, with no window region (`GetWindowRgnBox`, which copies
-  nothing), and its client area exactly that region. It keeps the frame
-  only when every pixel of every mark is in it. A fixture displaced by
-  even a pixel shows a neighbour's colour or the page at some mark's edge,
-  so this proves from the sampled pixels themselves that the fixture
-  covered the region in that frame. A frame without them leaves the check
-  pending. A failed check of the window fails it. A window region set on
-  the fixture and cleared again between the blit and the second check
-  would escape both. The fixture never clears one itself, so this needs an
-  app that sets regions on the server's own window with that timing.
+  minimized, its client area exactly that region, and its window region
+  one rectangle of exactly that client area (`GetWindowRgnBox` answering
+  `SIMPLEREGION` with those bounds; `ERROR`, which a failed query also
+  gives, never passes). It keeps the frame only when every pixel of every
+  mark is in it. A fixture displaced by even a pixel shows a neighbour's
+  colour or the page at some mark's edge, so this proves from the sampled
+  pixels themselves that the fixture covered the region in that frame. A
+  frame without them leaves the check pending. A failed check of the
+  window fails it. A window region replaced and put back exactly between
+  the blit and the second check would escape both. That needs an app that
+  sets regions on the server's own window with that timing.
 - A report passes only when it holds the fixture's page as it reads: its
   words in order, one after another. A fixed text naming every word the
   server draws from is no capture of this round's page.

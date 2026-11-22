@@ -1,14 +1,16 @@
 """The owner's desktop round's fixture (plan 9e5, docs/plans/oneshot/9-kinds.md "The owner's desktop round"): the
 server's own window, never the build's, showing the page of English words the server drew for one check. It is
-topmost, never takes activation, and paints its whole client area (`--rect`'s WIDTH by HEIGHT) opaque, so a
-surface read of that area reads only the round's own pixels beneath whatever the app draws over it. Along the
-client area's edges it paints the server's marks for this check (`--marks`: one `x y width height rrggbb` per
-line, in client pixels), which the capture helper finds in the very frame it sampled, or keeps nothing.
+topmost and shown by Windows without activation, never through Tk's `deiconify`, which asks for focus. It paints
+its whole client area (`--rect`'s WIDTH by HEIGHT) opaque, so a surface read of that area reads only the round's
+own pixels beneath whatever the app draws over it. Along the client area's edges it paints the server's marks
+for this check (`--marks`: one `x y width height rrggbb` per line, in client pixels), which the capture helper
+finds in the very frame it sampled, or keeps nothing.
 
-Once shown, it refuses in its own window procedure whatever would make it another source: a move, a resize, a
-change of z-order, a hide, a new title or style, a minimize, maximize or close, and undoes what Windows changes
-without asking it. Then it writes its frame's handle and its client area's rectangle on screen, in physical
-pixels, to `--out`, and runs until the round ends its job.
+Once shown, it gives itself a window region of exactly its client area. To keep the page steady for the reading,
+its own window procedure turns requests to move, resize, restack, hide, retitle, restyle, minimize, maximize or
+close it into none, and puts back a minimize, move, hide or lost topmost flag that came without such a request.
+Its order among other topmost windows is not kept; the marks cover that. Then it writes its frame's handle and
+its client area's rectangle on screen, in physical pixels, to `--out`, and runs until the round ends its job.
 
     python oneshot_fixture.py --title oneshot-fixture --words <file> --marks <file> --rect X Y WIDTH HEIGHT --out <file>
 """
@@ -23,7 +25,8 @@ from pathlib import Path
 GWL_EXSTYLE, GWLP_WNDPROC, WS_EX_NOACTIVATE = -20, -4, 0x08000000
 WM_SETTEXT, WM_CLOSE, WM_WINDOWPOSCHANGING, WM_STYLECHANGING, WM_SYSCOMMAND = 0x000C, 0x0010, 0x0046, 0x007C, 0x0112
 WM_WINDOWPOSCHANGED, SW_SHOWNOACTIVATE, HWND_TOPMOST, WS_EX_TOPMOST = 0x0047, 4, -1, 0x8
-SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_HIDEWINDOW, SWP_NOSENDCHANGING = 0x1, 0x2, 0x4, 0x10, 0x80, 0x400
+SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_SHOWWINDOW, SWP_HIDEWINDOW = 0x1, 0x2, 0x4, 0x10, 0x40, 0x80
+SWP_NOSENDCHANGING = 0x400
 SC_SIZE, SC_MOVE, SC_MINIMIZE, SC_MAXIMIZE, SC_CLOSE = 0xF000, 0xF010, 0xF020, 0xF030, 0xF060
 WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM)
 
@@ -38,11 +41,11 @@ class STYLESTRUCT(ctypes.Structure):
 
 
 def guarded(user32, frame: int):
-    """The frame's window procedure wrapped so that it keeps its place, size, z-order, visibility, title and
-    styles: each request for a change is turned into none. What Windows changes without asking (a minimize by
-    another process's `ShowWindow`, a move, hide or z-order change sent with `SWP_NOSENDCHANGING`) is undone as
-    soon as it is told, without activation; until then the helper finds the fixture changed or its marks
-    missing. The callback, which must outlive the window."""
+    """The frame's window procedure wrapped so that it keeps its place, size, topmost flag, visibility, title and
+    styles: each request for a change is turned into none. What comes without a request (a minimize by another
+    process's `ShowWindow`, a move, hide or lost topmost flag sent with `SWP_NOSENDCHANGING`) is put back as soon
+    as Windows reports it, without activation; until then the helper finds the fixture changed or its marks
+    missing. Its order among other topmost windows is not kept. The callback, which must outlive the window."""
 
     user32.SetWindowLongPtrW.restype = ctypes.c_void_p
     user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
@@ -93,7 +96,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--rect", type=int, nargs=4, required=True, metavar=("X", "Y", "WIDTH", "HEIGHT"))
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    user32 = ctypes.windll.user32
+    user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
     user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))   # per-monitor v2: the rect is physical pixels
     words = args.words.read_text(encoding="utf-8").split()
     x, y, width, height = args.rect
@@ -102,7 +105,6 @@ def main(argv: list[str] | None = None) -> None:
     root.title(args.title)
     root.geometry(f"{width}x{height}+{x}+{y}")
     root.resizable(False, False)
-    root.attributes("-topmost", True)
     root.configure(bg="white")
     page = tk.Canvas(root, width=width, height=height, bg="white", highlightthickness=0, bd=0)
     page.pack(expand=True, fill="both")
@@ -116,15 +118,26 @@ def main(argv: list[str] | None = None) -> None:
     root.update_idletasks()
     frame = user32.GetParent(root.winfo_id())   # Tk's toplevel frame, the window others find
     user32.SetWindowLongW(frame, GWL_EXSTYLE, user32.GetWindowLongW(frame, GWL_EXSTYLE) | WS_EX_NOACTIVATE)
-    root.deiconify()
+    # Shown topmost by Windows directly, never by Tk's `deiconify` or `-topmost`, which raise it and ask for focus.
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_uint]
+    user32.SetWindowPos(frame, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
     root.update()
     keep = []   # the guard's callback lives as long as the window
 
     def named() -> None:
-        keep.append(guarded(user32, frame))   # placed, styled and titled: from here on it refuses every change
-        box, origin = wintypes.RECT(), wintypes.POINT()   # the client area, all of it painted, never the frame's
-        user32.GetClientRect(frame, ctypes.byref(box))    # borders, which DWM draws partly invisible
-        user32.ClientToScreen(frame, ctypes.byref(origin))
+        box, origin, placed = wintypes.RECT(), wintypes.POINT(), wintypes.RECT()   # the client area, all of it
+        user32.GetClientRect(frame, ctypes.byref(box))    # painted, never the frame's borders, which DWM draws
+        user32.ClientToScreen(frame, ctypes.byref(origin))   # partly invisible
+        user32.GetWindowRect(frame, ctypes.byref(placed))
+        # The window's region is exactly its client area, in window coordinates: a shape Windows reports as one
+        # rectangle with those bounds, which the helper requires at each check.
+        left, top = origin.x - placed.left, origin.y - placed.top
+        gdi32.CreateRectRgn.restype = ctypes.c_void_p
+        user32.SetWindowRgn.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
+        if not user32.SetWindowRgn(frame, gdi32.CreateRectRgn(left, top, left + box.right, top + box.bottom), True):
+            raise SystemExit("the fixture could not take its shape")
+        keep.append(guarded(user32, frame))   # placed, shaped, styled and titled: from here on it refuses changes
         part = args.out.with_suffix(".part")
         part.write_text(json.dumps({"hwnd": frame, "rect": [origin.x, origin.y, box.right, box.bottom]}),
                         encoding="utf-8")

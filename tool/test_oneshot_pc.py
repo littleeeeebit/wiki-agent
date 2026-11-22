@@ -290,7 +290,7 @@ class Session:
 def desk(monkeypatch, tmp_path):
     """The Windows side as stand-ins: the fixture shows `PAGE`, every binding stands, and each read is counted."""
 
-    reads = {"window": [], "surface": [], "bound": []}
+    reads = {"window": [], "surface": [], "bound": [], "ended": []}
     capture = tmp_path / "capture.png"
     capture.write_bytes(b"PNG")
     monkeypatch.setattr(owner_round, "words", lambda: list(PAGE))
@@ -300,6 +300,7 @@ def desk(monkeypatch, tmp_path):
                         reads["bound"].append(seen) or {"job": job, "hwnd": hwnd})
     monkeypatch.setattr(owner_round, "window_read", lambda *a: reads["window"].append(a) or {"read": True, "file": str(capture)})
     monkeypatch.setattr(owner_round, "surface_read", lambda *a: reads["surface"].append(a) or {"read": True, "file": str(capture)})
+    monkeypatch.setattr(owner_round, "ended", lambda session, key, what="": reads["ended"].append(key))
     (tmp_path / "keep").mkdir()
     (tmp_path / "data").mkdir()
     return reads, tmp_path
@@ -339,11 +340,26 @@ def test_a_scenario_that_did_not_run_whole_is_no_ground_for_any_observation(held
     assert got["status"] == "failed" and why in got["why"]
 
 
+def test_each_checks_fixture_is_ended_before_the_check_returns_whatever_its_outcome(held, desk):
+    reads, root = desk
+    assert checked(desk, REPORT, driven("apple river garden"))["status"] == "passed"
+    assert checked(desk, REPORT, driven("garden"))["status"] == "failed"
+    assert reads["ended"] == ["fixture1", "fixture1"]
+
+    class Broken(Runs):
+        def drive(self, sid, state, steps, then):
+            raise RuntimeError("the app's look could not be cleaned")
+
+    with pytest.raises(RuntimeError):
+        pc.one(Session(), Broken(driven(), root / "data"), 2, REPORT, SCENARIO, "helper.exe", "", root / "keep")
+    assert reads["ended"][-1] == "fixture2"   # so the next check never finds two windows by the fixture's title
+
+
 def test_a_fixture_replaced_before_the_read_fails_and_nothing_is_read(held, desk, monkeypatch):
     monkeypatch.setattr(owner_round, "proven", lambda binding, members: "the window is gone")
     window = {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}
     got = checked(desk, window, driven())
-    assert got["status"] == "failed" and "고정 창" in got["why"] and desk[0] == {"window": [], "surface": [], "bound": []}
+    assert got["status"] == "failed" and "고정 창" in got["why"] and desk[0] == {"window": [], "surface": [], "bound": [], "ended": ["fixture1"]}
 
 
 def test_an_app_window_replaced_after_the_drivers_read_is_never_read(held, desk, monkeypatch):
@@ -385,7 +401,7 @@ def test_a_window_check_reads_only_through_the_window_and_a_composition_only_the
 
 def test_no_capture_helper_leaves_a_capture_check_pending(held, desk):
     got = checked(desk, SURFACE, driven(), exe=None)
-    assert got == {"status": "pending", "why": "도우미가 없다"} and desk[0] == {"window": [], "surface": [], "bound": []}
+    assert got == {"status": "pending", "why": "도우미가 없다"} and desk[0] == {"window": [], "surface": [], "bound": [], "ended": ["fixture1"]}
 
 
 def test_the_critic_judges_a_capture_against_its_sentence_and_the_page(held, desk, monkeypatch):
