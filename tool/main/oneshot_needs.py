@@ -27,7 +27,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from common import folded, overlaps
+from common import errorlog, folded, overlaps
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
 from .oneshot_spec import VIEWS, idle, saved, spec_of, view
@@ -223,7 +223,6 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         if spec_of(spec["repo"])["oneshot"].get("leaked"):
             saved(spec["repo"], oneshot={"leaked": []})
         return still_tainted(path, spec)
-    refused = still_tainted(path, spec)
     step = ""
 
     def git(*args: str) -> str:
@@ -247,7 +246,7 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         log = git("log", *HISTORY, f"{base}..HEAD") if base else ""
         places = {"답": final, "커밋": log + git("diff", "HEAD"), "커밋하지 않은 파일": "\n".join(map(read, untracked))}
     except (OSError, subprocess.SubprocessError) as exc:
-        return refused or f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
+        return unscanned(path, spec, hide, f"{step} 이(가) 실패했다 ({type(exc).__name__})")
     found: dict[str, set[str]] = {}
     for where, text in places.items():
         flat = folded(text)
@@ -257,16 +256,20 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
     marked = sorted(set().union(*map(need_ids, found.values())))
     if marked != (spec_of(spec["repo"])["oneshot"].get("leaked") or []):   # the sheet marks each need found now
         saved(spec["repo"], oneshot={"leaked": marked})
-    if not found:
-        return refused
     if "커밋" in found and base:   # the commits that hold it stay refused until the history no longer has them
         try:
             hit = {c: ids for c in git("rev-list", f"{base}..HEAD").split() if (ids := held_in(git("show", *HISTORY, c), hide))}
         except (OSError, subprocess.SubprocessError) as exc:
-            return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
-        o = spec_of(spec["repo"])["oneshot"]   # each commit with the needs it holds, marked while it stays
-        saved(spec["repo"], oneshot={"tainted": sorted({*(o.get("tainted") or []), *hit}),
-                                     "tainted_needs": {**(o.get("tainted_needs") or {}), **hit}})
+            return unscanned(path, spec, hide, f"{step} 이(가) 실패했다 ({type(exc).__name__})")
+        o = spec_of(spec["repo"])["oneshot"]   # each commit with every need it was ever found holding
+        old = o.get("tainted_needs") or {}
+        saved(spec["repo"], oneshot={"tainted": sorted({*(o.get("tainted") or []), *hit}), "tainted_needs": {
+            **old, **{c: sorted({*old.get(c, []), *ids}) for c, ids in hit.items()}}})
+    if (hold := spec_of(spec["repo"])["oneshot"].get("unscanned")) and hold["digest"] == digest(spec, hide):
+        saved(spec["repo"], oneshot={"unscanned": None})   # the scan a failure left owed, done with the same values
+    refused = still_tainted(path, spec_of(spec["repo"]))
+    if not found:
+        return refused
     every, rows = list(hide), list(owed(spec["oneshot"].get("design") or {}).items())
 
     def ref(label: str) -> str:
@@ -302,14 +305,59 @@ def held_in(text: str, hide: dict) -> list[str]:
 def marked(o: dict) -> set[str]:
     """The needs the sheet marks: those a turn's answer, commits or files held when last checked (`leaked`), and those
     a commit still in the history holds (`tainted_needs`), so the mark and the history refusal clear together."""
-    return {*(o.get("leaked") or []), *(n for c in o.get("tainted") or [] for n in (o.get("tainted_needs") or {}).get(c, []))}
+    return {*(o.get("leaked") or []), *((o.get("unscanned") or {}).get("needs") or []),
+            *(n for c in o.get("tainted") or [] for n in (o.get("tainted_needs") or {}).get(c, []))}
+
+
+def settle(path: Path, run, final: str) -> None:
+    """The end of every turn on a oneshot's worktree, while it still holds it: one the stage check did not scan
+    (`run.scanned`), a failed, stopped or person's turn, is scanned under its own mask, or reconciled without one,
+    so a commit it made is recorded however the turn ended. It moves no stage, and never raises: a scan that broke
+    leaves the hold a failed read leaves (`unscanned`)."""
+
+    from . import specs   # it imports this module
+
+    if getattr(run, "scanned", False) or not ((spec := specs.owner(path)) or {}).get("oneshot"):
+        return
+    hide = getattr(getattr(run, "chat", None), "hide", None)
+    try:
+        leaked(path, spec, hide, final)
+    except Exception as exc:
+        errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
+        if hide:
+            unscanned(path, spec, hide, type(exc).__name__)
+
+
+def digest(spec: dict, hide: dict) -> str:
+    """The values a session carried, as a slow salted digest (`rotated`'s), never a value."""
+    return hashlib.pbkdf2_hmac("sha256", json.dumps(sorted(hide)).encode(), str(spec["oneshot"].get("run")).encode(),
+                               200_000).hex()
+
+
+def unscanned(path: Path, spec: dict, hide: dict, what: str) -> str:
+    """A scan that could not finish leaves a hold (`unscanned`) with the needs it carried: refused and marked until
+    a scan with the same values finishes (`leaked`), or the history after the design commit is gone and nothing is
+    left uncommitted (`still_tainted`); a value replaced meanwhile can no longer be looked for."""
+    saved(spec["repo"], oneshot={"unscanned": {"digest": digest(spec, hide), "needs": sorted(need_ids(hide.values()))}})
+    return " / ".join(filter(None, [still_tainted(path, spec_of(spec["repo"])),
+                                    f"비밀 값이 남았는지 확인하지 못했다 — {what}"]))
 
 
 def still_tainted(path: Path, spec: dict) -> str:
     """Why a turn is refused while a commit once found holding a secret is still in HEAD's history, or empty,
     clearing the record once none is. Bound to the commits, never to today's values, so a value the owner
-    replaced or took back is refused until the history is rewritten."""
+    replaced or took back is refused until the history is rewritten. A scan left owed (`unscanned`) is refused
+    the same way, until the history after the design commit is gone and nothing is left uncommitted."""
 
+    def empty(*args: str) -> bool:   # a read that failed is never empty
+        done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=60)
+        return done.returncode == 0 and not done.stdout.strip()
+
+    hold, base = spec["oneshot"].get("unscanned"), spec["oneshot"].get("design_head")
+    if hold and base and empty("rev-list", f"{base}..HEAD") and empty("status", "--porcelain"):
+        saved(spec["repo"], oneshot={"unscanned": None})
+        hold = None
+    unsure = "비밀 값 검사를 끝내지 못한 턴이 있다 — 같은 값으로 다시 검사하거나 설계 커밋 뒤의 기록을 지운다" if hold else ""
     tainted = spec["oneshot"].get("tainted") or []
     left = []
     for c in tainted:
@@ -323,8 +371,8 @@ def still_tainted(path: Path, spec: dict) -> str:
     if left != tainted:   # only the commits Git says are gone leave the record, with the needs they held
         saved(spec["repo"], oneshot={"tainted": left, "tainted_needs": {
             c: n for c, n in (spec["oneshot"].get("tainted_needs") or {}).items() if c in left}})
-    return (f"비밀 값이 들어 있던 커밋 {', '.join(c[:12] for c in left)} 이(가) 아직 기록에 있다 — 설계 커밋 뒤의 "
-            "그 커밋들을 다시 써서 기록에서 지운다") if left else ""
+    return " / ".join(filter(None, [unsure, (f"비밀 값이 들어 있던 커밋 {', '.join(c[:12] for c in left)} 이(가) 아직 "
+                                           "기록에 있다 — 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서 지운다") if left else ""]))
 
 
 def rotated(spec: dict | None, env: dict, rows: list[dict]) -> str | None:

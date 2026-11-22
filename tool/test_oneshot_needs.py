@@ -502,7 +502,8 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     head = spec()["oneshot"]["design_head"]
     oneshot_spec.saved("budget", oneshot={"design_head": "f" * 40})   # a history git cannot read is never clean
     failed = needs.leaked(at_r1, spec(), hide, "끝냈다")   # named by what failed, never by Git's own words
-    assert failed == "비밀 값이 남았는지 확인하지 못했다 — git log 이(가) 실패했다 (OSError)"
+    assert failed.endswith(" / 비밀 값이 남았는지 확인하지 못했다 — git log 이(가) 실패했다 (OSError)")
+    assert spec()["oneshot"]["unscanned"] and "검사를 끝내지 못한" in failed   # held until a scan finishes
     oneshot_spec.saved("budget", oneshot={"design_head": git("rev-parse", "HEAD")})
     git("commit", "--allow-empty", "-m", f"Use {value.upper()} for the call")   # the message is pushed too
     assert "커밋" in needs.leaked(at_r1, spec(), hide, "끝냈다")
@@ -540,12 +541,33 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
                           chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
     build.checked(at_r1, run, spec(), f"키는 {value} 이다")()
     assert "The server refused this build turn: 비밀 값 [N1]" in sent[0] and value.lower() not in sent[0].lower()
-    # A person's turn moves nothing, but a commit it made holding the value is checked under its mask, and kept.
+    assert run.scanned   # the stage check scanned it: the turn's end does not again
+    # A person's turn, or one that failed or was stopped, moves nothing; its end scans what it made under its mask.
+    monkeypatch.setattr(specs, "owner", lambda path: spec())
     git("commit", "--allow-empty", "-m", f"Person {value}")
     person = SimpleNamespace(halt=threading.Event(), put=notes.append, person=True,
                              chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
     assert build.checked(at_r1, person, spec(), "끝냈다") is None and spec()["oneshot"]["stage"] == "build"
-    assert git("rev-parse", "HEAD") in spec()["oneshot"]["tainted"] and mark()
+    needs.settle(at_r1, person, "끝냈다")
+    person_commit = git("rev-parse", "HEAD")
+    assert person_commit in spec()["oneshot"]["tainted"] and mark()
+    # A rescan finding fewer needs in a commit keeps every need it was found holding.
+    oneshot_spec.saved("budget", oneshot={"tainted_needs": {**spec()["oneshot"]["tainted_needs"], person_commit: ["N1", "N9"]}})
+    needs.leaked(at_r1, spec(), hide, "끝냈다")
+    assert spec()["oneshot"]["tainted_needs"][person_commit] == ["N1", "N9"]
+    # A scan that broke leaves a hold, refused and marked, until a scan with the same values finishes.
+    git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == ""
+
+    def broke(*a):
+        raise RuntimeError("no")
+
+    git("commit", "--allow-empty", "-m", "Later")   # with no history after the design commit, nothing is held
+    with patch.object(needs, "leaked", broke):
+        needs.settle(at_r1, person, "끝냈다")
+    assert spec()["oneshot"]["unscanned"]["needs"] == ["N1"] and mark()
+    assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), {}, "끝냈다")   # no values: it cannot clear
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == "" and not spec()["oneshot"]["unscanned"] and not mark()
 
 
 def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_answer_as_given(tmp_path, monkeypatch):
