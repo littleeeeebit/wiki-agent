@@ -453,7 +453,7 @@ export default function App() {
     if (!wiki) return
     setFault('')
     try {
-      const { repo: now } = await api.setConfig(wiki.id, { repo: next, model: wiki.model, effort: wiki.effort })
+      const { repo: now } = await api.setConfig(wiki.id, { repo: next })   // a switch sets no model
       // The server has switched; the screen follows from this answer, not
       // from the next request — if that one failed, the picker stayed on the
       // old project while every API answered for the new one.

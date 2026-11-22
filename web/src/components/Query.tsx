@@ -309,7 +309,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   const start = onStart
 
   const apply = useCallback(
-    async (cfg: { model: string; effort: string; refactor_mode?: RefactorMode }) => {
+    async (cfg: { model?: string; effort?: string; refactor_mode?: RefactorMode }) => {
       if (!here) return
       setFault('')
       setConfiguring(true)
@@ -453,7 +453,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
               mode={here.refactor_mode ?? 'preserve'} generation={here.refactor_generation ?? 0}
               options={options} korean={on} busy={busy} onSpecs={onSpecs}
               onPinned={() => void api.getChannels().then(onChannels).catch(() => {})}
-              onMode={(mode: RefactorMode) => void apply({ model: here.model, effort: here.effort, refactor_mode: mode })} />}
+              onMode={(mode: RefactorMode) => void apply({ refactor_mode: mode })} />}
             after={active === 'refactor' && here && <div aria-label="리팩터링 명세" className="space-y-3">
               {specs.filter((s) => s.repo === here.repo && s.refactor?.survey && s.refactor.mode === (here.refactor_mode ?? 'preserve')
                 && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === s.id)))

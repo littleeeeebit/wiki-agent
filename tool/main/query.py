@@ -180,8 +180,11 @@ def chosen(name: str, cid: str = "", pick: dict | None = None) -> dict:
         saved = saved if isinstance(saved, dict) else {}
     except (OSError, ValueError):
         saved = {}
-    if pick is not None:
-        saved[cid] = pick
+    if pick is not None:   # an empty one takes the focus's pick away
+        if pick:
+            saved[cid] = pick
+        else:
+            saved.pop(cid, None)
         file.parent.mkdir(parents=True, exist_ok=True)
         temporary = file.with_suffix(".tmp")
         temporary.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")
@@ -474,9 +477,32 @@ class Say(BaseModel):
 
 class Config(BaseModel):
     repo: str
-    model: str = ""
-    effort: str = ""
+    model: str | None = None   # none: the request sets no model (a mode change, a project switch)
+    effort: str | None = None
     refactor_mode: Literal["preserve", "simplify", "rework"] | None = None
+
+
+def requested(model: str, effort: str) -> dict:
+    """A model and effort a request sets, checked: 400 for one that cannot run, 503 when the Codex list
+    cannot be read."""
+
+    models = channels.MODELS
+    if model.startswith("codex:"):
+        try:
+            models = channels.codex_models()
+        except Exception as exc:
+            raise HTTPException(503, f"Codex 모델 목록 확인 실패: {exc}") from exc
+    selected = next((m for m in models if m["id"] == model), None)
+    if selected is None and not model.startswith("codex") and channels.CLAUDE_MODEL.fullmatch(model):
+        # Typed in by hand. The list only holds aliases, which already follow
+        # the latest model; a name that is not on it goes to `--model` as it
+        # is and the CLI says whether it knows it.
+        selected = {"id": model}
+    if selected is None:
+        raise HTTPException(400, "지원하지 않는 모델 선택")
+    if effort not in {e["id"] for e in selected.get("efforts", channels.EFFORTS)}:
+        raise HTTPException(400, "이 모델이 지원하지 않는 effort")
+    return {"model": model, "effort": effort or selected.get("default_effort", "")}
 
 
 @router.get("/api/options")
@@ -646,32 +672,42 @@ def configure(cid: str, body: Config) -> dict:
     known(cid)
     if channels.repo_for(body.repo) is None:
         raise HTTPException(400, f"그런 저장소가 없다: {body.repo}")
-    models = channels.MODELS
-    if body.model.startswith("codex:"):
-        try:
-            models = channels.codex_models()
-        except Exception as exc:
-            raise HTTPException(503, f"Codex 모델 목록 확인 실패: {exc}") from exc
-    selected = next((m for m in models if m["id"] == body.model), None)
-    if selected is None and not body.model.startswith("codex") and channels.CLAUDE_MODEL.fullmatch(body.model):
-        # Typed in by hand. The list only holds aliases, which already follow
-        # the latest model; a name that is not on it goes to `--model` as it
-        # is and the CLI says whether it knows it.
-        selected = {"id": body.model}
-    if selected is None:
-        raise HTTPException(400, "지원하지 않는 모델 선택")
-    efforts = {e["id"] for e in selected.get("efforts", channels.EFFORTS)}
-    if body.effort not in efforts:
-        raise HTTPException(400, "이 모델이 지원하지 않는 effort")
 
     with _lock:
         switched = body.repo != project()
         # A switch changes nothing others read; a setting, or a mode a switch carries, waits for that answer.
         if (not switched or body.refactor_mode is not None) and (str(channels.repo_for(body.repo)), cid) in _busy:
             raise HTTPException(409, "답변 생성이 끝난 뒤 설정을 바꿔 주세요")
+        cfg = config(cid, body.repo)   # the destination's on a switch, which moves only after what can fail
+        # A survey fixed the conversation's model for its mode; only another mode lets it go.
+        mode = body.refactor_mode if cid == "refactor" else None
+        renewed = mode is not None and mode != cfg.get("refactor_mode", "preserve")
+        pinned = bool(cfg.get("refactor_pinned"))
+        # No model, or a switch (it carries none of its own), sets none: a mode-only request means the same
+        # thing again after its first try released the pin.
+        given = body.model is not None and not switched
+        if given and pinned and not renewed:
+            if (body.model, body.effort or "") != (cfg["model"], cfg["effort"]):
+                raise HTTPException(409, f"리팩터링 대화는 조사 모델 `{cfg['model']}` 로 고정됐다 — 모드를 바꾸거나 새로 조사해라")
+            given = False
+        want = requested(body.model, body.effort or "") if given else None
+        if want is None and pinned and renewed:   # the pin lets go: the person's own pick, checked as a cold read
+            want = picked(cfg["repo"], cid)
+        # Everything is written before anything is published, the pick and the mode together: a failed write
+        # leaves the focus, its session and a retry's view of the pin as they were.
+        generation = cfg.get("refactor_generation", 0) + renewed
+        before = chosen(cfg["repo"]).get(cid) or {}
+        if given:
+            chosen(cfg["repo"], cid, want)
+        if mode is not None:
+            try:
+                refactor_mode(cfg["repo"], mode, generation, refactor_mode(cfg["repo"]).get("survey")
+                              if pinned and not renewed else None)
+            except Exception:
+                if given:
+                    chosen(cfg["repo"], cid, before)
+                raise
         if switched:
-            # The default moves only after what can fail: `config` (Codex listing) and the disk write.
-            cfg = config(cid, body.repo)
             LOGS.mkdir(parents=True, exist_ok=True)
             path = LOGS / "project.json"
             temporary = path.with_suffix(".tmp")
@@ -681,29 +717,6 @@ def configure(cid: str, body: Config) -> dict:
             # This request moved the project itself; the rest of it works in
             # the new one. Its screen follows from the answer.
             claimed.set(body.repo)
-        else:
-            cfg = config(cid)
-        # A survey fixed the conversation's model for its mode; only another mode lets it go.
-        mode = body.refactor_mode if cid == "refactor" else None
-        renewed = mode is not None and mode != cfg.get("refactor_mode", "preserve")
-        pinned = bool(cfg.get("refactor_pinned"))
-        if pinned and not renewed and not switched and (body.model, body.effort) != (cfg["model"], cfg["effort"]):
-            raise HTTPException(409, f"리팩터링 대화는 조사 모델 `{cfg['model']}` 로 고정됐다 — 모드를 바꾸거나 새로 조사해라")
-        want, save = None, False   # a switch carries no model of its own, and a pin keeps its survey's
-        if pinned and renewed and (switched or (body.model, body.effort) == (cfg["model"], cfg["effort"])):
-            # The pin lets go and the screen only echoed the survey model: the person's own pick comes back,
-            # checked as a cold read checks it.
-            want = picked(cfg["repo"], cid)
-        elif not switched and not (pinned and not renewed):
-            want, save = {"model": body.model, "effort": body.effort or selected.get("default_effort", "")}, True
-        # Everything is written before anything is published: a failed write leaves the focus, its session
-        # and a retry's view of the pin as they were.
-        if save:
-            chosen(cfg["repo"], cid, want)
-        generation = cfg.get("refactor_generation", 0) + renewed
-        if mode is not None:
-            refactor_mode(cfg["repo"], mode, generation, refactor_mode(cfg["repo"]).get("survey") if pinned and not renewed
-                          else None)
         moved = want is not None and deepseek.provider(want["model"]) != deepseek.provider(cfg["model"])
         if want is not None:
             cfg.update(want)
