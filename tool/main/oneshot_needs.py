@@ -27,7 +27,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from common import errorlog, folded, overlaps
+from common import errorlog, folded, masked, overlaps
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
 from .oneshot_spec import VIEWS, idle, saved, spec_of, view
@@ -219,10 +219,11 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
 
     # Whatever the store holds now, a rotated value is still in those commits; the scan below still runs, so a
     # commit made meanwhile is recorded too.
+    flush(spec["repo"])   # a hold a failed write left in memory is kept first: it raises while it cannot be
     if not hide:   # nothing carried, nothing found now: the sheet keeps only what the history still holds
         if spec_of(spec["repo"])["oneshot"].get("leaked"):
             saved(spec["repo"], oneshot={"leaked": []})
-        return still_tainted(path, spec)
+        return still_tainted(path, spec_of(spec["repo"]))
     step = ""
 
     def git(*args: str) -> str:
@@ -314,28 +315,58 @@ def unsure(o: dict) -> set[str]:
     return {n for needs in (o.get("unscanned") or {}).values() for n in needs}
 
 
-def settle(path: Path, run, final: str) -> bool:
+def settle(path: Path, run, final: str, moving: bool = False) -> bool:
     """The end of every turn on a oneshot's worktree, while it still holds it, after the stage check and whatever
     that check wrote or committed: the tree as it is released is scanned under the turn's own mask, or reconciled
-    without one, however the turn ended. It moves no stage and never raises; a scan that broke leaves the hold a
-    failed read leaves (`unscanned`). `False` when even that could not be recorded: no next turn starts on it."""
+    without one, however the turn ended. Never raises; a scan that broke leaves the hold a failed read leaves
+    (`unscanned`, kept in memory when even that write fails). A refusal of a turn whose stage passed and was
+    `moving` the run on stops it with the reason, shown on the run and resumable once fixed, and returns `False`:
+    nothing that was to follow starts. A refused turn's repair turn goes on; it is scanned again before its check."""
 
-    from . import specs   # it imports this module
+    from . import oneshot_spec, specs   # they import this module
 
-    hide, spec = getattr(getattr(run, "chat", None), "hide", None), None
+    hide, spec, moving = getattr(getattr(run, "chat", None), "hide", None), None, moving and getattr(run, "passed", False)
     try:
-        if (spec := specs.owner(path)) and spec.get("oneshot"):
-            leaked(path, spec, hide, final)
-        return True
+        if not ((spec := specs.owner(path)) and spec.get("oneshot")):
+            return True
+        why = leaked(path, spec, hide, final)
     except Exception as exc:
         errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
         try:
-            if hide and spec:
-                unscanned(path, spec, hide, type(exc).__name__)
-            return bool(hide and spec)
+            why = unscanned(path, spec, hide, type(exc).__name__) if hide and spec else f"비밀 값 검사가 실패했다 ({type(exc).__name__})"
         except Exception as again:
             errorlog.record("oneshot-scan", type(again).__name__, path=str(path))
-            return False
+            why = "비밀 값 검사를 기록하지 못했다 — 기록할 수 있을 때까지 게시와 다음 단계를 막는다"
+    if why and moving and spec:
+        try:
+            oneshot_spec.store(spec["repo"]).stop("block", masked(why, hide or {}))
+        except Exception as exc:
+            errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
+    return not (why and moving)
+
+
+def publishable(path: Path, spec: dict) -> str:
+    """Why nothing goes out: checked at each external write (the APK upload, the push and the pull request) on the
+    exact state it sends, under the values the store holds now, with every refusal and hold recorded before. A
+    check that cannot finish refuses too."""
+
+    try:
+        return leaked(path, spec, agent(spec)[1], "")
+    except Exception as exc:
+        errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
+        return f"비밀 값 검사를 끝내지 못해 게시하지 않는다 ({type(exc).__name__})"
+
+
+# ponytail: in memory, a hold a failed spec write could not keep, written at the next scan; a restart loses it
+PENDING: dict[str, dict[str, list[str]]] = {}
+
+
+def flush(repo: str) -> None:
+    """Write the holds a failed write left in memory (`PENDING`); raises, keeping them, while the spec cannot be
+    written, so every scan, the stage checks and each external write refuse until it can."""
+    if held := PENDING.get(repo):
+        saved(repo, oneshot={"unscanned": {**(spec_of(repo)["oneshot"].get("unscanned") or {}), **held}})
+        PENDING.pop(repo, None)
 
 
 def digest(spec: dict, hide: dict) -> str:
@@ -348,8 +379,9 @@ def unscanned(path: Path, spec: dict, hide: dict, what: str) -> str:
     """A scan that could not finish leaves a hold (`unscanned`) with the needs it carried: refused and marked until
     a scan with the same values finishes (`leaked`), or the history after the design commit is gone and nothing is
     left uncommitted (`still_tainted`); a value replaced meanwhile can no longer be looked for."""
-    holds = spec_of(spec["repo"])["oneshot"].get("unscanned") or {}   # one hold per set of values, each owed alone
-    saved(spec["repo"], oneshot={"unscanned": {**holds, digest(spec, hide): sorted(need_ids(hide.values()))}})
+    # One hold per set of values, each owed alone; kept in memory first, so a write that fails still holds it.
+    PENDING.setdefault(spec["repo"], {})[digest(spec, hide)] = sorted(need_ids(hide.values()))
+    flush(spec["repo"])
     return " / ".join(filter(None, [still_tainted(path, spec_of(spec["repo"])),
                                     f"비밀 값이 남았는지 확인하지 못했다 — {what}"]))
 

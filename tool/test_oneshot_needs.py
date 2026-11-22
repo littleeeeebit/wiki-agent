@@ -578,8 +578,25 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), {}, "끝냈다")   # no values: it cannot clear
     assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), hide, "끝냈다")   # the other set is still owed
     assert list(spec()["oneshot"]["unscanned"].values()) == [["N2"]] and not row()["unsure"]
-    with patch.object(needs, "leaked", broke), patch.object(needs, "unscanned", broke):
-        assert not needs.settle(at_r1, person, "끝냈다")   # not even the hold recorded: no next turn on it
+    # The end scan gates what a passed stage was to start: refused, the run stops; a repair turn goes on.
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    passed = SimpleNamespace(**{**vars(person), "person": False, "passed": True})
+    assert needs.settle(at_r1, person, "끝냈다", moving=True)   # a person's turn moves nothing
+    assert not needs.settle(at_r1, passed, "끝냈다", moving=True) and spec()["oneshot"]["stopped"]["reason"] == "block"
+    assert needs.settle(at_r1, SimpleNamespace(**{**vars(passed), "passed": False}), "끝냈다", moving=True)
+    assert needs.publishable(at_r1, spec())   # and nothing goes out while it is owed
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    # A hold whose write fails stays in memory: every scan, and so every check and external write, refuses until
+    # it is written.
+    real = needs.saved
+    with patch.object(needs, "leaked", broke), patch.object(needs, "saved", lambda *a, **k: (_ for _ in ()).throw(OSError())):
+        assert not needs.settle(at_r1, passed, "끝냈다", moving=True)
+    assert needs.PENDING["budget"]
+    with patch.object(needs, "saved", lambda *a, **k: (_ for _ in ()).throw(OSError())):
+        with pytest.raises(OSError):
+            needs.leaked(at_r1, spec(), hide, "끝냈다")
+        assert "게시하지 않는다" in needs.publishable(at_r1, spec())
+    assert needs.saved is real and "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), {}, "끝냈다") and "budget" not in needs.PENDING
     git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])   # the history gone and the tree clean
     assert needs.leaked(at_r1, spec(), {}, "끝냈다") == "" and spec()["oneshot"]["unscanned"] == {}
 

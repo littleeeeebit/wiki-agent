@@ -25,7 +25,7 @@ import android_owned
 from common import masked
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_device, oneshot_spec, pr_text, release, specs
+from . import github_release, oneshot_build, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -348,6 +348,8 @@ def asked(repo: str) -> None:
     worker for the pull request's text, as every spec's does."""
 
     spec = oneshot_spec.spec_of(repo)
+    if why := oneshot_needs.publishable(Path(spec["worktree"]), spec):   # before anything goes out
+        return oneshot_spec.store(repo).stop(STAGE, why) and None   # stopped: no next turn
     if "android" in kinds_of(spec["oneshot"]):   # alone or among several kinds
         spec = oneshot_spec.saved(repo, oneshot={"apk": released(spec)})
     path, head = Path(spec["worktree"]), oneshot_spec.spec_of(repo)["oneshot"]["final_head"]
@@ -368,6 +370,8 @@ def handed(path: Path, run, spec: dict, final: str):
     run.checked = True
     # The text asked again is the run's own turn: charged, and stopping the stage if it fails.
     ask = lambda text: oneshot_build.send(repo, STAGE, text) or True   # noqa: E731 — sent stops itself on a refusal
+    if why := oneshot_needs.publishable(path, spec):   # the exact state the push and the pull request send
+        return oneshot_spec.store(repo).stop(STAGE, why) and None   # stopped: no next turn
     try:
         then = specs.written(specs.channels.repo_for(repo), path, run, spec, final, ask)
     except Exception as exc:   # a push that timed out: stopped with its reason, resumed from the README turn

@@ -636,6 +636,7 @@ def checked(path: Path, run, spec: dict, final: str):
         raise
     why = masked(why, hide)   # a check's reason can quote what the turn wrote: shown, kept and sent as each need
     if not why:
+        run.passed = True   # what follows moves the run on: the turn's end scan (`oneshot_needs.settle`) gates it
         if kind_held(oneshot_spec.spec_of(repo)["oneshot"]):   # the pass left the run at its kind's stop: no next
             return None
         return unless_stopped(run, repo, lambda: after(repo))
