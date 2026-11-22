@@ -238,21 +238,40 @@ def ran(report: dict, n: int) -> str:
     return ""
 
 
-def reported(report: dict, seen: dict, data: Path) -> str | None:
-    """The app's own report of what it captured: the value of the one element `id` names in the window it names,
-    in the last state, or the UTF-8 file under its `{data}`; None when there is none to read."""
+def reported(report: dict, seen: dict, data: Path, page: list[str]) -> str | None:
+    """The app's own report of what the capture step captured, or None when there is none to weigh: the value of
+    the one element `id` names in the window it names, in the state after the last step (the review's `act`), or
+    the UTF-8 file under its `{data}`. Each is fresh from that step: the element's window read whole in that state
+    and in the one before the step, and its value there not yet holding the fixture's words; the file written
+    after the step began, as the driver recorded it (`at`, a Windows file time)."""
 
     import desktop_driver
+    import owner_round
 
     if "file" in seen:
         file = (data / seen["file"]).resolve()
         if not file.is_relative_to(data.resolve()) or not file.is_file() or file.stat().st_size > MAX_REPORT:
             return None
-        return file.read_text(encoding="utf-8", errors="replace")
-    last = report["states"][-1]
-    window = desktop_driver.scope(report, last, seen.get("in", "main"))
-    nodes = [n for n in last["nodes"] if not n.get("foreign") and n.get("window") == window and n.get("id") == seen["id"]]
-    return nodes[0].get("value") if window is not None and len(nodes) == 1 else None
+        written = file.stat().st_mtime_ns // 100 + 116444736000000000   # the same clock as the driver's `at`
+        at = (report.get("steps") or [{}])[-1].get("at")
+        return file.read_text(encoding="utf-8", errors="replace") if isinstance(at, int) and written > at else None
+
+    def value(state: dict) -> tuple[bool, str | None]:   # (read whole, the element's value); no window: read, none
+        window = desktop_driver.scope(report, state, seen.get("in", "main"))
+        if window is None:
+            return True, None
+        if not any(r.get("hwnd") == window and r.get("read") for r in state.get("reads") or []):
+            return False, None   # a read that ended partway proves neither one element nor none
+        nodes = [n for n in state["nodes"]
+                 if not n.get("foreign") and n.get("window") == window and n.get("id") == seen["id"]]
+        return True, nodes[0].get("value") if len(nodes) == 1 else None
+
+    if len(report["states"]) < 2:
+        return None
+    (whole, now), (whole_before, before) = value(report["states"][-1]), value(report["states"][-2])
+    if not whole or not whole_before or owner_round.contains(before, page):   # held before the step: not its doing
+        return None
+    return now
 
 
 def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep: Path, standing) -> dict:
@@ -282,7 +301,7 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
         if why := owner_round.proven(fixture, members(fixture_key)):   # what the app read was not the round's page
             return {"status": "failed", "why": f"고정 창이 바뀌었다 — {why}"}
         if what == "report":
-            return {"status": "passed"} if owner_round.contains(reported(report, seen, Path(runs.data)), page) else \
+            return {"status": "passed"} if owner_round.contains(reported(report, seen, Path(runs.data), page), page) else \
                 {"status": "failed", "why": "앱이 캡처했다고 낸 것에 고정 창의 낱말이 다 들어 있지 않다"}
         if exe is None:
             return {"status": "pending", "why": missing}

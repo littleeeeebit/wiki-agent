@@ -123,8 +123,8 @@ def test_a_window_the_main_window_owns_at_startup_is_no_candidate_and_is_shot_wi
 
 
 def test_a_halt_while_the_driver_runs_ends_it_at_once(tmp_path):
-    reads = []   # the driver's start reads it once; its watch then finds it set
-    halt = types.SimpleNamespace(is_set=lambda: reads.append(1) or len(reads) > 1)
+    reads = []   # the driver's start reads it twice, as it is recorded and just before it runs; its watch then finds it set
+    halt = types.SimpleNamespace(is_set=lambda: reads.append(1) or len(reads) > 2)
     with desktop_session.look(tmp_path, "halt") as look:
         look.start("app", python(NONE), tmp_path)   # no window: the driver would wait out its first-window wait
         started = time.monotonic()

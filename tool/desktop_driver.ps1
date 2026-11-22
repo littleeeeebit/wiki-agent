@@ -329,6 +329,7 @@ try {
     $found = Target $step
     if ($found.error) { $done.error = $found.error; Save; continue }
     Enter "act $($step.name)"
+    $done.at = [DateTime]::UtcNow.ToFileTimeUtc()   # what the step's report is weighed against: written after this
     try { Act $found.element $step; $done.acted = $true } catch { $done.error = "$($_.Exception.Message)"; Save; continue }
     Save
     Settle

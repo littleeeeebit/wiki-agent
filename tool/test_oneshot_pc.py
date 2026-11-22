@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -256,15 +257,20 @@ FIXTURE = {"job": "fixture1", "hwnd": 201, "pid": 5, "class": "TkTopLevel", "tit
            "rect": [80, 80, 976, 579], "process": {"pid": 5, "created": 1, "exe": "python.exe"}}
 
 
-def driven(value: str | None = None, acted: bool = True, **over) -> dict:
-    """A driver's report of the scenario's one step on the owner's desktop: read, never shot."""
+def driven(value: str | None = None, acted: bool = True, before: str | None = None, whole: bool = True,
+           at: int = 125911584000000000, **over) -> dict:
+    """A driver's report of the scenario's one step on the owner's desktop: read, never shot. `before` is the
+    element's value as the step began, `whole` whether the state after it was read whole, `at` the step's start as
+    a Windows file time (2000 by default, before any file a test writes)."""
 
-    node = {"window": 101, "id": "seen", "value": value, "type": "Text", "depth": 1}
-    state = {"windows": [{"hwnd": 101, "pid": 7, "class": "App"}], "shots": [{"hwnd": 101, "drawn": False, "unshot": True}],
-             "reads": [{"hwnd": 101, "read": True}], "nodes": [node]}
+    def state(value, read=True):
+        return {"windows": [{"hwnd": 101, "pid": 7, "class": "App"}],
+                "shots": [{"hwnd": 101, "drawn": False, "unshot": True}], "reads": [{"hwnd": 101, "read": read}],
+                "nodes": [{"window": 101, "id": "seen", "value": value, "type": "Text", "depth": 1}]}
+
     return {"phase": "done", "main": {"hwnd": 101, "pid": 7, "class": "App"},
-            "states": [{**state, "id": "s00", "name": "start"}, {**state, "id": "s01", "name": "go"}],
-            "steps": [{"name": "go", "acted": acted, "state": "s01"}], **over}
+            "states": [{**state(before), "id": "s00", "name": "start"}, {**state(value, whole), "id": "s01", "name": "go"}],
+            "steps": [{"name": "go", "acted": acted, "state": "s01", "at": at}], **over}
 
 
 class Runs:
@@ -331,6 +337,18 @@ def test_a_report_holding_the_whole_page_passes_from_an_element_or_a_file_under_
     outside = {**SCREEN, "observe": {"report": {"file": "../keep/seen.txt", "from": "screen"}}}
     (root / "keep" / "seen.txt").write_text("apple river garden", encoding="utf-8")
     assert checked(desk, outside, driven())["status"] == "failed"   # never a file outside the app's `{data}`
+
+
+def test_a_report_counts_only_as_the_capture_steps_own_from_a_whole_read(held, desk):
+    page = "apple river garden"
+    assert checked(desk, REPORT, driven(page, before="waiting"))["status"] == "passed"
+    assert checked(desk, REPORT, driven(page, before=page))["status"] == "failed"   # it held the page before the act
+    assert checked(desk, REPORT, driven(page, whole=False))["status"] == "failed"   # a read that ended partway
+    _, root = desk
+    (root / "data" / "seen.txt").write_text(page, encoding="utf-8")
+    later = time.time_ns() // 100 + 116444736000000000 + 10 ** 8   # the step began ten seconds after the write
+    assert checked(desk, SCREEN, driven(at=later))["status"] == "failed"
+    assert checked(desk, SCREEN, driven(at=None))["status"] == "failed"   # no start recorded: nothing to weigh
 
 
 @pytest.mark.parametrize("report, why", [
