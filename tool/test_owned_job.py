@@ -42,21 +42,35 @@ def settled(job, count):
     return job.members()
 
 
-def test_a_kept_handle_reads_the_jobs_own_count_after_it_closed_and_can_end_it_again(job, tmp_path):
-    started(job, tmp_path, TREE)
-    settled(job, 2)
-    kept = job.kept()
-    try:
-        assert owned_job.active(kept) >= 2   # the root and its sleeping child
-        job.close()   # the job's own handles gone: the kept one still holds it, and what runs in it
-        assert owned_job.active(kept) >= 2
-        deadline = time.monotonic() + 10
-        while owned_job.active(kept, end=True) and time.monotonic() < deadline:
-            time.sleep(0.1)
-        assert owned_job.active(kept) == 0
-    finally:
-        assert owned_job.release(kept)
-    job.ended = True   # ended through the kept handle
+@pytest.mark.parametrize("refuse", [False, True])
+def test_the_last_check_and_the_resume_run_under_the_gate_and_a_refusal_there_never_runs_the_root(
+        job, tmp_path, refuse):
+    order, marker = [], tmp_path / "ran"
+
+    class Gate:
+        def __enter__(self):
+            order.append("taken")
+
+        def __exit__(self, *exc):
+            order.append("let go")
+
+    def last():
+        order.append("last")
+        if refuse:
+            raise owned_job.Refused("stopped")
+
+    code = f"open({str(marker)!r}, 'w').close()"
+    if refuse:
+        with pytest.raises(owned_job.Refused, match="stopped"):
+            started(job, tmp_path, code, before_resume=lambda root: order.append("recorded"), last=last, gate=Gate())
+    else:
+        started(job, tmp_path, code, before_resume=lambda root: order.append("recorded"), last=last, gate=Gate())
+    assert order == ["recorded", "taken", "last", "let go"]
+    deadline = time.monotonic() + 20   # a root that resumed writes its marker; give it the time to
+    while not refuse and not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert job.end()["clean"]
+    assert marker.exists() is not refuse
 
 
 def test_the_root_is_in_its_job_before_it_runs_and_every_member_is_proven_gone(job, tmp_path):

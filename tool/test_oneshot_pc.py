@@ -469,7 +469,9 @@ def empty_rounds(monkeypatch, tmp_path, look, standing) -> dict:
 
     import desktop_session
 
-    monkeypatch.setattr(pc, "base", lambda repo: tmp_path / repo)
+    monkeypatch.setattr(pc.oneshot, "RUNS", tmp_path)   # every repository's records, all under the test's folder
+    monkeypatch.setattr(pc.oneshot, "WORK", None)
+    monkeypatch.setattr(pc, "base", lambda repo: tmp_path / f"spec-{repo}" / pc.STAGE)
     monkeypatch.setattr(pc, "unrun", lambda o: [])
     monkeypatch.setattr(pc, "confirmed", lambda repo, build: standing())
     monkeypatch.setattr(owner_round, "helper", lambda folder: Path("helper.exe"))
@@ -489,7 +491,7 @@ def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_throug
     def look(folder, key, owned):
         order.append("enter")
         try:
-            yield SimpleNamespace(record={"jobs": {}}, unresolved={})
+            yield SimpleNamespace(record={"jobs": {}})
             if not release.is_set():   # the first round's look stays up until the test lets it end
                 release.wait(10)
         finally:
@@ -515,44 +517,33 @@ def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_throug
     assert order == ["enter", "cleaned", "enter", "cleaned"] and not pc._desk.locked()
 
 
-@pytest.mark.parametrize("count", [2, None])   # still running, or a count Windows would not give
-def test_a_job_whose_end_was_not_proven_keeps_every_round_off_the_desktop_until_its_count_is_zero(
-        monkeypatch, tmp_path, count):
+def test_any_repositorys_held_look_record_keeps_every_round_off_the_desktop_restart_or_not(monkeypatch, tmp_path):
     import contextlib
 
-    import owned_job
+    import desktop_session
 
-    order, standing, running, made, asked, released = [], [True], {41: count}, [], [], []
+    order, standing, made, held, read = [], [True], [], {"spec-a": ["round-1: pid 7 is still running"]}, []
 
     @contextlib.contextmanager
     def look(folder, key, owned):
-        order.append(folder.parent.name)
-        session = SimpleNamespace(record={"jobs": {}}, unresolved={})
-        yield session
-        if folder.parent.name == "a":   # its app's end not proven: the look kept a handle to that job
-            session.unresolved["app1"] = 41
+        order.append(folder.parent.parent.name)
+        yield SimpleNamespace(record={"jobs": {}})
 
     record = empty_rounds(monkeypatch, tmp_path, look, lambda: standing[0])
     monkeypatch.setattr(pc.desktop_look, "Launches", lambda *a, **k: made.append(k) or SimpleNamespace(due=lambda: None))
-    monkeypatch.setattr(pc, "_left", [])
-    monkeypatch.setattr(owned_job, "active", lambda handle, end=False: asked.append(end) or running[handle])
-    monkeypatch.setattr(owned_job, "release", lambda handle: released.append(handle) or True)
-    assert pc.observe("a", record, lambda: False) == {}
-    assert not pc._desk.locked() and pc._left == [("app1", 41)] and callable(made[0]["ready"])
-    # Another repository's round stops at once, its look never opened, after Windows is asked again to end it.
-    with pytest.raises(RuntimeError, match="작업이 끝났는지 확인되지 않았다 — app1"):
+    # The records on disk are all there is to go by: what a restarted server finds is what this one finds.
+    monkeypatch.setattr(desktop_session, "recover_all", lambda root: read.append(root) or held.get(root.parent.parent.name, []))
+    (tmp_path / "spec-a" / pc.STAGE / "looks").mkdir(parents=True)   # repository a's earlier round, held
+    with pytest.raises(RuntimeError, match="정리가 확인되지 않았다 — round-1: pid 7 is still running"):
         pc.observe("b", record, lambda: False)
-    assert order == ["a"] and asked == [True] and released == [] and not pc._desk.locked()
-    running[41] = 0   # the job's own count: nothing in it runs, followed or not
-    assert pc.observe("b", record, lambda: False) == {} and pc._left == [] and released == [41]
-    pc._left.append(("app2", None))   # no handle to read it by: held until the server restarts
-    with pytest.raises(RuntimeError, match="app2 \\(서버를 다시 시작해야 풀린다\\)"):
-        pc.observe("b", record, lambda: False)
-    pc._left.clear()
+    assert order == [] and not pc._desk.locked() and tmp_path / "spec-a" / pc.STAGE / "looks" in read
+    held.clear()   # recovery settled it
+    assert pc.observe("b", record, lambda: False) == {} and order == ["spec-b"]
+    assert callable(made[0]["ready"]) and made[0]["gate"] is pc.oneshot._lock
     standing[0] = False   # changed while the round waited: no look opens, and the desktop is free again
     with pytest.raises(pc.Stale):
         pc.observe("a", record, lambda: False)
-    assert order == ["a", "b"] and not pc._desk.locked()
+    assert order == ["spec-b"] and not pc._desk.locked()
 
 
 def test_a_build_is_confirmed_only_while_its_head_held_through_every_read(monkeypatch):

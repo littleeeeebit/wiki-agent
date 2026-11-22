@@ -2,6 +2,7 @@
 is followed through the job's completion port, and ending it yields a proof that reads only definite
 answers (docs/research/oneshot-desktop-session.md, "The launcher 9d2 needs")."""
 
+import contextlib
 import ctypes
 import os
 import subprocess
@@ -78,26 +79,6 @@ def _kernel():
     return k
 
 
-def active(handle: int, end: bool = False) -> int | None:
-    """How many processes the job `handle` holds are still running, by the job's own count, which includes
-    every process in it, whether or not anyone followed or could read that process. With `end`, Windows is first
-    asked once more to end them. None when the count cannot be read."""
-
-    k = _kernel()
-    if end:
-        k.TerminateJobObject(handle, 1)
-    accounting = _Accounting()
-    if k.QueryInformationJobObject(handle, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None):
-        return accounting.active
-    return None
-
-
-def release(handle: int) -> bool:
-    """Close a handle `Job.kept` gave; closing a job's last handle ends what is still in it."""
-
-    return bool(_kernel().CloseHandle(handle))
-
-
 class Job:
     """One owned job. `start` creates its process inside it; `members` reads who joined; `end` ends every
     member and proves it. Members are kept as a list, not by pid: a pid an exited member left can join again
@@ -157,9 +138,12 @@ class Job:
         finally:
             self.k.DeleteProcThreadAttributeList(attributes)
 
-    def start(self, argv: list[str], cwd, env: dict, desktop: str | None, log, before_resume=None) -> dict:
+    def start(self, argv: list[str], cwd, env: dict, desktop: str | None, log, before_resume=None, last=None,
+              gate=None) -> dict:
         """Start `argv` inside the job on `desktop`, its output to `log`. `before_resume` gets the root's
-        identity while it is still suspended, so a caller can record it before it runs. The root's identity."""
+        identity while it is still suspended, so a caller can record it before it runs; `last` is called under
+        `gate` (a lock), which is held through the resume. Whatever either raises rolls the root back before it
+        runs. The root's identity."""
 
         import msvcrt
 
@@ -193,8 +177,11 @@ class Job:
                 raise Refused(f"cannot read the identity of {argv[0]} before it runs")
             if before_resume:
                 before_resume(root)
-            if self.k.ResumeThread(thread) == 0xFFFFFFFF:
-                raise Refused(f"cannot resume {argv[0]}: {ctypes.get_last_error()}")
+            with gate if gate is not None else contextlib.nullcontext():
+                if last:
+                    last()
+                if self.k.ResumeThread(thread) == 0xFFFFFFFF:
+                    raise Refused(f"cannot resume {argv[0]}: {ctypes.get_last_error()}")
         except BaseException:
             self._rollback(process, thread, pid)   # never left suspended, never run unrecorded
             raise
@@ -358,15 +345,6 @@ class Job:
         return (len(getattr(self, "stray", [])) + len(getattr(self, "roots", []))
                 + sum(1 for entry in getattr(self, "joined", []) if entry["handle"])
                 + sum(1 for name in ("port", "job") if getattr(self, name, None)))
-
-    def kept(self) -> int | None:
-        """A handle of its own to this job, which keeps the job and its count readable after `close` (`active`,
-        `release`); None when Windows would not give one."""
-
-        copy, here = w.HANDLE(), self.k.GetCurrentProcess()
-        if self.job and self.k.DuplicateHandle(here, self.job, here, ctypes.byref(copy), 0, False, 2):
-            return copy.value   # DUPLICATE_SAME_ACCESS
-        return None
 
     def close(self) -> None:
         """Close every handle the job holds. A handle Windows will not close stays held, so a later call retries

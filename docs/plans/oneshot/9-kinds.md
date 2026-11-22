@@ -465,23 +465,26 @@ order:
    setup and fails no app. Once the fixture is up and bound, the check
    ends its job, its exit proven, before the next check starts. One round
    runs on the owner's desktop at a time, whichever repository it is for,
-   from its look's start through its cleanup. For each job whose end the
-   look did not prove, the server keeps a handle of its own, taken before
-   the look closes the job's. Each such job keeps every later round off
-   the desktop. At each admission, Windows is asked once more to end it,
-   and the job's own count of running processes is read. That count takes
-   in every process in the job, whether or not the round followed or
-   could read it. Zero lets the job go; a count that cannot be read, or a
-   job with no handle, stays held. The handles go with the server, and
-   the jobs with them, so a restart starts clear. Before each fixture
+   from its look's start through its cleanup. A look whose cleanup was not
+   proven leaves its record held on disk. Before any round starts, every
+   repository's look records are read through the looks' own recovery,
+   whichever run of the server wrote them. A held one keeps every round
+   off the desktop until that recovery settles it, which takes a
+   completed proof, a new boot or the end of its logon session. Before each fixture
    starts, no top-level window on the desktop may have the fixture's
    title. Once it is bound, its own must be the only one. The round
    confirms the approved HEAD and the frozen build once it has the
    desktop, before each fixture starts, and with each app's process made
    but not yet run. That last check reads HEAD again after the frozen
-   files, and a stop that came while it read still keeps the process from
+   files. The last stop check and the resume run under the lock a stop is
+   accepted under, so a stop accepted first keeps the process from
    running. A moved HEAD goes back to the build. A changed freeze with the
-   worktree unchanged goes back to approval.
+   worktree unchanged goes back to approval. A known limit, accepted by
+   the owner: a change to the frozen copy or HEAD in the instant between
+   that last check and the resume is not seen before the app runs. The
+   check after the app's run finds a changed freeze and sends it back to
+   the build, and the worktree check finds a moved HEAD, so such a round
+   never passes.
 2. The frozen app from a fresh start of the check's scenario, driven without
    a shot (`shoot: false`), so the driver reads and acts but never calls
    `PrintWindow`.

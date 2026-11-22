@@ -40,22 +40,22 @@ JUDGE_PROMPT = (ROOT / "tool/prompts/oneshot-owner-judge.md").read_text(encoding
 MAX_REPORT = 1 << 20   # bytes of an app's report file the round reads
 _halts: dict[str, threading.Event] = {}
 # One round on the owner's desktop at a time, whichever repository it is for, from its look's start through its
-# cleanup. Each job whose end a round's look did not prove is held (`_left`, its key and a handle of the server's
-# own, from `Look.unresolved`) and keeps every later round off the desktop. Each admission asks Windows once more
-# to end it and reads the job's own count of running processes, which takes in every process in it, followed or
-# not: zero lets it go. A count it cannot read, or a job Windows gave no handle to, stays held. The handles go
-# with the server, and the jobs with them (KILL_ON_JOB_CLOSE), so a restart starts clear.
+# cleanup. A round whose look's cleanup was not proven leaves its record held on disk, and every repository's
+# records are read before any round starts (`_held`): this server's or an earlier one's, they keep every round off
+# the desktop until `desktop_session.recover` settles them.
 _desk = threading.Lock()
-_left: list[tuple[str, int | None]] = []
 
 
-def _settled(handle: int | None) -> bool:
-    import owned_job
+def _held() -> list[str]:
+    """Why an earlier round's look, any repository's and from any run of the server, is not settled: every
+    record under each repository's `looks`, through `desktop_session.recover`. That clears one only once its proof
+    completed, or once a new boot or the end of its logon session proved its processes ended."""
 
-    if handle is None or owned_job.active(handle, end=True) != 0:
-        return False
-    owned_job.release(handle)
-    return True
+    import desktop_session
+
+    roots = {oneshot.RUNS, oneshot.WORK or oneshot.RUNS}   # a folder that could not move stays where it was
+    return [why for root in sorted(roots) for looks in sorted(root.glob(f"spec-*/{STAGE}/looks"))
+            for why in desktop_session.recover_all(looks)]
 
 
 class Stale(Exception):
@@ -303,8 +303,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
 def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
     """Every check the approval lets run, each by `one` in the round's own look on the owner's desktop, whose
     cleanup is proven on every exit (RuntimeError when it is not). One round at a time across repositories
-    (`_desk`), from the look's start through its cleanup, and none while an earlier one's jobs are not proven gone
-    (`_left`); the build is confirmed again once the round has the desktop, before each fixture starts, and with
+    (`_desk`), from the look's start through its cleanup, and none while any repository's earlier look is held
+    (`_held`); the build is confirmed again once the round has the desktop, before each fixture starts, and with
     each app's process made but not yet run (Stale when it no longer stands)."""
 
     import desktop_session
@@ -323,22 +323,19 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
     while not _desk.acquire(timeout=1):   # another repository's round is on the owner's desktop
         if stopped():
             raise RuntimeError("다른 저장소의 주인 화면 회차를 기다리다 멈췄다")
-    session = None
-
     def standing() -> None:   # nothing starts on the owner's desktop from a build that no longer stands
         if not confirmed(repo, build):
             raise Stale("승인한 회차가 지금 빌드와 다르다 — 다시 승인한다")
 
     try:
-        _left[:] = [(key, handle) for key, handle in _left if not _settled(handle)]
-        if _left:
-            raise RuntimeError("앞선 주인 화면 회차의 작업이 끝났는지 확인되지 않았다 — "
-                               + ", ".join(key if handle else f"{key} (서버를 다시 시작해야 풀린다)"
-                                           for key, handle in _left))
+        if held := _held():
+            raise RuntimeError("앞선 주인 화면 회차의 정리가 확인되지 않았다 — " + "; ".join(held))
         standing()
         with desktop_session.look(looks, f"round-{uuid.uuid4().hex[:12]}", owned=False) as session:
+            # The last stop check and the resume run under the lock a stop is accepted under: one accepted first
+            # always keeps the app from running.
             runs = desktop_look.Launches(session, build, desktop_look.size(o["profile"]), stopped, shoot=False,
-                                         ready=standing)
+                                         ready=standing, gate=oneshot._lock)
             for n, x in enumerate(oneshot_desktop.owner_scripted(o), 1):
                 if x["id"] not in skip:
                     runs.due()
@@ -346,9 +343,7 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
                                            standing)
     except desktop_session.Refused as exc:
         raise RuntimeError(f"주인 화면 회차를 정리하지 못했다 — {exc}") from exc
-    finally:
-        if session is not None:   # every job whose end it did not prove, whatever else the cleanup reported
-            _left.extend(session.unresolved.items())
+    finally:   # a cleanup not proven stays held in the look's record, which `_held` reads
         _desk.release()
     runs.due()
     return results

@@ -244,7 +244,7 @@ class Desk:
         (self.folder / name).mkdir(exist_ok=True)
         return self.folder / name
 
-    def start(self, key, argv, cwd, extra=None, halt=None, ready=None):
+    def start(self, key, argv, cwd, extra=None, halt=None, ready=None, gate=None):
         if self.refuse:
             raise self.refuse
         if ready is not None:   # the process made, not yet run
