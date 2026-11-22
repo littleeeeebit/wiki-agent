@@ -1051,8 +1051,6 @@ def stop(body: Stop) -> dict:
     if not run.done:
         run.halt.set()   # first: a process not started yet is stopped by this
         run.chat.stop(run.halt)   # only this turn's process, not the next one's
-        if aside := getattr(run, "aside", None):   # the spec author answering this turn's escalation
-            aside.stop(run.halt)
     return {"ok": True}
 
 

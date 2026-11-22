@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -64,7 +65,8 @@ def checked(repo: Path, block: dict, strict: bool = True, kept: list | tuple = (
     given = block.get("precedence")
     if not isinstance(given, list) or not given:
         raise ValueError("`precedence` 는 이 작업에 적용할 문서를 우선순위대로 담은 비지 않은 목록이어야 한다")
-    root, ranked, standing = repo.resolve(), [], {p.get("ref") for p in kept if isinstance(p, dict)}
+    # Standing means the same reference with the same authority: one promoted to `current` is checked again.
+    root, ranked, standing = repo.resolve(), [], {(p.get("ref"), p.get("role")) for p in kept if isinstance(p, dict)}
     for p in given:
         if not isinstance(p, dict) or not isinstance(p.get("ref"), str) or not isinstance(p.get("role"), str) \
                 or p["role"] not in ROLES:
@@ -74,9 +76,10 @@ def checked(repo: Path, block: dict, strict: bool = True, kept: list | tuple = (
         target = (root / (m.group(1) if m else ref)).resolve()
         if target != root and root not in target.parents:
             raise ValueError(f"`precedence` 의 `{ref}` 는 저장소 밖이다")
-        if strict and ref not in standing and not target.exists():
+        fresh = strict and (ref, p["role"]) not in standing
+        if fresh and not target.exists():
             raise ValueError(f"`precedence` 의 `{ref}` 가 저장소에 없다")
-        if strict and ref not in standing and m:
+        if fresh and m:
             first, last = int(m.group(2)), int(m.group(3))
             if not target.is_file() or not 1 <= first <= last <= lines(target):
                 raise ValueError(f"`precedence` 의 `{ref}` 줄 범위가 파일에 없다")
@@ -94,6 +97,16 @@ FIELDS = frozenset({"task", "precedence", "escalate"})
 
 def given(block: dict) -> bool:
     return any(k in block for k in FIELDS)
+
+
+def followed(spec: dict, change: dict) -> dict:
+    """A rewritten goal without a task of its own carries the task with it: the old task would stay the first
+    thing the implementer reads (the draft editor has no task field)."""
+
+    goal = " ".join(str(change.get("goal") or "").split())
+    if not spec.get("task") or "task" in change or not goal or goal == spec.get("goal"):
+        return {}
+    return {"task": {**spec["task"], "what": goal}}
 
 
 def surveyed(s: dict) -> dict:
@@ -160,8 +173,9 @@ def held_back(path: Path, run, spec: dict, change):
         return None
     if loop.LOOPING.fullmatch(spec["state"]):
         # The review loop sends this repair's retries: a second sender would race it for the worktree.
-        loop.asked(spec["repo"], spec["id"])
-        specs.failed(run, spec, "리뷰 수정 턴이 목표·작업 지시를 바꾸려 했다 — 반영하지 않았다. 사람이 판단한다")
+        why = f"리뷰 수정 턴이 목표·작업 지시를 바꾸려 했다 — 반영하지 않았다. 사람이 판단한다:\n{json.dumps(change, ensure_ascii=False)[:6000]}"
+        loop.asked(spec["repo"], spec["id"], why)
+        specs.failed(run, spec, why)
         return lambda: None
     if spec.get("narrow_asked"):
         specs.update(spec["repo"], spec["id"], narrow_asked=False)
@@ -200,13 +214,22 @@ def question(spec: dict, escalation: dict) -> str:
 
 
 def ask(path: Path, author: dict, system: str, text_: str, run) -> str:
-    """One read-only turn of `author` in `path`; its final answer. The work turn's Stop ends it too
-    (`work.stop` reads `run.aside`). Patched in tests."""
+    """One read-only turn of `author` in `path`; its final answer. Patched in tests.
+
+    Whatever stops the work turn — its Stop, the review loop's, a worktree removal, the server — sets the
+    run's halt, and the author's turn ends with it: the worktree is held until this returns."""
 
     from agent import ChatSession
     chat = ChatSession(path, tools=TOOLS, system=system, model=author.get("model") or "",
                        effort=author.get("effort", ""), isolated=not str(author.get("model")).startswith("codex:"))
-    run.aside = chat
+    over = threading.Event()
+
+    def watch():
+        while not over.wait(0.1):
+            if run.halt.is_set():
+                chat.stop(run.halt)
+                return
+    threading.Thread(target=watch, daemon=True, name="author-stop").start()
     final, failed = "", ""
     try:
         for ev in chat.say(text_, run.halt):
@@ -216,7 +239,7 @@ def ask(path: Path, author: dict, system: str, text_: str, run) -> str:
             elif ev.kind == "error":
                 failed = ev.text
     finally:
-        run.aside = None
+        over.set()
         chat.close()
     if failed:
         raise RuntimeError(failed)
@@ -227,15 +250,13 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     """`specs._check`'s step for an answer ending in an `escalation` block: `None` when there is none (the
     check goes on), otherwise what `_check` returns — the next turn to send, or nothing after a stop."""
 
-    from . import oneshot_build, specs
+    from . import specs
     blocks = found(specs.blocks(final)[1])
     if not blocks:
         return None
-    if oneshot_build.owns(spec):   # handled here: the stage's finalizer records no unchecked turn
-        run.checked = True
     value = blocks[0].get("value")
     if len(blocks) != 1 or "error" in blocks[0] or not shaped(value):
-        return specs.failed(run, spec, "`escalation` 블록은 conflict·where·question 을 담은 JSON 객체 하나여야 한다")
+        return ended(spec, run, "`escalation` 블록은 conflict·where·question 을 담은 JSON 객체 하나여야 한다")
     author, past = author_of(spec), spec.get("escalations") or []
     entry = {"ts": time.time(), "rev": spec["rev"], "escalation": value}
     # A record with an empty model is the CLI's default the spec was written on; no record is an older card.
@@ -259,22 +280,32 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     return applied(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec, past, entry, answer)
 
 
+def ended(spec: dict, run, reason: str):
+    """The task stops with `reason`. An unfinished oneshot's stage stops with it, where `[재개]` picks it up,
+    and its finalizer records no stop of its own over it."""
+
+    from . import oneshot_spec, specs
+    if (spec.get("oneshot") or {}).get("stage") not in (None, "done"):
+        oneshot_spec.store(spec["repo"]).stop("block", reason)
+        run.checked = True
+    return specs.failed(run, spec, reason)
+
+
 def stopped(spec: dict, run, history: list[dict]):
     from . import specs
-    specs.update(spec["repo"], spec["id"], escalations=history)
-    return specs.failed(run, spec, "사람이 멈춤 — 상위 모델의 답을 적용하지 않았다")
+    spec = specs.update(spec["repo"], spec["id"], escalations=history) or spec
+    return ended(spec, run, "사람이 멈춤 — 상위 모델의 답을 적용하지 않았다")
 
 
 def person(spec: dict, run, history: list[dict], reason: str):
-    """The person decides: the reason on the card, and a running review loop halted on it."""
+    """The person decides: the reason on the card, and a running review loop halted on it, the same reason
+    on its pause."""
 
-    from . import loop, oneshot_spec, specs
+    from . import loop, specs
     spec = specs.update(spec["repo"], spec["id"], escalations=history) or spec
     if loop.LOOPING.fullmatch(spec["state"]):
-        loop.asked(spec["repo"], spec["id"])
-    if (spec.get("oneshot") or {}).get("stage") not in (None, "done"):   # the run stops where a person resumes it
-        oneshot_spec.store(spec["repo"]).stop("block", reason)
-    return specs.failed(run, spec, reason)
+        loop.asked(spec["repo"], spec["id"], reason)
+    return ended(spec, run, reason)
 
 
 def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: dict, answer: str):
@@ -291,9 +322,11 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
     from . import loop
     if loop.LOOPING.fullmatch(spec["state"]):
         # The review loop owns this task's turns and its spec: nothing is applied before the person decides.
-        said = (value.get("text") or value.get("reason")) if isinstance(value, dict) else ""
+        # The whole answer goes on the card and the pause: the person resumes from what was proposed.
+        said = value["text"] if name == "guidance" and isinstance(value, dict) and isinstance(value.get("text"), str) \
+            else json.dumps(value, ensure_ascii=False, indent=1)
         return person(spec, run, history, f"상위 모델이 `{name}` 로 답했다 — 반영하지 않고 리뷰 루프를 멈췄다. 답을 보고 "
-                                          f"에이전트 칸에서 이어 가라: {str(said or json.dumps(value, ensure_ascii=False))[:500]}")
+                                          f"에이전트 칸에서 이어 가라:\n{said[:6000]}")
     try:
         if name == "guidance":
             if not isinstance(value, dict) or not isinstance(value.get("text"), str) or not value["text"].strip():
@@ -306,6 +339,8 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         elif name == "spec-update":
             with specs._files:
                 current = specs.load(spec["repo"], spec["id"])
+                if run.halt.is_set():   # Stop and the revision meet here: a Stop before this line owns the result
+                    return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
                 specs.revise(repo, current, value, author=True, checkout=path)   # the tree the author read
             spec = specs.update(spec["repo"], spec["id"], escalations=history)
             # A running session keeps the system prompt it started with: the revision goes in the turn.
@@ -318,6 +353,8 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
             gate = specs.gate_of(repo)
             if not gate:
                 raise ValueError("저장소의 gate_cmd 가 없어 선행 작업 카드를 만들 수 없다")
+            if run.halt.is_set():
+                return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
             sid = specs.card(repo, value["spec"], gate, {"focus": "escalation", "turn": time.time(),
                                                          "from": spec["id"], "author": author_of(spec)})
             return person(spec, run, history, f"선행 작업 `{sid}` 을 먼저 한다 — {value.get('reason') or '상위 모델이 나눴다'}. "
@@ -328,6 +365,7 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
     specs.note(run, f"상위 모델이 `{name}` 로 답했다 — 구현을 이어 간다")
     if oneshot:   # a Stop pressed while this turn is recorded leaves the stage resumable instead
         from . import oneshot_build
+        run.checked = True   # handled: the stage's finalizer records no unchecked turn
         return oneshot_build.unless_stopped(run, spec["repo"],
                                             lambda: oneshot_build.send(spec["repo"], spec["oneshot"]["stage"], told))
     return lambda: None if run.halt.is_set() else specs.again(path, run.chat, told, spec)

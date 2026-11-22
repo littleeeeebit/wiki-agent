@@ -158,6 +158,65 @@ def test_an_answer_outside_the_three_goes_to_the_person(task):
     assert "하나로 답하지 않았다" in specs.load("proj", sid)["fault"]
 
 
+def test_a_stop_at_the_revisions_save_owns_the_result(task):
+    repo, sid = task
+    run, loads, load = Run(), [], specs.load
+    update = {"rev": 1, "reason": "r", "goal": "Another goal", "out": [], "done": ["x"]}
+
+    def reloaded(*a):   # the Stop lands while the answer's spec is read back, before it is saved
+        loads.append(a)
+        if len(loads) == 2:
+            run.halt.set()
+        return load(*a)
+    with patch.object(handoff, "ask", side_effect=lambda *a: loads.clear() or block("spec-update", update)), \
+         patch.object(specs, "load", side_effect=reloaded), patch.object(specs, "again") as again:
+        assert specs._check(repo, run, block("escalation", ESCALATION)) is None
+    assert specs.load("proj", sid)["rev"] == 1 and not again.called
+
+
+def test_whatever_halts_the_turn_ends_the_authors_turn(tmp_path):
+    class Chat:
+        def __init__(self, *a, **k):
+            self.stopped = threading.Event()
+
+        def say(self, text, halt):
+            self.stopped.wait(5)
+            yield SimpleNamespace(kind="error", text="stopped", meta={})
+
+        def stop(self, halt):
+            self.stopped.set()
+
+        def close(self):
+            pass
+    run = Run()
+    threading.Timer(0.2, run.halt.set).start()   # the review loop's Stop sets the halt and nothing else
+    with patch("agent.ChatSession", Chat), pytest.raises(RuntimeError):
+        handoff.ask(tmp_path, {"model": "opus"}, "", "", run)
+
+
+def test_a_oneshot_escalation_that_goes_nowhere_leaves_the_stage_resumable(task):
+    repo, sid = task
+    specs.update("proj", sid, oneshot={"stage": "tests", "working": "tests"})
+    run = Run()
+    with patch("main.oneshot_spec.store") as store:
+        assert specs._check(repo, run, block("escalation", {"conflict": "x"})) is None
+    assert store.return_value.stop.call_args[0][0] == "block" and run.checked
+
+
+def test_a_rewritten_goal_carries_the_task_and_a_promoted_range_is_checked_again(task, repo):
+    repo, sid = task
+    with patch.object(specs, "again", return_value=True):
+        specs._check(repo, Run(person=True), block("spec-update", {"rev": 1, "reason": "owner", "goal": "Replace the login",
+                                                                  "out": [], "done": ["x"]}))
+    assert specs.load("proj", sid)["task"] == {"kind": "fix", "what": "Replace the login"}
+    (repo / "a.txt").write_text("one\n", encoding="utf-8")
+    kept = [{"ref": "a.txt:1-3", "role": "legacy"}]
+    good = {"task": {"kind": "fix", "what": "x"}}
+    assert handoff.checked(repo, {**good, "precedence": kept}, kept=kept)
+    with pytest.raises(ValueError, match="줄 범위"):
+        handoff.checked(repo, {**good, "precedence": [{"ref": "a.txt:1-3", "role": "current"}]}, kept=kept)
+
+
 def test_a_stop_while_the_author_answers_applies_nothing_and_sends_nothing(task):
     repo, sid = task
     run = Run()

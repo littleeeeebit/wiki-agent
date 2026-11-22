@@ -292,8 +292,13 @@ def turned(rid: str | Store, role: str, system: str, text: str, name: str, check
                 store.stop("block", f"모델 턴이 실패했다 — {exc}")
             return None
         with _lock:
-            store.put(inflight=None, spend=charged(store.get().get("spend"), role, codex, meta.get("cost_usd"),
-                                                   time.monotonic() - started))
+            # Who answered, by role, as the provider named it: a role left on the CLI default is still one model
+            # (the spec author `handoff` asks later, `oneshot_spec.approved`).
+            cfg, ran = role_config(role, store), store.get()
+            store.put(inflight=None, spend=charged(ran.get("spend"), role, codex, meta.get("cost_usd"),
+                                                   time.monotonic() - started),
+                      answered={**(ran.get("answered") or {}), role: {"model": cfg["model"] or str(meta.get("model") or ""),
+                                                                      "effort": cfg["effort"]}})
         try:
             return check(final, attempt) if "," in name else check(block(final, name))
         except (ValueError, TypeError, KeyError, AttributeError) as exc:   # the answer's shape, refused

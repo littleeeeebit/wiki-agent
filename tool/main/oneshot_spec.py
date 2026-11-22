@@ -381,7 +381,7 @@ def approved(repo: str) -> None:
         # wrote it answers the builder's escalations.
         saved(repo, task={"kind": "feature", "what": spec["goal"]},
               precedence=[{"ref": f, "role": "current", "why": "the approved design"} for f in files], escalate=[],
-              author=oneshot.role_config("spec", store(repo)),   # the role's default named when the owner kept it
+              author=(store(repo).get().get("answered") or {}).get("design") or oneshot.role_config("design", store(repo)),
               oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 

@@ -480,6 +480,8 @@ def test_a_submission_with_any_item_undecided_is_refused(world):
 
 def test_approving_every_item_writes_and_commits_the_design_and_moves_to_tests(world):
     at_r1(world)
+    answered = {"model": "claude-sonnet-4-6", "effort": ""}   # the design turn, on the CLI default
+    oneshot_spec.store("budget").put(answered={"design": answered})
     oneshot_spec.decide("budget", on_sheet(decisions=everything()))
     assert o()["stage"] == "tests" and o()["design_head"]
     assert (world / "docs/design/backend.md").read_text(encoding="utf-8").startswith("# 백엔드 설계")
@@ -490,6 +492,8 @@ def test_approving_every_item_writes_and_commits_the_design_and_moves_to_tests(w
     assert spec["task"]["kind"] == "feature" and [p["ref"] for p in spec["precedence"]] == \
         ["docs/design/backend.md", "docs/design/api.yaml"]
     assert handoff.text(Path(spec["worktree"]), spec).startswith("## Read this first")
+    # Its escalations go to the model that answered the design turn, even one left on the CLI default.
+    assert spec["author"] == answered
 
 
 @pytest.mark.parametrize("edited, reached", [

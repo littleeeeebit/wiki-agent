@@ -939,7 +939,7 @@ def edit(sid: str, body: Edit) -> dict:
             if not base:
                 raise HTTPException(400, "이름은 소문자·숫자·- 만, 64자까지")
             new = base if base == sid else unique(repo, base)
-        spec.update(made, id=new, rev=spec["rev"] + 1)
+        spec.update(made, **handoff.followed(spec, {"goal": body.goal}), id=new, rev=spec["rev"] + 1)
         save(spec)
         if new != sid:
             file_of(repo.name, sid).unlink()
@@ -979,6 +979,7 @@ def revise(repo: Path, spec: dict, change: dict, author: bool = False, checkout:
     # that changed under a standing range never blocks a reworded done item.
     made = fields(repo, {**{k: v for k, v in spec.items() if k not in handoff.FIELDS}, **{k: change[k] for k in (
         "goal", "out", "done", "review", "prerequisite_review") if k in change}}, gate, retired=retired)
+    change = {**change, **handoff.followed(spec, change)}
     if handoff.given(change):
         made.update(handoff.checked(checkout or repo, {**{k: spec.get(k) for k in handoff.FIELDS}, **{
             k: change[k] for k in handoff.FIELDS if k in change}}, kept=spec.get("precedence") or []))
