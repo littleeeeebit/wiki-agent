@@ -135,8 +135,9 @@ class Veil:
     deltas, one command's output) masked as a whole. The tail a value could still be starting in is held until the
     next part of that text, or `rest`, so a value split across parts is never shown in pieces."""
 
-    # The server's own handles at an event's top level: an approval is answered by its `id` as the screen got it.
-    IDS = frozenset({"id", "request", "item_id"})
+    # The server's own handles at an event's top level: an approval is answered by its `id` as the screen got it,
+    # and its `tool` picks the form the screen draws.
+    IDS = frozenset({"id", "request", "item_id", "tool"})
 
     def __init__(self, hide: dict[str, str] | None):
         self.hide, self.held = hide or {}, {}

@@ -454,6 +454,9 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     assert spec()["oneshot"]["tainted"] == sorted([added, git("rev-parse", "HEAD")])
     # Taken back or replaced, the value is no longer in the mask, but its commit stays refused.
     assert added[:12] in needs.leaked(at_r1, spec(), {}, "끝냈다")
+    git("commit", "--allow-empty", "-m", f"Again {value}")   # made while the refusal stands: recorded too
+    assert added[:12] in needs.leaked(at_r1, spec(), hide, "끝냈다")
+    assert git("rev-parse", "HEAD") in spec()["oneshot"]["tainted"]
     nowhere = tmp_path_factory.mktemp("no-repository")   # Git cannot read it: the record is kept, never cleared
     assert "아직 기록에 있다" in needs.still_tainted(nowhere, spec()) and spec()["oneshot"]["tainted"]
     git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])   # the history rewritten
@@ -577,3 +580,20 @@ def test_a_broken_check_is_logged_and_noted_masked(monkeypatch):
     assert specs.check(Path("."), run, "끝냈다") is None
     said = json.dumps([logged, notes], ensure_ascii=False)
     assert value not in said and "push failed for [N1]" in said
+
+
+def test_every_event_a_turn_puts_is_masked_but_the_tags_the_screen_dispatches_on(monkeypatch):
+    value, logged, faults = f"Ask{uuid.uuid4().hex}", [], []
+    monkeypatch.setattr(work, "feed", work.Feed())
+    run = work.Run(SimpleNamespace(id="w", parent_id=None, hide={value: "[N1]"}))
+    # A person's answer to a question, put by the server outside the provider's events.
+    run.put({"kind": "answered", "text": "", "meta": {"id": "q1", "allow": True, "by": "person", "answers": [value]}})
+    run.put({"kind": "approval", "text": "묻는다", "meta": {"id": "q2", "tool": "AskUserQuestion",
+                                                       "input": {"questions": [{"question": f"{value}?"}]}}})
+    assert value not in json.dumps(run.events) and run.events[0]["meta"]["answers"] == ["[N1]"]
+    assert run.events[1]["meta"]["tool"] == "AskUserQuestion"   # the form the screen draws, never masked
+    # A returned failure: the log, the note and the spec's fault.
+    monkeypatch.setattr(specs.errorlog, "record", lambda source, error, **k: logged.append(str(error)))
+    monkeypatch.setattr(specs, "update", lambda repo, sid, **k: faults.append(k["fault"]))
+    specs.failed(run, {"repo": "r", "id": "s"}, f"push failed: {value}")
+    assert [logged, faults, run.events[-1]["text"]] == [["push failed: [N1]"], ["push failed: [N1]"], "push failed: [N1]"]

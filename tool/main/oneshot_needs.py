@@ -193,10 +193,11 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
     pushes), or what it has not committed. Matched in any casing; the refusal names the need, never the value, and
     a failed read names only what failed: a Git or file error can quote what it read."""
 
-    if why := still_tainted(path, spec):   # whatever the store holds now: a rotated value is still in those commits
-        return why
+    # Whatever the store holds now, a rotated value is still in those commits; the scan below still runs, so a
+    # commit made meanwhile is recorded too.
     if not hide:
-        return ""
+        return still_tainted(path, spec)
+    refused = still_tainted(path, spec)
     step = ""
 
     def git(*args: str) -> str:
@@ -220,7 +221,7 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         log = git("log", *HISTORY, f"{base}..HEAD") if base else ""
         places = {"답": final, "커밋": log + git("diff", "HEAD"), "커밋하지 않은 파일": "\n".join(map(read, untracked))}
     except (OSError, subprocess.SubprocessError) as exc:
-        return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
+        return refused or f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
     found: dict[str, set[str]] = {}
     for where, text in places.items():
         flat = folded(text)
@@ -228,16 +229,17 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
             if value in text or folded(value) in flat:
                 found.setdefault(where, set()).add(label.strip("[]"))
     if not found:
-        return ""
+        return refused
     if "커밋" in found and base:   # the commits that hold it stay refused until the history no longer has them
         try:
             hit = [c for c in git("rev-list", f"{base}..HEAD").split() if seen(git("show", *HISTORY, c), hide)]
         except (OSError, subprocess.SubprocessError) as exc:
             return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
-        saved(spec["repo"], oneshot={"tainted": sorted({*(spec["oneshot"].get("tainted") or []), *hit})})
+        saved(spec["repo"], oneshot={"tainted": sorted({*(spec_of(spec["repo"])["oneshot"].get("tainted") or []), *hit})})
     ids = sorted(set().union(*found.values()))
-    return (f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 적지 "
-            "않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")
+    return " / ".join(filter(None, [refused, (
+        f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 적지 "
+        "않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")]))
 
 
 # A commit's names, message and patch; a merge's against its first parent, so a resolution's own text is read.
@@ -264,12 +266,10 @@ def still_tainted(path: Path, spec: dict) -> str:
         if done.returncode != 1 and subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{c}^{{commit}}"],
                                                    cwd=path, capture_output=True, timeout=60).returncode != 1:
             left.append(c)
-    if left:
-        return (f"비밀 값이 들어 있던 커밋 {', '.join(c[:12] for c in left)} 이(가) 아직 기록에 있다 — 설계 커밋 뒤의 "
-                "그 커밋들을 다시 써서 기록에서 지운다")
-    if tainted:
-        saved(spec["repo"], oneshot={"tainted": []})
-    return ""
+    if left != tainted:   # only the commits Git says are gone leave the record
+        saved(spec["repo"], oneshot={"tainted": left})
+    return (f"비밀 값이 들어 있던 커밋 {', '.join(c[:12] for c in left)} 이(가) 아직 기록에 있다 — 설계 커밋 뒤의 "
+            "그 커밋들을 다시 써서 기록에서 지운다") if left else ""
 
 
 def rotated(spec: dict | None, env: dict, rows: list[dict]) -> str | None:

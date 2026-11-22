@@ -1571,6 +1571,7 @@ def reviewed(spec: dict) -> None:
 
 
 def failed(run, spec: dict, reason: str) -> None:
+    reason = masked(reason, getattr(getattr(run, "chat", None), "hide", None))   # a push's own words can quote one
     errorlog.record("task-failure", reason, repo=spec["repo"], spec=spec["id"], turn=getattr(run, "turn", None))
     note(run, reason)
     update(spec["repo"], spec["id"], fault=reason)

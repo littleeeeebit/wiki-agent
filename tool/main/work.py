@@ -657,6 +657,8 @@ class Run:
         self.report_at: dict | None = None
 
     def put(self, payload: dict) -> None:
+        if hide := getattr(self.chat, "hide", None):   # every event the screen and the record get, the server's too
+            payload = {**payload, "text": masked(payload.get("text") or "", hide), "meta": Veil(hide).meta(payload.get("meta") or {})}
         if payload.get("kind") == "error" or (payload.get("meta") or {}).get("error"):
             errorlog.record("agent", payload.get("text", "Failed turn"), turn=self.turn, session=self.session_id)
         with self.wake:
@@ -833,8 +835,8 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
             key = ("delta",) if ev.kind == "delta" else ("tool", item) if (item := output_of(ev.kind, ev.meta)) else None
             for kind, held, m in veil.rest() if ev.kind in ("done", "error") else ():   # the texts ended: held tails first
                 run.put({"kind": kind, "text": held, "meta": m, "session_id": ev.session_id, "parent_id": ev.parent_id})
-            if (said := veil.stream(key, ev.text, ev.meta) if key else masked(ev.text, hide)) or not key or not hide:
-                run.put({"kind": ev.kind, "text": said, "meta": veil.meta(ev.meta),
+            if (said := veil.stream(key, ev.text, ev.meta) if key else ev.text) or not key or not hide:   # put masks
+                run.put({"kind": ev.kind, "text": said, "meta": ev.meta,
                          "session_id": ev.session_id, "parent_id": ev.parent_id})
         if not failed and not final.strip():
             failed = "완료된 답이 없다"
