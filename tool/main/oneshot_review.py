@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import posixpath
 import re
+import shutil
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -76,23 +78,37 @@ class MovedError(ValueError):
     """The worktree is no longer the HEAD the build passed."""
 
 
-def frozen(spec: dict) -> tuple[str, str, int | None]:
-    """`(head, how to read the diff, lines it adds)`, the diff from the base commit written for `pr_diff` and kept
-    as the record. The head is the one the build passed and the owner's measurement approved, never whatever
-    the tree holds: a tree that moved is `ValueError`, before anything reaches the reviewer."""
+@contextmanager
+def seen_at(spec: dict, store):
+    """`built_head` checked out detached, hooks off, for the block: the worktree's changes never reach the reviewer."""
 
-    tree, store = Path(spec["worktree"]), oneshot_spec.store(spec["repo"])
-    head = spec["oneshot"]["built_head"]
+    tree, seen = Path(spec["worktree"]), store.folder / "seen"   # Git makes the folders; a leftover goes first
+    off = ["git", "-c", f"core.hooksPath={store.folder / 'no-hooks'}", "worktree"]
+    gone = lambda: (specs.sh([*off, "remove", "--force", str(seen)], tree, 120), shutil.rmtree(seen, True),   # noqa: E731
+                    specs.sh([*off, "prune"], tree, 60))
+    gone()
+    if (done := specs.sh([*off, "add", "--detach", str(seen), spec["oneshot"]["built_head"]], tree, 300)).returncode:
+        raise ValueError(f"리뷰할 HEAD 를 따로 꺼내지 못했다 — {specs.said(done)}")
+    try:
+        yield seen
+    finally:
+        gone()
+
+
+def frozen(spec: dict, seen: Path) -> tuple[str, str, int | None]:
+    """`(head, how to read the diff, lines it adds)` for the approved `built_head`: the diff from the base commit,
+    written for `pr_diff` in the reviewer's checkout `seen` and kept as the record. A moved tree is `MovedError`."""
+
+    tree, store, head = Path(spec["worktree"]), oneshot_spec.store(spec["repo"]), spec["oneshot"]["built_head"]
     if why := moved(spec, tree):
         raise MovedError(why)
     done = specs.sh(["git", "diff", "--no-color", spec["start_head"], head], tree, 120)
     if done.returncode:
         raise ValueError(f"리뷰할 diff 를 읽지 못했다 — {(done.stderr or '').strip()[-300:]}")
-    store.folder.mkdir(parents=True, exist_ok=True)
     (store.folder / f"review-{head[:12]}.diff").write_text(done.stdout, encoding="utf-8", newline="\n")
-    read_tools.save_diff(tree, done.stdout)
+    read_tools.save_diff(seen, done.stdout)
     how = ("read it with the `pr_diff` tool" if oneshot.codex_role("review", store) else
-           f"read it from `{read_tools.diff_file(tree).resolve()}`; a line starting with ~ continues the line before it")
+           f"read it from `{read_tools.diff_file(seen).resolve()}`; a line starting with ~ continues the line before it")
     try:
         counted = specs.sh(["git", "diff", "--numstat", spec["start_head"], head], tree, 120)
     except subprocess.TimeoutExpired:   # the count is for the card; the frozen patch is what the review reads
@@ -629,17 +645,18 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
     """The checked verdict on the frozen HEAD, or `None` after stopping."""
 
     try:
-        head, how, added = frozen(spec)
-        rules = ruled(spec, tree, head)
+        with seen_at(spec, store) as seen:   # the reviewer reads its own checkout of the approved HEAD
+            head, how, added = frozen(spec, seen)
+            rules = ruled(spec, tree, head)
+            found = oneshot.turned(store, "review", oneshot.prompt("review", shape(spec["oneshot"])),
+                                   review_text(spec, head, how, rules), "oneshot-review",
+                                   lambda value: verdict_of(value, head, deferrable(spec), rules), seen)
     except MovedError as exc:   # the approved HEAD is no longer the tree: the build checks it again
         rebuild(spec["repo"], store, f"리뷰 직전에 작업트리가 바뀌었다 — {exc}")
         return None
     except (ValueError, OSError, RuntimeError) as exc:
         store.stop("review", str(exc))
         return None
-    found = oneshot.turned(store, "review", oneshot.prompt("review", shape(spec["oneshot"])),
-                           review_text(spec, head, how, rules), "oneshot-review",
-                           lambda value: verdict_of(value, head, deferrable(spec), rules), tree)
     return None if found is None else {**found, **({"added": added} if added is not None else {}),
                                        "focus": "narrow" if rules["changed"] is not None else "full"}
 

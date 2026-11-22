@@ -11,7 +11,6 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from agent import read_tools
 from main import (loop, oneshot, oneshot_build, oneshot_critique, oneshot_review, oneshot_sheet as sheet, oneshot_spec,
                   query, specs, work)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -78,9 +77,10 @@ def test_an_approval_of_the_head_read_moves_to_split_with_the_input_frozen(revie
     assert args == ("budget", "split") and not fields
     assert o()["stage"] == "split" and o()["working"] == "split" and o()["reviews"][-1]["findings"] == [P2]
     role, text, where = heard[0]
-    assert role == "review" and where == tree and head in text and "test_spending_adds_to_the_total" in text
+    assert role == "review" and where != tree and not where.exists()   # its own checkout, removed after
+    assert head in text and "test_spending_adds_to_the_total" in text
     assert "지출을 적으면" in text   # the requirements travel in the prompt; the reviewer reads no record
-    assert "budget_app.py" in read_tools.diff_file(tree).read_text(encoding="utf-8")
+    assert "budget_app.py" in next(oneshot_spec.store("budget").folder.glob("review-*.diff")).read_text(encoding="utf-8")
     assert (oneshot_spec.store("budget").folder / f"review-{head[:12]}.diff").exists()
 
 
@@ -420,7 +420,9 @@ def test_the_added_lines_count_a_line_that_starts_with_two_plus_signs(reviewed):
     git(tree, "add", "count.js")
     git(tree, "commit", "-m", "count")
     oneshot_spec.saved("budget", oneshot={"built_head": git(tree, "rev-parse", "HEAD")})
-    assert oneshot_review.frozen(specs.load("budget", oneshot.BRANCH))[2] == 3   # budget_app.py's two lines and this
+    s = specs.load("budget", oneshot.BRANCH)
+    with oneshot_review.seen_at(s, oneshot_spec.store("budget")) as seen:
+        assert oneshot_review.frozen(s, seen)[2] == 3   # budget_app.py's two lines and this
 
 
 def test_a_quoted_path_keeps_its_escapes_and_its_literal_hangul():
@@ -538,6 +540,23 @@ def test_the_reviewer_reads_only_the_approved_head_never_a_commit_made_since(rev
     assert not heard and o()["stage"] == "build" and o()["stopped"]["reason"] == "gate"
 
 
+def test_the_reviewer_reads_the_committed_head_while_the_worktree_changes(reviewed):
+    tree, head, _ = reviewed
+    committed, read = (tree / "budget_app.py").read_text(encoding="utf-8"), []
+
+    def ask(store, role, system, text, where=None, images=()):
+        (tree / "budget_app.py").write_text("changed = True\n", encoding="utf-8")   # restored before the turn ends
+        try:
+            read.append((git(where, "rev-parse", "HEAD"), (where / "budget_app.py").read_text(encoding="utf-8")))
+            return verdict(head, "approve"), {"cost_usd": 0.1}, False
+        finally:
+            (tree / "budget_app.py").write_text(committed, encoding="utf-8")
+
+    with patch.object(oneshot, "ask", ask), patch.object(oneshot_spec, "start", lambda *a, **k: None):
+        oneshot_review.review("budget")
+    assert read == [(head, committed)] and o()["stage"] == "split"
+
+
 def test_a_finding_handed_to_a_later_build_names_its_area_so_a_ruling_matches_it(reviewed):
     _, head, _ = reviewed
     nameless = {k: v for k, v in P1.items() if k != "area"} | {"later": {"kind": "webapp", "what": "x"}}
@@ -626,6 +645,23 @@ def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_
     git(tree, "commit", "-am", "new mechanism")
     assert oneshot_answers.passed(tree, o_, [{"area": "Amount validation"}])["replaced"] == []   # answered instead
     assert oneshot_answers.passed(tree, o_, [])["replaced"] == ["amount validation"]
+
+
+def test_a_comment_or_blank_line_neither_replaces_a_mechanism_nor_changes_a_test(reviewed):
+    tree, head, _ = reviewed
+    from main import oneshot_answers
+    (tree / "budget_app.py").write_text("def add(amount):\n    # same mechanism\n\n    return amount\n", encoding="utf-8")
+    git(tree, "commit", "-am", "a comment only")
+    o_ = {"replacing": ["amount validation"], "reviews": [{"verdict": "refuse", "head": head, "findings": [P1]}]}
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
+
+
+def test_a_test_span_is_the_definition_and_its_whole_body():
+    from main.oneshot_answers import test_span
+    assert test_span('LABEL = "test_old"\n', ["test_old"]) is None   # a mention is no test
+    assert test_span("def test_old():\n# a note\n    assert x\nok = 1\n", ["test_old"]) == (1, 3)
+    assert test_span("class TestA:\n    def test_b(self):\n        pass\n", ["TestA", "test_b"]) == (2, 3)
+    assert test_span("it('adds one', () => {\n  expect(1)\n})\n", ["adds one"]) == (1, 3)
 
 
 def test_an_owner_ruling_for_the_review_goes_to_the_build_with_their_words(reviewed):

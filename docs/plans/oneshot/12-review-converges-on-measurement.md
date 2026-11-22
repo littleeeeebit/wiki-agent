@@ -64,8 +64,10 @@ in one `oneshot-answers` block. Each entry names the finding's `area`, the
 and the test that pins the defended behaviour, as `path::name`. The build
 check (`oneshot_answers.answered`) refuses an entry whose area the refusal
 did not name, whose `breaks` are not design items or requirements, or whose
-test's own lines the commits since the refused HEAD did not add or change
-(`path::name`, or `path::Class::name` inside a class). After the gate, that
+test's own code lines the commits since the refused HEAD did not add or
+change (`path::name`, or `path::Class::name` inside a class). The test is
+its definition and body; a mention of its name, a comment or a blank line
+does not count. After the gate, that
 test must have run and passed in the build's own test run
 (`oneshot_answers.ran`). It saves the entries on the spec under `answers`,
 with the round they answer.
@@ -89,8 +91,9 @@ After a refusal, `conflicted` looks at each blocking area the owner has not
 ruled on. It is a conflict when the builder answered it in two rounds with a
 broken requirement, or when its mechanism was already replaced once
 (`replaced`). The build turn told to replace it saves it as `replacing`. It
-counts as replaced only once a build passes whose commits changed the refused
-lines of that area and did not answer it instead; a turn that never ran, or
+counts as replaced only once a build passes whose commits changed code (not
+a comment or a blank line) at the refused lines of that area and did not
+answer it instead; a turn that never ran, or
 left the area as it was, is told again. A refusal with a conflict
 does not go to the build or count towards the cap: the run waits at the
 `conflict` stage. The owner's board shows the review's findings beside the
@@ -140,7 +143,8 @@ need of the design given as plain text. It then starts `serve` in a job of
 its own, waits for its health address to answer 200, and stops it with
 everything it started. A health port something already answers before the
 start is refused, and so is one where any listener its host reaches (both
-loopback addresses for `localhost`) is outside the backend's process tree. A tree the backend wrote into is refused.
+loopback addresses for `localhost`) is outside the backend's process tree.
+A redirect is the health address's own status, never followed. A tree the backend wrote into is refused.
 
 After the check passes, the run is at `measure`. The server pushes the HEAD
 and opens pull request #1 as a draft, or finds and updates it
@@ -153,7 +157,11 @@ plan rebuilt since answers 409. A result waiting for the owner's verdict is
 set aside (`stale`) when an input changes. [실측 시작] holds the worktree,
 starts `serve`, runs the script with the inputs in its environment and every
 secret masked from its output, and keeps only the clips it accepts, the
-report and the backend's log, masked in every spelling JSON escaping gives.
+report and the backend's log, masked. The report is kept decoded, so no JSON
+escape spells a value differently; one that is not JSON is removed. The
+folder is cleaned on every exit, a failed read of the report included. A
+stored value changed while the script runs sets that result aside, and the
+run stops for the owner to measure again.
 Its stop is made before the worker starts and also
 holds while the server shuts down. A plan that no longer holds sends the run
 back to the build agent from the same button. A failed metric, a missing report or a backend
@@ -169,8 +177,11 @@ run as `comment_error` and told to the owner. The review reads the approved meas
 HEAD (`measured_text`). A finding the measurement contradicts is P2.
 
 No review runs without that approval. A run that reaches the review another
-way goes back to `measure`. The reviewer is given `built_head` itself, and a
-tree that moved off it goes back through the build check first. Any route
+way goes back to `measure`. The reviewer reads its own detached checkout of
+`built_head`, made with hooks off and removed after the turn, so nothing
+the worktree holds meanwhile reaches it. A worktree that moved off
+`built_head` goes back through the build check first. A comment GitHub
+refuses is masked before it is kept or told. Any route
 that changes a stored value (`oneshot_needs.stored`) also sets a waiting
 result aside. Review Loop neither lists, takes, asks again for
 nor dispatches (`kick`, `rereview`) the pull request of a oneshot run that has

@@ -243,7 +243,13 @@ def scrubbed(out: Path, hide: dict[str, str]) -> None:
             continue
         if p.parent == out and p.name in KEPT and p.is_file():
             text = p.read_text(encoding="utf-8", errors="replace")
-            if (clean := masked(text, hide)) != text:
+            if p.suffix == ".json":   # kept decoded, so no escape in the file spells a value differently
+                try:
+                    text = json.dumps(json.loads(text), ensure_ascii=False, indent=1)
+                except (ValueError, RecursionError):
+                    p.unlink()   # `report_of` already said it is not JSON; nothing reads it again
+                    continue
+            if (clean := masked(text, hide)) != text or p.suffix == ".json":
                 p.write_text(clean, encoding="utf-8")
             continue
         shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
@@ -295,10 +301,11 @@ def served(command: str, path: Path, env: dict, health: str, seconds: int, halt:
 
 
 def answers(health: str) -> int | None:
-    """The status `health` answers with, or `None` when nothing does."""
+    """The status `health` itself answers with, or `None` when nothing does. A redirect is its status, never
+    followed: whatever answers at the other end is not the backend being checked."""
 
     try:
-        with urllib.request.urlopen(health, timeout=3) as answer:
+        with NO_REDIRECT.open(health, timeout=3) as answer:
             return answer.status
     except urllib.error.HTTPError as exc:
         return exc.code
@@ -306,6 +313,12 @@ def answers(health: str) -> int | None:
         return None
 
 
+class Unfollowed(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None   # urllib then raises `HTTPError` with the redirect's own status
+
+
+NO_REDIRECT = urllib.request.build_opener(Unfollowed)
 LOOPBACK = {"127.0.0.1": {"127.0.0.1", "0.0.0.0"}, "localhost": {"127.0.0.1", "0.0.0.0", "::1", "::"}}
 
 
@@ -364,7 +377,7 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
 
     try:
         value = json.loads((out / "report.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         return {"error": f"실측 명령이 `{{out}}/report.json` 을 쓰지 않았거나 JSON 이 아니다 — {exc}"}
     if not isinstance(value, dict):
         return {"error": "`report.json` 은 metrics 를 담은 객체다"}
@@ -411,6 +424,7 @@ def measure(repo: str) -> None:
         shutil.rmtree(out, ignore_errors=True)
         out.mkdir(parents=True)
         env, hide = env_of(spec, plan)
+        since = CHANGES.get(repo, 0)
         record = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}
         try:
             with served(oneshot_build.run_as(plan["serve"]["command"], o, tree), tree, env, plan["serve"]["health"],
@@ -422,8 +436,10 @@ def measure(repo: str) -> None:
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
         finally:
-            found = report_of(out, plan, hide)
-            scrubbed(out, hide)   # every exit, a stop included, keeps nothing that shows a secret
+            try:
+                found = report_of(out, plan, hide)
+            finally:
+                scrubbed(out, hide)   # every exit, a stop or a failed read included, keeps nothing that shows a secret
         record["tail"] = (text or "").strip()[-3000:]
         if halt.is_set():
             store.stop("measure", "사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
@@ -431,7 +447,9 @@ def measure(repo: str) -> None:
             return None
         found = found if not cut else {"error": cut}
         record |= found | {"clips": clips_of(out, hide), "code": code}
-        if "input_error" in found:
+        if CHANGES.get(repo, 0) != since:   # a stored value changed while it ran: not a result of the inputs now
+            record |= {"status": "stale", "error": "실측하는 동안 비밀 값이 바뀌었다 — [실측 시작]으로 다시 잰다"}
+        elif "input_error" in found:
             record["status"] = "input"
         elif found.get("error") or code or not all(m["ok"] for m in found["metrics"]) or plan["clips"] and not record["clips"]:
             record["status"] = "failed"
@@ -454,6 +472,10 @@ def decided(repo: str, store, record: dict):
     runs = [*(o.get("measures") or []), record]
     if record["status"] == "owner":
         oneshot_spec.saved(repo, oneshot={"measures": runs, "working": None})
+        return None
+    if record["status"] == "stale":   # an input changed while it ran: no fault of the build, measured again
+        oneshot_spec.saved(repo, oneshot={"measures": runs})
+        store.stop("measure", record["error"])
         return None
     if record["status"] == "input":
         bad = record["input_error"]
@@ -668,7 +690,8 @@ def decide(repo: str, body: Decision) -> dict:
         elif body.approve:
             spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "stage": "review", "attempts": 0,
                                                      "measure_fails": 0, "fix": None, "working": "review"})
-            then = lambda: (noted_comment(repo, commented(spec, runs[-1])), oneshot_review.begin(repo))   # noqa: E731
+            then = lambda: (noted_comment(repo, masked(commented(spec, runs[-1]), hide)),   # noqa: E731
+                            oneshot_review.begin(repo))
         else:
             spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "stage": "build", "fix": "measure",
                                                      "attempts": 0, "working": "build"})
@@ -746,7 +769,17 @@ def shown(spec: dict) -> dict:
 
 
 oneshot_spec.VIEWS.append(shown)
-# A secret changed by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran with it.
-oneshot_needs.CHANGED.append(lambda repo, env: retire(oneshot_spec.spec_of(repo), "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다"))
+CHANGES: dict[str, int] = {}   # stored-value changes per repository, so a measurement sees one made while it ran
+
+
+def secret_changed(repo: str, env: str) -> None:
+    """A secret changed by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran with
+    it, and a running one is set aside when it ends."""
+
+    CHANGES[repo] = CHANGES.get(repo, 0) + 1
+    retire(oneshot_spec.spec_of(repo), "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다")
+
+
+oneshot_needs.CHANGED.append(secret_changed)
 oneshot_spec.SHEETS.add("measure")
 oneshot_spec.WAITS.add("measure")

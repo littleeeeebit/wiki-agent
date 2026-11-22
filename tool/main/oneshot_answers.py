@@ -57,6 +57,7 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
     # The lines committed since the refusal: an uncommitted change never counts, the clean-tree gate aside.
     if (since := oneshot_review.changed_lines(path, last["head"], "HEAD")) is None:
         raise ValueError("거절한 HEAD 와 지금 HEAD 를 비교하지 못했다")
+    since = coded(path, since)
     anchors, out = oneshot_review.anchors(spec), []
     for n, a in enumerate(value if isinstance(value, list) else [None]):
         where = f"`oneshot-answers`[{n}]"
@@ -84,22 +85,44 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
 COMMENT = ("#", "//", "/*", "*", "--")
 
 
+def code(line: str) -> bool:
+    return bool(s := line.strip()) and not s.startswith(COMMENT)
+
+
+def coded(path: Path, changed: dict[str, list[tuple[int, int]]]) -> dict[str, list[tuple[int, int]]]:
+    """`changed` (HEAD's side) without the lines that hold no code at HEAD: a blank line or a comment changes no
+    behaviour, so it neither changes a test nor replaces a mechanism.
+    ponytail: a line comment test; a docstring or block comment body still counts, a parser per language if not."""
+
+    out = {}
+    for file, ranges in changed.items():
+        try:
+            lines = (path / file).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        if kept := [(i, i) for lo, hi in ranges for i in range(lo, min(hi, len(lines)) + 1) if code(lines[i - 1])]:
+            out[file] = kept
+    return out
+
+
 def test_span(text: str, parts: list[str]) -> tuple[int, int] | None:
-    """The 1-based lines of the test `parts` names (`[Class, …,] name`) in `text`: from the first line outside a
-    comment that names it, after each enclosing class's, to the next line no deeper than it, a closing bracket
-    included. `None` when a part is not found."""
+    """The 1-based lines of the test `parts` names (`[Class, …,] name`) in `text`: from its definition (`def`,
+    `class`, `func`, `fn`, `function`, or a `test`/`it`/`describe` call titled with it), after each enclosing
+    class's, to the next code line no deeper than it, a closing bracket included. `None` when a part is not
+    defined: a mere mention is no test."""
 
     lines, at = text.splitlines(), 0
     for part in parts:
-        word = re.compile(rf"\b{re.escape(part.split('[')[0])}\b")
-        at = next((i for i in range(at, len(lines)) if word.search(lines[i])
-                   and not lines[i].lstrip().startswith(COMMENT)), None)
+        name = re.escape(part.split('[')[0])   # a definition, or a test call titled with it; never a mere mention
+        defined = re.compile(rf"^\s*(?:async\s+)?(?:def|class|func|fn|function)\s+{name}\b"
+                             rf"|\b(?:test|it|describe)\s*\(\s*[\"'`]{name}[\"'`]")
+        at = next((i for i in range(at, len(lines)) if defined.search(lines[i])), None)
         if at is None:
             return None
         start, at = at, at + 1
     depth = len(lines[start]) - len(lines[start].lstrip())
-    end = next((j for j in range(start + 1, len(lines))
-                if lines[j].strip() and len(lines[j]) - len(lines[j].lstrip()) <= depth), len(lines))
+    end = next((j for j in range(start + 1, len(lines)) if code(lines[j])   # a comment does not end the body
+                and len(lines[j]) - len(lines[j].lstrip()) <= depth), len(lines))
     if end < len(lines) and lines[end].lstrip()[:1] in "})]":
         end += 1
     return start + 1, end
@@ -138,6 +161,7 @@ def passed(path: Path, o: dict, answers: list[dict]) -> dict:
     asked, last = o.get("replacing") or [], next((r for r in reversed(o.get("reviews") or [])
                                                     if r["verdict"] == "refuse"), None)
     changed = oneshot_review.changed_lines(path, last["head"], "HEAD") if asked and last else None
+    changed = coded(path, changed) if changed else changed
     defended = {oneshot_review.area_of(a) for a in answers}
     done = [area for area in asked if changed and area not in defended and any(
         oneshot_review.touched(f["location"], changed) for f in oneshot_review.blocking(last)

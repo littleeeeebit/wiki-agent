@@ -112,7 +112,7 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
     with pytest.raises(HTTPException, match="판정할 실측이 없다"):   # a screen showing another run
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"] + 1, approve=True))
     begun = []
-    with patch.object(measure, "commented", lambda *a: "PR #1 에 실측 기록을 달지 못했다 — 401"), \
+    with patch.object(measure, "commented", lambda *a: f"PR #1 에 실측 기록을 달지 못했다 — 401 {KEY}"), \
             patch("main.oneshot_review.begin", begun.append):
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=True, note=f"자연스럽다 {KEY}"))
     assert o()["stage"] == "review" and begun == ["budget"] and o()["measures"][-1]["owner"]["approve"]
@@ -205,6 +205,15 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     assert o()["measures"][-1]["status"] == "owner"
     oneshot_needs.forget("budget", ENV)   # the general route that removes a secret at any stage
     assert o()["measures"][-1]["status"] == "stale"
+    gate = measure.specs.gate
+
+    def changing(*args, **kwargs):   # the value removed while the script runs
+        oneshot_needs.forget("budget", ENV)
+        return gate(*args, **kwargs)
+    given()
+    with patch.object(measure.specs, "gate", changing):
+        measure.measure("budget")
+    assert o()["measures"][-1]["status"] == "stale" and o()["stage"] == "measure" and not o().get("measure_fails")
     given()
     measure.measure("budget")
     run = o()["measures"][-1]
@@ -227,6 +236,35 @@ def test_a_kept_report_and_the_clips_folder_show_no_secret_in_any_spelling(tmp_p
     measure.scrubbed(out, hide)
     assert canary not in json.loads((out / "report.json").read_text(encoding="utf-8"))["notes"]
     assert sorted(p.name for p in (out / "clips").iterdir()) == ["ok.wav"]
+    spelled = "".join(f"\\u{ord(c):04x}" for c in canary)   # every character escaped: decoding brings it back
+    (out / "report.json").write_text('{"notes": "' + spelled + '"}', encoding="utf-8")
+    measure.scrubbed(out, hide)
+    assert canary not in json.loads((out / "report.json").read_text(encoding="utf-8"))["notes"]
+    (out / "report.json").write_text("[" * 5000 + "]" * 5000, encoding="utf-8")   # too deep for the reader
+    assert "error" in measure.report_of(out, {"metrics": []}, hide)
+    measure.scrubbed(out, hide)
+    assert not (out / "report.json").exists()
+
+
+def test_a_redirect_from_the_health_address_is_its_status_never_followed():
+    import http.server
+    import threading
+
+    class Moved(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", "http://127.0.0.1:9/elsewhere")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+    server = http.server.HTTPServer(("127.0.0.1", 0), Moved)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert measure.answers(f"http://127.0.0.1:{server.server_port}/health") == 302
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_only_the_started_backend_vouches_for_the_health_address():

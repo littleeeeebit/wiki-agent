@@ -428,12 +428,12 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
     assert "더하거나 고친 테스트" in sent[-1][2]
     oneshot_spec.saved("budget", oneshot={"attempts": 0})   # under the attempt cap for the cases below
-    write(tree, "test_ghost.py", 'NAME = "test_ghost"\n')   # committed, named, never a test
-    check(tree, said.replace("test_refund.py::test_a_refund_is_negative", "test_ghost.py::test_ghost"))()
+    write(tree, "ghost.py", "def test_ghost():\n    pass\n")   # a definition the test command never collects
+    check(tree, said.replace("test_refund.py::test_a_refund_is_negative", "ghost.py::test_ghost"))()
     assert "더하거나 고친 테스트" in sent[-1][2]   # an uncommitted file never counts
-    git(tree, "add", "test_ghost.py")
+    git(tree, "add", "ghost.py")
     git(tree, "commit", "-m", "ghost")
-    check(tree, said.replace("test_refund.py::test_a_refund_is_negative", "test_ghost.py::test_ghost"))()
+    check(tree, said.replace("test_refund.py::test_a_refund_is_negative", "ghost.py::test_ghost"))()
     assert "돌지 않음" in sent[-1][2]   # a name in the file that no test run reports passing
     check(tree, said)
     assert o()["stage"] == "measure" and o()["answers"][0]["round"] == 1 and o()["answers"][0]["head"] == refused
