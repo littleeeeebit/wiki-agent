@@ -213,16 +213,22 @@ def test_the_end_of_a_startup_log_is_cut_only_after_its_secrets_are_masked(tmp_p
     (log := tmp_path / "serve.log").write_text("start sk-secret-value end", encoding="utf-8")
     assert measure.tail(log, {"sk-secret-value": "[K]"}, size=8) == "[K] end"   # never a fragment of the value
     log.write_text(json.dumps({"key": 'sk-"q\\uote'}), encoding="utf-8")   # logged as JSON: its escaped spelling
-    assert "uote" not in measure.tail(log, {'sk-"q\\uote': "[K]"}) and "[K]" in measure.tail(log, {'sk-"q\\uote': "[K]"})
+    hide = measure.spelled({'sk-"q\\uote': "[K]"})   # as `env_of` gives it
+    assert "uote" not in measure.tail(log, hide) and "[K]" in measure.tail(log, hide)
 
 
-def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(at_measure):
+def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(at_measure, tmp_path):
     given()
     seen = []
     with patch.object(measure, "spelled", lambda hide: {**hide, "escaped-form": "[E]"}), \
             patch.object(measure.specs, "gate", lambda *a, **k: seen.append(k["hide"]) or (1, "", "")):
         measure.measure("budget")
     assert seen and seen[0].get("escaped-form") == "[E]" and KEY in seen[0]
+    secret = 'sk-"q\\uote'   # a diagnostic serialized inside the report's notes keeps its escape
+    (tmp_path / "report.json").write_text(json.dumps({"metrics": {}, "notes": json.dumps({"key": secret})}),
+                                          encoding="utf-8")
+    found = json.dumps(measure.report_of(tmp_path, {"metrics": []}, measure.spelled({secret: "[K]"})))
+    assert "uote" not in found and "[K]" in found
 
 
 def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_never_text(at_measure):

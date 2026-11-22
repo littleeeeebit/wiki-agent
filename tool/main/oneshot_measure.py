@@ -226,7 +226,7 @@ def env_of(spec: dict, plan: dict) -> tuple[dict, dict[str, str]]:
             env[x["env"]] = value
     hide = {**oneshot_needs.hidden(spec, env),
             **{form: f"[{k}]" for k, v in secrets.items() for form in {v, quote(v, safe="")}}}
-    return env, hide
+    return env, spelled(hide)   # every reader of the run's text masks the JSON-escaped spellings too
 
 
 # -- Starting the backend ---------------------------------------------------------------------------------
@@ -337,7 +337,7 @@ def accepted_by(psutil, server: tuple, client: tuple, seconds: float = 3.0) -> i
 
 def tail(log: Path, hide: dict, size: int = 1500) -> str:   # masked whole first: the cut never splits a secret
     try:
-        return masked(log.read_text(encoding="utf-8", errors="replace"), spelled(hide))[-size:].strip() or "(출력 없음)"
+        return masked(log.read_text(encoding="utf-8", errors="replace"), hide)[-size:].strip() or "(출력 없음)"
     except OSError:
         return "(출력 없음)"
 
@@ -427,7 +427,7 @@ def measure(repo: str) -> None:
                 limit = plan["measure"]["minutes"] * 60 + 300
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
                     "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
-                    idle=limit, hide=spelled(hide))   # the script may log JSON too
+                    idle=limit, hide=hide)
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
         except Exception as exc:   # unforeseen: raised again once the folder is dealt with
@@ -685,7 +685,7 @@ def decide(repo: str, body: Decision) -> dict:
         let_go = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
         try:   # held until the verdict is saved: no turn moves HEAD between the check and the record of it
             why = oneshot_review.moved(spec, tree, "built_head")
-            hide = env_of(spec, plan)[1] if plan else oneshot_needs.hidden(spec, oneshot_build.built_env(spec))
+            hide = env_of(spec, plan)[1] if plan else spelled(oneshot_needs.hidden(spec, oneshot_build.built_env(spec)))
             runs[-1] = {**last, "owner": {"approve": body.approve, "note": masked(note, hide), "ts": time.time()}}
             if why:
                 spec = retire(spec, f"실측한 뒤 작업트리가 바뀌었다 — {why}", stage="build", fix=None, attempts=0,

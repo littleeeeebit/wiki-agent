@@ -195,7 +195,7 @@ with that HEAD and the input's `env` and kind as the screen showed them; a
 plan rebuilt since answers 409. A result waiting for the owner's verdict is
 set aside (`stale`) when an input changes. [실측 시작] holds the worktree,
 starts `serve`, runs the script with the inputs in its environment and every
-secret masked from its output (JSON-escaped spellings included), and keeps only the clips it accepts, the
+secret masked from its output, and keeps only the clips it accepts, the
 report and the backend's log, masked (`oneshot_kept`). The script and the
 backend write into a folder of their own (`m<n>-<head>.raw`). `kept_from`
 copies out of it into the kept folder only those three:
@@ -213,9 +213,12 @@ included, appears only once all of it is written (`staged`). A failed read
 of the report while it is kept, or a failed look at any entry (`plain`
 answers "no" only for a missing one), stops the run like a failed copy, and
 so does any unforeseen error of the keeping; only invalid UTF-8 JSON is left
-out. When the backend fails to start, its log is masked whole, in the same
-JSON-escaped spellings as the kept log (`spelled`), before its end is cut
-for the error, so the cut never splits a secret. The removal counts a
+out. Every mask of a run comes from `env_of`, which holds each secret in
+its literal, URL-quoted and JSON-escaped spellings (`spelled`). So the
+script's output, the report's metrics and notes, the backend's log, the
+owner's note and every error mask the same forms. When the backend fails to
+start, its log is masked whole before its end is cut for the error, so the
+cut never splits a secret. The removal counts a
 folder as gone only when looking at it finds nothing; one that cannot be
 looked at is still there and stops the run. Then the raw folder is removed whole, on
 every exit, a failed copy included:
