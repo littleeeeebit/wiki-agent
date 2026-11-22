@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn, Zoom } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
-import { Needs } from '@/components/OneshotNeeds'
+import { Leaked, Needs } from '@/components/OneshotNeeds'
 import { Track } from '@/components/OneshotTrack'
 import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName, toolText,
@@ -123,9 +123,11 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
   const resume = !['kind', 'rekind'].includes(view.stopped?.reason ?? '') && (
     <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
-  const faulted = (fault || !!view.phone_owned?.length) && (
+  const leaked = view.needs?.some((n) => n.leaked)
+  const faulted = (fault || !!view.phone_owned?.length || leaked) && (
     <div className="flex flex-col gap-2 px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
       <Fault text={fault} />
+      <Leaked needs={view.needs ?? []} />
       {/* Shown on the run, whatever its stage, until the phone is listed again and the cleanup finishes. */}
       {view.phone_owned?.map((r) => r.state === 'unsure' ? (
         <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
@@ -170,7 +172,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
     return (
       <Track view={view} halt={<>
         <Fault text={fault} />
-        {view.phone_owned?.length ? faulted : null}
+        {view.phone_owned?.length || leaked ? faulted : null}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
       </>} />
     )

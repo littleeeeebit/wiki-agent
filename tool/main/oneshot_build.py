@@ -617,9 +617,11 @@ def checked(path: Path, run, spec: dict, final: str):
     A person's turn, or a turn in a stage S4 does not own, changes nothing."""
 
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
-    if getattr(run, "person", False) or stage not in STAGES:
-        return None
     hide = getattr(run.chat, "hide", None)
+    if getattr(run, "person", False) or stage not in STAGES:
+        # It moves nothing, but what it left is checked under its own mask: a commit holding a value stays refused.
+        _ = hide and oneshot_needs.leaked(path, spec, hide, final)
+        return None
     why = oneshot_needs.leaked(path, spec, hide, final)   # before any check reads it
     if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)

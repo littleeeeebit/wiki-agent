@@ -125,7 +125,7 @@ def shown(spec: dict) -> list[dict]:
     o = spec["oneshot"]
     kept = o.get("given") or {}
     return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid)),
-             "leaked": nid in (o.get("leaked") or [])}
+             "leaked": nid in marked(o)}
             for nid, (n, calls) in owed(o.get("design") or {}).items()]
 
 
@@ -219,7 +219,9 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
 
     # Whatever the store holds now, a rotated value is still in those commits; the scan below still runs, so a
     # commit made meanwhile is recorded too.
-    if not hide:
+    if not hide:   # nothing carried, nothing found now: the sheet keeps only what the history still holds
+        if spec_of(spec["repo"])["oneshot"].get("leaked"):
+            saved(spec["repo"], oneshot={"leaked": []})
         return still_tainted(path, spec)
     refused = still_tainted(path, spec)
     step = ""
@@ -252,17 +254,19 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         for value, label in hide.items():
             if value in text or folded(value) in flat:
                 found.setdefault(where, set()).add(label)
-    marked = sorted({getattr(lab, "need", None) or str(lab).strip("[]") for labs in found.values() for lab in labs})
-    if marked != (spec_of(spec["repo"])["oneshot"].get("leaked") or []):   # the sheet marks each need found
+    marked = sorted(set().union(*map(need_ids, found.values())))
+    if marked != (spec_of(spec["repo"])["oneshot"].get("leaked") or []):   # the sheet marks each need found now
         saved(spec["repo"], oneshot={"leaked": marked})
     if not found:
         return refused
     if "커밋" in found and base:   # the commits that hold it stay refused until the history no longer has them
         try:
-            hit = [c for c in git("rev-list", f"{base}..HEAD").split() if seen(git("show", *HISTORY, c), hide)]
+            hit = {c: ids for c in git("rev-list", f"{base}..HEAD").split() if (ids := held_in(git("show", *HISTORY, c), hide))}
         except (OSError, subprocess.SubprocessError) as exc:
             return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
-        saved(spec["repo"], oneshot={"tainted": sorted({*(spec_of(spec["repo"])["oneshot"].get("tainted") or []), *hit})})
+        o = spec_of(spec["repo"])["oneshot"]   # each commit with the needs it holds, marked while it stays
+        saved(spec["repo"], oneshot={"tainted": sorted({*(o.get("tainted") or []), *hit}),
+                                     "tainted_needs": {**(o.get("tainted_needs") or {}), **hit}})
     every, rows = list(hide), list(owed(spec["oneshot"].get("design") or {}).items())
 
     def ref(label: str) -> str:
@@ -285,9 +289,20 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
 HISTORY = ("-p", "--diff-merges=first-parent", "--format=%an%n%ae%n%cn%n%ce%n%B")
 
 
-def seen(text: str, hide: dict) -> bool:
+def need_ids(labels) -> set[str]:
+    return {getattr(lab, "need", None) or str(lab).strip("[]") for lab in labels}
+
+
+def held_in(text: str, hide: dict) -> list[str]:
+    """The needs whose value `text` holds, in any casing, by id."""
     flat = folded(text)
-    return any(value in text or folded(value) in flat for value in hide)
+    return sorted(need_ids(label for value, label in hide.items() if value in text or folded(value) in flat))
+
+
+def marked(o: dict) -> set[str]:
+    """The needs the sheet marks: those a turn's answer, commits or files held when last checked (`leaked`), and those
+    a commit still in the history holds (`tainted_needs`), so the mark and the history refusal clear together."""
+    return {*(o.get("leaked") or []), *(n for c in o.get("tainted") or [] for n in (o.get("tainted_needs") or {}).get(c, []))}
 
 
 def still_tainted(path: Path, spec: dict) -> str:
@@ -305,8 +320,9 @@ def still_tainted(path: Path, spec: dict) -> str:
         if done.returncode != 1 and subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{c}^{{commit}}"],
                                                    cwd=path, capture_output=True, timeout=60).returncode != 1:
             left.append(c)
-    if left != tainted:   # only the commits Git says are gone leave the record
-        saved(spec["repo"], oneshot={"tainted": left})
+    if left != tainted:   # only the commits Git says are gone leave the record, with the needs they held
+        saved(spec["repo"], oneshot={"tainted": left, "tainted_needs": {
+            c: n for c, n in (spec["oneshot"].get("tainted_needs") or {}).items() if c in left}})
     return (f"비밀 값이 들어 있던 커밋 {', '.join(c[:12] for c in left)} 이(가) 아직 기록에 있다 — 설계 커밋 뒤의 "
             "그 커밋들을 다시 써서 기록에서 지운다") if left else ""
 

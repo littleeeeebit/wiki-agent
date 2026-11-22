@@ -467,8 +467,15 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     assert "커밋" in why and "다시 써서" in why and value.lower() not in why.lower()
     added = git("rev-parse", "HEAD~1")   # the removal's diff quotes the value too
     assert spec()["oneshot"]["tainted"] == sorted([added, git("rev-parse", "HEAD")])
-    # Taken back or replaced, the value is no longer in the mask, but its commit stays refused.
+    assert spec()["oneshot"]["tainted_needs"] == {added: ["N1"], git("rev-parse", "HEAD"): ["N1"]}
+
+    def mark():
+        return next(n for n in needs.shown(spec()) if n["id"] == "N1")["leaked"]
+
+    assert mark()
+    # Taken back or replaced, the value is no longer in the mask, but its commit stays refused, and marked.
     assert added[:12] in needs.leaked(at_r1, spec(), {}, "끝냈다")
+    assert spec()["oneshot"]["leaked"] == [] and mark()
     git("commit", "--allow-empty", "-m", f"Again {value}")   # made while the refusal stands: recorded too
     assert added[:12] in needs.leaked(at_r1, spec(), hide, "끝냈다")
     assert git("rev-parse", "HEAD") in spec()["oneshot"]["tainted"]
@@ -476,6 +483,7 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
     assert "아직 기록에 있다" in needs.still_tainted(nowhere, spec()) and spec()["oneshot"]["tainted"]
     git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])   # the history rewritten
     assert needs.leaked(at_r1, spec(), hide, "끝냈다") == "" and spec()["oneshot"]["tainted"] == []
+    assert not mark() and spec()["oneshot"]["tainted_needs"] == {}   # the mark clears with the refusal
     assert needs.leaked(at_r1, spec(), {}, value) == ""   # a session that carried no secret is never checked
     # A merge's resolution: in neither parent, read against the first parent.
     git("checkout", "-q", "-b", "side")
@@ -532,6 +540,12 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
                           chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
     build.checked(at_r1, run, spec(), f"키는 {value} 이다")()
     assert "The server refused this build turn: 비밀 값 [N1]" in sent[0] and value.lower() not in sent[0].lower()
+    # A person's turn moves nothing, but a commit it made holding the value is checked under its mask, and kept.
+    git("commit", "--allow-empty", "-m", f"Person {value}")
+    person = SimpleNamespace(halt=threading.Event(), put=notes.append, person=True,
+                             chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
+    assert build.checked(at_r1, person, spec(), "끝냈다") is None and spec()["oneshot"]["stage"] == "build"
+    assert git("rev-parse", "HEAD") in spec()["oneshot"]["tainted"] and mark()
 
 
 def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_answer_as_given(tmp_path, monkeypatch):
