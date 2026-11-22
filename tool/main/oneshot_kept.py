@@ -27,7 +27,7 @@ def strict(text: str):
 
     def number(s: str) -> float:
         if not math.isfinite(v := float(s)):
-            raise ValueError(f"유한한 수가 아니다 — {s[:20]}")
+            raise ValueError("유한한 수가 아닌 값이 있다")   # never the token itself: it may be a secret
         return v
     value = json.loads(text, parse_constant=number, parse_float=number)
     json.dumps(value, ensure_ascii=False).encode("utf-8")   # a lone surrogate escape is `UnicodeEncodeError`
@@ -35,8 +35,8 @@ def strict(text: str):
 
 
 def same_number(text: str, v: int | float) -> bool:
-    """Whether the secret `text` is the number `v`: exactly (an integer past a float's precision included), or as
-    the float a JSON reader rounds it to."""
+    """Whether the secret `text` is the number `v`: exactly (an integer past a float's precision included), or,
+    for a float `v` the reader already rounded, as that same float. An integer `v` is never rounded."""
 
     try:
         n = decimal.Decimal(text.strip())
@@ -44,7 +44,7 @@ def same_number(text: str, v: int | float) -> bool:
             return False
         if n == decimal.Decimal(v):
             return True
-        return math.isfinite(f := float(n)) and f == float(v)
+        return isinstance(v, float) and math.isfinite(f := float(n)) and f == v
     except (decimal.InvalidOperation, OverflowError, ValueError):
         return False
 

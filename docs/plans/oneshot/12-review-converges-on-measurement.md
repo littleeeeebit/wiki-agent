@@ -70,11 +70,14 @@ an old test's comments, spacing or nesting stands in for one. Each part is
 a direct member of the one before it, read in Python by its syntax tree and
 in other languages from its definition lines; a mention, an inherited test or
 a nested function of the same name is none. After the gate, that test must
-have run and passed in the build's own test run (`oneshot_answers.ran`), as
-the case of exactly that module and those classes, after any prefix the
-runner adds, its path read from the runner's `root` as the contract tests
-are (`runner_root`, recovered from the pinned cases' files or modules for a
-run committed before it was saved). It saves the entries on the spec under `answers`,
+have run and passed in the build's own test run (`oneshot_answers.ran`). A
+case that names its file counts only where that file is the answer's and
+its class name ends in the module's own name and the selector's classes; a
+case without a file only where its class name is exactly the module and
+classes. Paths are read from the runner's `root` as the contract tests are
+(`runner_root`, recovered from the pinned cases' files for a run committed
+before it was saved). No prefix is guessed: the error tells a builder whose
+runner adds one to name files (pytest `-o junit_family=xunit1`). It saves the entries on the spec under `answers`,
 with the round they answer.
 
 `review_text` shows the next reviewer every answer (`answers_text`). In an
@@ -96,15 +99,14 @@ After a refusal, `conflicted` looks at each blocking area the owner has not
 ruled on. It is a conflict when the builder answered it in two rounds with a
 broken requirement, or when its mechanism was already replaced once
 (`replaced`). The build turn told to replace it saves it as `replacing`. It
-counts as replaced only once a build passes whose commits changed code (not
-a comment or a blank line) at the refused lines of that area, read on the
-refused commit's side where the finding points (`refused_lines`: each
-file's code lines compared in order, line by line, so a neighbour's change
-never marks the line beside it and a reorder is a change; Python's comments
-are left out by its tokens, while another language's comment edit counts),
-and did
+counts as replaced only once a build passes whose commits changed the file
+a finding of that area points at, any byte of it (`changed_files`), and did
 not answer it instead; a turn that never ran, or
-left the area as it was, is told again. A refusal with a conflict
+left the area as it was, is told again. This check is deliberately coarse:
+the review, not a line diff, judges whether the mechanism changed, and the
+check only rules out a turn that left the finding's file alone. A line diff
+cannot attribute an edit between repeated lines or inside a literal, so it
+is not used. A refusal with a conflict
 does not go to the build or count towards the cap: the run waits at the
 `conflict` stage. The owner's board shows the review's findings beside the
 builder's answers, and for each area offers three rulings: the review's side,
@@ -152,10 +154,11 @@ reaches, a command a PC app's confirmed tools do not cover, and a secret
 need of the design given as plain text. It then starts `serve` in a job of
 its own, waits for its health address to answer 200, and stops it with
 everything it started. A health port something already answers before the
-start is refused, and so is one where a listener that answers it is outside
-the backend's process tree: on each address family its host reaches (both
-for `localhost`), the exact loopback listeners, or with none the wildcard
-ones, a dual-stack `::` among them for IPv4. A redirect is
+start is refused. So is one where a process that accepts a connection to it
+is outside the backend's process tree. The server connects once to each
+address its host resolves to (both for `localhost`) and reads the accepted
+socket's owner, so whichever listener the system picks is the one judged. A
+redirect is
 the health address's own status, never followed. The build reads the plan
 committed at HEAD, as the screen does, never an ignored file. A tree the
 backend wrote into is refused.
@@ -176,8 +179,9 @@ decoded, each field masked (a number that is a secret's value included), and
 written once; one that is not JSON is removed. The plan and the report are
 read strictly: `NaN`, `Infinity`, an overflowing float or a lone surrogate
 escape is refused. A metric equal to a secret's value, in any numeric
-spelling, exactly or as the float a reader rounds it to, never counts as a
-measurement. The inputs are checked again under
+spelling, never counts as a measurement. An integer is compared exactly; a
+float, already rounded by the reader, is compared with the secret rounded the
+same way. A refused report's error never quotes its token, and is masked. The inputs are checked again under
 that lock right before the run, so one taken back meanwhile stops for the
 owner without a failed run. The folder
 is cleaned on every exit, a failed read of the report included. A stored
@@ -197,7 +201,8 @@ agent. The verdict names the run's number and HEAD. A tree that is no longer
 that HEAD, or holds uncommitted changes, sets the result aside and sends the
 run back through the build check. The worktree stays held from that check
 until the verdict is saved, and the comment goes only to a pull request #1
-that shows the approved HEAD. A comment GitHub refuses is kept on the
+whose head, saved and as GitHub shows it just before the comment, is the
+approved HEAD. A comment GitHub refuses is kept on the
 run as `comment_error` and told to the owner. The review reads the approved measurement of its
 HEAD (`measured_text`). A finding the measurement contradicts is P2.
 

@@ -650,15 +650,6 @@ def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_
     assert oneshot_answers.passed(tree, o_, [])["replaced"] == ["amount validation"]
 
 
-def test_a_comment_or_blank_line_neither_replaces_a_mechanism_nor_changes_a_test(reviewed):
-    tree, head, _ = reviewed
-    from main import oneshot_answers
-    (tree / "budget_app.py").write_text("def add(amount):\n    # same mechanism\n\n    return amount\n", encoding="utf-8")
-    git(tree, "commit", "-am", "a comment only")
-    o_ = {"replacing": ["amount validation"], "reviews": [{"verdict": "refuse", "head": head, "findings": [P1]}]}
-    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
-
-
 def test_a_test_span_is_the_definition_and_its_whole_body():
     from main.oneshot_answers import test_span
     assert test_span('LABEL = "test_old"\n', ["test_old"]) is None   # a mention is no test
@@ -673,6 +664,7 @@ def test_a_test_span_is_the_definition_and_its_whole_body():
     assert test_span(nested, ["TestSub", "test_value"]) is None   # a local function is no member test
     wrapped = "class TestRefund(\n    Base,\n):\n    def test_refund(self):\n        pass\n"
     assert test_span(wrapped, ["TestRefund", "test_refund"], "test_a.py") == (4, 5)   # a declaration over lines
+    assert test_span('const help = "Run test(\'refund\') first"\n', ["refund"], "a.test.js") is None   # in a string
     from main.oneshot_answers import stripped
     assert stripped("x = a // b  # half", ("#",)) == "x = a // b"   # Python's `//` is division
     assert stripped('url = "http://a#b"  // note', ("//",)) == 'url = "http://a#b"'
@@ -705,43 +697,25 @@ def test_an_answers_test_is_new_since_the_refusal_and_runs_as_the_runner_names_i
     for cls in ("test_pin.TestRules", "suite.test_pin.TestRules"):   # a class's same-named case, prefixed or not
         assert "돌지 않음" in ran([(cls, "test_new", "test_pin.py", "passed")], [{"test": "test_pin.py::test_new"}])
         assert ran([(cls, "test_new", "test_pin.py", "passed")], [{"test": "test_pin.py::TestRules::test_new"}]) == ""
-    assert ran([("suite.test_pin", "test_new", "", "passed")], [{"test": "test_pin.py::test_new"}]) == ""
-    no_file = {"contract": ["web/test_budget.py"], "cases": [["test_budget", "test_y", ""]]}   # xUnit 2
-    assert runner_root(no_file) == "web"
-    assert runner_root({**no_file, "cases": [["web.test_budget.TestA", "test_y", ""]]}) == ""
+    assert "xunit1" in ran([("suite.test_pin", "test_new", "", "passed")], [{"test": "test_pin.py::test_new"}])
+    assert ran([("test_pin", "test_new", "", "passed")], [{"test": "test_pin.py::test_new"}]) == ""   # exact, no file
+    other = [("integration.tests.test_pin", "test_new", "integration/tests/test_pin.py", "passed")]
+    assert "돌지 않음" in ran(other, [{"test": "tests/test_pin.py::test_new"}])   # the same names, another file
+    assert runner_root({"contract": ["web/test_budget.py"], "cases": [["test_budget", "test_y", ""]]}) == ""
 
 
-def test_a_removed_comment_or_an_insertion_elsewhere_replaces_no_mechanism(reviewed):
-    tree, _, _ = reviewed
+def test_a_replacement_counts_once_the_findings_file_is_not_what_the_refusal_read(reviewed):
+    tree, head, _ = reviewed
     from main import oneshot_answers
-    (tree / "budget_app.py").write_text("def add(amount):\n    # the same\n    return amount\nTAX = 1\n", encoding="utf-8")
-    git(tree, "commit", "-am", "a comment")
-    refused = git(tree, "rev-parse", "HEAD")
-    finding = {**P1, "location": "budget_app.py:3"}
-    o_ = {"replacing": ["amount validation"], "reviews": [{"verdict": "refuse", "head": refused, "findings": [finding]}]}
-    (tree / "budget_app.py").write_text("def add(amount):\n    return amount\nTAX = 1\n", encoding="utf-8")
-    git(tree, "commit", "-am", "the comment removed")
-    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
-    (tree / "budget_app.py").write_text("LIMIT = 1\ndef add(amount):\n    return amount\nTAX = 1\n", encoding="utf-8")
-    git(tree, "commit", "-am", "code above it")
-    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
-    (tree / "budget_app.py").write_text("LIMIT = 1\ndef add(amount):\n    return amount  # renamed note\nTAX = 1\n",
-                                        encoding="utf-8")
-    git(tree, "commit", "-am", "an inline comment only")
-    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
-    (tree / "budget_app.py").write_text("LIMIT = 1\ndef add(amount):\n    return amount  # again\nTAX = 2\n",
-                                        encoding="utf-8")
-    git(tree, "commit", "-am", "its comment and the line after it")   # one hunk, the refused line's code the same
-    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
-    (tree / "budget_app.py").write_text("LIMIT = 1\ndef add(amount):\n    return max(amount, 0)\n", encoding="utf-8")
-    git(tree, "commit", "-am", "the refused line replaced")
-    assert oneshot_answers.passed(tree, o_, [])["replaced"] == ["amount validation"]
-    from main.oneshot_answers import code_lines
-    swapped = lambda a, b: [t for _, t in code_lines(f"{a}  # one\n{b}  # two\n", "x.py")]   # noqa: E731
-    assert swapped("open()", "close()") != swapped("close()", "open()")   # a reorder is a change
-    text = 'NOTE = """\n# kept: it is the string\n"""\n'
-    assert code_lines(text, "x.py")[1] == (2, "# kept: it is the string")
-    assert code_lines("return price\n  * quantity  // n\n", "x.js")[1] == (2, "  * quantity  // n")
+    o_ = {"replacing": ["amount validation"], "reviews": [{"verdict": "refuse", "head": head, "findings": [P1]}]}
+    (tree / "other.py").write_text("X = 1\n", encoding="utf-8")
+    git(tree, "add", "other.py")
+    git(tree, "commit", "-m", "another file only")
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []   # budget_app.py as the refusal read it
+    text = (tree / "budget_app.py").read_text(encoding="utf-8")
+    (tree / "budget_app.py").write_text(text.replace("return", "return  "), encoding="utf-8")   # whitespace only
+    git(tree, "commit", "-am", "spacing")
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == ["amount validation"]   # each byte counts
 
 
 def test_an_owner_ruling_for_the_review_goes_to_the_build_with_their_words(reviewed):

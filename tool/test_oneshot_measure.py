@@ -123,6 +123,14 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
     assert o()["stage"] == "review" and begun == ["budget"] and o()["measures"][-1]["owner"]["approve"]
     assert "승인한 HEAD" in measure.commented({**spec(), "oneshot": {**o(), "pr1": {"number": 1, "head": "old"}}},
                                           o()["measures"][-1])
+    calls = []
+
+    def github(cmd, *a, **k):   # GitHub's PR #1 shows a newer HEAD pushed from elsewhere
+        calls.append(cmd[:3])
+        return subprocess.CompletedProcess(cmd, 0, "f" * 40 + "\n", "")
+    with patch.object(measure.specs, "sh", github):
+        assert "승인한 HEAD" in measure.commented(spec(), o()["measures"][-1])
+    assert calls == [["gh", "pr", "view"]]   # never commented
     assert KEY not in json.dumps(o(), ensure_ascii=False) and "401" in o()["measures"][-1]["comment_error"]
     from main import oneshot_review
     assert "자연스럽다" in oneshot_review.measured_text(o(), run["head"])
@@ -283,6 +291,10 @@ def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):
     assert measure.report_of(out, plan, hide)["metrics"][0]["value"] is None   # the same number, spelled as a float
     measure.scrubbed(out, hide)
     assert json.loads((out / "report.json").read_text(encoding="utf-8")) == {"metrics": {"rate": "[PIN]"}}
+    (out / "report.json").write_text(f'{{"metrics": {{"rate": {2 ** 53 + 3}}}}}', encoding="utf-8")
+    assert measure.report_of(out, plan, {str(2 ** 53 + 4): "[S]"})["metrics"][0]["value"] == 2 ** 53 + 3   # distinct
+    (out / "report.json").write_text('{"metrics": {"rate": 1e309}}', encoding="utf-8")
+    assert "1e309" not in json.dumps(measure.report_of(out, plan, {"1e309": "[S]"}))   # refused, its token not shown
     big = {str(2 ** 53 + 1): "[BIG]"}   # past a float's precision: kept exact as an integer, rounded as a float
     for text in (f'{{"metrics": {{"rate": {2 ** 53 + 1}}}}}', f'{{"metrics": {{"rate": {2 ** 53 + 1}.0}}}}'):
         (out / "report.json").write_text(text, encoding="utf-8")
@@ -335,25 +347,20 @@ def test_a_redirect_from_the_health_address_is_its_status_never_followed():
 
 
 def test_only_the_started_backend_vouches_for_the_health_address():
+    import socket
     from types import SimpleNamespace as NS
-    import psutil
-    me = NS(pid=10)
-    tree = NS(children=lambda recursive: [NS(pid=11)])
-
-    def listening(*pids_ips):
-        return [NS(status=psutil.CONN_LISTEN, laddr=NS(ip=ip, port=12345), pid=pid) for pid, ip in pids_ips]
-    with patch.object(psutil, "Process", lambda pid: tree):
-        with patch.object(psutil, "net_connections", lambda kind: listening((11, "::1"), (99, "127.0.0.1"))):
-            assert not measure.owned(me, "http://localhost:12345/health")   # another program on IPv4
-            assert not measure.owned(me, "http://127.0.0.1:12345/health")
-        with patch.object(psutil, "net_connections", lambda kind: listening((11, "::1"), (99, "10.0.0.5"))):
-            assert measure.owned(me, "http://localhost:12345/health")
-        with patch.object(psutil, "net_connections", lambda kind: listening((11, "::"),)):   # dual-stack, ours
-            assert measure.owned(me, "http://127.0.0.1:12345/health")
-        with patch.object(psutil, "net_connections", lambda kind: listening((11, "127.0.0.1"), (99, "::"))):
-            assert measure.owned(me, "http://127.0.0.1:12345/health")   # the exact listener answers, not `::`
-        with patch.object(psutil, "net_connections", lambda kind: listening((11, "0.0.0.0"), (99, "::"))):
-            assert not measure.owned(me, "http://127.0.0.1:12345/health")   # two wildcards: either may answer
+    with socket.socket() as listener:   # this test's own process answers on a loopback port
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        assert measure.owned(NS(pid=os.getpid()), f"http://127.0.0.1:{port}/health")   # it accepted the connection
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:   # a process that started nothing answering there
+            assert not measure.owned(other, f"http://127.0.0.1:{port}/health")
+        finally:
+            other.kill()
+            other.wait()
+    assert not measure.owned(NS(pid=os.getpid()), f"http://127.0.0.1:{port}/health")   # nothing answers
 
 
 def test_the_app_starts_without_psutil_which_the_install_declares():

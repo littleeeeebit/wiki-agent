@@ -21,6 +21,7 @@ import operator
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
@@ -291,31 +292,30 @@ class Unfollowed(urllib.request.HTTPRedirectHandler):
 
 
 NO_REDIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), Unfollowed)   # loopback: never a proxy
-# Each address family a host name reaches: its exact loopback listeners, or, with none, its wildcard ones (a
-# dual-stack `::` socket answers IPv4 too). The most specific bound socket answers a connection.
-V4 = ({"127.0.0.1", "::ffff:127.0.0.1"}, {"0.0.0.0", "::"})
-LOOPBACK = {"127.0.0.1": [V4], "localhost": [V4, ({"::1"}, {"::"})]}
-
-
 def owned(proc: subprocess.Popen, health: str) -> bool:
-    """Whether every socket that answers `health` (its port: on each address family its host reaches, the exact
-    loopback listeners, or with none the wildcard ones) belongs to `proc` or a process it started. Another program
-    that answers there never vouches for it; one an exact listener of the backend shadows does not answer.
-    ponytail: a foreign IPv6-only `::` beside a backend on `0.0.0.0` refuses, as psutil cannot tell it apart."""
+    """Whether every process that accepts a connection to `health` (one connection to each address its host
+    resolves to) is `proc` or a process it started: read off the accepted socket itself, whose remote port is
+    the connection's own, so whichever listener the system picks is the one judged."""
 
     try:
         import psutil   # `requirements-chat.txt`; here, so a server without it still starts and refuses only this
     except ImportError:
         raise ValueError("psutil 이 설치되지 않았다 — `pip install -r requirements-chat.txt` 로 다시 설치한다") from None
     url = urlsplit(health)
-    port = url.port or 80
+    port, pids = url.port or 80, []
     try:
         tree = {proc.pid, *(c.pid for c in psutil.Process(proc.pid).children(recursive=True))}
-        on = [c for c in psutil.net_connections("tcp")
-              if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port]
-        found = [c for exact, wild in LOOPBACK[url.hostname]
-                 for c in ([c for c in on if c.laddr.ip in exact] or [c for c in on if c.laddr.ip in wild])]
-        return bool(found) and all(c.pid in tree for c in found)
+        for family, kind, _, _, address in socket.getaddrinfo(url.hostname, port, type=socket.SOCK_STREAM):
+            with socket.socket(family, kind) as s:
+                s.settimeout(3)
+                try:
+                    s.connect(address)
+                except OSError:
+                    continue   # nothing answers on this address: it cannot answer for the backend either
+                mine = s.getsockname()[1]
+                pids.append(next((c.pid for c in psutil.net_connections("tcp") if c.laddr and c.laddr.port == port
+                                  and c.raddr and c.raddr.port == mine), None))
+        return bool(pids) and all(p in tree for p in pids)
     except (psutil.Error, OSError):
         return False
 
@@ -357,7 +357,7 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
     try:
         value = strict((out / "report.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError) as exc:
-        return {"error": f"실측 명령이 `{{out}}/report.json` 을 쓰지 않았거나 JSON 이 아니다 — {exc}"}
+        return {"error": f"실측 명령이 `{{out}}/report.json` 을 쓰지 않았거나 JSON 이 아니다 — {masked(str(exc), hide)}"}
     if not isinstance(value, dict):
         return {"error": "`report.json` 은 metrics 를 담은 객체다"}
     if isinstance(bad := value.get("input_error"), dict) and isinstance(bad.get("why"), str):
@@ -713,7 +713,11 @@ def commented(spec: dict, record: dict) -> str:
                       f"스크립트 메모: {record.get('notes') or '(없음)'}"])
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(text)
-    try:
+    try:   # GitHub's own head, read just before: a push from elsewhere since PR #1 was published is not approved
+        now = specs.sh(["gh", "pr", "view", str(pr["number"]), "--json", "headRefOid", "-q", ".headRefOid"],
+                       Path(spec["worktree"]), 60)
+        if now.returncode or now.stdout.strip() != record["head"]:
+            return f"PR #{pr['number']} 이 지금 승인한 HEAD `{record['head'][:12]}` 를 보이지 않는다 — {specs.said(now)}"
         done = specs.sh(["gh", "pr", "comment", str(pr["number"]), "--body-file", fh.name], Path(spec["worktree"]), 60)
         return f"PR #{pr['number']} 에 실측 기록을 달지 못했다 — {specs.said(done)}" if done.returncode else ""
     except (OSError, subprocess.TimeoutExpired) as exc:
