@@ -23,8 +23,8 @@
     },
     "tool/codex_pretool.py": {
       "dup": 9,
-      "lines": 64,
-      "reason": "Oneshot 11b2a: a hook failure in a session carrying a oneshot's secrets writes its deny (`guard_git.closed_out`, one line). Before that: Passes the shell's dialect to edit_as_diff so PowerShell strings are read as PowerShell. Before that: Runs command_repair first and returns a repair as allow + updatedInput, Codex's only rewrite shape. Before that: Chains both the tool-call guard (#272) and the memory-word check (#276) for Codex, one import each. Before that: Chains the memory-word check for Codex, which takes one PreToolUse hook. Before that: baseline at adoption"
+      "lines": 65,
+      "reason": "Oneshot 11b2a round 29: the wrapper imports `hook_deadline` first, so a credential session's deny is armed before anything can stall and its answer goes out once (one line). Before that: Oneshot 11b2a: a hook failure in a session carrying a oneshot's secrets writes its deny (`guard_git.closed_out`, one line). Before that: Passes the shell's dialect to edit_as_diff so PowerShell strings are read as PowerShell. Before that: Runs command_repair first and returns a repair as allow + updatedInput, Codex's only rewrite shape. Before that: Chains both the tool-call guard (#272) and the memory-word check (#276) for Codex, one import each. Before that: Chains the memory-word check for Codex, which takes one PreToolUse hook. Before that: baseline at adoption"
     },
     "tool/declared_continuation.py": {
       "dup": 12,

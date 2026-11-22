@@ -28,4 +28,7 @@ def closed_out(error: Exception) -> None:
     """A hook process's own failure: its deny written out, in such a session only."""
     if closed := held_closed(f"훅이 실패했다 ({type(error).__name__})"):
         sys.stdout.reconfigure(encoding="utf-8")   # the failure may come before the caller's own
-        json.dump(closed, sys.stdout, ensure_ascii=False)
+        try:   # through the deadline's once-only writer, standard library only too
+            __import__("hook_deadline").send(closed)
+        except Exception:  # noqa: BLE001 -- it could not load: written directly, as nothing else writes
+            json.dump(closed, sys.stdout, ensure_ascii=False)

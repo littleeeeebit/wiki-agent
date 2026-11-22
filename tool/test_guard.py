@@ -950,7 +950,7 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
     # As the host's process, a wrapper in a credential session is timed: the deadline's answer is the deny.
     armed, fallbacks = [], []
     monkeypatch.setattr(hook, "legacy", lambda *a: False)
-    monkeypatch.setattr(hook.hook_deadline, "arm", lambda seconds, fallback: armed.append(seconds))
+    monkeypatch.setattr(hook.hook_deadline, "arm", lambda seconds, fallback: armed.append((seconds, fallback)))
     monkeypatch.setattr(hook.runpy, "run_path", lambda *a, **k: fallbacks.append(hook.hook_deadline.best))
     for marked in (True, False):
         monkeypatch.setattr(sys, "argv", ["hook.py"])   # `main` hands `sys.argv` to the wrapper each time
@@ -958,8 +958,27 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
         if not marked:
             monkeypatch.delenv(guard_git.SECRETS_HELD)
         assert real_main(["codex", "codex_pretool.py"]) == 0
-    assert armed == [hook.PRETOOL_SECONDS] * 2 and fallbacks[1] is None
-    assert fallbacks[0]["hookSpecificOutput"]["permissionDecision"] == "deny"
+    # Armed with the deny before stdin or the project is read; the same deny stands while the wrapper runs.
+    assert [s for s, _ in armed] == [hook.hook_deadline.PRETOOL["codex_pretool.py"]] * 2
+    assert armed[0][1] == fallbacks[0] and fallbacks[0]["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert armed[1][1] is None and fallbacks[1] is None
+    # One answer: the wrapper's, through the deadline's writer, and the deadline's expiry adds nothing after it.
+    deadline = hook.hook_deadline
+    monkeypatch.setattr(deadline, "_armed", True)
+    monkeypatch.setattr(deadline, "_sent", False)
+    monkeypatch.setattr(deadline, "best", fallbacks[0])
+    monkeypatch.setattr(deadline.os, "_exit", lambda code: None)
+    capsys.readouterr()
+    deadline.send({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}})
+    deadline._expire()
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "allow"
+    monkeypatch.setattr(deadline, "_armed", False)   # unarmed again: every later answer here is written
+    monkeypatch.setattr(deadline, "_sent", False)
+    # Run directly (a per-project install), the wrapper's first import arms the deny itself.
+    probe = "import sys; sys.argv = ['claude_pretool.py']; import hook_deadline as d; print(d._armed, d.best is not None)"
+    done = subprocess.run([sys.executable, "-c", probe], cwd=Path(guard.__file__).parent, capture_output=True,
+                          text=True, encoding="utf-8", env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
+    assert done.stdout.split() == ["True", "True"], done.stderr
     monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
     monkeypatch.setattr(hook, "HERE", tmp_path)   # a wrapper that is not there at all
     assert real_main(["claude", "claude_pretool.py"]) == 0
