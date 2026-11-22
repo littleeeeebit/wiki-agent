@@ -934,6 +934,11 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
     for wrapper in ("claude_pretool.py", "codex_pretool.py"):
         assert hook.run(["claude", wrapper]) == 0
         assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny", wrapper
+    # A check the Claude wrapper could not load or run denies too, from a module that loads with nothing else.
+    import claude_pretool
+
+    monkeypatch.setattr(claude_pretool, "check", lambda name, payload: (_ for _ in ()).throw(ImportError(name)))
+    assert claude_pretool.verdict(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 @pytest.mark.parametrize("command", ["git log --show-signature", 'git log --format="%G?"', "git show --pretty=%GG",

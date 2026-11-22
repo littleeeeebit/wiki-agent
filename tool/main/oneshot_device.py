@@ -156,14 +156,17 @@ def cleared(tree: Path, device: dict) -> str:
     import subprocess
 
     apk = device["apk"]
-    listed = subprocess.run(["git", "ls-files", "--", apk], cwd=tree, capture_output=True, text=True,
+    if not inside(tree, apk):
+        return f"`{apk}` 로 가는 길에 링크나 작업트리 밖이 있다 — 작업트리 안의 보통 폴더에 빌드한다"
+    # Every entry Git tracks, compared casefolded with the declared spelling and the one the file resolves to:
+    # Windows opens a file by any casing, and Git's pathspec matches only its own.
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=tree, capture_output=True, text=True,
                             encoding="utf-8", errors="replace", timeout=60)
     if listed.returncode:
         return f"`{apk}` 를 Git 이 추적하는지 읽지 못했다 — 최종 게이트를 시작하지 않는다"
-    if listed.stdout.strip():
+    names = {apk.casefold(), (tree / apk).resolve().relative_to(tree.resolve()).as_posix().casefold()}
+    if names & {e.casefold() for e in listed.stdout.split("\0") if e}:
         return f"`{apk}` 가 커밋돼 있다 — 빌드 결과는 커밋하지 않는다. 지우고 무시 목록에 넣으면 게이트가 새로 만든다"
-    if not inside(tree, apk):
-        return f"`{apk}` 로 가는 길에 링크나 작업트리 밖이 있다 — 작업트리 안의 보통 폴더에 빌드한다"
     try:
         (tree / apk).unlink(missing_ok=True)
     except OSError as exc:

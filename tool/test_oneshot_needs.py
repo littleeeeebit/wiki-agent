@@ -107,6 +107,11 @@ def test_every_design_prompt_asks_for_needs_in_the_shape_the_server_takes(prompt
         with pytest.raises(ValueError, match="에이전트를 띄울 때"):
             needs.parsed([{"id": "N1", "what": "x", "kind": "secret", "env": launch}], "X1")
     assert needs.ENV.fullmatch("WIKI_AGENT_MANAGED")   # a saved need of that name can still be removed by it
+    # A design saved before the rule: no build session or gate starts with it, the owner told why.
+    with patch.object(needs, "secret_needs", lambda s: [("X1", {"id": "N1", "env": "ANTHROPIC_API_KEY"})]):
+        for start in (lambda: needs.agent({"oneshot": {"run": 1}, "repo": "budget"}), lambda: needs.gate_env({}, {})):
+            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+                start()
     assert all(f"`{k}`" in text for k in needs.KINDS) and "for it to run for real" in text
 
 

@@ -31,7 +31,7 @@ from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, deepseek
 from common.process import background_options
 from common.paths import RAW
 from common import Veil, errorlog, masked
-from guard_git import SECRETS_HELD
+from secrets_held import SECRETS_HELD
 from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and

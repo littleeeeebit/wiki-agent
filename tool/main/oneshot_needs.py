@@ -196,10 +196,20 @@ def label(nid: str, values: list[str], n: int) -> str:
     return Label(run * (n + 2), nid)
 
 
+def launchable(spec: dict) -> None:
+    """Raises for a design saved before `LAUNCH` that names what the agent's launch sets, drops or reads as its own
+    login: the build cell and the gate would hold different values. The owner removes the value (`forget`) and
+    renames the need in a new design."""
+    if bad := sorted({n["env"] for _, n in secret_needs(spec) if LAUNCH.fullmatch(n["env"])}):
+        raise ValueError(f"비밀 값 이름 {', '.join(f'`{b}`' for b in bad)} 은(는) 에이전트를 띄울 때 서버가 정하는 이름이다 "
+                         "— 값을 지우고 설계에서 다른 이름으로 바꾼 뒤 다시 시작한다")
+
+
 def gate_env(spec: dict, env: dict | None) -> dict | None:
     """`env`, the server's own when `None`, with every given secret set. A secret the design names but the store
     does not hold is removed, so a variable of that name the server happens to have never stands in for it."""
 
+    launchable(spec)
     if not (declared := {n["env"].upper() for _, n in secret_needs(spec)}):
         return env
     base = {k: v for k, v in (os.environ if env is None else env).items() if k.upper() not in declared}
@@ -212,6 +222,7 @@ def agent(spec: dict | None) -> tuple[dict, dict]:
 
     if not (spec or {}).get("oneshot") or not (needs := secret_needs(spec)):
         return {}, {}
+    launchable(spec)
     given = secrets(spec)
     env = {n["env"]: given.get(n["env"]) for _, n in needs}
     return env, hidden(spec, env)

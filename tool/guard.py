@@ -972,8 +972,8 @@ def judged(effect: tuple, g) -> str | None:
 
 def verdict(payload: dict, host: str = "claude") -> dict | None:
     """What the installed hooks (`claude_pretool`, `codex_pretool`) and this file's own entry ask; a failure
-    denies the call in a session carrying a oneshot's secrets (`guard_git.held_closed`) and raises otherwise."""
-    from guard_git import held_closed
+    denies the call in a session carrying a oneshot's secrets (`secrets_held`) and raises otherwise."""
+    from secrets_held import held_closed
 
     try:
         return checked(payload, host)
@@ -984,7 +984,7 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
 
 
 def checked(payload: dict, host: str) -> dict | None:
-    from guard_git import held_closed
+    from secrets_held import held_closed
     from guard_grant import grant, temps
 
     if os.environ.get("WIKI_AGENT_MANAGED") != "1":
@@ -1021,4 +1021,4 @@ if __name__ == "__main__":
             json.dump(answer, sys.stdout, ensure_ascii=False)
     except Exception as error:
         print(f"hook skipped: {type(error).__name__}", file=sys.stderr)
-        __import__("guard_git").closed_out(error)
+        __import__("secrets_held").closed_out(error)

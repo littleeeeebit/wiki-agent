@@ -27,29 +27,7 @@ import re
 from guard import Word, moved_to, paths, top
 from guard_models import gate, getopt, row, writes
 
-# Set in a session that carries a oneshot's secrets (`main.work.session`): it never pushes itself; the server
-# pushes once its secret check passes (`main.prerequisite_review.push`).
-SECRETS_HELD = "WIKI-AGENT-SECRETS-HELD"   # a hyphen: never a need's name (`oneshot_needs.ENV`)
-
-
-def closed_out(error: Exception) -> None:
-    """A hook process's own failure (`guard`, `claude_pretool`, `codex_pretool`): its deny written out."""
-    import json
-    import sys
-
-    if closed := held_closed(f"훅이 실패했다 ({type(error).__name__})"):
-        sys.stdout.reconfigure(encoding="utf-8")   # the failure may come before the caller's own
-        json.dump(closed, sys.stdout, ensure_ascii=False)
-
-
-def held_closed(why: str) -> dict | None:
-    """A session carrying a oneshot's secrets (`guard_git.SECRETS_HELD`) never runs a call the guard could not
-    check, so its push never slips past the refusal; any other session goes on as before."""
-    if not os.environ.get(SECRETS_HELD):
-        return None
-    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                   "permissionDecisionReason": f"{why} — 비밀 값을 가진 세션이라 확인하지 못한 호출은 "
-                                                               "막는다. 커밋만 하고, 푸시는 서버가 한다"}}
+from secrets_held import SECRETS_HELD, closed_out, held_closed  # noqa: F401 -- read here by older callers
 
 # git's own options before the verb that take no value. `-C` (a directory) and `-c` (a listed key) are read
 # by `m_git`; `--git-dir`, `--work-tree`, `--exec-path` and `--config-env` change which repository,

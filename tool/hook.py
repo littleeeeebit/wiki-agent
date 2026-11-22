@@ -41,8 +41,8 @@ LEGACY = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
 
 def closed(script: str, why: str) -> int:
     """A PreToolUse check (`claude_pretool`, `codex_pretool`) that never ran: denied in a session carrying a
-    oneshot's secrets (`guard_git.held_closed`), passed as before in any other."""
-    if script in ("claude_pretool.py", "codex_pretool.py") and (out := __import__("guard_git").held_closed(why)):
+    oneshot's secrets (`secrets_held`, which loads with nothing else), passed as before in any other."""
+    if script in ("claude_pretool.py", "codex_pretool.py") and (out := __import__("secrets_held").held_closed(why)):
         sys.stdout.reconfigure(encoding="utf-8")
         json.dump(out, sys.stdout, ensure_ascii=False)
     return 0
