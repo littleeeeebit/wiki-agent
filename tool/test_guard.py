@@ -928,12 +928,16 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
     # A wrapper that fails once the dispatcher has handed `sys.argv` to it still names the wrapper it ran.
     import hook
 
+    real_main = hook.main
     monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
     monkeypatch.setattr(sys, "argv", list(sys.argv))
     monkeypatch.setattr(hook, "main", lambda argv: (sys.argv.__setitem__(slice(None), ["child"]), 1 / 0))
     for wrapper in ("claude_pretool.py", "codex_pretool.py"):
         assert hook.run(["claude", wrapper]) == 0
         assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny", wrapper
+    monkeypatch.setattr(hook, "HERE", tmp_path)   # a wrapper that is not there at all
+    assert real_main(["claude", "claude_pretool.py"]) == 0
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"
     # A check the Claude wrapper could not load or run denies too, from a module that loads with nothing else.
     import claude_pretool
 

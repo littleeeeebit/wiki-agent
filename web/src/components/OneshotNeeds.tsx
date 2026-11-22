@@ -89,6 +89,7 @@ function Row({ n, busy, give, takeBack }: {
         <span role="status" className={n.given ? 'text-st-ready' : 'text-wait'}>{n.given ? '주어짐' : '없음'}</span>
         {n.leaked && <span role="alert" className="text-destructive">값이 결과에 들어 있다</span>}
         {n.unsure && <span role="status" className="text-wait">검사를 끝내지 못해 확인을 기다린다</span>}
+        {n.launch && <span role="status" className="text-wait">에이전트를 띄울 때 서버가 쓰는 이름이라 에이전트에게는 주지 않는다</span>}
       </div>
       <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void send() }}>
         {n.kind !== 'account' && (

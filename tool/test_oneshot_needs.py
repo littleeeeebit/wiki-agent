@@ -107,11 +107,16 @@ def test_every_design_prompt_asks_for_needs_in_the_shape_the_server_takes(prompt
         with pytest.raises(ValueError, match="에이전트를 띄울 때"):
             needs.parsed([{"id": "N1", "what": "x", "kind": "secret", "env": launch}], "X1")
     assert needs.ENV.fullmatch("WIKI_AGENT_MANAGED")   # a saved need of that name can still be removed by it
-    # A design saved before the rule: no build session or gate starts with it, the owner told why.
-    with patch.object(needs, "secret_needs", lambda s: [("X1", {"id": "N1", "env": "ANTHROPIC_API_KEY"})]):
-        for start in (lambda: needs.agent({"oneshot": {"run": 1}, "repo": "budget"}), lambda: needs.gate_env({}, {})):
-            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-                start()
+    # A design saved before the rule: R1 is not approved with it (an edit renames it); one approved before runs, its
+    # value never in the agent's environment, only the gate's, and masked in what the agent sees.
+    saved_need = [("N1", {"id": "N1", "env": "ANTHROPIC_API_KEY"})]
+    with patch.object(needs, "secret_needs", lambda s: saved_need), \
+            patch.object(needs, "_given", lambda s: [("N1", "ANTHROPIC_API_KEY", "v" * 20)]), \
+            patch.object(needs, "missing", lambda s: []):
+        assert "ANTHROPIC_API_KEY" in needs.unready({"oneshot": {}})
+        env, hide = needs.agent({"oneshot": {"run": 1}, "repo": "budget"})
+        assert env == {} and hide == {"v" * 20: "[N1]"}
+        assert needs.gate_env({}, {}) == {"ANTHROPIC_API_KEY": "v" * 20}
     assert all(f"`{k}`" in text for k in needs.KINDS) and "for it to run for real" in text
 
 

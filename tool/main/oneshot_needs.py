@@ -131,12 +131,21 @@ def shown(spec: dict) -> list[dict]:
     o = spec["oneshot"]
     kept = o.get("given") or {}
     return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid)),
-             "leaked": nid in marked(o), "unsure": nid in unsure(o) - marked(o)}
+             "leaked": nid in marked(o), "unsure": nid in unsure(o) - marked(o),
+             "launch": bool(LAUNCH.fullmatch(n.get("env") or ""))}
             for nid, (n, calls) in owed(o.get("design") or {}).items()]
 
 
 def missing(spec: dict) -> list[dict]:
     return [n for n in shown(spec) if not n["given"]]
+
+
+def unready(spec: dict) -> str:
+    """Why R1 is not approved yet: something the owner gives is not given, or a need bears a launch name
+    (`launchable`), which an edit at R1 renames."""
+    if lacking := missing(spec):
+        return "주인이 줄 것이 아직 없다 — " + ", ".join(f"{x['id']} {x['what']}" for x in lacking)
+    return launchable(spec)
 
 
 def secret_needs(spec: dict) -> list[tuple[str, dict]]:
@@ -196,20 +205,20 @@ def label(nid: str, values: list[str], n: int) -> str:
     return Label(run * (n + 2), nid)
 
 
-def launchable(spec: dict) -> None:
-    """Raises for a design saved before `LAUNCH` that names what the agent's launch sets, drops or reads as its own
-    login: the build cell and the gate would hold different values. The owner removes the value (`forget`) and
-    renames the need in a new design."""
+def launchable(spec: dict) -> str:
+    """Why R1 is not approved: a design saved before `LAUNCH` names what the agent's launch sets, drops or reads as
+    its own login. The card stays at R1, where an edit renames it. One approved before keeps running: that need
+    never reaches the build cell (`agent`), only the gate, and its row says so (`shown`)."""
     if bad := sorted({n["env"] for _, n in secret_needs(spec) if LAUNCH.fullmatch(n["env"])}):
-        raise ValueError(f"비밀 값 이름 {', '.join(f'`{b}`' for b in bad)} 은(는) 에이전트를 띄울 때 서버가 정하는 이름이다 "
-                         "— 값을 지우고 설계에서 다른 이름으로 바꾼 뒤 다시 시작한다")
+        return (f"비밀 값 이름 {', '.join(f'`{b}`' for b in bad)} 은(는) 에이전트를 띄울 때 서버가 정하는 이름이다 "
+                "— 그 항목을 수정 의견으로 다른 이름으로 바꾼 뒤 승인한다")
+    return ""
 
 
 def gate_env(spec: dict, env: dict | None) -> dict | None:
     """`env`, the server's own when `None`, with every given secret set. A secret the design names but the store
     does not hold is removed, so a variable of that name the server happens to have never stands in for it."""
 
-    launchable(spec)
     if not (declared := {n["env"].upper() for _, n in secret_needs(spec)}):
         return env
     base = {k: v for k, v in (os.environ if env is None else env).items() if k.upper() not in declared}
@@ -222,10 +231,10 @@ def agent(spec: dict | None) -> tuple[dict, dict]:
 
     if not (spec or {}).get("oneshot") or not (needs := secret_needs(spec)):
         return {}, {}
-    launchable(spec)
     given = secrets(spec)
-    env = {n["env"]: given.get(n["env"]) for _, n in needs}
-    return env, hidden(spec, env)
+    # A launch name (`LAUNCH`) never reaches the agent: the launch overrides it or reads it as its own login.
+    env = {n["env"]: given.get(n["env"]) for _, n in needs if not LAUNCH.fullmatch(n["env"])}
+    return env, hidden(spec, given)   # every given value masked, a launch name's too: the gate's output carries it
 
 
 def leaked(path: Path, spec: dict, hide: dict | None, final: str, last: bool = False) -> str:

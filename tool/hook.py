@@ -119,7 +119,7 @@ def main(argv: list[str]) -> int:
             timed = False
     if len(argv) < 2 or argv[0] not in LEGACY or not (HERE / argv[1]).is_file():
         print("hook skipped: usage hook.py <claude|codex> <script> [args]", file=sys.stderr)
-        return 0
+        return closed(argv[1] if len(argv) > 1 else "", "훅이 검사 스크립트를 찾지 못했다")   # a wrapper gone
     host, script, extra = argv[0], argv[1], argv[2:]
     raw = sys.stdin.buffer.read()
     try:

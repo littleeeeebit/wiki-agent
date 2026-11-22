@@ -495,7 +495,8 @@ def test_only_the_apk_the_final_gate_makes_is_frozen_and_a_failed_later_check_ke
     if os.name == "nt":   # another casing of the same file: Git's pathspec misses it, Windows opens it
         aliased = {**DEVICE, "apk": DEVICE["apk"].upper().replace(".APK", ".apk")}
         assert "커밋돼 있다" in oneshot_device.cleared(tree, aliased) and (tree / DEVICE["apk"]).is_file()
-    git(tree, "rm", "-q", "--cached", DEVICE["apk"])
+    git(tree, "rm", "-q", "--cached", DEVICE["apk"])   # its removal staged: still in HEAD, nothing deleted under it
+    assert "커밋 안 된 변경" in oneshot_device.cleared(tree, DEVICE) and (tree / DEVICE["apk"]).is_file()
     git(tree, "commit", "-m", "not tracked")
     (tree.parent / "built.apk").write_text("apk", encoding="utf-8")
     with patch.object(oneshot_build, "held", lambda *a: (_ for _ in ()).throw(ValueError("no report"))):
