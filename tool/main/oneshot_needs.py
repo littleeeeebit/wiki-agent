@@ -259,9 +259,18 @@ def leaked(path: Path, spec: dict, hide: dict | None, final: str) -> str:
         except (OSError, subprocess.SubprocessError) as exc:
             return f"비밀 값이 남았는지 확인하지 못했다 — {step} 이(가) 실패했다 ({type(exc).__name__})"
         saved(spec["repo"], oneshot={"tainted": sorted({*(spec_of(spec["repo"])["oneshot"].get("tainted") or []), *hit})})
-    # Each need by its label, `[N1]` whenever that spelling is safe (`label`): no value meets one, so no mask of this
-    # text or of any text around it, a retry prompt's included, ever rewrites the reference.
-    ids = sorted(str(lab) for lab in set().union(*found.values()))
+    every, sheet = list(hide), dict(secret_needs(spec))
+
+    def ref(label: str) -> str:
+        """The need as the sheet names it: the first of `[id]`, its variable and its description that no value
+        meets (`overlaps` reads across whatever text is around it), so no mask of this text or of a prompt around it
+        rewrites the reference; at last its label, which no value meets either."""
+        nid = getattr(label, "need", None) or str(label).strip("[]")
+        n = sheet.get(nid) or {}
+        return next((r for r in (f"[{nid}]", n.get("env"), n.get("what")) if isinstance(r, str) and r
+                     and not any(overlaps(v, [r]) for v in every)), str(label))
+
+    ids = sorted(ref(lab) for lab in set().union(*found.values()))
     return " / ".join(filter(None, [refused, (
         f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 — 값은 환경 변수로만 읽고 어디에도 적지 "
         "않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")]))

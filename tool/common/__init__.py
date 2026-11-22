@@ -199,31 +199,30 @@ class Veil:
         return isinstance(tool := meta.get("tool"), str) and tool in cls.QUESTIONS
 
     @staticmethod
-    def questions(given) -> list[dict]:
+    def questions(given, show=None) -> list[dict]:
         """A question tool's questions in their schema's shape and nothing else: each one's `question` and `id`,
         `header` and `multiSelect` when given, and its options' `label`, `description` and `preview`. One entry stays
         for every question and option asked, whatever its shape, so the answers and the option indices line up with
-        the provider's; a question and a label are always text (`text`)."""
+        the provider's; a question and a label are always text. `show` turns each field's value into that text
+        (`text` by default); the shape is read off the input as given, so no name a value is in can lose a field."""
 
-        listed = given.get("questions") if isinstance(given, dict) else None
-        return [{"question": text(q.get("question")), **{k: q[k] for k in ("id", "header") if isinstance(q.get(k), str)},
+        show = show or text
+        return [{"question": show(q.get("question")), **{k: show(q[k]) for k in ("id", "header") if isinstance(q.get(k), str)},
                  **({"multiSelect": q["multiSelect"]} if isinstance(q.get("multiSelect"), bool) else {}),
-                 "options": [{"label": text(o.get("label")),
-                              **{k: o[k] for k in ("description", "preview") if isinstance(o.get(k), str)}}
-                             if isinstance(o, dict) else {"label": text(o)}
+                 "options": [{"label": show(o.get("label")),
+                              **{k: show(o[k]) for k in ("description", "preview") if isinstance(o.get(k), str)}}
+                             if isinstance(o, dict) else {"label": show(o)}
                              for o in (q["options"] if isinstance(q.get("options"), list) else [])]}
-                if isinstance(q, dict) else {"question": text(q), "options": []}
-                for q in (listed if isinstance(listed, list) else [])]
+                for q in question_list(given.get("questions") if isinstance(given, dict) else None)]
 
     def asked(self, given) -> dict:
-        """A question tool's input as the screen reads it (`questions`): its fields by their schema's names, every
-        value masked. A name the provider added is left out with its value."""
-        return {"questions": [{k: v if isinstance(v, bool) else [{f: masked(t, self.hide) for f, t in o.items()} for o in v]
-                               if k == "options" else masked(v, self.hide) for k, v in q.items()}
-                              for q in self.questions(given)]}
+        """A question tool's input as the screen reads it (`questions`): its fields by their schema's names, each
+        value masked before it becomes text, so a value is never spelled otherwise first, as a structured field's
+        JSON would spell it. A name the provider added is left out with its value."""
+        return {"questions": self.questions(given, lambda value: text(self.deep(value)))}
 
     # The adapters' token counts: fixed names, numbers or nothing.
-    TOKENS = ("in", "out", "cache_read", "cache_write")
+    TOKENS = ("in", "out", "cache_read", "cache_write", "reasoning")
 
     def row(self, fields: dict) -> dict:
         """A work-record row's fields: as `meta`, and each saved step as an event's meta."""
@@ -274,6 +273,12 @@ class Veil:
         out = [(key[0], masked(text, self.hide), self.meta(meta)) for key, (text, meta) in self.held.items()]
         self.held.clear()
         return out
+
+
+def question_list(value) -> list[dict]:
+    """A question tool's batch as the adapters, their replies and the screen all read it: a list of mappings, any
+    other entry as a question of its text (`text`); no list, no question."""
+    return [q if isinstance(q, dict) else {"question": text(q)} for q in value] if isinstance(value, list) else []
 
 
 def text(value) -> str:

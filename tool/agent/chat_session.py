@@ -31,7 +31,7 @@ import weakref
 from collections import deque
 from pathlib import Path
 
-from common import worktree_home
+from common import question_list, worktree_home
 from common.host import INSTRUCTIONS, environment, skill_config
 from common.process import SUSPENDED, contained, killed, resumed, terminated
 
@@ -770,7 +770,7 @@ class ChatSession:
             self._send({"id": rid, "result": {"permissions": {}, "scope": "turn"}})
             return Event("tool", "리뷰 셀은 설정된 범위 밖의 추가 권한을 요청하지 않는다.")
         if method == "item/tool/requestUserInput":
-            questions = params.get("questions") or []
+            questions = question_list(params.get("questions"))   # one batch for the summary, reply and screen
 
             def said(allow, answers=(), rid=rid):
                 # Declined, no question has an answer; the model reads that.
@@ -1240,7 +1240,7 @@ class ChatSession:
                     if allow and name == "AskUserQuestion":
                         # The CLI reads the answers off the input, by question text.
                         args = {**args, "answers": {str(q.get("question")): a
-                                                    for q, a in zip(args.get("questions") or [], answers)}}
+                                                    for q, a in zip(question_list(args.get("questions")), answers)}}
                     said = ({"behavior": "allow", "updatedInput": args} if allow
                             else {"behavior": "deny", "message": DECLINED})
                     return {"type": "control_response",

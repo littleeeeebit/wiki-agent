@@ -194,7 +194,7 @@ def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     assert hide == {"n1": "■■"} and masked(masked("an1 n1", hide), hide) == masked("an1 n1", hide) == "a■■ ■■"
     assert hide["n1"].need == "N1"   # a refusal still names the need, whatever its label spells
     why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 n1 이다")   # `N1` would show the value: its label
-    assert "비밀 값 ■■ 이(가) 답 에" in why and masked(why, hide) == why
+    assert f"비밀 값 {ENV} 이(가) 답 에" in why and masked(why, hide) == why   # as the sheet names it
     hide = needs.hidden(needs.spec_of("budget"), {ENV: "N1 이(가)"})   # `N1` is safe alone, not in the sentence
     why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 N1 이(가) 다")
     assert "비밀 값 [N1] 이(가) 답 에" in why and masked(why, hide) == why
@@ -644,8 +644,10 @@ def test_a_question_keeps_its_schema_and_drops_what_the_provider_added(monkeypat
     # Every question and option asked keeps its entry, as text, so answers and indices line up with the provider's.
     assert Veil.questions({"questions": [{"options": [{"label": 3}, "plain"]}, 5]}) == [
         {"question": "", "options": [{"label": "3"}, {"label": "plain"}]}, {"question": "5", "options": []}]
-    assert veil.meta({"tokens": {"in": 3, "out": None, "secret": 1, "cache_read": "secret"}}) == {
-        "tokens": {"in": 3, "out": None, "cache_read": "[N4]"}}   # the counts by their names
+    assert veil.meta({"tokens": {"in": 3, "out": None, "reasoning": 2, "secret": 1, "cache_read": "secret"}}) == {
+        "tokens": {"in": 3, "out": None, "cache_read": "[N4]", "reasoning": 2}}   # the counts by their names
+    structured = {"questions": [{"question": {"q": 'say "secret"'}, "options": [{"label": ['a"secret']}]}]}
+    assert "secret" not in json.dumps(veil.meta({"tool": "AskUserQuestion", "input": structured}))   # masked, then text
     run = work.Run(SimpleNamespace(id="w", parent_id=None, hide={"x": "[N1]"}))
     run.put({"kind": "approval", "text": "실행할까?", "meta": {"id": "b", "tool": "Bash", "input": {"questions": 1}}})
     assert run.events[-1]["meta"]["input"] == {"questions": 1} and "b" not in run.asked   # an ordinary tool is not asked
