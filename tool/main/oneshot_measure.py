@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from common import masked, process, shell
 
 from . import oneshot, oneshot_build, oneshot_needs, oneshot_publish, oneshot_spec, release, runtime, specs, work
+from .oneshot_kept import CLIPS, KEPT, MAX_CLIPS, clips_of, label_of, scrubbed, strict  # noqa: F401 — kept here too
 from .query import _lock as work_lock, hold
 
 router = APIRouter()
@@ -45,13 +46,9 @@ PLAN = ".wiki/measure.json"
 IID = re.compile(r"M[1-9]\d*")
 MID = re.compile(r"[a-z][a-z0-9_]{0,40}")
 OPS = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge, "==": operator.eq}
-CLIPS = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".ogg": "audio/ogg", ".opus": "audio/ogg",
-         ".flac": "audio/flac", ".mp4": "video/mp4", ".webm": "video/webm"}
-MAX_CLIPS, MAX_CLIP = 12, 64 * 1024 * 1024
 MAX_MINUTES, MAX_SERVE_SECONDS = 60, 600
 MAX_TEXT = 2_000   # an input's typed value, and the owner's note
 HEALTH = re.compile(r"http://(127\.0\.0\.1|localhost)(:\d{1,5})?(/\S*)?")
-KEPT = ("report.json", "serve.log")   # what a measurement's folder keeps besides its clips, masked
 
 
 class Halted:
@@ -182,10 +179,10 @@ def planned(path: Path, spec: dict, rev: str | None = None) -> dict:
             shown = specs.sh(["git", "show", f"{rev}:{PLAN}"], path)
             if shown.returncode:
                 raise FileNotFoundError
-        value = json.loads(shown.stdout if rev else (path / PLAN).read_text(encoding="utf-8"))
+        value = strict(shown.stdout if rev else (path / PLAN).read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ValueError(f"`{PLAN}` 가 없다 — 실측 계획(serve, measure, inputs, metrics)을 커밋한다") from None
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise ValueError(f"`{PLAN}` 를 읽지 못했다 — {exc}") from None
     try:
         return checked(value, spec, path)
@@ -228,31 +225,6 @@ def env_of(spec: dict, plan: dict) -> tuple[dict, dict[str, str]]:
     hide = {**oneshot_needs.hidden(spec, env),
             **{form: f"[{k}]" for k, v in secrets.items() for form in {v, quote(v, safe="")}}}
     return env, hide
-
-
-def scrubbed(out: Path, hide: dict[str, str]) -> None:
-    """A measurement's folder as it is kept: the report and the backend's log masked, the clips `clips_of`
-    accepts, nothing else. Whatever else the script wrote may hold a value it was given, so it goes. Each
-    secret is also masked as JSON writes it inside a string, escaped, so no decoding brings it back."""
-
-    hide = {**hide, **{form: label for value, label in hide.items()
-                       for form in (json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1])}}
-    clips = {out / "clips" / name for name in clips_of(out, hide)}
-    for p in sorted(out.rglob("*"), reverse=True):   # files before the folders that hold them
-        if p in clips or p == out / "clips":
-            continue
-        if p.parent == out and p.name in KEPT and p.is_file():
-            text = p.read_text(encoding="utf-8", errors="replace")
-            if p.suffix == ".json":   # kept decoded, so no escape in the file spells a value differently
-                try:
-                    text = json.dumps(json.loads(text), ensure_ascii=False, indent=1)
-                except (ValueError, RecursionError):
-                    p.unlink()   # `report_of` already said it is not JSON; nothing reads it again
-                    continue
-            if (clean := masked(text, hide)) != text or p.suffix == ".json":
-                p.write_text(clean, encoding="utf-8")
-            continue
-        shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
 
 
 # -- Starting the backend ---------------------------------------------------------------------------------
@@ -318,7 +290,7 @@ class Unfollowed(urllib.request.HTTPRedirectHandler):
         return None   # urllib then raises `HTTPError` with the redirect's own status
 
 
-NO_REDIRECT = urllib.request.build_opener(Unfollowed)
+NO_REDIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), Unfollowed)   # loopback: never a proxy
 LOOPBACK = {"127.0.0.1": {"127.0.0.1", "0.0.0.0"}, "localhost": {"127.0.0.1", "0.0.0.0", "::1", "::"}}
 
 
@@ -376,7 +348,7 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
     the script says was wrong, and its notes, none of them showing a secret."""
 
     try:
-        value = json.loads((out / "report.json").read_text(encoding="utf-8"))
+        value = strict((out / "report.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError) as exc:
         return {"error": f"실측 명령이 `{{out}}/report.json` 을 쓰지 않았거나 JSON 이 아니다 — {exc}"}
     if not isinstance(value, dict):
@@ -388,19 +360,11 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
     rows = []
     for m in plan["metrics"]:
         v = got.get(m["id"])
-        number = isinstance(v, (int, float)) and (not isinstance(v, bool) or m["pass"]["op"] == "==")
+        number = isinstance(v, (int, float)) and (not isinstance(v, bool) or m["pass"]["op"] == "==") \
+            and label_of(v, hide) is None   # a value that is a secret is never shown as a measurement
         ok = bool(number and OPS[m["pass"]["op"]](v, m["pass"]["value"]))
         rows.append({**m, "value": v if number else None, "ok": ok})
     return {"metrics": rows, "notes": masked(str(value.get("notes") or ""), hide)[:MAX_TEXT]}
-
-
-def clips_of(out: Path, hide: dict[str, str]) -> list[str]:
-    folder = out / "clips"
-    if not folder.is_dir():
-        return []
-    found = sorted(p.name for p in folder.iterdir() if p.is_file() and p.suffix.lower() in CLIPS
-                   and p.stat().st_size <= MAX_CLIP and masked(p.name, hide) == p.name)
-    return found[:MAX_CLIPS]
 
 
 def measure(repo: str) -> None:
@@ -423,8 +387,9 @@ def measure(repo: str) -> None:
         out = store.folder / "measure" / f"m{n}-{o['built_head'][:12]}"
         shutil.rmtree(out, ignore_errors=True)
         out.mkdir(parents=True)
-        env, hide = env_of(spec, plan)
-        since = CHANGES.get(repo, 0)
+        with oneshot._lock:   # every stored-value change counts under this lock: the values and the count agree
+            env, hide = env_of(spec, plan)
+            since = CHANGES.get(repo, 0)
         record = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}
         try:
             with served(oneshot_build.run_as(plan["serve"]["command"], o, tree), tree, env, plan["serve"]["health"],
@@ -447,9 +412,7 @@ def measure(repo: str) -> None:
             return None
         found = found if not cut else {"error": cut}
         record |= found | {"clips": clips_of(out, hide), "code": code}
-        if CHANGES.get(repo, 0) != since:   # a stored value changed while it ran: not a result of the inputs now
-            record |= {"status": "stale", "error": "실측하는 동안 비밀 값이 바뀌었다 — [실측 시작]으로 다시 잰다"}
-        elif "input_error" in found:
+        if "input_error" in found:
             record["status"] = "input"
         elif found.get("error") or code or not all(m["ok"] for m in found["metrics"]) or plan["clips"] and not record["clips"]:
             record["status"] = "failed"
@@ -457,12 +420,22 @@ def measure(repo: str) -> None:
                 record["error"] = "변환한 소리를 들어 볼 클립이 `{out}/clips` 에 없다"
         else:
             record["status"] = "owner"
-        return lambda: decided(repo, store, record)
+        return lambda: decided(repo, store, record, since)
 
     oneshot_review.holding(repo, "실측", body)
 
 
-def decided(repo: str, store, record: dict):
+def decided(repo: str, store, record: dict, since: int):
+    """`result` of a measurement whose run started at change count `since`: compared and saved under the lock every
+    stored-value change takes, so a change made at any moment of the run sets it aside."""
+
+    with oneshot._lock:
+        if CHANGES.get(repo, 0) != since:
+            record = {**record, "status": "stale", "error": "실측하는 동안 비밀 값이 바뀌었다 — [실측 시작]으로 다시 잰다"}
+        return result(repo, store, record)
+
+
+def result(repo: str, store, record: dict):
     """A measurement saved. One the owner must judge waits; a wrong input stops for the owner; a failure goes to
     the build agent, up to the review's round cap."""
 

@@ -87,9 +87,9 @@ def seen_at(spec: dict, store):
     gone = lambda: (specs.sh([*off, "remove", "--force", str(seen)], tree, 120), shutil.rmtree(seen, True),   # noqa: E731
                     specs.sh([*off, "prune"], tree, 60))
     gone()
-    if (done := specs.sh([*off, "add", "--detach", str(seen), spec["oneshot"]["built_head"]], tree, 300)).returncode:
-        raise ValueError(f"리뷰할 HEAD 를 따로 꺼내지 못했다 — {specs.said(done)}")
-    try:
+    try:   # an add that fails or times out after registering the checkout is removed as well
+        if (done := specs.sh([*off, "add", "--detach", str(seen), spec["oneshot"]["built_head"]], tree, 300)).returncode:
+            raise ValueError(f"리뷰할 HEAD 를 따로 꺼내지 못했다 — {specs.said(done)}")
         yield seen
     finally:
         gone()
@@ -654,7 +654,7 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
     except MovedError as exc:   # the approved HEAD is no longer the tree: the build checks it again
         rebuild(spec["repo"], store, f"리뷰 직전에 작업트리가 바뀌었다 — {exc}")
         return None
-    except (ValueError, OSError, RuntimeError) as exc:
+    except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         store.stop("review", str(exc))
         return None
     return None if found is None else {**found, **({"added": added} if added is not None else {}),

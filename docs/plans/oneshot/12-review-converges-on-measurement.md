@@ -64,12 +64,13 @@ in one `oneshot-answers` block. Each entry names the finding's `area`, the
 and the test that pins the defended behaviour, as `path::name`. The build
 check (`oneshot_answers.answered`) refuses an entry whose area the refusal
 did not name, whose `breaks` are not design items or requirements, or whose
-test's own code lines the commits since the refused HEAD did not add or
-change (`path::name`, or `path::Class::name` inside a class). The test is
-its definition and body; a mention of its name, a comment or a blank line
-does not count. After the gate, that
-test must have run and passed in the build's own test run
-(`oneshot_answers.ran`). It saves the entries on the spec under `answers`,
+test's code is the same at HEAD as at the refused HEAD (`path::name`, or
+`path::Class::name` inside a class). The test is its definition and body,
+each part found inside the one before it, and compared by its code lines
+only: a mention, a comment, a blank line or a neighbour's change leaves it
+as it was. After the gate, that test must have run and passed in the
+build's own test run (`oneshot_answers.ran`), its path read from the
+runner's `root` as the contract tests are (`runner_root`). It saves the entries on the spec under `answers`,
 with the round they answer.
 
 `review_text` shows the next reviewer every answer (`answers_text`). In an
@@ -92,8 +93,9 @@ ruled on. It is a conflict when the builder answered it in two rounds with a
 broken requirement, or when its mechanism was already replaced once
 (`replaced`). The build turn told to replace it saves it as `replacing`. It
 counts as replaced only once a build passes whose commits changed code (not
-a comment or a blank line) at the refused lines of that area and did not
-answer it instead; a turn that never ran, or
+a comment or a blank line) at the refused lines of that area, read on the
+refused commit's side where the finding points (`refused_lines`), and did
+not answer it instead; a turn that never ran, or
 left the area as it was, is told again. A refusal with a conflict
 does not go to the build or count towards the cap: the run waits at the
 `conflict` stage. The owner's board shows the review's findings beside the
@@ -157,11 +159,16 @@ plan rebuilt since answers 409. A result waiting for the owner's verdict is
 set aside (`stale`) when an input changes. [실측 시작] holds the worktree,
 starts `serve`, runs the script with the inputs in its environment and every
 secret masked from its output, and keeps only the clips it accepts, the
-report and the backend's log, masked. The report is kept decoded, so no JSON
-escape spells a value differently; one that is not JSON is removed. The
-folder is cleaned on every exit, a failed read of the report included. A
-stored value changed while the script runs sets that result aside, and the
-run stops for the owner to measure again.
+report and the backend's log, masked (`oneshot_kept`). The report is
+decoded, each field masked (a number that is a secret's value included), and
+written once; one that is not JSON is removed. The plan and the report are
+read strictly: `NaN`, `Infinity` or an overflowing float is refused. A
+metric that is a secret's value never counts as a measurement. The folder
+is cleaned on every exit, a failed read of the report included. A stored
+value changed at any moment of the run sets that result aside: the values
+and the change count are read together, and compared and saved together,
+under the lock every change takes. The run then stops for the owner to
+measure again. The health check goes through no proxy.
 Its stop is made before the worker starts and also
 holds while the server shuts down. A plan that no longer holds sends the run
 back to the build agent from the same button. A failed metric, a missing report or a backend

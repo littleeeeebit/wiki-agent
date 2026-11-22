@@ -662,6 +662,39 @@ def test_a_test_span_is_the_definition_and_its_whole_body():
     assert test_span("def test_old():\n# a note\n    assert x\nok = 1\n", ["test_old"]) == (1, 3)
     assert test_span("class TestA:\n    def test_b(self):\n        pass\n", ["TestA", "test_b"]) == (2, 3)
     assert test_span("it('adds one', () => {\n  expect(1)\n})\n", ["adds one"]) == (1, 3)
+    inherited = "class TestTarget(Base):\n    pass\n\nclass TestOther:\n    def test_value(self):\n        pass\n"
+    assert test_span(inherited, ["TestTarget", "test_value"]) is None   # found only inside the class named
+    assert test_span("// test('value', () => {\n  run()\n", ["value"]) is None   # a comment defines nothing
+    assert test_span("test('value', () => {\n  --count;\n  check()\n})\n", ["value"]) == (1, 4)
+
+
+def test_an_answers_test_must_change_its_own_code_and_a_runner_root_names_it(reviewed):
+    from main.oneshot_answers import body_of, ran
+    before = "# about it\ndef test_old():\n    assert True\n"
+    assert body_of(before, ["test_old"]) == body_of(before.replace("# about it\n", ""), ["test_old"])
+    assert body_of(before, ["test_old"]) != body_of(before.replace("True", "1 == 1"), ["test_old"])
+    case = [("test_budget", "test_x", "test_budget.py", "passed")]   # the runner reports from `web`
+    assert ran(case, [{"test": "web/test_budget.py::test_x"}], "web") == ""
+    assert "돌지 않음" in ran(case, [{"test": "web/test_budget.py::test_x"}])
+
+
+def test_a_removed_comment_or_an_insertion_elsewhere_replaces_no_mechanism(reviewed):
+    tree, _, _ = reviewed
+    from main import oneshot_answers
+    (tree / "budget_app.py").write_text("def add(amount):\n    # the same\n    return amount\n", encoding="utf-8")
+    git(tree, "commit", "-am", "a comment")
+    refused = git(tree, "rev-parse", "HEAD")
+    finding = {**P1, "location": "budget_app.py:3"}
+    o_ = {"replacing": ["amount validation"], "reviews": [{"verdict": "refuse", "head": refused, "findings": [finding]}]}
+    (tree / "budget_app.py").write_text("def add(amount):\n    return amount\n", encoding="utf-8")
+    git(tree, "commit", "-am", "the comment removed")
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
+    (tree / "budget_app.py").write_text("LIMIT = 1\ndef add(amount):\n    return amount\n", encoding="utf-8")
+    git(tree, "commit", "-am", "code above it")
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []
+    (tree / "budget_app.py").write_text("LIMIT = 1\ndef add(amount):\n    return max(amount, 0)\n", encoding="utf-8")
+    git(tree, "commit", "-am", "the refused line replaced")
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == ["amount validation"]
 
 
 def test_an_owner_ruling_for_the_review_goes_to_the_build_with_their_words(reviewed):

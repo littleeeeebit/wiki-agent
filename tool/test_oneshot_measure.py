@@ -215,6 +215,15 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
         measure.measure("budget")
     assert o()["measures"][-1]["status"] == "stale" and o()["stage"] == "measure" and not o().get("measure_fails")
     given()
+    read = measure.report_of
+
+    def late(*args):   # the value removed after the script, before the result is saved
+        oneshot_needs.forget("budget", ENV)
+        return read(*args)
+    with patch.object(measure, "report_of", late):
+        measure.measure("budget")
+    assert o()["measures"][-1]["status"] == "stale"
+    given()
     measure.measure("budget")
     run = o()["measures"][-1]
     write(tree, "stray.txt", "x")   # the tree moved since it was measured
@@ -244,6 +253,38 @@ def test_a_kept_report_and_the_clips_folder_show_no_secret_in_any_spelling(tmp_p
     assert "error" in measure.report_of(out, {"metrics": []}, hide)
     measure.scrubbed(out, hide)
     assert not (out / "report.json").exists()
+
+
+def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):
+    out = tmp_path / "m1"
+    out.mkdir()
+    hide = {"424242": "[PIN]", '"}': "[P]"}
+    (out / "report.json").write_text(json.dumps({"metrics": {"rate": 424242}, "notes": 'a"}b'}), encoding="utf-8")
+    plan = {"metrics": [{"id": "rate", "pass": {"op": ">=", "value": 1}}]}
+    assert measure.report_of(out, plan, hide)["metrics"][0]["value"] is None   # never shown as a measurement
+    measure.scrubbed(out, hide)
+    kept = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert kept == {"metrics": {"rate": "[PIN]"}, "notes": "a[P]b"}
+
+
+def test_a_number_that_is_not_finite_is_refused_in_a_report_and_a_plan(tmp_path):
+    for text in ('{"a": NaN}', '{"a": Infinity}', '{"a": 1e999}'):
+        with pytest.raises(ValueError):
+            measure.strict(text)
+    (tmp_path / "report.json").write_text('{"metrics": {"rate": Infinity}}', encoding="utf-8")
+    assert "error" in measure.report_of(tmp_path, {"metrics": []}, {})
+    (tmp_path / ".wiki").mkdir()
+    (tmp_path / ".wiki" / "measure.json").write_text("[" * 5000 + "]" * 5000, encoding="utf-8")
+    with pytest.raises(ValueError, match="읽지 못했다"):   # too deep: the plan error, with its recovery button
+        measure.planned(tmp_path, {})
+
+
+def test_the_health_check_never_goes_through_a_proxy():
+    import urllib.request
+    # The empty handler stands in for the default one, which would read the machine's proxy settings.
+    assert not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies for h in measure.NO_REDIRECT.handlers)
+    assert any(isinstance(h, urllib.request.ProxyHandler) for h in urllib.request.build_opener().handlers) \
+        or not urllib.request.getproxies()
 
 
 def test_a_redirect_from_the_health_address_is_its_status_never_followed():
