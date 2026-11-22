@@ -219,7 +219,7 @@ def ask(store: Store, role: str, system: str, text: str, where: Path | None = No
     """One turn, read-only, in `where` (the store's own folder by default), `images` beside the text:
     `(final, meta, codex)`. `tools=""` is a turn with no tools at all, on either provider. Patched in tests."""
 
-    cfg = role_config(role, store)
+    cfg = dict(role_config(role, store))   # a copy: an old run's is the window's live `next` setting
     where = where or store.folder
     where.mkdir(parents=True, exist_ok=True)
     # Claude isolated: no hooks, settings or app instructions. Codex stays on `app-server`, whose read-only
