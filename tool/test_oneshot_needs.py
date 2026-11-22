@@ -657,6 +657,13 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
             z.writestr("a.bin", b"x" + value.encode(enc))
         assert "[N1]" in needs.asset(apk, spec(), hide), enc
     assert not needs.ENV.fullmatch(SECRETS_HELD)   # the server's marker is never a need's name
+    with zipfile.ZipFile(apk, "w", zipfile.ZIP_DEFLATED) as z:   # a compressed entry whose bytes are broken
+        z.writestr("a.bin", b"x" * 4096)
+    raw = bytearray(apk.read_bytes())
+    at = raw.index(b"a.bin") + len(b"a.bin")
+    raw[at:at + 8] = b"\xff" * 8
+    apk.write_bytes(bytes(raw))
+    assert needs.asset(apk, spec(), hide).startswith("올릴 파일을 읽지 못해")
     with patch.object(needs, "agent", lambda s: ({}, {"OSError": "[N9]"})), patch.object(needs, "leaked", broke := (
             lambda *a: (_ for _ in ()).throw(OSError()))):
         assert "OSError" not in needs.publishable(at_r1, spec())   # a failure's reason is masked as well

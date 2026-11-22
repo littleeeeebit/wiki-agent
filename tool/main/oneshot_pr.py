@@ -291,8 +291,8 @@ def froze(spec: dict, head: str, hide: dict) -> dict:
         scan = oneshot_needs.asset(into / name, spec, hide)
         return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name),
                 "scan": scan}
-    except OSError:
-        shutil.rmtree(into, ignore_errors=True)   # never a partial copy left behind
+    except BaseException:
+        shutil.rmtree(into, ignore_errors=True)   # never a partial copy left behind, whatever stopped it
         raise
 
 

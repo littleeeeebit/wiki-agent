@@ -394,6 +394,7 @@ def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
     and, an APK being a zip, each entry decompressed with its name. A file that cannot be read is refused too."""
 
     import zipfile
+    import zlib
 
     hide = agent(spec)[1] if hide is None else hide
     if not hide:
@@ -403,7 +404,7 @@ def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
         if zipfile.is_zipfile(file):
             with zipfile.ZipFile(file) as z:   # and what the entries hold compressed
                 parts += [b for i in z.infolist() for b in (i.filename.encode(), z.read(i))]
-    except (OSError, zipfile.BadZipFile, RuntimeError, ValueError) as exc:
+    except (OSError, zipfile.BadZipFile, RuntimeError, ValueError, zlib.error, EOFError) as exc:
         return masked(f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})", hide)
     # UTF-16 pairs may start at an odd byte: each buffer is read from its first and its second byte.
     found = sorted({n for b in parts for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)})

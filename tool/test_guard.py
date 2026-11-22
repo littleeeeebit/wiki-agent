@@ -947,6 +947,20 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
         assert real_main(["claude", "claude_pretool.py"]) == 0
         monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
     assert len(ran) == 1 and "--without" not in ran[0]   # run whole when marked, skipped as legacy otherwise
+    # As the host's process, a wrapper in a credential session is timed: the deadline's answer is the deny.
+    armed, fallbacks = [], []
+    monkeypatch.setattr(hook, "legacy", lambda *a: False)
+    monkeypatch.setattr(hook.hook_deadline, "arm", lambda seconds, fallback: armed.append(seconds))
+    monkeypatch.setattr(hook.runpy, "run_path", lambda *a, **k: fallbacks.append(hook.hook_deadline.best))
+    for marked in (True, False):
+        monkeypatch.setattr(sys, "argv", ["hook.py"])   # `main` hands `sys.argv` to the wrapper each time
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"{}"), encoding="utf-8"))
+        if not marked:
+            monkeypatch.delenv(guard_git.SECRETS_HELD)
+        assert real_main(["codex", "codex_pretool.py"]) == 0
+    assert armed == [hook.PRETOOL_SECONDS] * 2 and fallbacks[1] is None
+    assert fallbacks[0]["hookSpecificOutput"]["permissionDecision"] == "deny"
+    monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
     monkeypatch.setattr(hook, "HERE", tmp_path)   # a wrapper that is not there at all
     assert real_main(["claude", "claude_pretool.py"]) == 0
     assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"

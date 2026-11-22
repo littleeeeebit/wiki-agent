@@ -38,7 +38,9 @@ A refusal comes back with the reason, at most three times in all.
 {needs}
 
   Your shell and the server's gate both have each secret's environment
-  variable, so a test that needs one runs and must pass when you run it too.
+  variable, so a test that needs one runs and must pass when you run it too —
+  except a secret the list marks as the gate's alone: it is not in your shell,
+  so its test is left to the gate, which runs it live.
   Never print a secret's value, and never write it into a file, a commit or
   your answer. The server refuses a turn whose answer, commits since the
   design commit or uncommitted files hold one, naming only the need.

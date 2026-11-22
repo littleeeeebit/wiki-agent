@@ -39,10 +39,16 @@ PROJECT = {"inject.py", "session_state.py", "sync.py"}
 LEGACY = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
 
 
+# The PreToolUse wrappers, and when the deadline answers for one in a credential session: a few seconds under its
+# `timeout` (10, `apply.py`), interpreter start-up not counted from here.
+PRETOOL = ("claude_pretool.py", "codex_pretool.py")
+PRETOOL_SECONDS = 7.0
+
+
 def closed(script: str, why: str) -> int:
     """A PreToolUse check (`claude_pretool`, `codex_pretool`) that never ran: denied in a session carrying a
     oneshot's secrets (`secrets_held`, which loads with nothing else), passed as before in any other."""
-    if script in ("claude_pretool.py", "codex_pretool.py") and (out := __import__("secrets_held").held_closed(why)):
+    if script in PRETOOL and (out := __import__("secrets_held").held_closed(why)):
         sys.stdout.reconfigure(encoding="utf-8")
         json.dump(out, sys.stdout, ensure_ascii=False)
     return 0
@@ -111,10 +117,10 @@ def main(argv: list[str]) -> int:
     # the project is known to be attached, and an empty one never exits — the
     # host decides then. Only as the host's process: a test calling `main`
     # would be ended by the timer.
-    timed = len(argv) > 1 and argv[1] in hook_deadline.LIMITS and Path(sys.argv[0]).name == "hook.py"
+    timed = len(argv) > 1 and argv[1] in (*hook_deadline.LIMITS, *PRETOOL) and Path(sys.argv[0]).name == "hook.py"
     if timed:
         try:
-            hook_deadline.arm(hook_deadline.LIMITS[argv[1]][0], None)
+            hook_deadline.arm(hook_deadline.LIMITS[argv[1]][0] if argv[1] in hook_deadline.LIMITS else PRETOOL_SECONDS, None)
         except Exception:  # noqa: BLE001 — without a deadline the hook still runs, as it did before one
             timed = False
     if len(argv) < 2 or argv[0] not in LEGACY or not (HERE / argv[1]).is_file():
@@ -158,7 +164,10 @@ def main(argv: list[str]) -> int:
     nonce = os.environ.get("WIKI_PROBE", "")
     # The fallback goes live only now, the project known to be attached, and
     # in probe mode only once the buffer that forwards it is in place.
-    fallback = hook_deadline.stalled(script) if timed else None
+    # A PreToolUse check still running then denies in a credential session (`secrets_held`); in any other there is
+    # no fallback, and the host decides as before.
+    fallback = (hook_deadline.stalled(script) if script in hook_deadline.LIMITS
+                else __import__("secrets_held").held_closed("훅이 시간 안에 검사를 끝내지 못했다")) if timed else None
     if not nonce:
         hook_deadline.best = fallback
         runpy.run_path(str(HERE / script), run_name="__main__")

@@ -501,6 +501,13 @@ def test_only_the_apk_the_final_gate_makes_is_frozen_and_a_failed_later_check_ke
     write(tree, ".wiki/decisions/a-record.md", "the start hook's record")   # the app's own: not work, as at the gate
     assert oneshot_device.cleared(tree, DEVICE) == "" and not (tree / DEVICE["apk"]).exists()
     (tree / ".wiki/decisions/a-record.md").unlink()
+    # Only an output Git ignores, outside the app's record folders, is ever removed.
+    for kept in ("app/kept.APK.txt", ".wiki/decisions/x.apk"):
+        write(tree, kept, "not a build output")
+        assert "무시하는 빌드 결과가 아니다" in oneshot_device.cleared(tree, {**DEVICE, "apk": kept}) or \
+            "커밋 안 된 변경" in oneshot_device.cleared(tree, {**DEVICE, "apk": kept})
+        assert (tree / kept).is_file()
+        (tree / kept).unlink()
     (tree.parent / "built.apk").write_text("apk", encoding="utf-8")
     with patch.object(oneshot_build, "held", lambda *a: (_ for _ in ()).throw(ValueError("no report"))):
         check(tree, answer(report()))()

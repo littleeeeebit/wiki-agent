@@ -177,6 +177,12 @@ def cleared(tree: Path, device: dict) -> str:
     names = {apk.casefold(), (tree / apk).resolve().relative_to(tree.resolve()).as_posix().casefold()}
     if names & {e.casefold() for e in (index + "\0" + head).split("\0") if e}:
         return f"`{apk}` 가 커밋돼 있다 — 빌드 결과는 커밋하지 않는다. 지우고 무시 목록에 넣으면 게이트가 새로 만든다"
+    import verify   # the app's own record folders (`HARVESTED`), which the status above leaves out
+
+    # Untracked everywhere; then only an output Git ignores, outside those folders, is removed.
+    if any(n.startswith(tuple(h.casefold() for h in verify.HARVESTED)) for n in names) or subprocess.run(
+            ["git", "check-ignore", "-q", "--", apk], cwd=tree, capture_output=True, timeout=60).returncode:
+        return f"`{apk}` 는 Git 이 무시하는 빌드 결과가 아니다 — 무시 목록에 든 빌드 폴더에 빌드한다"
     try:
         (tree / apk).unlink(missing_ok=True)
     except OSError as exc:
