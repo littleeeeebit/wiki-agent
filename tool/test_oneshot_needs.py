@@ -628,6 +628,11 @@ def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_on
             z.comment = comment
         assert "[N1]" in needs.asset(apk, spec(), hide), name
     assert needs.asset(apk.with_name("gone.apk"), spec(), hide).startswith("올릴 파일을 읽지 못해")
+    with zipfile.ZipFile(apk, "w") as z:   # bytes no entry holds (a signing block's place) are read raw
+        z.writestr("a.txt", "c")
+    apk.write_bytes(value.encode() + apk.read_bytes())
+    assert zipfile.is_zipfile(apk) and "[N1]" in needs.asset(apk, spec(), hide)
+    assert not needs.ENV.fullmatch(SECRETS_HELD)   # the server's marker is never a need's name
     with patch.object(needs, "agent", lambda s: ({}, {"OSError": "[N9]"})), patch.object(needs, "leaked", broke := (
             lambda *a: (_ for _ in ()).throw(OSError()))):
         assert "OSError" not in needs.publishable(at_r1, spec())   # a failure's reason is masked as well

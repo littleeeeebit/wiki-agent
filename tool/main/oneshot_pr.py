@@ -159,7 +159,8 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
     ran = [backend, gate] if gate != backend else [gate]
-    verdict = oneshot_build.judged(path, run, spec, ran, oneshot_build.built_env(spec), expect=checked)
+    env = oneshot_build.built_env(spec)   # read once: the freeze scan below looks for exactly these values
+    verdict = oneshot_build.judged(path, run, spec, ran, env, expect=checked)
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := oneshot_build.held(path, run, spec, verdict):
@@ -169,7 +170,7 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         if why := oneshot_device.built(path, o["device"]) or release_checked(path, spec, verdict["head"], run.halt):
             return why
         try:
-            frozen = froze(spec, verdict["head"])
+            frozen = froze(spec, verdict["head"], oneshot_needs.hidden(spec, env))
         except OSError as exc:   # the attachment is optional: the pull request opens and its body says why
             frozen = {"head": verdict["head"], "error": f"최종 게이트가 만든 APK 를 복사하지 못했다 — {exc}"}
     report = next(b["value"] for b in specs.blocks(final)[1] if b["name"] == "done-report")
@@ -264,7 +265,7 @@ def decisions(o: dict) -> list[str]:
     return out
 
 
-def froze(spec: dict, head: str) -> dict:
+def froze(spec: dict, head: str, hide: dict) -> dict:
     """The APK the final gate just built, copied out of the worktree while the check holds it, with its
     digest: the APK is a build output Git does not track, so nothing read from the tree later is the one the
     gate passed. An earlier gate's copy goes first."""
@@ -275,9 +276,9 @@ def froze(spec: dict, head: str) -> dict:
     try:
         into.mkdir(parents=True)
         shutil.copyfile(Path(spec["worktree"]) / spec["oneshot"]["device"]["apk"], into / name)
-        # Read under the values its build ran with, while they are those: an upload later, after a value changed
-        # or was taken back, still needs this scan, bound to these bytes by their digest.
-        scan = oneshot_needs.asset(into / name, spec, oneshot_needs.hidden(spec, oneshot_build.built_env(spec)))
+        # Read under the values its build ran with (`hide`, from the gate's own environment): an upload later,
+        # after a value changed or was taken back, still needs this scan, bound to these bytes by their digest.
+        scan = oneshot_needs.asset(into / name, spec, hide)
         return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name),
                 "scan": scan}
     except OSError:

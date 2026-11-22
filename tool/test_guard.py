@@ -899,6 +899,16 @@ def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, mon
     monkeypatch.setenv(guard_git.SECRETS_HELD, "1")   # the server pushes after its secret check
     found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
     assert any("secrets" in e for e in found if e.startswith("top(")), found
+    # Where the guard cannot check, it fails closed for such a session only: no grant, or the hook failing.
+    monkeypatch.setenv("WIKI_AGENT_MANAGED", "1")
+    payload = {"tool_name": "Bash", "tool_input": {"command": "git push origin HEAD"}, "cwd": str(tmp_path)}
+    monkeypatch.setattr(guard_grant, "grant", lambda *a: None)
+    assert guard.verdict(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    monkeypatch.delenv(guard_git.SECRETS_HELD)
+    assert guard.verdict(payload) is None
+    hook = subprocess.run([sys.executable, str(Path(guard.__file__))], input="not json", capture_output=True,
+                          text=True, encoding="utf-8", env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
+    assert json.loads(hook.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 @pytest.mark.parametrize("command", ["git log --show-signature", 'git log --format="%G?"', "git show --pretty=%GG",

@@ -34,7 +34,7 @@ from .oneshot_spec import VIEWS, idle, saved, spec_of, view
 
 router = APIRouter()
 NID = re.compile(r"N[1-9]\d*")
-ENV = re.compile(r"[A-Z][A-Z0-9_]*")
+ENV = re.compile(r"(?!WIKI_AGENT_)[A-Z][A-Z0-9_]*")   # the server's own markers (`guard_git.SECRETS_HELD`) reserved
 KINDS = {"secret": "비밀 값", "account": "계정", "tool": "프로그램", "file": "파일"}
 MAX_SECRET = 2560   # bytes Credential Manager holds in one credential, as UTF-16
 
@@ -364,9 +364,8 @@ ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be")
 
 def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
     """Why an asset about to be uploaded (the frozen APK) is not sent: a value of `hide` (the store's now, by
-    default) anywhere in it, as UTF-8 or either UTF-16, in any casing. An APK is a zip: each entry is read
-    decompressed, and its names and comments with the archive's own comment, so the whole file the upload sends
-    is read. A file that cannot be read is refused too."""
+    default) anywhere in it, as UTF-8 or either UTF-16, in any casing: the raw file, every byte the upload sends,
+    and, an APK being a zip, each entry decompressed with its name. A file that cannot be read is refused too."""
 
     import zipfile
 
@@ -374,11 +373,10 @@ def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
     if not hide:
         return ""
     try:
-        if not zipfile.is_zipfile(file):
-            parts = [file.read_bytes()]
-        else:
-            with zipfile.ZipFile(file) as z:
-                parts = [z.comment, *(b for i in z.infolist() for b in (i.filename.encode(), i.comment, i.extra, z.read(i)))]
+        parts = [file.read_bytes()]   # every byte that goes up, signing blocks and gaps included
+        if zipfile.is_zipfile(file):
+            with zipfile.ZipFile(file) as z:   # and what the entries hold compressed
+                parts += [b for i in z.infolist() for b in (i.filename.encode(), z.read(i))]
     except (OSError, zipfile.BadZipFile, RuntimeError, ValueError) as exc:
         return masked(f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})", hide)
     found = sorted({n for b in parts for enc in ENCODINGS for n in held_in(b.decode(enc, "ignore"), hide)})

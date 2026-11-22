@@ -450,7 +450,7 @@ def test_a_release_whose_reply_was_lost_gets_the_apk_again_and_a_failed_one_is_s
         oneshot_pr.asked("budget")   # the frozen copy went with the first upload: nothing is read off the tree
     assert "고정한 APK 사본이 없거나 바뀌었다" in o()["apk"]["error"] and "url" not in o()["apk"]
     assert "디버그 APK 를 Release 에 올리지 못했다 — 최종 게이트가 고정한" in "\n".join(pr_text.apk_section(spec()))
-    tree_copy = oneshot_pr.froze(spec(), o()["final_head"])
+    tree_copy = oneshot_pr.froze(spec(), o()["final_head"], {})
     oneshot_spec.saved("budget", oneshot={"apk_frozen": tree_copy})
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         oneshot_pr.asked("budget")

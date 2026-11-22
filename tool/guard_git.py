@@ -31,6 +31,16 @@ from guard_models import gate, getopt, row, writes
 # pushes once its secret check passes (`main.prerequisite_review.push`).
 SECRETS_HELD = "WIKI_AGENT_SECRETS_HELD"
 
+
+def held_closed(why: str) -> dict | None:
+    """A session carrying a oneshot's secrets (`guard_git.SECRETS_HELD`) never runs a call the guard could not
+    check, so its push never slips past the refusal; any other session goes on as before."""
+    if not os.environ.get(SECRETS_HELD):
+        return None
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": f"{why} — 비밀 값을 가진 세션이라 확인하지 못한 호출은 "
+                                                               "막는다. 커밋만 하고, 푸시는 서버가 한다"}}
+
 # git's own options before the verb that take no value. `-C` (a directory) and `-c` (a listed key) are read
 # by `m_git`; `--git-dir`, `--work-tree`, `--exec-path` and `--config-env` change which repository,
 # configuration or program runs: they are not here, so they are `top`.
