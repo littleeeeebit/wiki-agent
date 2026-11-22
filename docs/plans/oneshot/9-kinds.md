@@ -540,7 +540,12 @@ order:
    runs as the same user and could as well write the server's records
    directly, so closing those instants would protect nothing. The checks
    are there for an app or a build that changed its copy, not for a local
-   process working against the server.
+   process working against the server. For the same reason, also by the
+   owner's decision, an app under test that deliberately deceives the round
+   is out of scope. Examples are reading the fixture process's memory, or
+   swapping its report path for a link while the server opens it. The app
+   runs as the same user too. The round finds an honest app that is broken
+   or unfinished, not one built to cheat it.
 2. The frozen app from a fresh start of the check's scenario, driven without
    a shot (`shoot: false`), so the driver reads and acts but never calls
    `PrintWindow`.
