@@ -756,8 +756,7 @@ def judged(path: Path, run, spec: dict, commands: list[str], env: dict | None, *
     try:
         verdict = specs.judge(path, [c.replace(REPORT, literal(r.as_posix())) for c, r in zip(commands, reports)], run.halt,
                               lambda text: specs.note(run, text), env=env, hide=oneshot_needs.hidden(spec, env), **kw)
-        for r in reports:
-            oneshot_calls.ran(spec, r)
+        oneshot_calls.ran(spec, reports)
         return verdict
     finally:
         for r in reports:

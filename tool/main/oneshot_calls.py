@@ -53,14 +53,15 @@ def reached(spec: dict, found: list[tuple[str, str, str, str]]) -> None:
         oneshot_spec.saved(spec["repo"], oneshot={"calls": {**calls, **{x: calls.get(x, 0) + 1 for x in hit}}})
 
 
-def ran(spec: dict, report: Path) -> None:
-    """`reached` for a gate's report, when the gate wrote one."""
+def ran(spec: dict, reports: list[Path]) -> None:
+    """`reached` for each report a gate's commands wrote, each its own run."""
 
-    try:
-        root = ElementTree.parse(report).getroot()
-    except (OSError, ElementTree.ParseError):
-        return
-    reached(spec, listed(root))
+    for report in reports:
+        try:
+            root = ElementTree.parse(report).getroot()
+        except (OSError, ElementTree.ParseError):
+            continue
+        reached(spec, listed(root))
 
 
 def summary(spec: dict) -> list[dict]:

@@ -38,10 +38,10 @@ def test_each_report_counts_once_toward_the_calls_its_tests_ran_and_never_for_a_
                          ("t", "test_rates", "", "skipped")])
     calls.reached(spec, [("t", "test_lists", "", "passed")])
     report = tmp_path / "junit.xml"
-    calls.ran(spec, report)   # a gate that wrote no report counts nothing
+    calls.ran(spec, [report])   # a gate that wrote no report counts nothing
     report.write_text('<testsuite><testcase classname="t" name="test_translates"/>'
                       '<testcase classname="t" name="test_rates"/></testsuite>', encoding="utf-8")
-    calls.ran(spec, report)
+    calls.ran(spec, [report])
     spec = oneshot_spec.spec_of("budget")
     assert spec["oneshot"]["calls"] == {"X1": 2, "X2": 1}
     # Only a call that needs a secret lists the tests CI skips for it.
