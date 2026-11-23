@@ -121,6 +121,10 @@ def test_a_valid_core_passes_and_a_web_block_is_not_one():
     with pytest.raises(ValueError, match="oneshot-modules"):
         sheet.parsed({"oneshot-api": []}, "android")
     assert sheet.blocks("android") == "oneshot-modules,oneshot-outside,oneshot-assumptions,oneshot-tests"
+    # A case finds its planned test by name, so no two planned tests share one.
+    twin = {**DESIGN["oneshot-tests"][0], "id": "T2", "then": "다른 결과"}
+    with pytest.raises(ValueError, match="`test_name` 이 겹친다"):
+        sheet.parsed({**DESIGN, "oneshot-tests": [*DESIGN["oneshot-tests"], twin]}, "android")
 
 
 def test_an_app_that_never_leaves_the_phone_passes_with_no_outside_calls():

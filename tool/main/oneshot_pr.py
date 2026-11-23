@@ -48,21 +48,27 @@ SKIPS = r"""- name: Tests owed to the local gate
     import os, re
     from pathlib import Path
     from xml.etree import ElementTree
+    root = Path(os.environ.get("GITHUB_WORKSPACE") or ".")   # the checkout, whatever this step's folder
+    found = sorted(root.glob("**/{report}"))   # wherever the gate's command changed into
     cases = None
-    for report in sorted(Path().glob("**/{report}")):   # wherever the gate's command changed into
+    if len(found) == 1:
         try:
-            cases = (cases or []) + list(ElementTree.parse(report).getroot().iter("testcase"))
+            cases = list(ElementTree.parse(found[0]).getroot().iter("testcase"))
         except (OSError, ElementTree.ParseError):
             pass
     rows = []
     for case in cases or []:
         skip = case.find("skipped")
         why = "" if skip is None else (skip.get("message") or "") + " " + (skip.text or "")
-        if ids := sorted(set(re.findall(r"\bN[1-9][0-9]*\b", why))):
-            name = f"{case.get('classname') or ''} {case.get('name') or ''}".replace("|", "\\|")
+        if ids := sorted(set(re.findall(r"(?<![A-Za-z0-9_])N[1-9][0-9]*(?![0-9])", why))):
+            name = f"{case.get('classname') or ''} {case.get('name') or ''}"
+            name = " ".join(name.replace("\\", "\\\\").replace("|", "\\|").split())
             rows.append(f"| {name} | {', '.join(ids)} |")
     lines = ["## 로컬 게이트가 맡은 테스트", ""]
-    if cases is None:
+    if len(found) > 1:
+        lines.append("게이트 보고서로 보이는 파일이 여럿이라 어느 것이 이 게이트의 것인지 정할 수 없다: "
+                     + ", ".join(f"`{p.relative_to(root).as_posix()}`" for p in found))
+    elif cases is None:
         lines.append("JUnit 보고서(`{report}`)가 없어 건너뛴 테스트를 셀 수 없다.")
     elif not rows:
         lines.append("비밀 값이 없어 건너뛴 테스트는 없다.")

@@ -197,25 +197,34 @@ def test_a_workflow_deleted_in_the_run_is_no_ci_and_a_committed_one_passes(finis
     assert "CI 워크플로(`.github/workflows/ci.yml`)가 없다" in sent[-1][2]
 
 
-@pytest.mark.parametrize("folder, report, said", [
-    ("", None, "JUnit 보고서(`artifacts/junit.xml`)가 없어"),
-    ("", '<testsuite><testcase classname="t" name="test_ok"/></testsuite>', "건너뛴 테스트는 없다"),
-    ("", '<testsuite><testcase classname="t" name="test_rate"><skipped message="N2 and N1 absent"/></testcase>'
-     '<testcase classname="t" name="test_other"><skipped message="slow"/></testcase></testsuite>',
+SKIPPED = '<testsuite><testcase classname="t" name="{name}"><skipped message="{why}"/></testcase></testsuite>'
+
+
+@pytest.mark.parametrize("reports, said", [
+    ({}, "JUnit 보고서(`artifacts/junit.xml`)가 없어"),
+    ({"": '<testsuite><testcase classname="t" name="test_ok"/></testsuite>'}, "건너뛴 테스트는 없다"),
+    ({"": '<testsuite><testcase classname="t" name="test_rate"><skipped message="N2 and N1 absent"/></testcase>'
+          '<testcase classname="t" name="test_other"><skipped message="slow"/></testcase></testsuite>'},
      "| t test_rate | N1, N2 |"),
-    # A gate that changed into a folder wrote its report there; a pipe in a name stays inside its cell.
-    ("app", '<testsuite><testcase classname="t" name="test_values[a|b]"><skipped message="N1"/></testcase></testsuite>',
-     r"| t test_values[a\|b] | N1 |"),
+    # A gate that changed into a folder wrote its report there; the cell keeps a pipe and a backslash inside it.
+    ({"app": SKIPPED.format(name="test_values[a|b]", why="N1")}, r"| t test_values[a\|b] | N1 |"),
+    ({"": SKIPPED.format(name="test_values[a\\|b]", why="N1")}, r"| t test_values[a\\\|b] | N1 |"),
+    # A need id before a Korean particle is still the id; a longer one is another.
+    ({"": SKIPPED.format(name="test_rate", why="N1이 없다, N12 도")}, "| t test_rate | N1, N12 |"),
+    # Two reports: which is the gate's is not known, so none is listed.
+    ({"": SKIPPED.format(name="test_rate", why="N1"), "fixture": SKIPPED.format(name="test_old", why="N2")},
+     "어느 것이 이 게이트의 것인지 정할 수 없다: `artifacts/junit.xml`, `fixture/artifacts/junit.xml`"),
 ])
-def test_the_ci_summary_step_lists_the_tests_skipped_for_a_need(tmp_path, folder, report, said):
-    if report:
+def test_the_ci_summary_step_lists_the_tests_skipped_for_a_need(tmp_path, reports, said):
+    for folder, report in reports.items():
         (tmp_path / folder / "artifacts").mkdir(parents=True)
         (tmp_path / folder / "artifacts" / "junit.xml").write_text(report, encoding="utf-8")
-    out = tmp_path / "summary.md"
-    subprocess.run([sys.executable, "-c", oneshot_pr.SKIP_STEP["run"]], cwd=tmp_path, check=True,
-                   env={**os.environ, "GITHUB_STEP_SUMMARY": str(out)})
+    out, step = tmp_path / "summary.md", tmp_path / "step"   # the step may run in a folder of its own
+    step.mkdir()
+    subprocess.run([sys.executable, "-c", oneshot_pr.SKIP_STEP["run"]], cwd=step, check=True,
+                   env={**os.environ, "GITHUB_STEP_SUMMARY": str(out), "GITHUB_WORKSPACE": str(tmp_path)})
     text = out.read_text(encoding="utf-8")
-    assert said in text and "test_other" not in text
+    assert said in text and "test_other" not in text and ("| t test_old" not in text)
 
 
 def test_the_readme_turn_of_a_public_repository_carries_the_summary_step(finished):

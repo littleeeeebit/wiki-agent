@@ -281,10 +281,16 @@ local gate. A public repository never receives a secret.
 
 The summary is a step the README turn writes as given (`oneshot_pr.SKIPS`).
 It goes after the gate's step in the same job, with `if: always()` and
-`shell: python`. It reads every `artifacts/junit.xml` under the checkout,
-since the gate's command may change into a folder before writing it. It
-writes a table to the run's summary: each skipped test whose reason names a
-need id, with those ids, a `|` in a name escaped. A missing report says so. The server's CI check (`ci_file`) requires
+`shell: python`. It looks for `artifacts/junit.xml` anywhere under the
+checkout (`GITHUB_WORKSPACE`, whatever folder the step runs in), since the
+gate's command may change into a folder before writing it. With exactly one
+such file it writes a table to the run's summary: each skipped test whose
+reason names a need id, with those ids. An id counts before a Korean
+particle (`N1이`), and the test's cell escapes `\` and `|`. No file says the
+report is missing; several say which they are and list nothing, since which
+is the gate's is not known. A single file the gate did not write, when the
+gate failed before writing its own, reads as the gate's: the checkout
+ignores `artifacts/`, so only the job itself could have put it there. The server's CI check (`ci_file`) requires
 that step's `if`, `shell` and `run` exactly as given.
 
 ### The review reads fakes as weakened contracts
@@ -334,7 +340,9 @@ those numbers (`oneshot_calls`):
 - Every JUnit report a server run reads counts once toward each call one of
   those tests ran in, passing or failing. A skip does not count. Each command
   of a gate writes its own report. Once the tests commit pinned the cases,
-  only a pinned case counts, never a same-named one in another class or file. That covers
+  only a pinned case counts, never a same-named one in another class or file.
+  No two planned tests share a `test_name` (`oneshot_sheet._items`), so a
+  case names one planned test. That covers
   the tests stage, the build's check of the pinned cases and every gate
   (`oneshot_build.junit`, `judged`).
 - The stage's record shows `X1 3번` per call. The finished run's summary
