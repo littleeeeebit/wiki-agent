@@ -957,3 +957,12 @@ def test_every_row_of_a_session_holding_secrets_is_masked(at_r1):
         work.remember(at_r1, "user", f"{value} 를 써라", turn="t", session_id=f"s-{value}")
     row = work.recall(at_r1, 0)[-1]
     assert (row["text"], row["session_id"]) == ("[N1] 를 써라", f"s-{value}")   # the handle resumes as given
+
+
+def test_a_saved_design_whose_planned_tests_share_a_name_is_held_at_approval(at_r1):
+    design = o()["design"]
+    twin = {**design["tests"][0], "id": "T9"}
+    oneshot_spec.saved("budget", oneshot={"design": {**design, "tests": [*design["tests"], twin]}})
+    with patch.object(needs, "unready", lambda spec: ""), pytest.raises(HTTPException) as refused:
+        approve()
+    assert refused.value.status_code == 409 and "계획 테스트 이름이 겹친다" in refused.value.detail and o()["stage"] == "r1"

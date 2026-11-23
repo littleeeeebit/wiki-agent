@@ -751,8 +751,8 @@ def decide(repo: str, body: Decisions) -> dict:
             start(repo, "redesign", comments, reach, r1={**o["r1"], "decisions": decisions},
                   reading=read(o, "r1", body.reading, comments, briefed))
             return view(spec_of(repo))
-        from . import oneshot_needs   # it imports this module
-        if why := oneshot_needs.unready(spec):   # plan 11: no run proceeds on a stand-in for what the owner gives
+        from . import oneshot_calls, oneshot_needs   # they import this module
+        if why := oneshot_needs.unready(spec) or oneshot_calls.held(o["design"]):   # plan 11: no stand-in, no shared name
             raise HTTPException(409, why)
         saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions},
                              "reading": read(o, "r1", body.reading, (), briefed)})

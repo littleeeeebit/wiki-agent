@@ -145,6 +145,9 @@ def _items(name: str, value, kinds: dict = KINDS) -> list[dict]:
         for key in keys:
             made[key] = item.get(key)
         out.append(_kind(name, made, where))
+    from .oneshot_calls import twins   # a case finds its planned test by name: one name, one test
+    if name == "tests" and (twice := twins(out)):
+        raise ValueError(f"`{block}`: `test_name` 이 겹친다 — {', '.join(twice)}: 계획 테스트마다 이름이 하나다")
     return out
 
 

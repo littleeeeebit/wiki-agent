@@ -12,6 +12,7 @@ From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summa
 from __future__ import annotations
 
 import os
+import sys
 import shutil
 import subprocess
 import threading
@@ -22,10 +23,10 @@ from pathlib import Path
 import yaml
 
 import android_owned
-from common import masked
+from common import masked, shell
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
+from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -40,6 +41,46 @@ CI = f"{WORKFLOWS}ci.yml"
 # The workflow's events. Written unquoted: `test_prerequisite_review` reads a quoted push as a git push.
 TRIGGERS = set("push pull_request".split())
 KIND_PROMPT_NAMES = {"webapp": "a web app", "android": "an Android app", "desktop": "a Windows app"}
+# The public CI's step after the gate, written as is: the tests skipped for want of a need, owed to the local gate.
+SKIPS = r"""- name: Tests owed to the local gate
+  if: always()
+  shell: python
+  run: |
+    import os, re
+    from pathlib import Path
+    from xml.etree import ElementTree
+    root = Path(os.environ.get("GITHUB_WORKSPACE") or ".")   # the checkout, whatever this step's folder
+    found = sorted(root.glob("**/{report}"))   # wherever the gate's command changed into
+    cases = None
+    if len(found) == 1:
+        try:
+            cases = list(ElementTree.parse(found[0]).getroot().iter("testcase"))
+        except (OSError, ElementTree.ParseError):
+            pass
+    rows = []
+    for case in cases or []:
+        skip = case.find("skipped")
+        why = "" if skip is None else (skip.get("message") or "") + " " + (skip.text or "")
+        if ids := sorted(set(re.findall(r"(?<![A-Za-z0-9_])N[1-9][0-9]*(?![A-Za-z0-9_])", why))):
+            name = f"{case.get('classname') or ''} {case.get('name') or ''}"
+            name = " ".join(name.split())   # literal in a code span, whose fence outruns any backtick run in it
+            ticks = "`" * (max((len(run) for run in re.findall("`+", name)), default=0) + 1)
+            rows.append(f"- {ticks} {name} {ticks}: {', '.join(ids)}")
+    lines = ["## 로컬 게이트가 맡은 테스트", ""]
+    if len(found) > 1:
+        lines.append("게이트 보고서로 보이는 파일이 여럿이라 어느 것이 이 게이트의 것인지 정할 수 없다: "
+                     + ", ".join(f"`{p.relative_to(root).as_posix()}`" for p in found))
+    elif cases is None:
+        lines.append("JUnit 보고서(`{report}`)가 없어 건너뛴 테스트를 셀 수 없다.")
+    elif not rows:
+        lines.append("비밀 값이 없어 건너뛴 테스트는 없다.")
+    else:
+        lines += ["CI 에는 비밀 값이 없어 아래 테스트를 건너뛰었다. 주인의 PC 에서 도는 게이트가 실제 호출로 돌린다.",
+                  "", *rows]
+    with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+        out.write("\n".join(lines) + "\n")
+""".replace("{report}", oneshot_build.REPORT)
+SKIP_STEP = yaml.safe_load(SKIPS)[0]
 
 
 def readme_text(spec: dict) -> str:
@@ -50,9 +91,10 @@ def readme_text(spec: dict) -> str:
     public = profile.get("visibility") == "public" and profile.get("ci") == "github-actions"
     kinds = kinds_of(spec["oneshot"])
     android = "android" in kinds   # alone, or among several kinds, whose gate builds it on the core
-    job = ("a job on `ubuntu-latest` that sets up a JDK (`actions/setup-java`) and the Android SDK "
-           "(`android-actions/setup-android`), then a step that `run`s the gate command above, as written"
-           if android else "a job whose step `run`s the gate command above, as written")
+    gate = slots_for(None, Path(spec["worktree"])).get("gate_cmd", "").strip()
+    run = f"a step that `run`s exactly these lines, as the server's gate ran them:\n\n```\n{ci_gate(gate)}\n```\n\n"
+    job = (f"a job on `{RUNNER}` that sets up a JDK (`actions/setup-java`) and the Android SDK "
+           f"(`android-actions/setup-android`), then {run}" if android else f"a job on `{RUNNER}` with {run}")
     several = f"""
 This repository holds {len(kinds)} kinds of the application, sharing one core:
 {', '.join(KIND_PROMPT_NAMES[k] for k in kinds)}. Give each its own section, in that
@@ -61,14 +103,17 @@ tests and every kind's build. For the web app, Run is the command that starts
 it and where it is then served.
 """ if len(kinds) > 1 else ""
     return (README_PROMPT.replace("{os}", " and ".join(both))
-            .replace("{gate}", slots_for(None, Path(spec["worktree"])).get("gate_cmd", "").strip())
+            .replace("{gate}", gate)
             .replace("{android}", several + (f"""
 {"In the Android app's section," if several else 'This is an Android app.'} Setup names the JDK and the Android SDK the build
 needs. Run is instead the command that builds the debug APK,
 `{spec['oneshot']['device']['apk']}`, and the one that installs it on a phone
 connected with USB debugging on: adb's install command with that APK's path.
 """ + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else ""))
-            .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}."
+            .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}"
+                     "That job has no `if` or `needs`, and that step no `if` or `background`. "
+                     "After that step, in the same job, add this step exactly as written; it lists in the run's "
+                     f"summary the tests CI skipped for want of a secret:\n\n```yaml\n{SKIPS}```"
                      if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
 
 
@@ -94,9 +139,20 @@ def workflows(path: Path) -> dict[str, str]:
     return {name: meta.split()[0] for meta, _, name in (e.partition("\t") for e in done.stdout.split("\0") if e)}
 
 
+# The gate was proven in this machine's shell (`shell.launch`): PowerShell on Windows, bash elsewhere, and its commands
+# may be the platform's own (`gradlew.bat`, `xcrun`). The runner is of the same system, its default shell alike.
+RUNNER = {"win32": "windows-latest", "darwin": "macos-latest"}.get(sys.platform, "ubuntu-latest")
+
+
+def ci_gate(gate: str) -> str:
+    """The gate as the server's shell ran it: PowerShell's call operator before a quoted program (`shell.invoked`)."""
+
+    return shell.invoked(gate) if os.name == "nt" else gate
+
+
 def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     """`ci.yml` committed as a plain file (a link points anywhere) whose workflow has a trigger and a
-    job step that runs the gate: a comment or an empty job is no CI."""
+    job step that runs the gate, followed in that job by `SKIPS`: a comment or an empty job is no CI."""
 
     if mode not in ("100644", "100755"):
         return False
@@ -111,15 +167,22 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     events = {on} if isinstance(on, str) else set(on) if isinstance(on, (list, dict)) else set()
     if not TRIGGERS <= events:   # on every push and pull request, not by hand only
         return False
-    steps = [s for job in flow["jobs"].values() if isinstance(job, dict) for s in job.get("steps") or []]
     # The gate's lines run as a block of `run`, each exactly: named in a comment or an `echo` it never runs,
     # and an argument added (`--collect-only`, a narrower selection) runs something else. Arguments live in
     # `gate_cmd`, which may span lines (the front build extends the backend's).
-    want = [line.strip() for line in gate.splitlines() if line.strip()]
-    for s in steps:
-        have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()] if isinstance(s, dict) else []
-        if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
-            return True
+    want = [line.strip() for line in ci_gate(gate).splitlines() if line.strip()]
+    for job in flow["jobs"].values():
+        # A condition, or a job it waits on that a condition skips, can skip it on a push or a pull request.
+        if not isinstance(job, dict) or job.get("if") is not None or job.get("needs") is not None:
+            continue
+        steps = [s for s in job.get("steps") or [] if isinstance(s, dict)]
+        for at, s in enumerate(steps):
+            if s.get("if") is not None or s.get("background") is not None:   # the summary reads it once finished
+                continue
+            have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()]
+            if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
+                if any(all(later.get(k) == SKIP_STEP[k] for k in ("if", "shell", "run")) for later in steps[at + 1:]):
+                    return True
     return False
 
 
@@ -154,7 +217,7 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return "이 저장소는 CI 워크플로를 두지 않는다 — " + ", ".join(flows[:5]) + " 를 지운다"
     if public and not ci_file(path, held.get(CI), gate):
         return (f"공개 저장소의 CI 워크플로(`{CI}`)가 없다 — 커밋된 보통 파일로, `on:` 트리거와 "
-                f"게이트(`{gate}`)를 `run` 하는 job step 을 둔다")
+                f"게이트(`{gate}`)를 `run` 하는 job step, 같은 job 에서 그 뒤에 README 턴이 준 건너뛴 테스트 요약 step 을 그대로 둔다")
     if why := oneshot_build.pinned(path, o):
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
@@ -434,7 +497,8 @@ def summary(spec: dict) -> dict:
                        "edited": sorted({i for e in reading.get(g) or [] for i in e.get("edited") or []})}
                       for g in ("r1", "r2", "r3")],
             "spend": o.get("spend") or {}, "critiques": len(o.get("critiques") or []),
-            "looks": len(o.get("looks") or []), "apk": o.get("apk")}
+            "looks": len(o.get("looks") or []), "apk": o.get("apk"), "calls": oneshot_calls.summary(spec),
+            "ci": (o.get("profile") or {}).get("visibility") == "public" and (o.get("profile") or {}).get("ci") == "github-actions"}
 
 
 def extra(spec: dict) -> dict:
