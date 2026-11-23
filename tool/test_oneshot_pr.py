@@ -391,7 +391,7 @@ def github(android, monkeypatch):
 def held(fake, head):
     """S8's one release for `head`, with its assets' digests."""
 
-    rels = [r for r in fake.rels if r["tag_name"] == f"oneshot-apk-{head[:12]}"]
+    rels = [r for r in fake.rels if r["tag_name"] == f"oneshot-{head[:12]}"]
     assert len(rels) == 1
     return rels[0], [gh.digest(a) for a in rels[0]["assets"]]
 
@@ -430,7 +430,7 @@ def test_an_android_apps_apk_goes_to_a_draft_prerelease_the_pull_request_links(a
     assert [a["name"] for a in rel["assets"]] == [f"budget-{head[:12]}-debug.apk"] and digests == [digest]
     apk = o()["apk"]
     assert apk == {"head": head, "name": f"budget-{head[:12]}-debug.apk", "sha256": digest,
-                   "tag": f"oneshot-apk-{head[:12]}", "url": rel["html_url"]}
+                   "tag": f"oneshot-{head[:12]}", "url": rel["html_url"]}
     assert not Path(frozen[-1]["path"]).exists()   # the copy it uploaded is gone
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         oneshot_pr.asked("budget")   # a resumed S8 asks for the text again: the release is not made twice

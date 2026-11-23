@@ -497,8 +497,10 @@ def waiting(repo: str, o: dict) -> dict:
     build goes back to it, and `[재개]` builds again. An earlier version's run held at `build-front` with its build
     frozen and its stop lost is left resumable too: this version looks at that build in the same check."""
 
-    front = STAGE_ORDER.index("build-front")
-    if (build := o.get("desktop_build")) and not o.get("working") and not standing(repo, build):
+    # From S8 on the frozen build is used no more, and the README turn's commit moves HEAD past it by design: the
+    # installer S8 attaches is the final gate's own.
+    front, used = STAGE_ORDER.index("build-front"), o.get("stage") not in ("pr", "done")
+    if (build := o.get("desktop_build")) and used and not o.get("working") and not standing(repo, build):
         stage = "build-front" if o.get("stage") in STAGE_ORDER and STAGE_ORDER.index(o["stage"]) > front \
             else o.get("stage")
         o = saved(repo, oneshot={"desktop_build": None, "stage": stage, "stopped": {
@@ -552,7 +554,7 @@ def standing(repo: str, build: dict) -> bool:
 def kind_stop(stage: str, o: dict | None = None) -> dict:
     """The `kind` stop at `stage`, where this version's run ends."""
 
-    return {"reason": "kind", "state": stage, "detail": {"pr": "R3 를 승인했다 — 풀 리퀘스트는 다음 버전에서 이어진다"}.get(
+    return {"reason": "kind", "state": stage, "detail": {"pr": "README 와 최종 게이트를 마치고 빌드를 초안 프리릴리스에 올렸다 — 풀 리퀘스트는 다음 버전에서 이어진다"}.get(
         stage, "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다")}
 
 

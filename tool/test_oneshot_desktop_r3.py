@@ -10,7 +10,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
 
 from main import oneshot_brief as brief, oneshot_critique as critique, oneshot_desktop_look, oneshot_pc as pc, \
     oneshot_spec
@@ -82,20 +81,27 @@ def test_the_sheet_has_the_pc_apps_shots_and_where_each_deferred_check_passed(pa
     assert shown["r3_items"] == ["S1"] and "## PC에서 확인한 지적" in shown["r3_sheet"]
 
 
-def test_the_approval_waits_before_the_pull_request_with_the_kind_stop(passed_round, monkeypatch):
+def test_the_approval_starts_s8s_readme_turn(passed_round):
     opened()
-    monkeypatch.setattr(oneshot_spec, "start", lambda *a, **k: pytest.fail("the pull request is the next step's"))
     on = critique.Decisions(source=brief.source(brief.snapshot(oneshot_spec.spec_of("budget"), "r3")),
                             decisions={"S1": {"approve": True}})
-    with patch.object(critique.oneshot_pr, "begin", lambda repo: pytest.fail("S8 is the next step's")):
+    begun = []
+    with patch.object(critique.oneshot_pr, "begin", begun.append):
         critique.decide("budget", on)
-    after = o()
-    assert after["stage"] == "pr" and not after["working"] and after["stopped"]["reason"] == "kind"
-    assert "풀 리퀘스트는 다음 버전에서" in after["stopped"]["detail"]
-    oneshot_spec.recover()   # held there: a restart keeps the stop, and `[재개]` is refused
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == "pr"
-    with pytest.raises(HTTPException, match="다음 버전"):
+    assert begun == ["budget"] and o()["stage"] == "pr" and not o().get("stopped")
+
+
+def test_a_run_an_earlier_version_held_after_r3_resumes_at_the_readme_turn(passed_round):
+    # 9e6a's stop: R3 approved, the run held at `pr` before its README turn.
+    oneshot_spec.saved("budget", oneshot={"stage": "pr", "working": None, "stopped": {
+        "reason": "kind", "state": "pr", "detail": "R3 를 승인했다 — 풀 리퀘스트는 다음 버전에서 이어진다"}})
+    oneshot_spec.recover()
+    assert o()["stopped"]["reason"] == "restart"
+    sent = []
+    with patch.object(critique.oneshot_pr.oneshot_build, "send", lambda repo, stage, text: sent.append((stage, text))), \
+            patch.object(critique.oneshot_pr, "readme_text", lambda spec: "the README turn"):
         oneshot_spec.resume("budget")
+    assert sent == [("pr", "the README turn")]
 
 
 def test_a_run_an_earlier_version_held_before_r3_opens_it_on_recovery(passed_round):

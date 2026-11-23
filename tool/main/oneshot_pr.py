@@ -34,7 +34,10 @@ README_PROMPT = (ROOT / "tool/prompts/oneshot-readme.md").read_text(encoding="ut
 ADAPTER = ".wiki/adapter.toml"
 RELEASE_PROMPT = (ROOT / "tool/prompts/oneshot-readme-release.md").read_text(encoding="utf-8")
 STAGE = "pr"
-TRIES = 3   # the debug APK's create and upload, each, as `gh release` retried them
+TRIES = 3   # the prerelease's create and each asset's upload, as GitHub's own CLI retried them
+# The files S8 attaches, by the record key their frozen copy (`<key>_frozen`) and upload keep: the kind that owes
+# one, and its name bare and with its object and subject particles.
+ASSETS = {"apk": ("android", "APK", "APK 를", "APK 가"), "installer": ("desktop", "설치 파일", "설치 파일을", "설치 파일이")}
 OS_NAMES = {"windows": "Windows", "macos": "macOS"}
 WORKFLOWS = ".github/workflows/"
 CI = f"{WORKFLOWS}ci.yml"
@@ -109,7 +112,13 @@ it and where it is then served.
 needs. Run is instead the command that builds the debug APK,
 `{spec['oneshot']['device']['apk']}`, and the one that installs it on a phone
 connected with USB debugging on: adb's install command with that APK's path.
-""" + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else ""))
+""" + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else "") + (f"""
+{"In the PC app's section," if several else 'This is a PC app (a Windows program).'} Setup names the tools its build
+needs. Run is the command that builds it and the one that starts the program
+the build leaves. Install names the installer the gate builds, `{installer}`:
+the pull request attaches it to a draft prerelease, and the section says how to
+run it.
+""" if (installer := (spec["oneshot"].get("desktop_build") or {}).get("installer")) and "desktop" in kinds else ""))
             .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}"
                      "That job has no `if` or `needs`, and that step no `if` or `background`. "
                      "After that step, in the same job, add this step exactly as written; it lists in the run's "
@@ -225,25 +234,32 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     android = "android" in kinds_of(o)
     if android and (why := oneshot_device.cleared(path, o["device"])):   # the gate makes the APK frozen below
         return why
+    # A PC app's installer goes as the APK does, an earlier build's removed first, but never stops the gate: the
+    # gate the frontend approved may not build one, and the pull request's body then says why it has none.
+    installer = (o.get("desktop_build") or {}).get("installer") if "desktop" in kinds_of(o) else None
+    unmade = installer and oneshot_device.cleared(path, {"apk": installer})
     env = oneshot_build.built_env(spec)   # read once: the freeze scan below looks for exactly these values
     verdict = oneshot_build.judged(path, run, spec, ran, env, expect=checked)
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    frozen = None
-    if android:   # the APK S8 attaches: the gate's own output, frozen before a later command can rebuild it
+    # Each file S8 attaches: the gate's own output, frozen before a later command can rebuild it.
+    frozen, head = {}, verdict["head"]
+    if android:
         if why := oneshot_device.built(path, o["device"]):
             return why
-        try:
-            frozen = froze(spec, verdict["head"], oneshot_needs.hidden(spec, env))
-        except OSError as exc:   # the attachment is optional: the pull request opens and its body says why
-            frozen = {"head": verdict["head"], "error": f"최종 게이트가 만든 APK 를 복사하지 못했다 — {exc}"}
-    why = "raised"   # until the later checks answer: a raise keeps it, and the copy goes with it
+        frozen["apk"] = kept(spec, head, oneshot_needs.hidden(spec, env), "apk")
+    if installer:
+        frozen["installer"] = {"head": head, "error": unmade} if unmade else kept(
+            spec, head, oneshot_needs.hidden(spec, env), "installer") if oneshot_device.inside(path, installer) and (
+            path / installer).is_file() else {"head": head, "error": f"최종 게이트가 `{installer}` 를 만들지 않았다"}
+    why = "raised"   # until the later checks answer: a raise keeps it, and the copies go with it
     try:
         why = oneshot_build.held(path, run, spec, verdict) or android and release_checked(
             path, spec, verdict["head"], run.halt)
     finally:
-        if why and frozen and frozen.get("path"):   # failed or raised: the copy is never kept
-            shutil.rmtree(Path(frozen["path"]).parent, ignore_errors=True)
+        for copy in frozen.values() if why else ():   # failed or raised: no copy is ever kept
+            if copy.get("path"):
+                shutil.rmtree(Path(copy["path"]).parent, ignore_errors=True)
     if why:
         return why
     report = next(b["value"] for b in specs.blocks(final)[1] if b["name"] == "done-report")
@@ -252,7 +268,7 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     specs.update(spec["repo"], spec["id"], report=report, gate={"cmd": "\n".join(ran), "head": verdict["head"],
                                                                 "tail": tail, "selection": "full"})
     oneshot_spec.saved(spec["repo"], oneshot={"final_head": verdict["head"], "attempts": 0,
-                                              **({"apk_frozen": frozen} if frozen else {})})
+                                              **{f"{key}_frozen": copy for key, copy in frozen.items()}})
     specs.note(run, f"최종 게이트 통과 · {verdict['head'][:12]}")
     return ""
 
@@ -338,17 +354,30 @@ def decisions(o: dict) -> list[str]:
     return out
 
 
-def froze(spec: dict, head: str, hide: dict) -> dict:
-    """The APK the final gate just built, copied out of the worktree while the check holds it, with its
-    digest: the APK is a build output Git does not track, so nothing read from the tree later is the one the
-    gate passed. An earlier gate's copy goes first."""
+def kept(spec: dict, head: str, hide: dict, key: str) -> dict:
+    """`froze`, or why it could not: the attachment is optional, so the pull request opens and its body says why."""
 
-    base = oneshot_spec.store(spec["repo"]).folder / "release"
+    try:
+        return froze(spec, head, hide, key)
+    except OSError as exc:
+        return {"head": head, "error": f"최종 게이트가 만든 {ASSETS[key][2]} 복사하지 못했다 — {exc}"}
+
+
+def froze(spec: dict, head: str, hide: dict, key: str = "apk") -> dict:
+    """The file the final gate just built (the APK, or the PC app's installer: `ASSETS`), copied out of the
+    worktree while the check holds it, with its digest: a build output Git does not track, so nothing read from
+    the tree later is the one the gate passed. An earlier gate's copy of the same file goes first."""
+
+    o = spec["oneshot"]
+    base = oneshot_spec.store(spec["repo"]).folder / ("release" if key == "apk" else f"release-{key}")
     shutil.rmtree(base, ignore_errors=True)
-    name, into = f"{spec['repo']}-{head[:12]}-debug.apk", base / f"r{time.time_ns()}"
+    source = o["device"]["apk"] if key == "apk" else o["desktop_build"]["installer"]
+    # Only the suffix of the installer's own name: GitHub renames an asset whose name it does not take.
+    name = f"{spec['repo']}-{head[:12]}-" + ("debug.apk" if key == "apk" else f"setup{Path(source).suffix.lower()}")
+    into = base / f"r{time.time_ns()}"
     try:
         into.mkdir(parents=True)
-        shutil.copyfile(Path(spec["worktree"]) / spec["oneshot"]["device"]["apk"], into / name)
+        shutil.copyfile(Path(spec["worktree"]) / source, into / name)
         # Read under the values its build ran with (`hide`, from the gate's own environment): an upload later,
         # after a value changed or was taken back, still needs this scan, bound to these bytes by their digest.
         scan = oneshot_needs.asset(into / name, spec, hide)
@@ -359,48 +388,71 @@ def froze(spec: dict, head: str, hide: dict) -> dict:
         raise
 
 
-def released(spec: dict) -> dict:
-    """The APK the final gate froze, attached to a draft prerelease of the repository, which the pull request's
-    body links: the URL, the asset's name and digest and the head, or why it could not. The owner decided on
-    2026-11-16 that a Release holds it: it works for a private repository and keeps."""
+def released(spec: dict, keys: list[str]) -> dict:
+    """The files the final gate froze (`keys` of `ASSETS`), attached to one draft prerelease of the repository for
+    its head, which the pull request's body links: each key's URL, asset name and digest and the head, or why it
+    could not. The owner decided on 2026-11-16 that a Release holds them: it works for a private repository and
+    keeps."""
 
-    o, path = spec["oneshot"], Path(spec["worktree"])
-    head, frozen, old = o["final_head"], o.get("apk_frozen") or {}, o.get("apk") or {}
+    path, head = Path(spec["worktree"]), spec["oneshot"]["final_head"]
+    tag, made = f"oneshot-{head[:12]}", []   # `made`: the prerelease once had, or why it could not be
+
+    def prerelease() -> tuple[str, dict]:
+        if not made:
+            try:
+                made.append(_prerelease(spec, github_release.slug(release.remote(path)), head, tag))
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                made.append(exc)
+        if isinstance(made[0], Exception):   # asked once: the next file says the same reason
+            raise made[0]
+        return made[0]
+
+    return {key: _released(spec, key, prerelease, tag) for key in keys}
+
+
+def _prerelease(spec: dict, repo: str, head: str, tag: str) -> tuple[str, dict]:
+    """This head's draft prerelease, made unless already there (an earlier upload, or a create whose reply was
+    lost): a second draft of the same tag would leave the first behind. A transient failure is tried again, a
+    bounded number of times, as GitHub's own CLI did."""
+
+    def found() -> dict | None:
+        return next((r for r in github_release.releases(repo) if r.get("tag_name") == tag), None)
+
+    for n in range(TRIES):
+        if held := found():
+            return repo, held
+        try:
+            return repo, github_release.create(repo, tag, None, f"{spec['repo']} 원샷 빌드 · {head[:12]}",
+                                               f"원샷 실행의 첫 PR 이 링크하는 빌드 산출물이다. 빌드 커밋 `{head}`.",
+                                               draft=True, prerelease=True)
+        except github_release.Failed as exc:   # a transient one is looked for again at the loop's top
+            if not exc.transient or n == TRIES - 1:
+                if held := found():   # it was made; only the answer was lost
+                    return repo, held
+                raise
+    raise AssertionError("unreachable")
+
+
+def _released(spec: dict, key: str, prerelease, tag: str) -> dict:
+    """One frozen file on the head's prerelease (`prerelease()` has it), its copy removed whatever happens."""
+
+    o, (_, bare, scanned, subject) = spec["oneshot"], ASSETS[key]
+    head, frozen, old = o["final_head"], o.get(f"{key}_frozen") or {}, o.get(key) or {}
     if frozen.get("head") != head or frozen.get("error"):
-        return {"head": head, "error": frozen.get("error") or "최종 게이트가 고정한 APK 가 없다"}
-    # A resumed S8 asks for the text again: the same APK is not uploaded twice, a rebuilt one replaces it.
+        return {"head": head, "error": frozen.get("error") or f"최종 게이트가 고정한 {subject} 없다"}
+    # A resumed S8 asks for the text again: the same file is not uploaded twice, a rebuilt one replaces it.
     if old.get("url") and (old.get("head"), old.get("sha256")) == (head, frozen["sha256"]):
         shutil.rmtree(Path(frozen["path"]).parent, ignore_errors=True)
         return old
-    file, tag = Path(frozen["path"]), f"oneshot-apk-{head[:12]}"
+    file = Path(frozen["path"])
     try:
         if not file.is_file() or android_owned.sha256(file) != frozen["sha256"]:
-            raise ValueError("최종 게이트가 고정한 APK 사본이 없거나 바뀌었다")
+            raise ValueError(f"최종 게이트가 고정한 {bare} 사본이 없거나 바뀌었다")
         # The exact bytes that go up: clean under the values the build ran with (`froze`) and under today's.
-        if why := ("scan" not in frozen and "최종 게이트가 고정한 APK 를 검사한 기록이 없다") or frozen["scan"] \
+        if why := ("scan" not in frozen and f"최종 게이트가 고정한 {scanned} 검사한 기록이 없다") or frozen["scan"] \
                 or oneshot_needs.asset(file, spec):
             raise ValueError(why)
-        repo = github_release.slug(release.remote(path))
-
-        def found() -> dict | None:
-            return next((r for r in github_release.releases(repo) if r.get("tag_name") == tag), None)
-
-        # This head's release already there (an earlier upload, or a create whose reply was lost) gets this
-        # APK as its asset: a second draft of the same tag would leave the first behind.
-        # A transient failure is tried again, a bounded number of times, as `gh release` itself did.
-        for n in range(TRIES):
-            if held := found():
-                break
-            try:
-                held = github_release.create(repo, tag, None, f"{spec['repo']} 디버그 APK · {head[:12]}",
-                                             f"원샷 실행의 첫 PR 이 링크하는 디버그 APK 다. 빌드 커밋 `{head}`.",
-                                             draft=True, prerelease=True)
-                break
-            except github_release.Failed as exc:   # a transient one is looked for again at the loop's top
-                if not exc.transient or n == TRIES - 1:
-                    if held := found():   # it was made; only the answer was lost
-                        break
-                    raise
+        repo, held = prerelease()
         failed = None
         for n in range(TRIES + 1):   # the read after the last try decides: a last upload that landed counts
             mine = next((a for a in github_release.release(repo, held["id"]).get("assets") or []
@@ -426,14 +478,16 @@ def released(spec: dict) -> dict:
 
 
 def asked(repo: str) -> None:
-    """The gate passed: an Android app's APK goes up for the pull request to link, then one turn asks the
-    worker for the pull request's text, as every spec's does."""
+    """The gate passed: an Android app's APK and a PC app's installer go up for the pull request to link, then
+    one turn asks the worker for the pull request's text, as every spec's does."""
 
     spec = oneshot_spec.spec_of(repo)
     if why := oneshot_needs.publishable(Path(spec["worktree"]), spec):   # before anything goes out
         return oneshot_spec.store(repo).stop(STAGE, why) and None   # stopped: no next turn
-    if "android" in kinds_of(spec["oneshot"]):   # alone or among several kinds
-        spec = oneshot_spec.saved(repo, oneshot={"apk": released(spec)})
+    if keys := [key for key, (kind, *_) in ASSETS.items() if kind in kinds_of(spec["oneshot"])]:   # alone or among several
+        spec = oneshot_spec.saved(repo, oneshot={**released(spec, keys), "attached": spec["oneshot"]["final_head"]})
+    if oneshot_spec.held(spec["oneshot"]):   # a PC app's pull request is the next step's
+        return oneshot_spec.store(repo).stop("kind", oneshot_spec.kind_stop(STAGE)["detail"]) and None
     path, head = Path(spec["worktree"]), oneshot_spec.spec_of(repo)["oneshot"]["final_head"]
     spec = specs.update(repo, spec["id"], writing={"head": head, "asked": 1})
     said = decisions(spec["oneshot"])
@@ -486,7 +540,7 @@ def summary(spec: dict) -> dict:
                        "edited": sorted({i for e in reading.get(g) or [] for i in e.get("edited") or []})}
                       for g in ("r1", "r2", "r3")],
             "spend": o.get("spend") or {}, "critiques": len(o.get("critiques") or []),
-            "looks": len(o.get("looks") or []), "apk": o.get("apk"), "calls": oneshot_calls.summary(spec),
+            "looks": len(o.get("looks") or []), "apk": o.get("apk"), "installer": o.get("installer"), "calls": oneshot_calls.summary(spec),
             "ci": (o.get("profile") or {}).get("visibility") == "public" and (o.get("profile") or {}).get("ci") == "github-actions"}
 
 
