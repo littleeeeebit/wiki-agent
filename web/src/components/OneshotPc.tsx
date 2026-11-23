@@ -25,11 +25,14 @@ export function PcApprove({ repo, view, plan, busy, act }: {
         </label>
       )}
       <Decide>
-        <Btn tone="wait" className={GO} disabled={busy || !plan.checks.length}
+        {/* No `owner` check owed, none pending either: the approval only reads the frozen build again, into R3. */}
+        <Btn tone="wait" className={GO} disabled={busy || (!plan.checks.length && !!view.pc_unrun?.length)}
           onClick={() => void act(() => api.approvePc(repo, plan, surface))}>{given ? '다시 승인' : '승인'}</Btn>
       </Decide>
     </>}>
       <div className="flex max-w-[44rem] flex-col gap-4 px-10 py-6 max-[1500px]:px-7 max-[560px]:px-4">
+        {!plan.checks.length && !view.pc_unrun?.length && <p className="font-medium">돌릴 검사가 없다 — 승인하면 아무것도 띄우지
+          않고, 얼린 빌드를 작업트리에서 다시 읽은 뒤 R3 로 간다.</p>}
         <p>소유 데스크톱에서는 볼 수 없는 캡처 검사를 내 화면에서 한 번 돌린다. 아래에 적힌 것만 띄우고 읽으며, 승인은 이 빌드의 한
           회차에만 쓴다. 서버가 다시 켜지거나 빌드가 바뀌면 다시 승인한다.</p>
         <p className="text-muted-foreground">승인하면 바로 내 화면 왼쪽 위에 고정 창과 앱이 뜬다. 회차는 창을 앞으로 가져오거나 키를

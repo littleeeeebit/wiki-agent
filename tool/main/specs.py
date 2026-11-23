@@ -1316,9 +1316,10 @@ def own_base(spec: dict) -> str:
     """The base this spec already names: its own, else that of the pull request
     attached to it. A PR published by hand into a non-default base keeps that
     base when the spec is published again; the default would be a second PR
-    from the same branch, which `existing_pr` refuses."""
+    from the same branch, which `existing_pr` refuses. A oneshot's measured draft keeps its base the same way."""
 
-    return spec.get("base") or (spec.get("pr") or {}).get("base") or ""
+    return (spec.get("base") or (spec.get("pr") or {}).get("base")
+            or ((spec.get("oneshot") or {}).get("pr1") or {}).get("base") or "")
 
 
 def local_base(spec: dict, path: Path) -> str:
@@ -1480,7 +1481,7 @@ def base_of(spec: dict, path: Path) -> subprocess.CompletedProcess:
         sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
 
 
-def existing_pr(path: Path, branch: str, base: str) -> tuple[int, str] | None:
+def existing_pr(path: Path, branch: str, base: str, only: int | None = None) -> tuple[int, str] | None:
     """The open pull request of this repository from `branch` into `base`, or
     `None`. Every field is checked here, not left to `gh`'s filters: a fork's
     branch of the same name is someone else's. `RuntimeError` when GitHub
@@ -1499,17 +1500,19 @@ def existing_pr(path: Path, branch: str, base: str) -> tuple[int, str] | None:
                            f"그 PR 을 닫거나 base 를 `{base}` 로 바꾼 뒤 다시 발행하세요")
     if len(rows) > 1:
         raise RuntimeError(f"`{branch}` → `{base}` 로 열린 PR 이 {len(rows)}개다")
+    if only and (int(rows[0]["number"]) if rows else None) != only:   # a oneshot's measured draft, never another
+        raise RuntimeError(f"실측하고 리뷰한 초안 PR #{only} 이 열려 있지 않다 — 그 PR 을 다시 연 뒤 다시 한다")
     return (int(rows[0]["number"]), rows[0]["url"]) if rows else None
 
 
-def pull_request(path: Path, branch: str, base: str, title: str, body: str) -> tuple[int, str]:
+def pull_request(path: Path, branch: str, base: str, title: str, body: str, only=None) -> tuple[int, str]:
     """Return an existing or new PR's `(number, url)`; refresh reused metadata.
     Never retry a failed/timed-out create: re-list because its reply may be lost.
     Raise `RuntimeError` when publication cannot complete."""
 
     # GitHub refuses a title over 256 characters; a spec's goal can run longer, and the body carries it whole.
     title = title if len(title) <= 256 else title[:255] + "…"
-    found = existing_pr(path, branch, base)
+    found = existing_pr(path, branch, base, only)   # `only`: that pull request or none, so never a create
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(body)
     try:
@@ -1559,7 +1562,8 @@ def opened(repo: Path, path: Path, run, spec: dict):
     try:
         files = sh(["git", "diff", "--numstat", f"origin/{base.stdout.strip()}...HEAD"], path)
         n, url = pull_request(path, branch, base.stdout.strip(), pr_text.title_of(spec),
-                              body_of(spec, "" if files.returncode else files.stdout))
+                              body_of(spec, "" if files.returncode else files.stdout),
+                              ((spec.get("oneshot") or {}).get("pr1") or {}).get("number"))
     except RuntimeError as exc:
         return failed(run, spec, str(exc))
     plan = spec["source"].get("plan")

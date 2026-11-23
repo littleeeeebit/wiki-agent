@@ -120,7 +120,7 @@ def runtime(destination: Path, cache: Path) -> None:
          "--implementation", "cp", "--python-version", "3.14", "--abi", "cp314", "--no-compile",
          "--target", python / "Lib/site-packages", "-r", ROOT / "requirements-chat.txt"])
     # Import smoke check uses the bundled interpreter, not the builder's environment.
-    run([python / "python.exe", "-c", "import fastapi,uvicorn,wsproto,yaml,markdown_it,langfuse,ssl,sqlite3; print('Bundled runtime imports passed')"])
+    run([python / "python.exe", "-c", "import fastapi,uvicorn,wsproto,yaml,markdown_it,langfuse,psutil,ssl,sqlite3; print('Bundled runtime imports passed')"])
 
 
 def smoke_backend(payload: Path) -> None:

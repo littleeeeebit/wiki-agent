@@ -636,10 +636,11 @@ def secret_write(name: str, value: str) -> None:
         raise OSError(f"자격 증명을 쓰지 못했다: {ctypes.get_last_error()}")
 
 
-def secret_delete(name: str) -> None:
+def secret_delete(name: str) -> bool:   # whether one was there: one already gone is no error
     ctypes, a = _advapi()
-    if not a.CredDeleteW(target(name), GENERIC, 0) and ctypes.get_last_error() != NOT_FOUND:
+    if not (done := a.CredDeleteW(target(name), GENERIC, 0)) and ctypes.get_last_error() != NOT_FOUND:
         raise OSError(f"자격 증명을 지우지 못했다: {ctypes.get_last_error()}")
+    return bool(done)
 
 
 LOCK_SECONDS = 60

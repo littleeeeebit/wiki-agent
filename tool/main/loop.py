@@ -26,8 +26,8 @@ from common.budget import Budget, Cancelled, Exhausted
 from common.paths import RAW
 from workspace import adopt, base_branch, checkout, folder_for, holder, merged, remove, worktrees
 
-from . import (channels, connect, decisions, knowledge, maintenance, pr_text, prerequisite_review, query, refactor_run,
-               review_contract, runtime, specs, sweep, verification, work)
+from . import (channels, connect, decisions, knowledge, maintenance, oneshot_profile, pr_text, prerequisite_review, query,
+               refactor_run, review_contract, runtime, specs, sweep, verification, work)
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 from .review_result import (  # noqa: F401 -- preserve the loop protocol API
     FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
@@ -677,9 +677,11 @@ _seated = 0
 
 
 def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
-    """Put the spec in `리뷰 대기` and start its loop, unless one runs. A loop
-    that was stopped is waited for first, so two never drive one spec."""
+    """Put the spec in `리뷰 대기` and start its loop, unless one runs or it is an unfinished oneshot run's,
+    whose review is its own. A loop that was stopped is waited for first, so two never drive one spec."""
 
+    if oneshot_profile.in_run(specs.load(repo, sid)):
+        return
     key = (repo, sid)
     with _lock:
         old = _loops.get(key)
@@ -2572,6 +2574,8 @@ def review_again(sid: str) -> dict:
         raise HTTPException(409, "리뷰가 이미 돌고 있다")
     if not spec.get("pr") or spec["state"] != "머지 가능" and not spec["state"].startswith("PR #"):
         raise HTTPException(409, "이 상태에서는 새 리뷰를 시작하지 않는다")
+    if why := oneshot_profile.in_run(spec):
+        raise HTTPException(409, why)
     if spec.get("plan_commit") == "asked":
         raise HTTPException(409, "계획 행 커밋이 아직이다")
     rereview(repo.name, spec)
@@ -2580,8 +2584,10 @@ def review_again(sid: str) -> dict:
 
 def rereview(repo: str, spec: dict) -> None:
     """Another independent round for a `머지 가능` or PR spec; four more rounds when its cap is used up,
-    or the loop ships the new head and stops at the cap before reviewing it."""
+    or the loop ships the new head and stops at the cap before reviewing it. Never an unfinished oneshot run's."""
 
+    if oneshot_profile.in_run(spec):
+        return
     with specs._files:
         specs.update(repo, spec["id"], review_again=True,
                      extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0))
@@ -2718,12 +2724,12 @@ def prs() -> dict:
                      "number,title,headRefName,headRefOid,headRepositoryOwner,isCrossRepository,url"], repo, 60)
     if done.returncode:
         return {"project": name, "rows": [], "error": specs.said(done)}
-    known = by_pr(name)
-    rows = []
+    known, rows = by_pr(name), []
     for row in json.loads(done.stdout):
-        spec = known.get(row["number"]) or unlinked(repo, row["headRefName"])
-        why = refusal(row, spec if spec and spec.get("pr") else None) or (
-            "" if spec else clash(name, row["headRefName"]))
+        if oneshot_profile.in_run(spec := known.get(row["number"]) or (   # a fork's same-named branch is not ours
+                None if row.get("isCrossRepository") else unlinked(repo, row["headRefName"]))):
+            continue   # an unfinished Oneshot's PR is not listed at all; dispatch checks it again
+        why = refusal(row, spec if spec and spec.get("pr") else None) or ("" if spec else clash(name, row["headRefName"]))
         rows.append({"number": row["number"], "title": row["title"], "branch": row["headRefName"],
                      "head": row["headRefOid"], "url": row["url"], "fork": bool(row.get("isCrossRepository")),
                      "spec": spec["id"] if spec else None, "state": spec["state"] if spec else None,
@@ -2766,7 +2772,7 @@ def take(repo: Path, n: int, environment: str = "local", cell: dict | None = Non
     cell = cell if cell and cell.get("model") else None
     spec = by_pr(repo.name).get(n)
     if spec is not None:
-        why = refusal({}, spec)
+        why = oneshot_profile.in_run(spec) or refusal({}, spec)
         if why:
             raise HTTPException(409, why)
         spec = named(repo, spec, cell)
@@ -2798,6 +2804,8 @@ def take(repo: Path, n: int, environment: str = "local", cell: dict | None = Non
         raise HTTPException(409, "연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
     sid = folder_for(view["headRefName"])
     existing = unlinked(repo, view["headRefName"])
+    if why := oneshot_profile.in_run(existing):
+        raise HTTPException(409, why)
     if existing is not None:
         spec = named(repo, attach(repo, existing, view, environment), cell)
         kick(repo.name, spec["id"])

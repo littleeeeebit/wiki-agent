@@ -111,7 +111,7 @@ def test_every_design_prompt_asks_for_needs_in_the_shape_the_server_takes(prompt
     # value never in the agent's environment, only the gate's, and masked in what the agent sees.
     saved_need = [("N1", {"id": "N1", "env": "ANTHROPIC_API_KEY"})]
     with patch.object(needs, "secret_needs", lambda s: saved_need), \
-            patch.object(needs, "_given", lambda s: [("N1", "ANTHROPIC_API_KEY", "v" * 20)]), \
+            patch.object(needs, "_given", lambda s, strict=False: [("N1", "ANTHROPIC_API_KEY", "v" * 20)]), \
             patch.object(needs, "missing", lambda s: []):
         assert "ANTHROPIC_API_KEY" in needs.unready({"oneshot": {}})
         env, hide = needs.agent({"oneshot": {"run": 1}, "repo": "budget"})
@@ -243,6 +243,12 @@ def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     hide = needs.hidden(needs.spec_of("budget"), {ENV: "N1 이(가)"})   # `N1` is safe alone, not in the sentence
     why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 N1 이(가) 다")
     assert "비밀 값 [N1] 이(가) 답 에" in why and masked(why, hide) == why
+    # A measurement's own secret is labelled against the design's values too: its name never spells one.
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: "7319"}, {"SERVICE_7319_TOKEN": "tok-abc"})
+    shown = masked("pin 7319 token tok-abc", hide)
+    assert "7319" not in shown and "tok-abc" not in shown and masked(shown, hide) == shown
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: "design-key"}, {"N1": "measured-key"})   # `env` = a need id
+    assert "-key" not in masked("design-key measured-key", hide)
     wrapped = masked(f"The server refused this build turn: {why}\n\nFix it", hide)   # as `checked` sends it
     assert "비밀 값 [N1] 이(가) 답 에" in wrapped and "N1 이(가)" not in wrapped.replace("[N1] 이(가)", "")
     hide = needs.hidden(needs.spec_of("budget"), {ENV: f"{ENV}[n1"})   # meets both `[N1]` and the variable
@@ -317,6 +323,18 @@ def test_a_host_without_credential_manager_shows_the_sheet_and_refuses_a_secret(
     with pytest.raises(HTTPException, match="자격 증명 관리자가 없다") as e:
         give("N1", value="x")
     assert e.value.status_code == 409
+
+
+def test_a_damaged_secret_counts_as_different_so_it_can_be_replaced(at_r1, monkeypatch):
+    def damaged(key):   # Credential Manager returned it, but its bytes are no UTF-16
+        raise UnicodeDecodeError("utf-16-le", b"\x00", 0, 1, "truncated")
+
+    monkeypatch.setattr(needs.release, "secret_read", damaged)
+    assert not needs.same("k", "v") and not needs.same("k", None)
+    written = {}
+    monkeypatch.setattr(needs.release, "secret_write", written.__setitem__)
+    needs.stored("budget", "SOME_KEY", "fresh-value")
+    assert written == {needs.name("budget", "SOME_KEY"): "fresh-value"}
 
 
 def test_what_was_given_can_be_taken_back(at_r1, tmp_path):

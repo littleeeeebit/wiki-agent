@@ -29,8 +29,8 @@ HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # README, installer and CI job land (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
 KIND_STOPS: dict[str, str] = {"desktop": "pr"}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
-STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "review", "split", "board", "frontend", "r2", "build-front",
-               "critique", "phone", "pc", "r3", "pr", "done")
+STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "measure", "review", "conflict", "split", "board", "frontend",
+               "r2", "build-front", "critique", "phone", "pc", "r3", "pr", "done")
 # The sizes S7 sets a PC app's main window to: its frame in physical pixels, as the driver reads it back.
 WINDOWS = ("1280x800", "1024x768", "1440x900", "1920x1080")
 # The reference phone S7 shoots (`device` replaces `responsive` for `android`): emulator hardware profiles.
@@ -326,3 +326,11 @@ def cut(spend: dict, role: str, codex: bool, elapsed: float, lived: float) -> di
         out["unknown"] += 1   # `charged` marks only USD roles; a Codex turn's time is the unknown here
     out["longest"] = spend["longest"]   # an estimate is not a measured turn
     return out
+
+
+def in_run(spec: dict | None) -> str:
+    """Why a oneshot run that has not finished keeps its pull request (#1, a draft) out of Review Loop, or empty:
+    its own review runs on the oneshot screen, after the owner approves the real measurement."""
+
+    stage = ((spec or {}).get("oneshot") or {}).get("stage")
+    return "원샷이 아직 이 PR 을 쓰는 중이다 — 리뷰는 원샷 화면에서 실측을 승인한 뒤 돈다" if stage not in (None, "done") else ""
