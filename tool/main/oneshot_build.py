@@ -28,7 +28,7 @@ from common import masked
 from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
-from . import connect, oneshot, oneshot_android, oneshot_needs, oneshot_spec, refactor_run, runtime, specs, work
+from . import connect, oneshot, oneshot_android, oneshot_calls, oneshot_needs, oneshot_spec, refactor_run, runtime, specs, work
 from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled
 from .query import _lock as work_lock, hold
 
@@ -402,12 +402,10 @@ def junit(path: Path, run, spec: dict, command: str) -> list[tuple[str, str, str
             raise ValueError(f"테스트 명령이 `{{report}}` 에 JUnit 보고서를 쓰지 않았다 — {text.strip()[-800:]}") from None
     finally:
         report.unlink(missing_ok=True)
-    found = [(case.get("classname") or "", case.get("name") or "", case.get("file") or "",
-              # A skip anywhere, a cleanup's included, outranks the rest: nothing skipped counts either way.
-              next((k for k in ("skipped", "error", "failure") if case.find(k) is not None), "passed"))
-             for case in root.iter("testcase")]
+    found = oneshot_calls.listed(root)
     if leaked := sorted({label for c in found for v, label in hide.items() if any(v in f for f in c[:3])}):
         raise ValueError(f"테스트 사례 이름에 비밀 값이 들어 있다 — {', '.join(leaked)}: 값을 사례 이름에 넣지 말라")
+    oneshot_calls.reached(spec, found)
     return found
 
 
@@ -751,15 +749,18 @@ def built(path: Path, run, spec: dict, final: str) -> str:
 
 def judged(path: Path, run, spec: dict, commands: list[str], env: dict | None, **kw) -> dict:
     """`specs.judge` of `commands` in `env` as the server runs a gate: the output shows no secret `env` carries, and
-    the adapter's JUnit report, which may quote one, is written outside the tree and deleted after."""
+    each command's JUnit report, which may quote one, is written outside the tree, counted and deleted after."""
 
-    report = oneshot_spec.store(spec["repo"]).folder / "junit" / f"gate-{time.time_ns()}.xml"
-    report.parent.mkdir(parents=True, exist_ok=True)
+    reports = [oneshot_spec.store(spec["repo"]).folder / "junit" / f"gate-{time.time_ns()}-{i}.xml" for i in range(len(commands))]
+    reports[0].parent.mkdir(parents=True, exist_ok=True)
     try:
-        return specs.judge(path, [c.replace(REPORT, literal(report.as_posix())) for c in commands], run.halt,
-                           lambda text: specs.note(run, text), env=env, hide=oneshot_needs.hidden(spec, env), **kw)
+        verdict = specs.judge(path, [c.replace(REPORT, literal(r.as_posix())) for c, r in zip(commands, reports)], run.halt,
+                              lambda text: specs.note(run, text), env=env, hide=oneshot_needs.hidden(spec, env), **kw)
+        oneshot_calls.ran(spec, reports)
+        return verdict
     finally:
-        report.unlink(missing_ok=True)
+        for r in reports:
+            r.unlink(missing_ok=True)
 
 
 def held(path: Path, run, spec: dict, verdict: dict) -> str:

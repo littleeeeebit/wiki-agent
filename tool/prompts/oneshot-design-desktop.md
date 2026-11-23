@@ -67,6 +67,7 @@ requirements list and glossary in an `oneshot-spec` block,
   called by a module that does. A module reached by neither is out of scope.
 - Every `calls` entry names an existing module or outside call, never the
   module itself, and every outside call is called by some module.
+- No two tests share a `test_name`, in any letter case.
 - A need's id is `N1`, `N2` …; one id names one need, and one `env` belongs
   to one id. A `secret` names its `env`; no other kind has one.
 - Every scenario (a requirement with `postconditions`) has a module that

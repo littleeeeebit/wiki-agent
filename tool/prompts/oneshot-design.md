@@ -55,6 +55,7 @@ requirements list and glossary in an `oneshot-spec` block,
   test naming it. A test names its requirement and every endpoint it calls; a
   flow names every endpoint its steps call. An outside call names its
   requirement and the endpoint that makes it.
+- No two tests share a `test_name`, in any letter case.
 - A need's id is `N1`, `N2` …; one id names one need, and one `env` belongs
   to one id. A `secret` names its `env`; no other kind has one.
 - No entity, field, path, outside target or `does` uses a word the glossary's `avoid` lists.

@@ -162,6 +162,9 @@ function Record({ view }: { view: SpecView }) {
     ...(o.reviews?.length ? [['리뷰 거절', of(o.refused ?? 0, lim?.refusals)] as [string, string]] : []),
     ...(looks ? [['화면 비평', of(counted, lim?.critiques) + (counted !== looks ? ` · 모두 ${looks}회` : '')] as [string, string]] : []),
     ...(o.cases?.length ? [['계약 테스트', `${o.cases.length}개`] as [string, string]] : []),
+    // Beside the spending, the gate runs that reached each outside call (`oneshot_calls.reached`).
+    ...(o.design?.outside?.length
+      ? [['바깥 호출', o.design.outside.map((x) => `${x.id} ${o.calls?.[x.id] ?? 0}번`).join(' · ')] as [string, string]] : []),
     ['쓴 것', [money(spent.usd), spent.seconds != null && clock(spent.seconds), spent.calls != null && `호출 ${spent.calls}번`]
       .filter(Boolean).join(' · ') || '아직 없다'],
   ]
