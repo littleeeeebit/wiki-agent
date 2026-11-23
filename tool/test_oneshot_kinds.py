@@ -163,6 +163,7 @@ def test_several_kinds_test_and_build_the_core_alone_with_its_tests_as_the_gate(
 
 
 DEFER = {"location": "core/src/overlay.rs:18", "severity": "P1", "reason": "상태바를 가린다", "evidence": "insets 0",
+         "area": "overlay insets", "breaks": ["R1"], "repro": "기기에서 오버레이를 켜면 상태바를 덮는다",
          "device": {"kind": "android", "requirement": "R1", "check": "오버레이가 상태바 아래에서 시작한다"}}
 
 
