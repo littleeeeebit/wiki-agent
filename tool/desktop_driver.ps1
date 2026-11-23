@@ -173,11 +173,13 @@ function Items([string]$at) {   # each open item container's items, realized or 
     try {
       $container = $element.GetCurrentPattern([System.Windows.Automation.ItemContainerPattern]::Pattern)
       $count, $unread, $item = 0, 0, $null
+      $mine = New-Object 'System.Collections.Generic.HashSet[string]'   # this container's items, by runtime id
       do {   # one call past the bound: a container of exactly $MAX_ITEMS is seen to end
         $item = $container.FindItemByProperty($item, $null, $null)
         if ($item) {
           $count++
-          try { if (-not $seen.Contains((Rid $item))) { $unread++ } } catch { $unread++ }
+          # An id met twice here names two items one walked element cannot both be: the second is unread.
+          try { $r = Rid $item; if (-not $mine.Add($r) -or -not $seen.Contains($r)) { $unread++ } } catch { $unread++ }
         }
       } while ($item -and $count -le $MAX_ITEMS)
       if (-not $item) { $node.items, $node.unread = $count, $unread }

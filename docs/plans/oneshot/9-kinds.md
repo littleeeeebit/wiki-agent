@@ -351,7 +351,9 @@ source, and the server assigns it:
     supplied `Collapsed` or `LeafNode` skips a container's item audit. Any
     other state is audited, including one that is unsupplied or out of
     range. The audit matches items to the elements read by runtime id. An
-    item with no runtime id counts as unread, never as one already read. An element's id or name that is not
+    item with no runtime id counts as unread, never as one already read.
+    So does any item whose runtime id an earlier item of the same container
+    already had. An element's id or name that is not
     whole UTF-16 leaves its window's read not whole. The driver reads every element's automation id again
     after its value and compares the two ordinally. One that changed (a
     control rebound meanwhile) leaves that window's read not whole. Such a

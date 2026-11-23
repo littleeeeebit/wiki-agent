@@ -409,7 +409,25 @@ def test_an_element_without_a_runtime_id_is_never_taken_for_one_already_read():
                            capture_output=True, text=True, timeout=60)
     assert probe.stdout.split() == ["refused", "refused", "42.7"], probe
     items = script.split("function Items(", 1)[1].split("\nfunction ", 1)[0]
-    assert "try { if (-not $seen.Contains((Rid $item))) { $unread++ } } catch { $unread++ }" in items
+    assert "try { $r = Rid $item; if (-not $mine.Add($r) -or -not $seen.Contains($r)) { $unread++ } } catch { $unread++ }" in items
+
+
+def test_two_items_of_one_container_sharing_a_runtime_id_leave_one_of_them_unread():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    rid = "function Rid(" + script.split("function Rid(", 1)[1].split("\nfunction ", 1)[0]
+    audit = script.split("function Items(", 1)[1].split("$mine = ", 1)[1].split("} while", 1)[0]
+    # The audit's own text over a stand-in container of two items, both `42.7`, with one element by that id walked.
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", rid + "\n"
+                            "function Peer($n) { $p = [pscustomobject]@{ n = $n }; "
+                            "$p | Add-Member ScriptMethod GetRuntimeId { ,@(42, 7) }; $p }\n"
+                            "$peers = @((Peer 1), (Peer 2))\n"
+                            "$container = [pscustomobject]@{}; $container | Add-Member ScriptMethod FindItemByProperty "
+                            "{ param($after, $p, $v) if ($null -eq $after) { $peers[0] } elseif ($after.n -eq 1) "
+                            "{ $peers[1] } else { $null } }\n"
+                            "$seen = New-Object 'System.Collections.Generic.HashSet[string]'; [void]$seen.Add('42.7')\n"
+                            "$count, $unread, $item = 0, 0, $null\n$mine = " + audit + "} while ($item)\n"
+                            "\"$count $unread\""], capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["2", "1"], probe
 
 
 def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
