@@ -286,20 +286,26 @@ def test_a_view_counts_as_whole_only_not_scrollable_both_ways_at_a_full_size():
     script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
     rule = "if ($patterns -contains \"Scroll\" -and" + \
         script.split("if ($patterns -contains \"Scroll\" -and", 1)[1].split("  $script:nodes += $node", 1)[0]
-    # The rule's own text over stand-ins answering the four scroll properties: (vertical, its size, horizontal,
-    # its size), `none` unsupplied. Only the first holds its view whole.
-    cases = ["$false 100 $false 100", "$false 25 $false 100", "$true 25 $false 100", "$false 100 $false 99.5",
-             "none 100 $false 100", "$false none $false 100", "'no' 100 $false 100"]
+    # The rule's own text over stand-ins answering the six scroll properties: (vertically scrollable, its view
+    # size, its position, then the same horizontally), `none` unsupplied. Each later case breaks one property of
+    # the first, the only one whose view holds it all. `(-1)`: a bare -1 in argument mode is the string "-1".
+    full = "$false 100 (-1)"
+    cases = [f"{full} {full}", f"$true 100 (-1) {full}", f"$false 25 (-1) {full}", f"$false 99.5 (-1) {full}",
+             f"$false 100 50 {full}", f"{full} $false 100 50", f"{full} $true 100 (-1)", f"{full} $false 25 (-1)",
+             f"none 100 (-1) {full}", f"$false none (-1) {full}", f"$false 100 none {full}",
+             f"'no' 100 (-1) {full}", f"0 100 (-1) {full}", f"$false '100' (-1) {full}", f"$false 100 '-1' {full}"]
     probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
                             "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes\n"
                             "$P = [System.Windows.Automation.ScrollPattern]\n"
                             "$patterns = @('Scroll')\n"
-                            "function Case($vc, $vs, $hc, $hs) {\n"
+                            "function Case($vc, $vs, $vp, $hc, $hs, $hp) {\n"
                             "  $element = [pscustomobject]@{ k = @{ $P::VerticallyScrollableProperty.Id = $vc; "
-                            "$P::VerticalViewSizeProperty.Id = $vs; $P::HorizontallyScrollableProperty.Id = $hc; "
-                            "$P::HorizontalViewSizeProperty.Id = $hs } }\n"
+                            "$P::VerticalViewSizeProperty.Id = $vs; $P::VerticalScrollPercentProperty.Id = $vp; "
+                            "$P::HorizontallyScrollableProperty.Id = $hc; $P::HorizontalViewSizeProperty.Id = $hs; "
+                            "$P::HorizontalScrollPercentProperty.Id = $hp } }\n"
                             "  $element | Add-Member ScriptMethod GetCurrentPropertyValue { param($p, $d) "
-                            "$x = $this.k[$p.Id]; if ($x -eq 'none') { [System.Windows.Automation.AutomationElement]::NotSupported } "
+                            "$x = $this.k[$p.Id]; if ($x -is [string] -and $x -eq 'none') "
+                            "{ [System.Windows.Automation.AutomationElement]::NotSupported } "
                             "elseif ($x -is [int]) { [double]$x } else { $x } }\n"
                             "  $node = [ordered]@{}\n  " + rule + "\n  if ($node.Contains('unread')) { 'partial' } else { 'whole' }\n}\n"
                             + "\n".join(f"Case {c}" for c in cases)], capture_output=True, text=True, timeout=60)

@@ -275,16 +275,19 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
   if ($patterns -contains "Scroll" -and $patterns -notcontains "ItemContainer") {
     # No enumeration of what lies past its view, which a virtualized list never realizes: the driver does not
     # scroll, so a container that scrolls has an unverified end and its read is not whole. Only both directions
-    # supplied, without defaults, as not scrollable with a view of 100 percent prove its view holds it all.
+    # supplied, without defaults, as not scrollable, with a view of 100 percent and at the position `NoScroll`,
+    # prove its view holds it all: any of them contradicting the others leaves its end unverified.
     $more = $true
     try {
       $P = [System.Windows.Automation.ScrollPattern]
       $full = $true
-      foreach ($d in @(@($P::VerticallyScrollableProperty, $P::VerticalViewSizeProperty),
-                       @($P::HorizontallyScrollableProperty, $P::HorizontalViewSizeProperty))) {
+      foreach ($d in @(@($P::VerticallyScrollableProperty, $P::VerticalViewSizeProperty, $P::VerticalScrollPercentProperty),
+                       @($P::HorizontallyScrollableProperty, $P::HorizontalViewSizeProperty, $P::HorizontalScrollPercentProperty))) {
         $can = $element.GetCurrentPropertyValue($d[0], $true)
         $size = $element.GetCurrentPropertyValue($d[1], $true)
-        $full = $full -and $can -is [bool] -and -not $can -and $size -is [double] -and $size -eq 100
+        $at = $element.GetCurrentPropertyValue($d[2], $true)
+        $full = $full -and $can -is [bool] -and -not $can -and $size -is [double] -and $size -eq 100 -and
+          $at -is [double] -and $at -eq [System.Windows.Automation.ScrollPattern]::NoScroll
       }
       $more = -not $full
     } catch { }

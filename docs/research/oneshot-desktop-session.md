@@ -192,8 +192,9 @@ closes, and a failed enumeration or close holds the look.
 
 The driver is a process on the owned desktop, in a job of its own. It reads
 the UI Automation control view and acts only through patterns: `Invoke`,
-`Value.SetValue`, `Toggle`, `SelectionItem.Select`, `ExpandCollapse`,
-`Scroll` and `ScrollItem`. It sends no synthetic input (`SendInput`,
+`Value.SetValue`, `Toggle`, `SelectionItem.Select`, `ExpandCollapse` and
+`ScrollItem.ScrollIntoView`. It reads `Scroll` properties but never
+scrolls through that pattern. It sends no synthetic input (`SendInput`,
 `SetCursorPos`, window messages for keys or clicks) and uses no clipboard.
 A step names its control by `AutomationId`, scoped to its screen. A name is
 used only when no id exists, and it must match exactly one element, of a
@@ -271,7 +272,8 @@ The checks read the tree as the Android loop reads its hierarchy:
   container supports `ItemContainer`, `FindItemByProperty` counts its items,
   realized or not, against the elements the walk read. A container that only
   scrolls counts as read whole only when its view holds everything: both
-  directions not scrollable, with a view size of 100 percent. Any other
+  directions not scrollable, with a view size of 100 percent and the
+  position `NoScroll`. Any other
   container whose end cannot be verified holds the check.
 
 ### Cleanup and its proof
