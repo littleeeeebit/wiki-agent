@@ -37,12 +37,15 @@ def reaching(design: dict) -> dict[str, list[str]]:
 
 
 def reached(spec: dict, found: list[tuple[str, str, str, str]]) -> None:
-    """One more gate run toward each call a test of `found` reached without skipping."""
+    """One more gate run toward each call a test of `found` reached without skipping. Once the tests commit pinned
+    the cases, only a pinned case counts: a same-named case of another class or file never stands in for it."""
 
     from .oneshot_build import named   # it imports this module
 
+    pins = {tuple(p) for p in spec["oneshot"].get("cases") or []}
+    ran = [c for c in found if c[3] != "skipped" and (not pins or tuple(c[:3]) in pins)]
     hit = [x for x, names in reaching(spec["oneshot"].get("design") or {}).items()
-           if any(kind != "skipped" and any(named(n, case) for n in names) for _, case, _, kind in found)]
+           if any(named(n, c[1]) for c in ran for n in names)]
     if not hit:
         return
     with oneshot._lock:   # read and written as one step, so two gates never lose a count

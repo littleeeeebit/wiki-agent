@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from main import oneshot_build, oneshot_spec, specs
 from main import oneshot_calls as calls
-from main import oneshot_spec
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import world  # noqa: F401 — `world` is a fixture
 
@@ -42,3 +47,31 @@ def test_each_report_counts_once_toward_the_calls_its_tests_ran_and_never_for_a_
     # Only a call that needs a secret lists the tests CI skips for it.
     assert calls.summary(spec) == [{"id": "X1", "target": "번역 API", "runs": 2, "tests": ["test_translates"]},
                                    {"id": "X2", "target": "공개 환율 페이지", "runs": 1, "tests": []}]
+
+
+def test_once_pinned_only_the_pinned_case_counts_never_a_same_named_one(world):  # noqa: F811
+    oneshot_spec.saved("budget", oneshot={"design": WEB, "cases": [["t", "test_translates", "test_t.py"]]})
+    spec = oneshot_spec.spec_of("budget")
+    calls.reached(spec, [("t", "test_translates", "test_t.py", "skipped"), ("u", "test_translates", "test_u.py", "passed")])
+    assert not oneshot_spec.spec_of("budget")["oneshot"].get("calls")
+    calls.reached(spec, [("t", "test_translates", "test_t.py", "passed")])
+    assert oneshot_spec.spec_of("budget")["oneshot"]["calls"] == {"X1": 1}
+
+
+def test_each_command_of_a_gate_writes_and_counts_its_own_report(world):  # noqa: F811
+    oneshot_spec.saved("budget", oneshot={"design": WEB})
+    spec = oneshot_spec.spec_of("budget")
+    seen = []
+
+    def judge(path, commands, *a, **kw):   # each command writes the report its quoted path names
+        for command, name in zip(commands, ("test_translates", "test_rates")):
+            report = Path(re.search(r"'([^']+)'", command).group(1))
+            seen.append(report)
+            report.write_text(f'<testsuite><testcase classname="t" name="{name}"/></testsuite>', encoding="utf-8")
+        return {"ok": True}
+
+    with patch.object(specs, "judge", judge):
+        oneshot_build.judged(Path("."), SimpleNamespace(halt=None), spec,
+                             [f"pytest --junitxml={oneshot_build.REPORT}", f"pytest --junitxml={oneshot_build.REPORT} && build"], None)
+    assert len(set(seen)) == 2 and not any(r.exists() for r in seen)
+    assert oneshot_spec.spec_of("budget")["oneshot"]["calls"] == {"X1": 1, "X2": 1}

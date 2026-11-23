@@ -749,17 +749,19 @@ def built(path: Path, run, spec: dict, final: str) -> str:
 
 def judged(path: Path, run, spec: dict, commands: list[str], env: dict | None, **kw) -> dict:
     """`specs.judge` of `commands` in `env` as the server runs a gate: the output shows no secret `env` carries, and
-    the adapter's JUnit report, which may quote one, is written outside the tree and deleted after."""
+    each command's JUnit report, which may quote one, is written outside the tree, counted and deleted after."""
 
-    report = oneshot_spec.store(spec["repo"]).folder / "junit" / f"gate-{time.time_ns()}.xml"
-    report.parent.mkdir(parents=True, exist_ok=True)
+    reports = [oneshot_spec.store(spec["repo"]).folder / "junit" / f"gate-{time.time_ns()}-{i}.xml" for i in range(len(commands))]
+    reports[0].parent.mkdir(parents=True, exist_ok=True)
     try:
-        verdict = specs.judge(path, [c.replace(REPORT, literal(report.as_posix())) for c in commands], run.halt,
+        verdict = specs.judge(path, [c.replace(REPORT, literal(r.as_posix())) for c, r in zip(commands, reports)], run.halt,
                               lambda text: specs.note(run, text), env=env, hide=oneshot_needs.hidden(spec, env), **kw)
-        oneshot_calls.ran(spec, report)
+        for r in reports:
+            oneshot_calls.ran(spec, r)
         return verdict
     finally:
-        report.unlink(missing_ok=True)
+        for r in reports:
+            r.unlink(missing_ok=True)
 
 
 def held(path: Path, run, spec: dict, verdict: dict) -> str:

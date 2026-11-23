@@ -197,17 +197,20 @@ def test_a_workflow_deleted_in_the_run_is_no_ci_and_a_committed_one_passes(finis
     assert "CI 워크플로(`.github/workflows/ci.yml`)가 없다" in sent[-1][2]
 
 
-@pytest.mark.parametrize("report, said", [
-    (None, "JUnit 보고서(`artifacts/junit.xml`)가 없어"),
-    ('<testsuite><testcase classname="t" name="test_ok"/></testsuite>', "건너뛴 테스트는 없다"),
-    ('<testsuite><testcase classname="t" name="test_rate"><skipped message="N2 and N1 absent"/></testcase>'
+@pytest.mark.parametrize("folder, report, said", [
+    ("", None, "JUnit 보고서(`artifacts/junit.xml`)가 없어"),
+    ("", '<testsuite><testcase classname="t" name="test_ok"/></testsuite>', "건너뛴 테스트는 없다"),
+    ("", '<testsuite><testcase classname="t" name="test_rate"><skipped message="N2 and N1 absent"/></testcase>'
      '<testcase classname="t" name="test_other"><skipped message="slow"/></testcase></testsuite>',
      "| t test_rate | N1, N2 |"),
+    # A gate that changed into a folder wrote its report there; a pipe in a name stays inside its cell.
+    ("app", '<testsuite><testcase classname="t" name="test_values[a|b]"><skipped message="N1"/></testcase></testsuite>',
+     r"| t test_values[a\|b] | N1 |"),
 ])
-def test_the_ci_summary_step_lists_the_tests_skipped_for_a_need(tmp_path, report, said):
+def test_the_ci_summary_step_lists_the_tests_skipped_for_a_need(tmp_path, folder, report, said):
     if report:
-        (tmp_path / "artifacts").mkdir()
-        (tmp_path / "artifacts" / "junit.xml").write_text(report, encoding="utf-8")
+        (tmp_path / folder / "artifacts").mkdir(parents=True)
+        (tmp_path / folder / "artifacts" / "junit.xml").write_text(report, encoding="utf-8")
     out = tmp_path / "summary.md"
     subprocess.run([sys.executable, "-c", oneshot_pr.SKIP_STEP["run"]], cwd=tmp_path, check=True,
                    env={**os.environ, "GITHUB_STEP_SUMMARY": str(out)})

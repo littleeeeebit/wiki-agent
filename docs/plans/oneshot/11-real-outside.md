@@ -281,9 +281,10 @@ local gate. A public repository never receives a secret.
 
 The summary is a step the README turn writes as given (`oneshot_pr.SKIPS`).
 It goes after the gate's step in the same job, with `if: always()` and
-`shell: python`. It reads the gate's JUnit report and writes a table to the
-run's summary: each skipped test whose reason names a need id, with those
-ids. A missing report says so. The server's CI check (`ci_file`) requires
+`shell: python`. It reads every `artifacts/junit.xml` under the checkout,
+since the gate's command may change into a folder before writing it. It
+writes a table to the run's summary: each skipped test whose reason names a
+need id, with those ids, a `|` in a name escaped. A missing report says so. The server's CI check (`ci_file`) requires
 that step's `if`, `shell` and `run` exactly as given.
 
 ### The review reads fakes as weakened contracts
@@ -331,12 +332,15 @@ those numbers (`oneshot_calls`):
   endpoint the call names, or a module whose `calls` lead to it through
   other modules.
 - Every JUnit report a server run reads counts once toward each call one of
-  those tests ran in, passing or failing. A skip does not count. That covers
+  those tests ran in, passing or failing. A skip does not count. Each command
+  of a gate writes its own report. Once the tests commit pinned the cases,
+  only a pinned case counts, never a same-named one in another class or file. That covers
   the tests stage, the build's check of the pinned cases and every gate
   (`oneshot_build.junit`, `judged`).
 - The stage's record shows `X1 3번` per call. The finished run's summary
   shows a table: each call, its count, and, for a call that needs a secret,
-  the planned tests CI skips and the local gate runs.
+  the planned tests CI skips and the local gate runs. A repository without CI
+  calls them the tests that need a secret.
 
 ### A credential the build commits anyway
 

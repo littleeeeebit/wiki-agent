@@ -46,17 +46,21 @@ SKIPS = r"""- name: Tests owed to the local gate
   shell: python
   run: |
     import os, re
+    from pathlib import Path
     from xml.etree import ElementTree
-    try:
-        cases = list(ElementTree.parse("{report}").getroot().iter("testcase"))
-    except (OSError, ElementTree.ParseError):
-        cases = None
+    cases = None
+    for report in sorted(Path().glob("**/{report}")):   # wherever the gate's command changed into
+        try:
+            cases = (cases or []) + list(ElementTree.parse(report).getroot().iter("testcase"))
+        except (OSError, ElementTree.ParseError):
+            pass
     rows = []
     for case in cases or []:
         skip = case.find("skipped")
         why = "" if skip is None else (skip.get("message") or "") + " " + (skip.text or "")
         if ids := sorted(set(re.findall(r"\bN[1-9][0-9]*\b", why))):
-            rows.append(f"| {case.get('classname') or ''} {case.get('name') or ''} | {', '.join(ids)} |")
+            name = f"{case.get('classname') or ''} {case.get('name') or ''}".replace("|", "\\|")
+            rows.append(f"| {name} | {', '.join(ids)} |")
     lines = ["## 로컬 게이트가 맡은 테스트", ""]
     if cases is None:
         lines.append("JUnit 보고서(`{report}`)가 없어 건너뛴 테스트를 셀 수 없다.")
@@ -456,7 +460,8 @@ def summary(spec: dict) -> dict:
                        "edited": sorted({i for e in reading.get(g) or [] for i in e.get("edited") or []})}
                       for g in ("r1", "r2", "r3")],
             "spend": o.get("spend") or {}, "critiques": len(o.get("critiques") or []),
-            "looks": len(o.get("looks") or []), "apk": o.get("apk"), "calls": oneshot_calls.summary(spec)}
+            "looks": len(o.get("looks") or []), "apk": o.get("apk"), "calls": oneshot_calls.summary(spec),
+            "ci": (o.get("profile") or {}).get("visibility") == "public" and (o.get("profile") or {}).get("ci") == "github-actions"}
 
 
 def extra(spec: dict) -> dict:

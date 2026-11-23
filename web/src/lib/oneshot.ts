@@ -49,6 +49,8 @@ export type RunSummary = {
   apk?: { url?: string; name?: string; error?: string } | null
   /** Each outside call, the gate runs that reached it, and the planned tests CI skips for its secret. */
   calls?: Call[]
+  /** Whether the product repository has CI, which skips the tests that need a secret. */
+  ci?: boolean
 }
 
 /** One outside call on the card (`oneshot_calls.summary`). */
