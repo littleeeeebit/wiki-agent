@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
-from .oneshot_spec import VIEWS, idle, saved, spec_of, view
+from .oneshot_spec import SAVES, VIEWS, idle, saved, spec_of, view
 
 router = APIRouter()
 NID = re.compile(r"N[1-9]\d*")
@@ -235,8 +235,7 @@ def need_of(repo: str, nid: str, source: str) -> tuple[dict, dict]:
 
 
 CHANGED: list = []   # `f(repo, env)` before any secret changes, by any route; returns what `settled` puts back
-                     # if the store then refuses, `(oneshot as set aside, fields)`, or `None`: `oneshot_measure`
-                     # registers one
+                     # if the store then refuses, the `oneshot` fields, or `None`: `oneshot_measure` registers one
 CHANGES: dict[str, int] = {}   # changes made per repository, so a measurement sees one made while it ran
 
 
@@ -275,7 +274,8 @@ def stored(repo: str, env: str, value: str | None) -> None:
             release.secret_write(name(repo, env), value)
             changed = True
     except (ValueError, OSError) as e:
-        BACK.setdefault(repo, []).extend(filter(None, undo))   # the store kept its value: so does the result
+        at = SAVES.get(repo, 0)   # the save count as the set-aside left it: the store kept its value, so does the result
+        BACK.setdefault(repo, []).extend((at, fields) for fields in undo if fields)
         settled(repo)
         if isinstance(e, ValueError):
             raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
@@ -288,16 +288,16 @@ BACK: dict[str, list] = {}   # per repository, what a refused change set aside a
 
 
 def settled(repo: str) -> None:
-    """Each `(oneshot as set aside, fields)` a refused change left in `BACK`, put back: only while the run's whole
-    `oneshot` record is still exactly as that change saved it. Anything saved since (an input, a new run, any
-    field) leaves the result set aside, and the owner measures again. While a put-back fails, the result stays
-    set aside (no verdict on it) and the request answers 409; the next secret request tries again. `BACK` is
-    memory: after a restart the result stays set aside."""
+    """Each `(save count, fields)` a refused change left in `BACK`, put back: only while no Oneshot save came
+    since that change set the result aside (`oneshot_spec.SAVES`), even one that left the record as it was.
+    Anything saved since (an input, a new run, any field) leaves the result set aside, and the owner measures
+    again. While a put-back fails, the result stays set aside (no verdict on it) and the request answers 409;
+    the next secret request tries again. `BACK` is memory: after a restart the result stays set aside."""
 
     while BACK.get(repo):
         try:
-            aside, back = BACK[repo][0]
-            if spec_of(repo)["oneshot"] == aside:
+            at, back = BACK[repo][0]
+            if SAVES.get(repo, 0) == at:
                 saved(repo, oneshot=back)
         except (OSError, HTTPException) as e:
             raise HTTPException(409, f"비밀 값은 그대로인데 내려놓았던 결과를 되돌리지 못했다 ({type(e).__name__}) — "
