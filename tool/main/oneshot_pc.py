@@ -26,8 +26,10 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from common import masked
+
 from . import oneshot, oneshot_desktop, oneshot_desktop_look as desktop_look, oneshot_front_build as front_build, \
-    oneshot_review as review, oneshot_spec, runtime, specs
+    oneshot_look, oneshot_needs, oneshot_review as review, oneshot_spec, runtime, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -308,14 +310,16 @@ def reported(report: dict, seen: dict, data: Path, page: list[str]) -> str | Non
     return now
 
 
-def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep: Path, standing) -> dict:
+def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep: Path, standing,
+        hide: dict[str, str] | None = None) -> dict:
     """One `owner` check: its fixture, then the app from a fresh start of its scenario, then what it observes while
     both still run, each source proven again first. `passed`, `failed` or `pending` with why, or `judge` with the
     capture copied into `keep` for the critic. Once the fixture is up and bound, its job is ended, its exit proven,
     before this returns or raises, so the next check's fixture is the only window by that title. A fixture that
     never came up or could not be bound raises, and the round's look ends it with the rest. `standing` raises
     Stale once the approved build no longer stands: called before the fixture starts, and by `runs` with the app's
-    process made but not yet run."""
+    process made but not yet run. An app whose read text holds a value of `hide`, the owner's secrets it was started
+    with, fails its check, and nothing of it is captured for the critic, who sends pictures to a model."""
 
     import owner_round
 
@@ -356,6 +360,10 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
     def then(report: dict, key: str) -> dict:
         if why := ran(report, steps):
             return {"status": "failed", "why": why}
+        # As the PC look's: every string of every state the driver read, a secret's any spelling a high finding.
+        if hide and (leaked := oneshot_needs.carried([t for s in report["states"] for t in desktop_look.texts(s)],
+                                                     [], hide)):
+            return {"status": "failed", "why": oneshot_look.shown_secret(leaked)}
         if why := owner_round.proven(fixture, members(fixture_key)):   # what the app read was not the round's page
             return {"status": "failed", "why": f"고정 창이 바뀌었다 — {why}"}
         if what == "report":
@@ -401,12 +409,14 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
     return report.get("observed") or {"status": "failed", "why": "검사를 끝내지 못했다"}
 
 
-def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
+def observe(repo: str, o: dict, stopped, carry: dict | None = None, hide: dict[str, str] | None = None) -> dict[str, dict]:
     """Every check the approval lets run, each by `one` in the round's own look on the owner's desktop, whose
     cleanup is proven on every exit (RuntimeError when it is not). One round at a time across repositories
     (`_desk`), from the look's start through its cleanup, and none while any repository's earlier look is held
     (`_held`); the build is confirmed again once the round has the desktop, before each fixture starts, and with
-    each app's process made but not yet run (Stale when it no longer stands)."""
+    each app's process made but not yet run (Stale when it no longer stands). Each app starts with `carry`, the
+    owner's secrets by their `env` (`oneshot_needs.given_in`); with any to `hide`, the look's raw evidence goes with
+    its cleanup, as the PC look's does."""
 
     import desktop_session
     import owner_round
@@ -432,16 +442,17 @@ def observe(repo: str, o: dict, stopped) -> dict[str, dict]:
         if held := _held():
             raise RuntimeError("앞선 주인 화면 회차의 정리가 확인되지 않았다 — " + "; ".join(held))
         standing()
-        with desktop_session.look(looks, f"round-{uuid.uuid4().hex[:12]}", owned=False) as session:
+        with desktop_session.look(looks, f"round-{uuid.uuid4().hex[:12]}", owned=False,
+                                  disposable=bool(hide)) as session:
             # The last stop check and the resume run under the lock a stop is accepted under: one accepted first
             # always keeps the app from running.
             runs = desktop_look.Launches(session, build, desktop_look.size(o["profile"]), stopped, shoot=False,
-                                         ready=standing, gate=oneshot._lock)
+                                         ready=standing, gate=oneshot._lock, given=carry)
             for n, x in enumerate(oneshot_desktop.owner_scripted(o), 1):
                 if x["id"] not in skip:
                     runs.due()
                     results[x["id"]] = one(session, runs, n, x, build["checks"][x["id"]], exe, missing, keep,
-                                           standing)
+                                           standing, hide)
     except desktop_session.Refused as exc:
         raise RuntimeError(f"주인 화면 회차를 정리하지 못했다 — {exc}") from exc
     finally:   # a cleanup not proven stays held in the look's record, which `_held` reads
@@ -500,17 +511,21 @@ def owner_round(repo: str) -> None:
         # Used up as the round starts: however it ends, a stop or a refused turn included, the next is approved anew.
         oneshot_spec.saved(repo, oneshot={"pc": {**fresh(), "status": "running", "ran": given,
                                                  "last": (o.get("pc") or {}).get("last")}})
+        # Read once: each app holds exactly what the round's results are masked with (`common.masked`).
+        env = oneshot_needs.gate_env(spec, None)
+        carry = oneshot_needs.given_in(spec, env, oneshot_desktop.LOOK_ENV | oneshot_desktop.OWNED_ENV)
+        hide = oneshot_needs.hidden(spec, env)
         try:
-            results = observe(repo, o, stopped)
+            results = observe(repo, o, stopped, carry, hide)
         except Stale as exc:   # the build changed while the round waited for the desktop: approved anew
-            anew = {"status": "waiting", "detail": str(exc)}   # `exc` is gone once out of here
+            anew = {"status": "waiting", "detail": masked(str(exc), hide)}   # `exc` is gone once out of here
             return lambda: settled(repo, anew)
         except ValueError as exc:   # the app refused, changed its frozen copy or overran: the build's to fix
-            again = {"status": "rebuild", "detail": f"주인 화면 회차 — {exc}"}   # `exc` is gone once out of here
+            again = {"status": "rebuild", "detail": masked(f"주인 화면 회차 — {exc}", hide)}
             return lambda: settled(repo, again, store)
         except Exception as exc:   # an unproven cleanup, a fixture that never showed: nothing passes
             cut = {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"} if stopped() else \
-                {"status": "error", "detail": f"주인 화면 회차가 끝나지 못했다 — {exc}"}
+                {"status": "error", "detail": masked(f"주인 화면 회차가 끝나지 못했다 — {exc}", hide)}
             return lambda: settled(repo, cut)
         for cid, result in results.items():   # the critic judges each capture once the round's windows are gone
             if result["status"] == "judge" and not stopped():
@@ -519,6 +534,7 @@ def owner_round(repo: str) -> None:
                 results[cid] = {**result, **verdict}
         if stopped():   # a stop accepted before the round ended: never its outcome
             return lambda: settled(repo, {"status": "stopped", "detail": "주인 화면 회차를 멈췄다"})
+        results = {cid: {**r, "why": masked(r["why"], hide)} if "why" in r else r for cid, r in results.items()}
         return lambda: settled(repo, outcome(o, results), store)
 
     # A tree moved meanwhile goes back to the build's checks as an overrun does: decided against a stop, under the lock.

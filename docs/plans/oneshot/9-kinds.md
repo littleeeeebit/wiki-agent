@@ -667,6 +667,15 @@ with no stop asked meanwhile, lets it sample.
   words in order, one after another. A fixed text naming every word the
   server draws from is no capture of this round's page.
 
+Each app the round starts gets the owner's secrets as the PC look's starts
+do (11b2b), from one read of the environment at the round's start. That read
+also supplies the masks. Every string of every state the driver read gets
+the PC look's check. An app whose read text holds a secret fails its check
+with a high finding, before any capture is taken, so the critic's model
+never sees it. With any secret given, the round's look removes its raw
+evidence with its cleanup. Every result, finding and error the round keeps
+is masked.
+
 Each capture is copied out before the round's look is cleaned, and the critic
 judges it against `shows` and the fixture's words only after every window the
 round started is gone. A check stays pending when its helper cannot be built,

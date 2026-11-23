@@ -575,10 +575,13 @@ def test_the_critic_judges_a_capture_against_its_sentence_and_the_page(held, des
         pc.judged(oneshot_spec.store("budget"), held, "O3", result)
 
 
-def ran(monkeypatch, results=None, error: Exception | None = None, during=None) -> dict:
-    """The approved round run by its worker in this thread, `observe` a stand-in returning `results`."""
+def ran(monkeypatch, results=None, error: Exception | None = None, during=None, given=None) -> dict:
+    """The approved round run by its worker in this thread, `observe` a stand-in returning `results`; `given`, a
+    list, gets what each app would start with and what the round masks."""
 
-    def observe(repo, o_, stopped):
+    def observe(repo, o_, stopped, carry=None, hide=None):
+        if given is not None:
+            given.append((carry, hide))
         if during:
             during()
         if error:
@@ -611,6 +614,44 @@ def test_a_pass_whose_head_moved_while_its_copy_was_read_goes_back_to_the_build(
     monkeypatch.setattr(pc, "at_head", lambda repo, head: not moved)
     after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "passed"}}, during=lambda: moved.append(1))
     assert after["stage"] == pc.front_build.STAGE and not pc.passed(after)
+
+
+@pytest.mark.parametrize("cut", [False, True])
+def test_the_round_starts_its_apps_with_the_owners_secrets_and_keeps_none_of_them(held, monkeypatch, cut):
+    # The environment is read once: the apps hold exactly what the round's findings and errors are masked with.
+    reads = []
+    monkeypatch.setattr(pc.oneshot_needs, "gate_env", lambda spec, env: reads.append(env) or {"API_KEY": "s3cr3t"})
+    monkeypatch.setattr(pc.oneshot_needs, "given_in", lambda spec, env, own: {"API_KEY": env["API_KEY"],
+                                                                                "own": sorted(own)})
+    monkeypatch.setattr(pc.oneshot_needs, "hidden", lambda spec, env: {env["API_KEY"]: "[N1]"})
+    monkeypatch.setattr(oneshot_build, "send", lambda *a: None)
+    monkeypatch.setattr(oneshot_critique, "front_turn", lambda s: json.dumps(s["oneshot"]["fix"], ensure_ascii=False))
+    given = []
+    # A failed check's finding, or the app's refusal (`rebuild`), both back to the build.
+    after = ran(monkeypatch, error=ValueError("앱이 s3cr3t 로 멈췄다")) if cut else \
+        ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "failed", "why": "앱이 s3cr3t 를 보였다"}},
+            given=given)
+    assert reads == [None] and "s3cr3t" not in str(after) and "[N1]" in str(after)
+    if not cut:
+        assert given == [({"API_KEY": "s3cr3t", "own": sorted(pc.oneshot_desktop.LOOK_ENV | pc.oneshot_desktop.OWNED_ENV)},
+                          {"s3cr3t": "[N1]"})]
+        (finding,) = after["fix"]["findings"]
+        assert "[N1]" in finding["what"]
+
+
+def test_a_check_whose_app_shows_a_secret_fails_and_is_never_captured(held, desk):
+    reads, root = desk
+    hide = {"s3cr3t": "[N1]"}
+    report = driven()
+    report["states"][-1]["nodes"].append({"window": 101, "id": "token", "name": "S3CR3T", "type": "Text", "depth": 1})
+    window = {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}
+    for x in (window, REPORT):
+        got = pc.one(Session(), Runs(report, root / "data"), 1, x, SCENARIO, "helper.exe", "", root / "keep",
+                     lambda: None, hide)
+        assert got["status"] == "failed" and "[N1]" in got["why"] and "s3cr3t" not in got["why"].lower(), got
+    assert not reads["window"] and not list((root / "keep").iterdir())
+    # Without a secret to hide, the same app is checked as before.
+    assert checked(desk, window, report)["status"] == "judge"
 
 
 def test_a_failed_check_goes_to_the_build_as_a_finding(held, monkeypatch):
@@ -656,7 +697,7 @@ def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_throug
     order, release = [], threading.Event()
 
     @contextlib.contextmanager
-    def look(folder, key, owned):
+    def look(folder, key, owned, disposable=False):
         order.append("enter")
         try:
             yield SimpleNamespace(record={"jobs": {}})
@@ -691,10 +732,12 @@ def test_any_repositorys_held_look_record_keeps_every_round_off_the_desktop_rest
     import desktop_session
 
     order, standing, made, held, read = [], [True], [], {"spec-a": ["round-1: pid 7 is still running"]}, []
+    kept = []
 
     @contextlib.contextmanager
-    def look(folder, key, owned):
+    def look(folder, key, owned, disposable=False):
         order.append(folder.parent.parent.name)
+        kept.append((owned, disposable))
         yield SimpleNamespace(record={"jobs": {}})
 
     record = empty_rounds(monkeypatch, tmp_path, look, lambda: standing[0])
@@ -714,6 +757,11 @@ def test_any_repositorys_held_look_record_keeps_every_round_off_the_desktop_rest
     monkeypatch.setattr(pc.os, "scandir", scan)
     assert pc.observe("b", record, lambda: False) == {} and order == ["spec-b"]
     assert callable(made[0]["ready"]) and made[0]["gate"] is pc.oneshot._lock
+    assert made[0]["given"] is None and kept == [(False, False)]
+    # The owner's secrets: each app starts with them, and the look's raw evidence goes with its cleanup.
+    assert pc.observe("b", record, lambda: False, {"API_KEY": "s3cr3t"}, {"s3cr3t": "[N1]"}) == {}
+    assert made[1]["given"] == {"API_KEY": "s3cr3t"} and kept[1] == (False, True)
+    order.remove("spec-b")
     standing[0] = False   # changed while the round waited: no look opens, and the desktop is free again
     with pytest.raises(pc.Stale):
         pc.observe("a", record, lambda: False)
