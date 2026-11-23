@@ -142,14 +142,19 @@ def critique(repo: str) -> None:
     review.holding(repo, "화면 비평", body, "front_built_head", front_build.STAGE)
 
 
+def proven(look: dict) -> list[str]:
+    """The PC app's owed `look` checks a look recorded as run and passing, by this version's proof; else none."""
+
+    return look.get("proven") or [] if look.get("proof") == front_build.oneshot_desktop_look.PROOF else []
+
+
 def stale(o: dict) -> str:
     """Why the last look is no evidence for a critique or the phone round after it: it ran none of the PC app's
     owed `look` checks, or names no freeze, or another than the run's (an earlier version's look); empty when
     it is evidence."""
 
     look = (o.get("looks") or [{}])[-1]
-    proven = look.get("proven") or [] if look.get("proof") == front_build.oneshot_desktop_look.PROOF else []
-    if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in proven]:
+    if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in proven(look)]:
         return f"PC 앱에서 확인할 {', '.join(unproven)} 을 마지막 화면 검사가 돌리지 않았다"
     if look.get("build") and (not look.get("freeze") or look["freeze"] != (o.get("desktop_build") or {}).get("freeze")):
         return "마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다"
@@ -328,8 +333,10 @@ def on_pc(o: dict, owed: list[dict], last: dict) -> list[str]:
         if x["source"] == "owner":
             (seen,) = x["observe"]
             where = f"주인 화면 회차 `{(pc.get('head') or '')[:12]}` 에서 통과 — {SEEN_BY[seen]}"
-        else:
+        elif x["id"] in proven(last):
             where = f"PC 세션 {last['round']}회차 `{last['head'][:12]}` 에서 통과"
+        else:   # R3 never opens on such a look (`stale`): said as it is all the same
+            where = f"PC 세션 {last['round']}회차가 돌린 기록이 없다"
         out.append(f"- {x['id']} {x['requirement']}: {x['check']} — {where}")
     return out
 

@@ -12,7 +12,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot_brief as brief, oneshot_critique as critique, oneshot_pc as pc, oneshot_spec
+from main import oneshot_brief as brief, oneshot_critique as critique, oneshot_desktop_look, oneshot_pc as pc, \
+    oneshot_spec
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_pc import BUILD, approval, held  # noqa: F401 — `held` is a fixture
 from test_oneshot_spec import o, world  # noqa: F401 — `world` is a fixture
@@ -29,7 +30,8 @@ def looked(n: int, findings=()) -> dict:
     shots.mkdir(parents=True, exist_ok=True)
     for state in critique.STATES:
         (shots / f"S1-window-{state}.png").write_bytes(PNG)
-    return {"round": n, "head": BUILD["head"], "findings": list(findings), "freeze": BUILD["freeze"]}
+    return {"round": n, "head": BUILD["head"], "findings": list(findings), "build": BUILD["identity"],   # as the look's
+            "freeze": BUILD["freeze"], "proven": ["O1"], "proof": oneshot_desktop_look.PROOF}
 
 
 @pytest.fixture
@@ -70,6 +72,12 @@ def test_the_sheet_has_the_pc_apps_shots_and_where_each_deferred_check_passed(pa
     assert "O2 R1: 캡처한 글이 보인다 — 주인 화면 회차" in pc_part and "앱이 낸 보고" in pc_part
     assert "O3" in pc_part and "화면 합성 캡처를 비평가가 봤다" in pc_part
     assert "에뮬레이터" not in sheet and "기기에서 확인한 지적" not in sheet
+    # Only a pass the look recorded by this version's proof is said to be one.
+    for unproven in ({"proven": []}, {"proof": "an earlier version's"}):
+        looks = o()["looks"]
+        oneshot_spec.saved("budget", oneshot={"looks": [*looks[:-1], {**looks[-1], **unproven}]})
+        assert "O1 R1: 켜진다 — PC 세션 2회차가 돌린 기록이 없다" in critique.r3_sheet(oneshot_spec.spec_of("budget"), shot)
+        oneshot_spec.saved("budget", oneshot={"looks": looks})
     shown = critique.extra(oneshot_spec.spec_of("budget"))   # `held` stands the whole view in for the spec
     assert shown["r3_items"] == ["S1"] and "## PC에서 확인한 지적" in shown["r3_sheet"]
 
