@@ -681,7 +681,15 @@ a composition, the app's visible top-level windows are listed again before
 the helper samples and before the frame is kept, and any window the last
 read did not hold fails the check. Any other capture fails the check too.
 The critic's turn gets the same masks, so a failed turn's kept reason shows
-no secret. With any secret given, the round's look also
+no secret.
+
+The secret check reads the text the driver read; the capture comes after it.
+Text an app shows between that read and the capture is a limit the owner
+accepted, as it is for the PC look (11b2b). That covers a label in a window
+already read that changes, and a window that opens and closes between the
+two listings of a composition. The window listings, the whole reads and the
+masks stand. No re-read binds the capture's pixels to the text that was
+checked. With any secret given, the round's look also
 removes its raw evidence with its cleanup. Every result, finding and error
 the round keeps is masked. A folder the cleanup could not remove is named in
 the kept record by its own name and the error's kind and code, never by a
