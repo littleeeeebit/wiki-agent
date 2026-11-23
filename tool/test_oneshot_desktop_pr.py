@@ -9,6 +9,7 @@ installer, which the real checks read (`test_release_desktop.nsis`). GitHub's Re
 nothing goes out.
 """
 
+import json
 import os
 import shutil
 import struct
@@ -177,14 +178,19 @@ def test_a_pc_app_with_no_installer_table_still_finishes_its_gate_and_says_why(p
     ("tool", "`cargo` 는 확정한 도구도 작업트리 안의 파일도 아니거나"),
     ("chain", "`build` 는 평범한 명령을 ` && ` 로만 잇는다"),
     ("far", "`build` 가 체크아웃 밖의 경로를 가리킨다"),
+    ("rooted", "`build` 가 체크아웃 밖의 경로를 가리킨다"),
+    ("config", "`src-tauri/tauri.conf.json` 의 `frontendDist` 가 체크아웃 밖을 가리킨다"),
     ("source", "빌드가 체크아웃의 커밋된 파일을 바꿨다")])
 def test_a_release_table_whose_build_fails_its_checks_sends_the_readme_turn_back(pc, monkeypatch, wrong, said):
     tree, sent, github, _ = pc
+    if wrong == "config":   # the approved config builds the frontend the live worktree holds
+        approved(tree, ("src-tauri/tauri.conf.json", json.dumps({"build": {"frontendDist": str(tree / "dist")}})))
     if wrong == "tauri":   # the confirmed stack is Tauri, and the README turn left its table out
         readme(tree)
     else:
         tabled(tree, DESKTOP.replace('"python tauri.py"', {"tool": '"cargo tauri build"', "chain": '"python a.py; cargo b"',
-                                                                 "far": "'python tauri.py --dist ../tree/dist'"}
+                                                                 "far": "'python tauri.py --dist ../tree/dist'",
+                                                                 "rooted": "'python tauri.py --dist \\wt\\dist'"}
                                      .get(wrong, '"python tauri.py"')))
     real = release.build
     if wrong == "source":   # a build that rewrites a committed file
@@ -278,6 +284,19 @@ def test_with_a_web_app_the_pc_apps_files_are_held_as_alone(pc):
     both = {**o(), "intent": {"kind": "webapp", "kinds": ["webapp", "desktop"]}}
     assert oneshot_pr.unapproved(tree, both, git(tree, "rev-parse", "HEAD"), {"release": {}}) == ["app.py"]
     assert "Any other change is refused." in oneshot_pr.scope(both)
+
+
+def test_a_config_whose_paths_stay_in_the_checkout_builds(pc):
+    tree, _, _, built = pc
+    approved(tree, ("src-tauri/Tauri.windows.conf.json", json.dumps({"build": {
+        "frontendDist": "../dist", "beforeBuildCommand": {"script": "npm run build", "cwd": ".."}}})))
+    tabled(tree, DESKTOP)
+    assert oneshot_pr.release_checked(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event(), {}, {}) == ""
+    assert len(built) == 1
+    write(tree, "src-tauri/Tauri.windows.conf.json", json.dumps({"build": {"beforeBuildCommand": "npm --prefix C:/wt run b"}}))
+    approved(tree)
+    assert "`beforeBuildCommand` 가 체크아웃 밖을 가리킨다" in oneshot_pr.release_checked(
+        tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event(), {}, {})
 
 
 def test_a_checkout_whose_removal_fails_once_is_removed_on_the_second_try(pc, monkeypatch):

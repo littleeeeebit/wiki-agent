@@ -332,9 +332,41 @@ def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
                     or n == source and n in added and version_file(path, head, n))]
 
 
-# An absolute path (a drive, a share, a home, a POSIX root with a folder in it; a switch such as `/p:x` is not one),
-# or a `..` step.
-FAR = re.compile(r"(?<![\w$%./])(?:[A-Za-z]:[\\/]|\\\\|~[\\/]|/[^\s/:\"']+/)|(?:^|[\\/\s\"'=])\.\.(?:[\\/]|$|[\s\"'])")
+# An absolute path (a drive, a share or a path rooted at the current drive, a home, a POSIX root with a folder in
+# it; a switch such as `/p:x` is not one), or a `..` step.
+FAR = re.compile(r"(?<![\w$%./\\])(?:[A-Za-z]:[\\/]|\\|~[\\/]|/[^\s/:\"']+/)|(?:^|[\\/\s\"'=])\.\.(?:[\\/]|$|[\s\"'])")
+# The Tauri configs a build merges, the Windows one included, in JSON, JSON5 or TOML.
+CONFIGS = re.compile(r"(?:^|/)(?:tauri(?:\.windows)?\.conf\.json5?|tauri(?:\.windows)?\.toml)$", re.IGNORECASE)
+
+
+def configured(src: Path) -> str:
+    """Why the PC app's committed Tauri config would build from outside the checkout `src`: its frontend's files
+    (`build.frontendDist`, v1's `distDir`) not inside it, or a command it runs first (`beforeBuildCommand`,
+    `beforeBundleCommand`) naming a path outside (`outside`) or run from outside. Empty when none does. A config it
+    cannot read is refused, JSON5 with comments among them."""
+
+    root = src.resolve()
+    for name in filter(CONFIGS.search, release.git(src, "-c", "core.quotepath=off", "ls-files", "-z").split("\0")):
+        try:
+            text = (src / name).read_text(encoding="utf-8")
+            build = (tomllib.loads(text) if name.lower().endswith(".toml") else json.loads(text)).get("build") or {}
+        except (OSError, ValueError, AttributeError) as exc:
+            return f"`{name}` 를 읽지 못했다 — {type(exc).__name__}"
+
+        def inside(value: str) -> bool:
+            return bool(re.match(r"https?://", value)) or ((src / name).parent / value).resolve().is_relative_to(root)
+
+        for key in ("frontendDist", "distDir", "frontend-dist", "dist-dir"):
+            values = build.get(key, [])
+            for value in values if isinstance(values, list) else [values]:
+                if not isinstance(value, str) or not inside(value):
+                    return f"`{name}` 의 `{key}` 가 체크아웃 밖을 가리킨다 — {value!r}"
+        for key in ("beforeBuildCommand", "beforeBundleCommand", "before-build-command", "before-bundle-command"):
+            run = build.get(key) or {}
+            script, cwd = (run, "") if isinstance(run, str) else (str(run.get("script", "")), str(run.get("cwd", "")))
+            if far := outside(script) or (cwd if cwd and not inside(cwd) else ""):
+                return f"`{name}` 의 `{key}` 가 체크아웃 밖을 가리킨다 — {far}"
+    return ""
 
 
 def outside(command: str) -> str:
@@ -400,6 +432,8 @@ def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, fr
                     raise ValueError(f"`build` 는 {oneshot_build.CHAIN}")
                 if far := outside(cfg[kind]["build"]):   # the checkout is all it reads: no worktree file after R3
                     raise ValueError(f"`build` 가 체크아웃 밖의 경로를 가리킨다 — {far}: 저장소 안의 상대 경로만 쓴다")
+                if kind == "desktop" and (far := configured(src)):   # nor what its committed config points at
+                    raise ValueError(far)
                 table = {**cfg[kind], "build": oneshot_build.run_as(cfg[kind]["build"], spec["oneshot"], src)}
                 if kind == "android":
                     apk = release.build(src, table, later, kit, halt, drop=drop)
