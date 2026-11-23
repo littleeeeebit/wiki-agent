@@ -172,7 +172,7 @@ def test_a_clean_round_at_the_cap_earns_its_confirming_round_on_the_same_freeze(
         critique.critique("budget")   # the cap's round, clean on the new freeze: never a rebuild, a medium aside
         assert not o().get("stopped") and o()["working"] == "critique" and o()["stage"] == "critique"
         critique.critique("budget")   # its confirmation on the same freeze
-    assert o()["stage"] == "r3" and o()["stopped"]["reason"] == "kind"
+    assert o()["stage"] == "r3" and not o().get("stopped") and o()["r3"]["round"] == 1   # R3 opens on it
 
 
 def test_a_look_that_ran_none_of_the_pc_apps_owed_look_checks_goes_back_to_the_build(judged):

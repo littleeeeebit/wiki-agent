@@ -142,14 +142,19 @@ def critique(repo: str) -> None:
     review.holding(repo, "화면 비평", body, "front_built_head", front_build.STAGE)
 
 
+def proven(look: dict) -> list[str]:
+    """The PC app's owed `look` checks a look recorded as run and passing, by this version's proof; else none."""
+
+    return look.get("proven") or [] if look.get("proof") == front_build.oneshot_desktop_look.PROOF else []
+
+
 def stale(o: dict) -> str:
     """Why the last look is no evidence for a critique or the phone round after it: it ran none of the PC app's
     owed `look` checks, or names no freeze, or another than the run's (an earlier version's look); empty when
     it is evidence."""
 
     look = (o.get("looks") or [{}])[-1]
-    proven = look.get("proven") or [] if look.get("proof") == front_build.oneshot_desktop_look.PROOF else []
-    if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in proven]:
+    if unproven := [x["id"] for x in oneshot_desktop.looked_for(o) if x["id"] not in proven(look)]:
         return f"PC 앱에서 확인할 {', '.join(unproven)} 을 마지막 화면 검사가 돌리지 않았다"
     if look.get("build") and (not look.get("freeze") or look["freeze"] != (o.get("desktop_build") or {}).get("freeze")):
         return "마지막 화면 검사가 지금 얼린 PC 앱 빌드의 것이 아니다"
@@ -294,6 +299,8 @@ def r3_sheet(spec: dict, shot, phone_shot=None) -> str:
                   f"모두 에뮬레이터 {last['round']}회차 `{last['head'][:12]}` 의 계측 테스트에서 통과했다.", "",
                   *[f"- {x['id']} [{x['severity']}] {x['requirement']} `{x['location']}`: {x['reason']} — 확인: {x['check']}"
                     for x in owed]]
+    if pc_owed := [x for x in o.get("owed") or [] if x["kind"] == "desktop"]:
+        lines += ["", *on_pc(o, pc_owed, last)]
     if phone:
         lines += ["", *measured(phone), "", *walkthroughs(spec)]
     lines += ["", "<details><summary>다른 화면, 상태, 회차마다의 전후, 기계 검사 기록</summary>", ""]
@@ -310,6 +317,28 @@ def r3_sheet(spec: dict, shot, phone_shot=None) -> str:
         lines.append(f"- {x['round']}회차 `{x['head'][:12]}`: 높음 {counts['high']}, 보통 {counts['medium']}, 낮음 {counts['low']}")
     lines += ["", "</details>", ""]
     return "\n".join(lines)
+
+
+SEEN_BY = {"report": "앱이 낸 보고", "window": "앱 창의 캡처를 비평가가 봤다",
+           "composition": "화면 합성 캡처를 비평가가 봤다"}
+
+
+def on_pc(o: dict, owed: list[dict], last: dict) -> list[str]:
+    """A PC app's deferred checks and where each passed: a `look` check in the look on the run's own desktop, an
+    `owner` check in the owner's desktop round, which ran only when one was owed."""
+
+    pc = o.get("pc") or {}
+    out = ["## PC에서 확인한 지적", "", "백엔드 리뷰가 PC 앱을 띄워야만 보인다며 미룬 지적이다.", ""]
+    for x in owed:
+        if x["source"] == "owner":
+            (seen,) = x["observe"]
+            where = f"주인 화면 회차 `{(pc.get('head') or '')[:12]}` 에서 통과 — {SEEN_BY[seen]}"
+        elif x["id"] in proven(last):
+            where = f"PC 세션 {last['round']}회차 `{last['head'][:12]}` 에서 통과"
+        else:   # R3 never opens on such a look (`stale`): said as it is all the same
+            where = f"PC 세션 {last['round']}회차가 돌린 기록이 없다"
+        out.append(f"- {x['id']} {x['requirement']}: {x['check']} — {where}")
+    return out
 
 
 def measured(phone: dict) -> list[str]:
@@ -429,7 +458,8 @@ def decide(repo: str, body: Decisions) -> dict:
                         "findings": asked_fixes(spec, body, briefed, comments)},
                 "r3": {**o["r3"], "decisions": decisions, "next_marks": {k: "edited" for k in comments}}})
     if not comments:
-        if oneshot_spec.spec_of(repo)["oneshot"]["stage"] == oneshot_pr.STAGE:   # outside the lock: the turn takes the worktree's hold
+        after = oneshot_spec.spec_of(repo)["oneshot"]
+        if after["stage"] == oneshot_pr.STAGE and not after.get("stopped"):   # outside the lock: the turn takes the worktree's hold
             oneshot_pr.begin(repo)
         return oneshot_spec.view(oneshot_spec.spec_of(repo))
     oneshot_build.send(repo, front_build.STAGE, front_turn(spec))
@@ -442,6 +472,10 @@ def approved(repo: str) -> None:
     and a tree that moved since goes back to the build's checks."""
 
     def moving(store, spec, tree) -> bool:
+        if oneshot_spec.held({**spec["oneshot"], "stage": oneshot_pr.STAGE}):   # a PC app's S8 is the next step's
+            oneshot_spec.saved(repo, oneshot={"stage": oneshot_pr.STAGE, "working": None,
+                                              "stopped": oneshot_spec.kind_stop(oneshot_pr.STAGE)})
+            return False
         # `working` names the README turn before it is sent: a server that dies in between leaves it for
         # `recover`, and the turn that follows sends the queued instruction when it ends.
         oneshot_spec.saved(repo, oneshot={"stage": oneshot_pr.STAGE, "working": oneshot_pr.STAGE})

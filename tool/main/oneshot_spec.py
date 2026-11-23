@@ -552,7 +552,7 @@ def standing(repo: str, build: dict) -> bool:
 def kind_stop(stage: str, o: dict | None = None) -> dict:
     """The `kind` stop at `stage`, where this version's run ends."""
 
-    return {"reason": "kind", "state": stage, "detail": {"r3": "화면 비평과 기기 회차를 마쳤다 — R3 는 다음 버전에서 이어진다"}.get(
+    return {"reason": "kind", "state": stage, "detail": {"pr": "R3 를 승인했다 — 풀 리퀘스트는 다음 버전에서 이어진다"}.get(
         stage, "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다")}
 
 
