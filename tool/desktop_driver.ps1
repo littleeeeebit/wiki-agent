@@ -243,8 +243,9 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
   $script:walked.Add($element)   # its identity is read by `Items`, under that operation's own deadline
   $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded
   if (-not $open) {
-    try {
-      $open = $element.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -in
+    try {   # without defaults: an unsupplied state is unknown, never the client's `LeafNode`
+      $e = $element.GetCurrentPropertyValue([System.Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty, $true)
+      $open = -not ($e -is [System.Windows.Automation.ExpandCollapseState]) -or $e -in
         @([System.Windows.Automation.ExpandCollapseState]::Expanded, [System.Windows.Automation.ExpandCollapseState]::PartiallyExpanded)
     } catch { $open = $true }   # its state unread: its items are owed
   }

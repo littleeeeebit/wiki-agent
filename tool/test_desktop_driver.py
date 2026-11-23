@@ -382,6 +382,13 @@ def test_a_toggle_state_is_read_without_defaults_so_an_unsupplied_one_is_unknown
     assert "if ($t -is [System.Windows.Automation.ToggleState]) { [string]$t } else { $null }" in nodes
 
 
+def test_an_unsupplied_expansion_state_has_its_items_audited_never_taken_for_a_leaf():
+    nodes = desktop_driver.SCRIPT.read_text(encoding="utf-8").split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
+    assert "ExpandCollapsePattern]::ExpandCollapseStateProperty, $true)" in nodes and \
+        ".Current.ExpandCollapseState" not in nodes
+    assert "$open = -not ($e -is [System.Windows.Automation.ExpandCollapseState]) -or" in nodes
+
+
 def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
     script = tmp_path / "form.ps1"
     # The app holds a lone surrogate itself: a request's JSON would carry one only as U+FFFD.
