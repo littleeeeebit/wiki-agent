@@ -1052,6 +1052,7 @@ export const workReset = (path: string, keep: Keep) =>
   post('/api/work/reset', { path, keep }).then((r) => json<Kept>(r, '작업 문맥 비우기'))
 export const workAnswer = (body: {
   path: string; session_id: string; id: string; allow: boolean; scope: 'once' | 'session'; answers?: string[]
+  picks?: (number[] | null)[]
 }) => post('/api/work/answer', body).then((r) => json(r, '승인'))
 export const workStop = (path: string, turn: string) =>
   post('/api/work/stop', { path, turn }).then((r) => json(r, '멈춤'))

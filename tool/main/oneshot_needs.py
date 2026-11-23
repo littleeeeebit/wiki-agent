@@ -14,14 +14,20 @@ the gate's output shows `[N1]` where it would stand (`hidden`).
 
 from __future__ import annotations
 
+import hashlib
+import itertools
+import json
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from common import errorlog, folded, masked, overlaps, unescaped
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
 from .oneshot_spec import VIEWS, idle, saved, spec_of, view
@@ -29,6 +35,10 @@ from .oneshot_spec import VIEWS, idle, saved, spec_of, view
 router = APIRouter()
 NID = re.compile(r"N[1-9]\d*")
 ENV = re.compile(r"[A-Z][A-Z0-9_]*")
+# What the agent's launch sets or drops (`common.host.environment`, `agent.deepseek.environment`), and what an
+# agent CLI reads as its own login: a need of that name would never reach the agent as given.
+LAUNCH = re.compile(r"WIKI_AGENT_.*|ORCA_.*|RELEASE_KEY_PASSWORD|ANTHROPIC_.*|CLAUDE_.*|DEEPSEEK_API_KEY|"
+                    r"OPENAI_API_KEY|CODEX_.*")
 KINDS = {"secret": "비밀 값", "account": "계정", "tool": "프로그램", "file": "파일"}
 MAX_SECRET = 2560   # bytes Credential Manager holds in one credential, as UTF-16
 
@@ -51,6 +61,8 @@ def parsed(value, where: str) -> list[dict]:
         env = n.get("env")
         if n["kind"] == "secret" and not (isinstance(env, str) and ENV.fullmatch(env)):
             raise ValueError(f"{where} {n['id']}: 비밀 값은 `env` 에 대문자 환경 변수 이름을 적는다")
+        if n["kind"] == "secret" and LAUNCH.fullmatch(env):
+            raise ValueError(f"{where} {n['id']}: `{env}` 는 서버가 에이전트를 띄울 때 정하는 이름이다 — 다른 이름을 적는다")
         if n["kind"] != "secret" and env is not None:
             raise ValueError(f"{where} {n['id']}: `env` 는 비밀 값에만 붙는다")
         out.append({"id": n["id"], "what": " ".join(n["what"].split()), "kind": n["kind"], **({"env": env} if env else {})})
@@ -118,12 +130,22 @@ def shown(spec: dict) -> list[dict]:
 
     o = spec["oneshot"]
     kept = o.get("given") or {}
-    return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid))}
+    return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid)),
+             "leaked": nid in marked(o), "unsure": nid in unsure(o) - marked(o),
+             "launch": bool(LAUNCH.fullmatch(n.get("env") or ""))}
             for nid, (n, calls) in owed(o.get("design") or {}).items()]
 
 
 def missing(spec: dict) -> list[dict]:
     return [n for n in shown(spec) if not n["given"]]
+
+
+def unready(spec: dict) -> str:
+    """Why R1 is not approved yet: something the owner gives is not given, or a need bears a launch name
+    (`launchable`), which an edit at R1 renames."""
+    if lacking := missing(spec):
+        return "주인이 줄 것이 아직 없다 — " + ", ".join(f"{x['id']} {x['what']}" for x in lacking)
+    return launchable(spec)
 
 
 def secret_needs(spec: dict) -> list[tuple[str, dict]]:
@@ -157,8 +179,40 @@ def hidden(spec: dict, env: dict | None) -> dict[str, str]:
 
     have = {k.upper(): v for k, v in (env or {}).items()}
     # ponytail: the raw and URL-quoted forms only; another encoding of a value (base64, JSON-escaped) still shows
-    return {form: f"[{nid}]" for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))
-            for form in {value, quote(value, safe="")}}
+    forms = {nid: {value, quote(value, safe="")} for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))}
+    every = [form for kept in forms.values() for form in kept]
+    return {form: label(nid, every, i) for i, (nid, kept) in enumerate(forms.items()) for form in kept}
+
+
+class Label(str):
+    """A need's mask as shown, carrying the need's id: the label need not spell it (`label`)."""
+
+    def __new__(cls, shown: str, need: str):
+        made = super().__new__(cls, shown)
+        made.need = need
+        return made
+
+
+def label(nid: str, values: list[str], n: int) -> str:
+    """`[N1]` for need `N1`, or the first other spelling none of `values` meets (`common.overlaps`), so no value
+    shows through a label and masking twice is masking once, for a value given now or kept from before. At last, a
+    run of a character no value holds, one longer for each need."""
+
+    for left, right in ("[]", "⟦⟧", "‹›", "«»"):
+        if not any(overlaps(v, [shown := f"{left}{nid}{right}"]) for v in values):
+            return Label(shown, nid)
+    run = next(c for c in map(chr, itertools.count(0x25A0)) if not any(folded(c) in folded(v) for v in values))
+    return Label(run * (n + 2), nid)
+
+
+def launchable(spec: dict) -> str:
+    """Why R1 is not approved: a design saved before `LAUNCH` names what the agent's launch sets, drops or reads as
+    its own login. The card stays at R1, where an edit renames it. One approved before keeps running: that need
+    never reaches the build cell (`agent`), only the gate, and its row says so (`shown`)."""
+    if bad := sorted({n["env"] for _, n in secret_needs(spec) if LAUNCH.fullmatch(n["env"])}):
+        return (f"비밀 값 이름 {', '.join(f'`{b}`' for b in bad)} 은(는) 에이전트를 띄울 때 서버가 정하는 이름이다 "
+                "— 그 항목을 수정 의견으로 다른 이름으로 바꾼 뒤 승인한다")
+    return ""
 
 
 def gate_env(spec: dict, env: dict | None) -> dict | None:
@@ -171,6 +225,284 @@ def gate_env(spec: dict, env: dict | None) -> dict | None:
     return {**base, **secrets(spec)}
 
 
+def agent(spec: dict | None) -> tuple[dict, dict]:
+    """A oneshot build session's environment over the server's, and what it shows instead of each value: every
+    given secret by its `env`, and `None` (dropped) for one the design names but the store does not hold."""
+
+    if not (spec or {}).get("oneshot") or not (needs := secret_needs(spec)):
+        return {}, {}
+    given = secrets(spec)
+    # A launch name (`LAUNCH`) never reaches the agent: the launch overrides it or reads it as its own login.
+    env = {n["env"]: given.get(n["env"]) for _, n in needs if not LAUNCH.fullmatch(n["env"])}
+    return env, hidden(spec, given)   # every given value masked, a launch name's too: the gate's output carries it
+
+
+def leaked(path: Path, spec: dict, hide: dict | None, final: str, last: bool = False) -> str:
+    """Why a build turn is refused when what it leaves holds a secret its session carried (`hide`, from `agent`):
+    its answer, every commit since the design commit with its message and names (the history the pull request
+    pushes), or what it has not committed. Matched in any casing; the refusal names the need, never the value, and
+    a failed read names only what failed: a Git or file error can quote what it read."""
+
+    # Whatever the store holds now, a rotated value is still in those commits; the scan below still runs, so a
+    # commit made meanwhile is recorded too.
+    if not hide:   # nothing carried, nothing found now: the sheet keeps only what the history still holds
+        if spec_of(spec["repo"])["oneshot"].get("leaked"):
+            saved(spec["repo"], oneshot={"leaked": []})
+        return still_tainted(path, spec_of(spec["repo"]))
+    step = ""
+
+    def git(*args: str) -> str:
+        nonlocal step
+        step = f"git {args[0]}"
+        done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120)
+        if done.returncode:
+            raise OSError(done.returncode)
+        return done.stdout
+
+    def read(file: Path) -> str:
+        nonlocal step
+        step = "커밋하지 않은 파일 읽기"
+        return file.read_bytes().decode("utf-8", "ignore") if file.is_file() else ""
+
+    base = spec["oneshot"].get("design_head")
+    try:   # a tree that cannot be read is refused, never taken as clean
+        # ponytail: text diffs and untracked text only; a secret inside a committed binary is not seen
+        untracked = [path / f for f in git("ls-files", "--others", "--exclude-standard", "-z").split("\0") if f]
+        log = git("log", *HISTORY, f"{base}..HEAD") if base else ""
+        places = {"답": decoded(final), "커밋": decoded(log + git("diff", "HEAD")),
+                  "커밋하지 않은 파일": decoded("\n".join(map(read, untracked)))}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return unscanned(path, spec, hide, f"{step} 이(가) 실패했다 ({type(exc).__name__})")
+    found: dict[str, set[str]] = {}
+    for where, text in places.items():
+        flat = folded(text)
+        for value, label in hide.items():
+            if value in text or folded(value) in flat:
+                found.setdefault(where, set()).add(label)
+    marked = sorted(set().union(*map(need_ids, found.values())))
+    if marked != (spec_of(spec["repo"])["oneshot"].get("leaked") or []):   # the sheet marks each need found now
+        saved(spec["repo"], oneshot={"leaked": marked})
+    if "커밋" in found and base:   # the commits that hold it stay refused until the history no longer has them
+        try:
+            hit = {c: ids for c in git("rev-list", f"{base}..HEAD").split() if (ids := held_in(git("show", *HISTORY, c), hide))}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return unscanned(path, spec, hide, f"{step} 이(가) 실패했다 ({type(exc).__name__})")
+        o = spec_of(spec["repo"])["oneshot"]   # each commit with every need it was ever found holding
+        old = o.get("tainted_needs") or {}
+        saved(spec["repo"], oneshot={"tainted": sorted({*(o.get("tainted") or []), *hit}), "tainted_needs": {
+            **old, **{c: sorted({*old.get(c, []), *ids}) for c, ids in hit.items()}}})
+    # A hold with these very values is covered by this finished scan; only a turn's last scan (`settle`) ends it.
+    d = digest(spec, hide) if (holds := spec_of(spec["repo"])["oneshot"].get("unscanned") or {}) else None
+    if last and d in holds:
+        saved(spec["repo"], oneshot={"unscanned": {k: v for k, v in holds.items() if k != d}})
+    refused = still_tainted(path, spec_of(spec["repo"]), covered=d)
+    if not found:
+        return refused
+    every, rows = list(hide), list(owed(spec["oneshot"].get("design") or {}).items())
+
+    def ref(label: str) -> str:
+        """The need as the sheet names it, each one unique there: the first of `[id]`, its variable and its row
+        (`시트의 k번째 항목`, the sheet's order) that no value meets (`overlaps` reads across whatever text is around
+        it), so no mask of this text or of a prompt around it rewrites the reference. Its label when a value meets
+        all three; the sheet marks every need found (`leaked`), so even that one is found there."""
+        nid = getattr(label, "need", None) or str(label).strip("[]")
+        k, n = next(((k, n) for k, (i, (n, _)) in enumerate(rows, 1) if i == nid), (0, {}))
+        return next((r for r in (f"[{nid}]", n.get("env"), k and f"시트의 {k}번째 항목") if isinstance(r, str) and r
+                     and not any(overlaps(v, [r]) for v in every)), str(label))
+
+    ids = sorted(ref(lab) for lab in set().union(*found.values()))
+    return " / ".join(filter(None, [refused, (
+        f"비밀 값 {', '.join(ids)} 이(가) {', '.join(found)} 에 들어 있다 (시트에 표시) — 값은 환경 변수로만 읽고 어디에도 적지 "
+        "않는다. 커밋에 들어갔다면 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서도 지운다")]))
+
+
+# A commit's names, message and patch; a merge's against its first parent, so a resolution's own text is read.
+HISTORY = ("-p", "--diff-merges=first-parent", "--format=%an%n%ae%n%cn%n%ce%n%B")
+
+
+def need_ids(labels) -> set[str]:
+    return {getattr(lab, "need", None) or str(lab).strip("[]") for lab in labels}
+
+
+def decoded(text: str) -> str:
+    """`text`, then the same text as a reader of its JSON gets it (`common.unescaped`): what any block, fence or
+    parser sends or saves is the decoded value, which a JSON escape (`\\u0041`, `\\/`) spells differently."""
+    return f"{text}\n{unescaped(text)}"
+
+
+def held_in(text: str, hide: dict) -> list[str]:
+    """The needs whose value `text` holds, in any casing, as spelled or as its JSON decodes (`decoded`), by id."""
+    text = decoded(text)
+    flat = folded(text)
+    return sorted(need_ids(label for value, label in hide.items() if value in text or folded(value) in flat))
+
+
+def marked(o: dict) -> set[str]:
+    """The needs the sheet marks: those a turn's answer, commits or files held when last checked (`leaked`), and those
+    a commit still in the history holds (`tainted_needs`), so the mark and the history refusal clear together."""
+    return {*(o.get("leaked") or []), *(n for c in o.get("tainted") or [] for n in (o.get("tainted_needs") or {}).get(c, []))}
+
+
+def unsure(o: dict) -> set[str]:
+    """The needs a scan that could not finish carried (`unscanned`, `failed`): not found, awaiting a scan."""
+    return {n for h in (o.get("unscanned") or {}).values() if h.get("failed") for n in h["needs"]}
+
+
+def owe(path: Path, run) -> None:
+    """A turn carrying a oneshot's secrets owes a scan from its start: a hold for its set of values is written
+    before anything is sent, so a turn that never reaches its last scan (`settle`), a restart included, still
+    holds what it may have made. Raises, and the turn does not start, when the hold cannot be written."""
+
+    from . import specs   # it imports this module
+
+    if (hide := getattr(run.chat, "hide", None)) and (spec := specs.owner(path)) and spec.get("oneshot"):
+        holds, d = spec_of(spec["repo"])["oneshot"].get("unscanned") or {}, digest(spec, hide)
+        if d not in holds:
+            saved(spec["repo"], oneshot={"unscanned": {**holds, d: {"needs": sorted(need_ids(hide.values())), "failed": False}}})
+
+
+def settle(path: Path, run, final: str, moving: bool = False) -> bool:
+    """The end of every turn on a oneshot's worktree, while it still holds it, after the stage check and whatever
+    that check wrote or committed: the tree as it is released is scanned under the turn's own mask, or reconciled
+    without one, however the turn ended. Never raises; a scan that broke leaves the hold a failed read leaves
+    (`unscanned`, kept in memory when even that write fails). A refusal of a turn whose stage passed and was
+    `moving` the run on stops it with the reason, shown on the run and resumable once fixed, and returns `False`:
+    nothing that was to follow starts. A refused turn's repair turn goes on; it is scanned again before its check."""
+
+    from . import oneshot_spec, specs   # they import this module
+
+    hide, spec, moving = getattr(getattr(run, "chat", None), "hide", None), None, moving and getattr(run, "passed", False)
+    try:
+        if not ((spec := specs.owner(path)) and spec.get("oneshot")):
+            return True
+        why = leaked(path, spec, hide, final, last=True)
+    except Exception as exc:
+        errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
+        try:
+            why = unscanned(path, spec, hide, type(exc).__name__) if hide and spec else f"비밀 값 검사가 실패했다 ({type(exc).__name__})"
+        except Exception as again:
+            errorlog.record("oneshot-scan", type(again).__name__, path=str(path))
+            why = "비밀 값 검사를 끝내지 못했다 — 턴이 시작할 때 적어 둔 보류가 게시와 다음 단계를 막는다"
+    if why and moving and spec:
+        try:
+            oneshot_spec.store(spec["repo"]).stop("block", masked(why, hide or {}))
+        except Exception as exc:
+            errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
+    return not (why and moving)
+
+
+# The UTF-16 byte orders an archive's text may take; a value in any of them, or in UTF-8, is found.
+ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be")
+
+
+def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
+    """Why an asset about to be uploaded (the frozen APK) is not sent: a value of `hide` (the store's now, by
+    default) anywhere in it, as UTF-8 or either UTF-16, in any casing: the raw file, every byte the upload sends,
+    and, an APK being a zip, each entry decompressed with its name. A file that cannot be read is refused too."""
+
+    import zipfile
+    import zlib
+
+    hide = agent(spec)[1] if hide is None else hide
+    if not hide:
+        return ""
+    try:
+        parts = [file.read_bytes()]   # every byte that goes up, signing blocks and gaps included
+        if zipfile.is_zipfile(file):
+            with zipfile.ZipFile(file) as z:   # and what the entries hold compressed
+                parts += [b for i in z.infolist() for b in (i.filename.encode(), z.read(i))]
+    except (OSError, zipfile.BadZipFile, RuntimeError, ValueError, zlib.error, EOFError) as exc:
+        return masked(f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})", hide)
+    # UTF-16 pairs may start at an odd byte: each buffer is read from its first and its second byte.
+    found = sorted({n for b in parts for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)})
+    return masked(f"비밀 값 {', '.join(f'[{n}]' for n in found)} 이(가) 올릴 파일에 들어 있다 — 올리지 않는다", hide) \
+        if found else ""
+
+
+def publishable(path: Path, spec: dict) -> str:
+    """Why nothing goes out: checked at each external write (the APK upload, the push and the pull request) on the
+    exact state it sends, under the values the store holds now, with every refusal and hold recorded before. A
+    check that cannot finish refuses too."""
+
+    hide: dict = {}
+    try:
+        hide = agent(spec)[1]
+        return masked(leaked(path, spec, hide, ""), hide)   # as the stop that keeps it shows it
+    except Exception as exc:
+        errorlog.record("oneshot-scan", type(exc).__name__, path=str(path))
+        return masked(f"비밀 값 검사를 끝내지 못해 게시하지 않는다 ({type(exc).__name__})", hide)
+
+
+def digest(spec: dict, hide: dict) -> str:
+    """The values a session carried, as a slow salted digest (`rotated`'s), never a value."""
+    return hashlib.pbkdf2_hmac("sha256", json.dumps(sorted(hide)).encode(), str(spec["oneshot"].get("run")).encode(),
+                               200_000).hex()
+
+
+def unscanned(path: Path, spec: dict, hide: dict, what: str) -> str:
+    """A scan that could not finish marks its turn's hold (`unscanned`, written at the turn's start by `owe`) failed:
+    refused and shown as unsure until a turn's last scan with the same values finishes (`leaked`), or the history
+    after the design commit is gone and nothing is left uncommitted (`still_tainted`); a value replaced meanwhile
+    can no longer be looked for."""
+    # One hold per set of values, each owed alone; the turn's start wrote it (`owe`), this marks it failed.
+    holds = spec_of(spec["repo"])["oneshot"].get("unscanned") or {}
+    saved(spec["repo"], oneshot={"unscanned": {**holds, digest(spec, hide): {
+        "needs": sorted(need_ids(hide.values())), "failed": True}}})
+    return " / ".join(filter(None, [still_tainted(path, spec_of(spec["repo"])),
+                                    f"비밀 값이 남았는지 확인하지 못했다 — {what}"]))
+
+
+def still_tainted(path: Path, spec: dict, covered: str | None = None) -> str:
+    """Why a turn is refused while a commit once found holding a secret is still in HEAD's history, or empty,
+    clearing the record once none is. Bound to the commits, never to today's values, so a value the owner
+    replaced or took back is refused until the history is rewritten. A scan left owed (`unscanned`) is refused
+    the same way, until the history after the design commit is gone and nothing is left uncommitted."""
+
+    def empty(*args: str) -> bool:   # a read that failed is never empty
+        done = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60)
+        return done.returncode == 0 and not done.stdout.strip()
+
+    # `covered`: the hold of the values a scan just finished with, which that scan answers for, kept until its turn's
+    # last scan ends it.
+    holds, base = spec["oneshot"].get("unscanned") or {}, spec["oneshot"].get("design_head")
+    hold = {k: v for k, v in holds.items() if k != covered}
+    if hold and base and empty("rev-list", f"{base}..HEAD") and empty("status", "--porcelain"):
+        saved(spec["repo"], oneshot={"unscanned": {k: v for k, v in holds.items() if k == covered}})
+        hold = {}
+    unsure = "비밀 값 검사를 끝내지 못한 턴이 있다 — 같은 값으로 다시 검사하거나 설계 커밋 뒤의 기록을 지운다" if hold else ""
+    tainted = spec["oneshot"].get("tainted") or []
+    left = []
+    for c in tainted:
+        # Gone only when Git says so: not an ancestor (1), or no such commit (1 from `--verify --quiet`). Any other
+        # answer, a read that failed included, keeps it.
+        done = subprocess.run(["git", "merge-base", "--is-ancestor", c, "HEAD"], cwd=path, capture_output=True,
+                              timeout=60)
+        if done.returncode != 1 and subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{c}^{{commit}}"],
+                                                   cwd=path, capture_output=True, timeout=60).returncode != 1:
+            left.append(c)
+    if left != tainted:   # only the commits Git says are gone leave the record, with the needs they held
+        saved(spec["repo"], oneshot={"tainted": left, "tainted_needs": {
+            c: n for c, n in (spec["oneshot"].get("tainted_needs") or {}).items() if c in left}})
+    return " / ".join(filter(None, [unsure, (f"비밀 값이 들어 있던 커밋 {', '.join(c[:12] for c in left)} 이(가) 아직 "
+                                           "기록에 있다 — 설계 커밋 뒤의 그 커밋들을 다시 써서 기록에서 지운다") if left else ""]))
+
+
+def rotated(spec: dict | None, env: dict, rows: list[dict]) -> str | None:
+    """Whether the secrets a oneshot session carries differ from those the worktree's conversation last ran with:
+    it held those values, so it must not resume. The answer is written as a `context` row by the caller, which
+    `resumable` never resumes past, so a restart before the next turn still starts afresh. The new digest is
+    returned when it differs, else `None`: a slow salted digest, never a value. Nothing is saved here, so the
+    session lock never waits on the spec's."""
+
+    if not (spec or {}).get("oneshot"):
+        return None
+    data = json.dumps(sorted(env.items())).encode()
+    digest = hashlib.pbkdf2_hmac("sha256", data, str(spec["oneshot"].get("run")).encode(), 200_000).hex() if env else ""
+    return None if digest == next((r["secrets"] for r in reversed(rows) if "secrets" in r), "") else digest
+
+
 def told(spec: dict) -> str:
     """The needs as the tests and the build read them: a secret by its variable, a program or a file by the path
     it was given at, an account by what it is. Never a secret's value."""
@@ -179,7 +511,10 @@ def told(spec: dict) -> str:
     lines = []
     for nid, (n, calls) in owed(spec["oneshot"].get("design") or {}).items():
         uses = ", ".join(x["id"] for x in calls)
-        if n["kind"] == "secret":
+        if n["kind"] == "secret" and LAUNCH.fullmatch(n["env"]):   # never in the agent's shell (`agent`)
+            lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret the server's gate alone has: it is not in "
+                         f"your shell, so do not set, read or repair it there; the gate runs its live check ({uses})")
+        elif n["kind"] == "secret":
             lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret ({uses})")
         elif n["kind"] in ("tool", "file") and (path := (given.get(nid) or {}).get("path")):
             lines.append(f"- {nid} {n['what']}, a {'program' if n['kind'] == 'tool' else 'file'} at `{path}` ({uses})")

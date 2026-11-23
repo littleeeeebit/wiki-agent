@@ -757,8 +757,8 @@ def decide(repo: str, body: Decisions) -> dict:
                   reading=read(o, "r1", body.reading, comments, briefed))
             return view(spec_of(repo))
         from . import oneshot_needs   # it imports this module
-        if lacking := oneshot_needs.missing(spec):   # plan 11: no run proceeds on a stand-in for what the owner gives
-            raise HTTPException(409, "주인이 줄 것이 아직 없다 — " + ", ".join(f"{x['id']} {x['what']}" for x in lacking))
+        if why := oneshot_needs.unready(spec):   # plan 11: no run proceeds on a stand-in for what the owner gives
+            raise HTTPException(409, why)
         saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions},
                              "reading": read(o, "r1", body.reading, (), briefed)})
         approved(repo)

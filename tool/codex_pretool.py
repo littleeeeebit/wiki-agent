@@ -1,6 +1,7 @@
 """Codex PreToolUse: the shared wiki's command blocks and its own checks, together."""
 
-# First, so the wait on the other imports and on stdin is already being watched.
+# First, so the wait on the other imports and on stdin is watched and a credential deny armed.
+import hook_deadline
 import hook_diagnostics  # noqa: F401
 import json
 from pathlib import Path
@@ -58,6 +59,7 @@ if __name__ == "__main__":
         payload = json.load(sys.stdin)
         answer = verdict(payload) if isinstance(payload, dict) else None
         if answer:
-            json.dump(answer, sys.stdout, ensure_ascii=False)
+            hook_deadline.send(answer)   # once: the deadline's answer never follows it, nor it the deadline's
     except Exception as error:
         print(type(error).__name__, file=sys.stderr)
+        __import__("secrets_held").closed_out(error)   # a session carrying a oneshot's secrets runs nothing unchecked

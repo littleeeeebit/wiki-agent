@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from main import handoff, specs
+from main import oneshot_needs as needs
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_specs import made, repo as repository_fixture, spec_block
 
@@ -233,9 +234,71 @@ def test_a_oneshot_escalation_that_goes_nowhere_leaves_the_stage_resumable(task)
     repo, sid = task
     specs.update("proj", sid, oneshot={"stage": "tests", "working": "tests"})
     run = Run()
-    with patch("main.oneshot_spec.store") as store:
+    with patch("main.oneshot_spec.store") as store, patch("main.oneshot_needs.leaked", return_value=""):
         assert specs._check(repo, run, block("escalation", {"conflict": "x"})) is None
     assert store.return_value.stop.call_args[0][0] == "block" and run.checked
+
+
+def test_a_oneshot_escalation_holding_a_secret_never_reaches_the_author_or_the_card(task):
+    repo, sid = task
+    specs.update("proj", sid, oneshot={"stage": "tests", "working": "tests"})
+    run = Run()
+    run.chat.hide = {"tok-31415926": "[N1]"}   # value → label, as `oneshot_needs.hidden` builds it
+    with patch("main.oneshot_needs.leaked", return_value="`API_TOKEN` 이 답에 있다") as leaked, \
+         patch.object(handoff, "ask") as ask, patch("main.oneshot_build.checked", return_value=None) as checked:
+        assert specs._check(repo, run, block("escalation", {**ESCALATION, "question": "tok-31415926?"})) is None
+    assert leaked.called and checked.called and not ask.called
+    assert "tok-31415926" not in json.dumps(specs.load("proj", sid), ensure_ascii=False)
+    # A clean escalation goes on; what the author's turn returns or raises is masked before it is kept.
+    with patch("main.oneshot_needs.leaked", return_value=""), patch("main.oneshot_spec.store"), \
+         patch.object(handoff, "ask", side_effect=RuntimeError("quoted tok-31415926")):
+        specs._check(repo, run, block("escalation", ESCALATION))
+    saved = specs.load("proj", sid)
+    assert "tok-31415926" not in json.dumps(saved, ensure_ascii=False) and "[N1]" in saved["fault"]
+    # An author reply whose decoded value holds it is used for nothing: not saved, not sent on.
+    escaped = "Here.\n\n```guidance\n{\"text\": \"use \\u0074ok-31415926\"}\n```\n"   # JSON's \u0074 is "t"
+    assert "tok-31415926" not in escaped and "tok-31415926" in needs.decoded(escaped)
+    with patch("main.oneshot_needs.leaked", return_value=""), patch("main.oneshot_spec.store"), \
+         patch.object(handoff, "ask", return_value=escaped), patch.object(specs, "again") as again:
+        specs._check(repo, run, block("escalation", ESCALATION))
+    saved = specs.load("proj", sid)
+    assert not again.called and saved["escalations"][-1]["answer"] == {"kind": "refused"}
+    assert "tok-31415926" not in json.dumps(saved, ensure_ascii=False) and "비밀 값이 있어" in saved["fault"]
+    # A need id the value meets is never written either: the refusal names nothing, and every exit is masked.
+    run.chat.hide = {"n1": "[N1]"}
+    specs.update("proj", sid, escalations=[])   # a fresh round: the earlier ones above used the round budget
+    with patch("main.oneshot_needs.leaked", return_value=""), patch("main.oneshot_spec.store") as store, \
+         patch.object(handoff, "ask", return_value="```guidance\n{\"text\": \"n1\"}\n```\n"):
+        specs._check(repo, run, block("escalation", ESCALATION))
+    stopped = store.return_value.stop.call_args[0][1]
+    assert "n1" not in stopped.casefold().replace("[n1]", "") and "비밀 값이 있어" in stopped
+
+
+def test_a_published_oneshots_escalation_is_scanned_as_it_decodes_before_the_author_sees_it(task):
+    repo, sid = task
+    specs.update("proj", sid, oneshot={"stage": "done"})   # published: the build checks own it no longer
+    run = Run()
+    run.chat.hide = {"tok-31415926": "[N1]"}
+    seen = []
+    with patch("main.oneshot_needs.leaked", side_effect=lambda p, s, h, final: seen.append(final) or "[N1] 답"), \
+         patch.object(handoff, "ask") as ask:
+        specs._check(repo, run, block("escalation", ESCALATION))
+    assert seen and not ask.called and "[N1]" in specs.load("proj", sid)["fault"]
+    # A spec-update is scanned the same way before it can save a revision.
+    rev = specs.load("proj", sid)["rev"]
+    with patch("main.oneshot_needs.leaked", return_value="[N1] 답") as leaked, patch.object(specs, "revise") as revise:
+        specs._check(repo, run, block("spec-update", {"rev": rev, "reason": "tok-31415926", "out": [], "done": ["x"]}))
+    assert leaked.called and not revise.called and specs.load("proj", sid)["rev"] == rev
+
+
+def test_an_unfinished_oneshots_hold_gates_the_handoff_with_nothing_carried(task):
+    repo, sid = task
+    specs.update("proj", sid, oneshot={"stage": "tests", "working": "tests"})
+    run = Run()   # no secrets carried this turn: the recorded hold still refuses (`still_tainted`)
+    with patch("main.oneshot_needs.leaked", return_value="기록에 남아 있다") as leaked, \
+         patch.object(handoff, "ask") as ask, patch("main.oneshot_build.checked", return_value=None) as checked:
+        specs._check(repo, run, block("escalation", ESCALATION))
+    assert leaked.call_args[0][2] is None and checked.called and not ask.called
 
 
 def test_a_rewritten_goal_carries_the_task_and_a_promoted_range_is_checked_again(task, repo):

@@ -132,8 +132,17 @@ def push(path: Path, spec: dict, command: list[str]) -> subprocess.CompletedProc
     """Every server push of a task branch: refused, as a failed push, while declared evidence leaked."""
     from . import specs
 
-    why = leaked(path, spec)
+    why = leaked(path, spec) or oneshot(path, spec)
     return subprocess.CompletedProcess(command, 1, "", why) if why else specs.sh(command, path, 120)
+
+
+def oneshot(path: Path, spec: dict) -> str:
+    """A oneshot's branch, whatever stage pushes it (the first pull request, a review repair, a maintenance push):
+    refused while its secret check refuses, on the exact state the push sends (`oneshot_needs.publishable`)."""
+    from . import oneshot_needs, specs
+
+    spec = spec if spec.get("oneshot") else specs.owner(path)   # the spec pushed, else the checkout's owner
+    return oneshot_needs.publishable(path, spec) if spec and spec.get("oneshot") else ""
 
 
 def _unpublished(path: Path, spec: dict) -> None:

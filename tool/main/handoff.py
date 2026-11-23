@@ -268,16 +268,32 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     # Run here, still holding the worktree as the gate does: the author reads the tree the implementer left,
     # and its lines land in this turn's record.
     specs.note(run, f"충돌을 명세를 쓴 모델 `{author.get('model') or '기본 모델'}` 에게 넘긴다 ({len(past) + 1}/{ROUNDS})")
+    from common import masked
+
+    hide = getattr(getattr(run, "chat", None), "hide", None)   # a oneshot's secrets: never saved or sent on
     try:
         answer = ask(path, author, PROMPT, question(spec, value), run)
     except Exception as exc:   # an unanswered round trip is the person's to settle, never a silent retry
         if run.halt.is_set():
             return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped"}}])
-        return person(spec, run, [*past, {**entry, "answer": {"kind": "failed", "error": str(exc)[:500]}}],
-                      f"상위 모델 왕복이 실패했다 — {exc}")
+        error = masked(str(exc), hide)
+        return person(spec, run, [*past, {**entry, "answer": {"kind": "failed", "error": error[:500]}}],
+                      f"상위 모델 왕복이 실패했다 — {error}")
+    from . import oneshot_needs
+
+    if hide and oneshot_needs.held_in(answer, hide):   # nothing of it is used, nor named
+        return person(spec, run, [*past, {**entry, "answer": {"kind": "refused"}}],
+                      "상위 모델의 답에 이 세션의 비밀 값이 있어 쓰지 않는다")
     if run.halt.is_set():   # a Stop pressed while the author answered: nothing of the answer takes effect
         return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "text": answer[-2000:]}}])
     return applied(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec, past, entry, answer)
+
+
+def safe(run, reason: str) -> str:
+    """`reason` masked with the turn's secrets: every exit of the handoff keeps or shows it."""
+    from common import masked
+
+    return masked(reason, getattr(getattr(run, "chat", None), "hide", None))
 
 
 def ended(spec: dict, run, reason: str):
@@ -285,6 +301,8 @@ def ended(spec: dict, run, reason: str):
     and its finalizer records no stop of its own over it."""
 
     from . import oneshot_spec, specs
+
+    reason = safe(run, reason)
     if (spec.get("oneshot") or {}).get("stage") not in (None, "done"):
         oneshot_spec.store(spec["repo"]).stop("block", reason)
         run.checked = True
@@ -302,6 +320,8 @@ def person(spec: dict, run, history: list[dict], reason: str):
     on its pause."""
 
     from . import loop, specs
+
+    reason = safe(run, reason)   # before the loop's pause and the stage's stop keep it
     spec = specs.update(spec["repo"], spec["id"], escalations=history) or spec
     if loop.LOOPING.fullmatch(spec["state"]):
         loop.asked(spec["repo"], spec["id"], reason)
