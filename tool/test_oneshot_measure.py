@@ -737,6 +737,17 @@ def test_a_plan_that_no_longer_holds_goes_back_to_the_build_agent(at_measure):
     assert o()["stage"] == "build" and sent[-1][1] == "build" and "no longer holds" in sent[-1][2]
 
 
+def test_the_worker_measures_with_the_built_heads_plan_whatever_the_tree_holds(at_measure):
+    tree, _ = at_measure
+    given()
+    git(tree, "update-index", "--skip-worktree", ".wiki/measure.json")   # an edit git status does not show
+    write(tree, ".wiki/measure.json", "{")
+    measure.HALTS["budget"] = measure.Halted()   # as `start` makes it: no stop pressed in an earlier run holds
+    measure.measure("budget")
+    assert o()["measures"][-1]["status"] == "owner"
+    assert measure.committed(tree, "HEAD", ".wiki/no-such-file") is None
+
+
 def test_a_committed_plan_that_is_not_utf_8_goes_back_to_the_build_agent(at_measure):
     tree, sent = at_measure   # a code-page byte in a step: never repaired into a plan the worker cannot read
     plan = tree / ".wiki/measure.json"

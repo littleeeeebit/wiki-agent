@@ -13,10 +13,12 @@ import math
 import os
 import shutil
 import stat
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-from common import masked
+from common import masked, process
 
 CLIPS = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".ogg": "audio/ogg", ".opus": "audio/ogg",
          ".flac": "audio/flac", ".mp4": "video/mp4", ".webm": "video/webm"}
@@ -76,6 +78,17 @@ def cleaned(value, hide: dict[str, str]):
     if isinstance(value, list):
         return [cleaned(v, hide) for v in value]
     return (label_of(value, hide) or value) if isinstance(value, (int, float)) else value
+
+
+def committed(path: Path, rev: str, name: str) -> bytes | None:
+    """`name` as commit `rev` holds it, byte for byte, or `None` when it does not. Git writes into a file, not a
+    pipe, as `specs.sh` does on Windows: a timeout never waits for a pipe a child of git still holds open."""
+
+    with tempfile.TemporaryFile() as out:
+        done = subprocess.run(["git", "show", f"{rev}:{name}"], cwd=path, stdout=out, stderr=subprocess.DEVNULL,
+                              stdin=subprocess.DEVNULL, timeout=60, **process.background_options())
+        out.seek(0)
+        return None if done.returncode else out.read()
 
 
 def plain(p: Path, kind: int = stat.S_IFREG) -> bool:

@@ -40,8 +40,8 @@ from pydantic import BaseModel
 from common import masked, process, shell
 
 from . import oneshot, oneshot_build, oneshot_needs, oneshot_publish, oneshot_spec, release, runtime, specs, work
-from .oneshot_kept import (CLIPS, MAX_CLIPS, clips_of, fresh, kept_from, label_of, plain, spelled,  # noqa: F401
-                           strict, tail)
+from .oneshot_kept import (CLIPS, MAX_CLIPS, clips_of, committed, fresh, kept_from, label_of, plain,  # noqa: F401
+                           spelled, strict, tail)
 from .oneshot_publish import commented
 from .query import _lock as work_lock, hold
 
@@ -178,12 +178,9 @@ def planned(path: Path, spec: dict, rev: str | None = None) -> dict:
     """The worktree's plan, checked; at commit `rev` when given: the built HEAD's, whatever the tree holds now."""
 
     try:
-        if rev:   # the committed bytes, decoded as strictly as the worker reads the file: never a repaired text
-            shown = subprocess.run(["git", "show", f"{rev}:{PLAN}"], cwd=path, capture_output=True, timeout=120,
-                                   stdin=subprocess.DEVNULL, **process.background_options())
-            if shown.returncode:
-                raise FileNotFoundError
-        value = strict(shown.stdout.decode("utf-8") if rev else (path / PLAN).read_text(encoding="utf-8"))
+        if rev and (shown := committed(path, rev, PLAN)) is None:   # its bytes, decoded strictly: never repaired
+            raise FileNotFoundError
+        value = strict(shown.decode("utf-8") if rev else (path / PLAN).read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ValueError(f"`{PLAN}` 가 없다 — 실측 계획(serve, measure, inputs, metrics)을 커밋한다") from None
     except (OSError, ValueError, RecursionError) as exc:
@@ -404,7 +401,7 @@ def measure(repo: str) -> None:
     def body(store, spec, tree):
         o = spec["oneshot"]
         try:
-            plan = planned(tree, spec)
+            plan = planned(tree, spec, o["built_head"])   # the built HEAD's, as Start checked it: never the tree's
             if missing := [x["id"] for x in plan["inputs"] if not has(spec, x)]:
                 raise ValueError(f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")
             if (o.get("pr1") or {}).get("head") != o["built_head"]:
