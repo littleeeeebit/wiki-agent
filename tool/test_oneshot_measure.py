@@ -275,6 +275,10 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     given()
     measure.measure("budget")
     assert o()["measures"][-1]["status"] == "owner"
+    with patch.object(measure, "retire", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))), \
+            pytest.raises(HTTPException, match="바꾸지 않았다"):   # the result set aside first, or the store kept
+        oneshot_needs.forget("budget", ENV)
+    assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "owner"
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
     measure.measure("budget")

@@ -239,16 +239,21 @@ CHANGED: list = []   # `f(repo, env)` after any secret changes, by whichever rou
 
 def stored(repo: str, env: str, value: str | None) -> None:
     """A secret written, or removed with `None`; a failure names the store, never the value. Every route that
-    changes a secret writes through here, so `CHANGED` hears each change."""
+    changes a secret writes through here, so `CHANGED` hears each change, before the store changes: a waiting
+    result is set aside first, and when that fails the store is left as it was."""
 
+    try:
+        for f in CHANGED:
+            f(repo, env)
+    except OSError as e:
+        raise HTTPException(409, f"기다리는 결과를 먼저 내려놓지 못해 비밀 값을 바꾸지 않았다 ({type(e).__name__}) — "
+                                 "다시 시도한다") from None
     try:
         release.secret_write(name(repo, env), value) if value is not None else release.secret_delete(name(repo, env))
     except ValueError:
         raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
     except OSError as e:
         raise HTTPException(409, f"자격 증명 관리자를 고치지 못했다 — {e}") from None
-    for f in CHANGED:
-        f(repo, env)
 
 
 @router.post("/api/oneshot/spec/{repo}/needs/{nid}")
