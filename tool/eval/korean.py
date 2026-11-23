@@ -8,7 +8,8 @@ product path — A en/EN, B ko/EN, C en/KO, D ko/KO — run in
 checks that need no host, and the report's pair gates and attribution.
 
 `--check` validates the pair file against its dataset: shapes, eligibility,
-heading maps and fact units, and the seven groups of twelve. The output
+heading maps and fact units, the seven groups of twelve, and every label on
+the English original it stands for. The output
 overlay check is `tool/eval/overlay.py`.
 """
 
@@ -42,6 +43,22 @@ HANGUL = re.compile(r"[가-힣]")
 SENTENCE = re.compile(r"(?<=[.!?])\s+")
 # Lines that are a block of their own (a heading, a table row) or start one (a list item, a quote).
 OWN_LINE, STARTS = re.compile(r"#|\|"), re.compile(r"[-*+]\s|\d+[.)]\s|>")
+# Polarity, after NegEx and ConText (docs/research/korean-set-labels.md):
+# a cue, the phrases that hold one but negate nothing, and what ends a cue's scope.
+# A cue governs up to five words after it, or three before it (`deals are not tracked`).
+# A comma, colon or point inside a number ends nothing;
+# `and` ends it, so the next proposition is its own (`never use it and errors are shown`).
+# `or` does not: `no captions or subtitles` negates both.
+CUE = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless)\b|n't\b", re.I)
+PSEUDO = re.compile(r"\b(?:no|not)\s+(?:more|less|later|earlier)\s+than\b|\bnot\s+only\b|\bnot\s+exceed|"
+                    r"\bwithout\s+(?:delay|fail)\b|\bno\s+matter\b|\bno\s+doubt\b", re.I)
+CLAUSE = re.compile(r"[;!?\n]|[,.:](?!\d)|\b(?:and|but|although|though|however|whereas|while|which|except)\b", re.I)
+# What a question pastes: its first quotation, in double, typographic or single quotation marks
+# (a single mark only where no word joins it, so `What's` opens nothing).
+QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”|‘[^’]*’(?!\w)|«[^»]*»|「[^」]*」|『[^』]*』|(?<!\w)'.+?'(?!\w)", re.S)
+# With nothing quoted or pasted on one line, a label's first sentence (`Prospect asks: Can we pay? ...`).
+LABELLED = re.compile(r"^[^:\n]{1,60}:\s.*?[.?!](?=\s)", re.S)
+BEFORE, AFTER = 5, 3
 
 
 # -- the set --------------------------------------------------------------------
@@ -97,9 +114,9 @@ def invalid(pairs: dict, data: dict) -> list[str]:
         if not isinstance(p.get("input", {}).get("ko"), str) or not HANGUL.search(p["input"]["ko"]):
             out.append(f"{where}: input.ko is a Korean wording")
         m = p.get("meaning") or {}
-        if set(m) != {"require", "forbid", "literals"} or not phrases(m["require"]) or not all(
-                isinstance(m[k], list) and all(isinstance(s, str) and s for s in m[k]) for k in ("forbid", "literals")):
-            out.append(f"{where}: meaning is {{require: [[...]], forbid: [...], literals: [...]}}")
+        if set(m) - {"asked"} != {"require", "forbid", "literals"} or not phrases(m["require"]) or \
+                not phrases(m.get("asked", [])) or not all(strings(m[k]) for k in ("forbid", "literals")):
+            out.append(f"{where}: meaning is {{require: [[...]], asked?: [[...]], forbid: [...], literals: [...]}}")
         if p.get("review") not in (pairs["labels"].get("reviews") or {}):
             out.append(f"{where}: no recorded review")
         out += [f"{where}: {page} has no twin" for page in sorted(files(i) - set(pairs["twins"]))]
@@ -382,14 +399,79 @@ def lost(text: str, require: list[list[str]], literals: list[str]) -> list[str]:
 
     best = None
     for said in sentences(text) or [""]:
-        low = said.lower()
-        missing = [f"none of {g}" for g in require if not any(p.lower() in low for p in g)] + \
-                  [p for x in literals if (p := literal_problem(x, said))]
+        missing = missed(said, require) + [p for x in literals if (p := literal_problem(x, said))]
         if not missing:
             return []
         if best is None or rank(missing) < rank(best):
             best = missing
     return best
+
+
+def cued(phrase: str) -> bool:
+    return bool(CUE.search(PSEUDO.sub(" ", phrase)))
+
+
+def denied(text: str, i: int, j: int) -> bool:
+    """Whether a negation cue governs `text[i:j]`: one in the same clause, at
+    most `BEFORE` words before it or `AFTER` words after it."""
+
+    before = PSEUDO.sub(" ", CLAUSE.split(text[:i])[-1]).split()[-BEFORE:]
+    after = PSEUDO.sub(" ", CLAUSE.split(text[j:])[0]).split()[:AFTER]
+    return bool(CUE.search(" ".join(before)) or CUE.search(" ".join(after)))
+
+
+def missed(text: str, require: list[list[str]]) -> list[str]:
+    """The `require` groups `text` does not meet. Phrases match as
+    `meaning.at` does (a number whole).
+    A phrase a cue governs does not meet its group there in two cases:
+    when the label has no negation in it (`does not have alt text` is not `have alt text`),
+    or when it is the positive wording in a group of negations
+    (`does not stay on` is not `no longer switch off`).
+    A label that names the negation holds it in its own phrases (`never autoplay`),
+    and what it negates (`sound`) is not checked for one."""
+
+    from eval.meaning import at
+
+    positive = not any(cued(p) for g in require for p in g)
+    guard = lambda g, p: positive or (not cued(p) and any(cued(q) for q in g))  # noqa: E731
+    return [f"none of {g}" for g in require
+            if not any(not (guard(g, p) and denied(text, i, j)) for p in g for i, j in at(p, text))]
+
+
+def asked_part(text: str, literals: list[str]) -> str:
+    """What a question asks after what it pastes. The pasted part is the
+    first quotation or pasted literal, whichever starts first, with whatever
+    starts inside it. Where the translator put the line breaks does not move
+    it, and a term the question itself quotes later (`a "shared cart"`,
+    `"formulas"`) stays in it. With neither, it is the last line, and on a
+    single line what follows a label's first sentence (`Prospect asks: ...?`)."""
+
+    from eval.meaning import at
+
+    first = QUOTED.search(text)
+    spans = sorted(([first.span()] if first else []) + [s[0] for x in literals if (s := at(x, text))])
+    if not spans:
+        s = text.strip()
+        return s.rsplit("\n", 1)[-1] if "\n" in s else s[m.end():] if (m := LABELLED.match(s)) else s
+    end = spans[0][1]
+    for i, j in spans[1:]:
+        if i < end:
+            end = max(end, j)
+    return text[end:]
+
+
+def check(meaning: dict, text: str) -> list[str]:
+    """A question's meaning labels against its English: `missed`, any
+    `forbid` phrase, and each literal as a whole token. `asked` groups are
+    the asked part and are met only after what the question pastes
+    (`asked_part`): the pasted `Shared carts` is not the asked `private cart`."""
+
+    from eval.meaning import at, literal_problem
+
+    asked = asked_part(text, meaning["literals"])
+    return missed(text, meaning["require"]) + [f"asked {m}" for m in missed(asked, meaning.get("asked", []))] + \
+        [f"has {p!r}" for p in meaning["forbid"] if at(p, text)] + \
+        [p for x in meaning.get("literals", []) if (p := literal_problem(x, text))]
 
 
 def rank(missing: list[str]) -> tuple[int, int]:
@@ -445,17 +527,30 @@ def facts(pairs: dict, chunks: list[dict], label, english) -> list[dict]:
     return out
 
 
+def baseline(pairs: dict, data: dict) -> list[str]:
+    """Labels that fail on the English originals: each pair's meaning on its
+    intent's English question, and each fact unit on its English section. A
+    label that fails there would count a faithful translation as a loss."""
+
+    intents, known = {i["id"]: i for i in data["intents"]}, dataset.pages(data)
+    out = [f"{p['intent']}: {m}" for p in pairs["pairs"]
+           for m in check(p["meaning"], intents[p["intent"]]["variants"]["en"])]
+    for page, twin in sorted(pairs["twins"].items()):
+        body = {path.split(" > ")[-1]: b for path, b in dataset.sections(known[page])}
+        out += [f"{page} fact {f['id']}: {m}" for f in twin["facts"]
+                for m in lost(body.get(f["section"], ""), f["require"], f["literals"])]
+    return out
+
+
 def question(meaning: dict, row: dict) -> dict:
     """The meaning labels against a Korean question's normalized English as
     the row recorded it. Not normalized is its own outcome, never a pass;
     a literal found only in a hyphenated word is uncertain."""
 
-    from eval import meaning as labels
-
     normalized = (row.get("normalization") or {}).get("query")
     if normalized not in evidence.USABLE or not row.get("question_en"):
         return {"status": "not_normalized", "normalization": normalized}
-    wrong = labels.check(meaning, {"status": "translated", "text": row["question_en"]})
+    wrong = check(meaning, row["question_en"])
     return {"status": status(wrong), "missing": wrong}
 
 
@@ -700,10 +795,11 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="python tool/eval/korean.py", description="Reliability PR 9's pairs")
     parser.add_argument("--pairs", type=Path, default=PAIRS)
-    parser.add_argument("--check", action="store_true", help="validate the pair file and its seven groups of twelve")
+    parser.add_argument("--check", action="store_true",
+                        help="validate the pair file, its seven groups of twelve and its labels on the English originals")
     args = parser.parse_args(argv)
     pairs, data = load(args.pairs)
-    wrong = allocation(pairs, data)
+    wrong = baseline(pairs, data)
     print("\n".join(wrong) or f"{len(pairs['pairs'])} pairs, {len(pairs['twins'])} twins; calibration intents "
                               f"per group {calibration(pairs, data)}; reviewed by "
                               f"{pairs['labels']['reviewed_by'] or 'nobody yet'}")
