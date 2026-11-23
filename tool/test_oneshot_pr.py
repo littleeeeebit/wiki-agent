@@ -5,6 +5,7 @@ gate run for real in a temporary worktree, and GitHub is `test_specs.Remote`, so
 is pushed and no pull request is made.
 """
 
+import contextlib
 import json
 import os
 import subprocess
@@ -348,25 +349,6 @@ def test_a_repairs_publication_stacks_on_the_measured_draft_never_a_replacement(
     assert not remote.created()
 
 
-def test_a_base_lookup_that_times_out_before_s8s_push_stops_the_run_so_it_can_be_resumed(finished):
-    tree, sent = finished
-    readme(tree)
-    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
-    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
-        check(tree, answer(report()))()
-    remote = Remote()
-
-    def timed_out(args, cwd, timeout=60):
-        if args[:3] == ["gh", "repo", "view"]:
-            raise subprocess.TimeoutExpired(args, timeout)
-        return remote(args, cwd, timeout)
-
-    with patch.object(specs, "sh", timed_out):
-        assert check(tree, SUMMARIZED) is None
-    assert o()["working"] is None and o()["stopped"]["reason"] == "pr" and "TimeoutExpired" in o()["stopped"]["detail"]
-    assert not remote.pushes() and not remote.created()
-
-
 @pytest.mark.parametrize("change, said", [
     # an adapter gate that dropped the contract's command: refused as any change outside `[release]`, unrun
     (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "`[release]` 밖이"),
@@ -398,22 +380,26 @@ def test_a_push_github_refuses_stops_the_run_with_its_reason(finished):
     assert o()["stopped"]["reason"] == "pr" and "push 실패" in o()["stopped"]["detail"] and not remote.created()
 
 
-def test_a_push_that_times_out_stops_the_run_so_it_can_be_resumed(finished):
+@pytest.mark.parametrize("slow", [["git", "push"], ["gh", "repo", "view"]])   # the push, or the draft check before it
+def test_a_push_that_times_out_stops_the_run_so_it_can_be_resumed(finished, slow):
     tree, sent = finished
     readme(tree)
+    if slow[0] == "gh":   # with PR #1, the draft's base is looked up before anything is pushed
+        oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     remote = Remote()
 
     def timed_out(args, cwd, timeout=60):
-        if args[:2] == ["git", "push"]:
+        if args[:len(slow)] == slow:
             raise subprocess.TimeoutExpired(args, timeout)
         return remote(args, cwd, timeout)
 
-    with patch.object(specs, "sh", timed_out), pytest.raises(subprocess.TimeoutExpired):
+    with patch.object(specs, "sh", timed_out), \
+            (pytest.raises(subprocess.TimeoutExpired) if slow[0] == "git" else contextlib.nullcontext()):
         check(tree, SUMMARIZED)
     assert o()["working"] is None and o()["stopped"]["reason"] == "pr" and "TimeoutExpired" in o()["stopped"]["detail"]
-    assert not remote.created()
+    assert not remote.pushes() and not remote.created()
 
 
 def test_a_pull_request_text_asked_again_is_the_runs_own_turn(finished):
