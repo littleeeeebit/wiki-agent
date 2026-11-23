@@ -309,7 +309,9 @@ def desk(monkeypatch, tmp_path):
     monkeypatch.setattr(owner_round, "proven", lambda binding, members: "")
     monkeypatch.setattr(owner_round, "bind", lambda job, hwnd, members, title=None, seen=None:
                         reads["bound"].append(seen) or {"job": job, "hwnd": hwnd})
-    monkeypatch.setattr(owner_round, "window_read", lambda *a: reads["window"].append(a) or {"read": True, "file": str(capture)})
+    monkeypatch.setattr(owner_round, "window_read", lambda *a, **k: reads["window"].append(a) or (
+        {"read": False, "why": why} if (why := k["also"]() if k.get("also") else "") else   # proven before the go
+        {"read": True, "file": str(capture)}))
     monkeypatch.setattr(owner_round, "surface_read", lambda *a: reads["surface"].append(a) or {"read": True, "file": str(capture)})
     monkeypatch.setattr(owner_round, "ended", lambda session, key, what="": reads["ended"].append(key))
     (tmp_path / "keep").mkdir()
@@ -505,6 +507,28 @@ def test_a_steps_postcondition_off_a_read_that_was_not_whole_proves_nothing(held
     report = driven()
     report["states"][2]["nodes"].insert(0, {"window": 101, "type": "List", "items": 3, "unread": 1})
     assert "약속한 상태" in checked(desk, SCREEN, report)["why"]
+
+
+@pytest.mark.parametrize("x, gone_at", [
+    (SCREEN, 2),   # the report: proven before it is read, gone by the time it was
+    ({**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}, 2),   # gone before the helper's go
+    ({**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}, 3),   # gone once the frame was read
+])
+def test_a_read_counts_only_while_the_fixture_still_stands_through_it(held, desk, monkeypatch, x, gone_at):
+    _, root = desk
+    (root / "data" / "seen.txt").write_text("apple river garden", encoding="utf-8")
+    assert checked(desk, x, driven())["status"] in ("passed", "judge")
+    calls = []
+
+    def proven(binding, members):   # the fixture's proofs counted; the app's stand
+        if binding is FIXTURE:
+            calls.append(1)
+            return "the window is gone" if len(calls) >= gone_at else ""
+        return ""
+
+    monkeypatch.setattr(owner_round, "proven", proven)
+    got = checked(desk, x, driven())
+    assert got["status"] == "failed" and "고정 창" in got["why"], got
 
 
 def test_a_handle_naming_another_class_than_the_driver_read_is_never_bound(monkeypatch):

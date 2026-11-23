@@ -149,6 +149,14 @@ def test_a_stop_accepted_just_before_the_go_is_published_reaches_the_helper_as_s
     assert list(tmp_path.rglob("stop")) and not list(tmp_path.rglob("go"))
 
 
+def test_a_window_read_whose_other_proof_fails_with_the_item_open_is_never_sampled(desk, tmp_path):
+    binding, helper = owner_round.bind("app1", 101, [PROCESS]), Helper()
+    session = Session(tmp_path, helper)
+    got = owner_round.window_read(session, "capture1", Path("helper.exe"), binding, lambda: [PROCESS],
+                                  threading.Event(), also=lambda: "the fixture is gone")
+    assert got == {"read": False, "why": "the fixture is gone"} and helper.answers == ["stop"]
+
+
 def test_a_read_the_helper_could_not_let_go_of_wholly_passes_nothing(desk, tmp_path):
     binding = owner_round.bind("app1", 101, [PROCESS])
     with pytest.raises(RuntimeError, match="the memory DC"):

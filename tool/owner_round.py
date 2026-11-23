@@ -235,9 +235,10 @@ def ended(session, key: str, what: str = "캡처 도우미를") -> None:
         raise RuntimeError(f"{what} 끝내지 못했다 — {'; '.join(proof['reasons'])}")
 
 
-def _read(session, key: str, argv: list[str], binding: dict, members, halt, name: str, gate) -> dict:
-    """The helper's two phases: it says it is ready (`item.json`), the binding is proven again then, and only a
-    `go` written after that proof, with no stop asked, lets it sample. The stop is decided and `go` written under
+def _read(session, key: str, argv: list[str], binding: dict, members, halt, name: str, gate, also=None) -> dict:
+    """The helper's two phases: it says it is ready (`item.json`), the binding is proven again then, and `also`,
+    any other proof the read stands on (why it fails, or empty), and only a `go` written after those proofs, with
+    no stop asked, lets it sample. The stop is decided and `go` written under
     `gate`, the lock a stop is accepted under, so a stop accepted first always reaches the helper as `stop`.
     Unavailable when the helper could make nothing here (an item Windows refused or gave empty, no bitmap, or
     no word from it in time): the check stays pending. RuntimeError when it let go of
@@ -262,7 +263,8 @@ def _read(session, key: str, argv: list[str], binding: dict, members, halt, name
             if last.get("unreleased"):
                 raise RuntimeError(f"캡처 도우미가 자원을 다 놓지 못했다 — {'; '.join(last['unreleased'])}")
             raise Unavailable(f"캡처 도우미가 읽을 준비를 하지 못했다 — {item.get('why') if item else '제때 답이 없다'}")
-        why = proven(binding, members())   # with the item open: a window replaced since never gets its frames
+        # With the item open: a window replaced since never gets its frames, nor one whose other proof failed.
+        why = proven(binding, members()) or (also() if also else "")
         with gate:
             if halt.is_set():   # a stop asked before this point, while the job was read included: never a `go`
                 why = "the round was stopped"
@@ -279,13 +281,13 @@ def _read(session, key: str, argv: list[str], binding: dict, members, halt, name
         ended(session, key)
 
 
-def window_read(session, key: str, exe: Path, binding: dict, members, halt, gate=None) -> dict:
+def window_read(session, key: str, exe: Path, binding: dict, members, halt, gate=None, also=None) -> dict:
     """A window-bound read of `binding`'s window: the helper makes the item, the binding is proven again with it
-    open, and only then may the helper start the frame pool. `{"read": True, "file"}`, or why nothing was read.
-    The helper's job is ended on every outcome."""
+    open, and `also` (the fixture's own proof, for the round), and only then may the helper start the frame pool.
+    `{"read": True, "file"}`, or why nothing was read. The helper's job is ended on every outcome."""
 
     argv = [str(exe), "window", str(binding["hwnd"])]
-    return _read(session, key, argv, binding, members, halt, "window.png", gate or contextlib.nullcontext())
+    return _read(session, key, argv, binding, members, halt, "window.png", gate or contextlib.nullcontext(), also)
 
 
 def surface_read(session, key: str, exe: Path, binding: dict, rect: list[int], members, halt, gate=None) -> dict:

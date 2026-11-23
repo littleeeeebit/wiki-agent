@@ -590,7 +590,10 @@ order:
    (`tool/owner_capture.cs`). The app's main window as the driver last read
    it must still be bound to a live process of the app's job. That process
    is whichever member owns the window. It is checked after a report is
-   read, and before and after a window or composition capture. An app that
+   read, and before and after a window or composition capture. The
+   fixture's binding is proven again with it: after a report is read,
+   before the helper's `go` for a window capture, as it already is for a
+   composition, and after any capture is read. An app that
    crashed meanwhile is no pass, even if a child of it still draws.
 
 The server builds the helper with the .NET Framework's `csc` against the

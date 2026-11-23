@@ -345,6 +345,14 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
             return str(exc)
         return owner_round.proven(binding, members(key))
 
+    def fixture_up() -> str:
+        why = owner_round.proven(fixture, members(fixture_key))
+        return f"고정 창이 바뀌었다 — {why}" if why else ""
+
+    def both_up(report: dict, key: str) -> str:   # each read counts only while both its sources still stand
+        why = running(report, key)
+        return f"앱이 살아 있지 않았다 — {why}" if why else fixture_up()
+
     def then(report: dict, key: str) -> dict:
         if why := ran(report, steps):
             return {"status": "failed", "why": why}
@@ -352,8 +360,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
             return {"status": "failed", "why": f"고정 창이 바뀌었다 — {why}"}
         if what == "report":
             text = reported(report, seen, Path(runs.data), page)
-            if why := running(report, key):   # read, then the app proven still up: one that crashed is no pass
-                return {"status": "failed", "why": f"보고를 읽은 뒤 앱이 살아 있지 않았다 — {why}"}
+            if why := both_up(report, key):   # read, then the app and the fixture proven still up
+                return {"status": "failed", "why": f"보고를 읽은 뒤 {why}"}
             return {"status": "passed"} if owner_round.contains(text, page) else \
                 {"status": "failed", "why": "앱이 캡처했다고 낸 것에 고정 창의 낱말이 다 들어 있지 않다"}
         if why := running(report, key):   # before a capture is allowed: a crashed app's child may still draw
@@ -371,7 +379,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
                 except ValueError as exc:
                     return {"status": "failed", "why": f"앱의 창을 묶지 못했다 — {exc}"}
                 got = owner_round.window_read(session, f"capture{n}", exe, binding, lambda: members(key), runs.halt,
-                                              oneshot._lock)   # as `stop` takes it: a stop accepted first is a `stop`
+                                              oneshot._lock,   # as `stop` takes it: a stop accepted first is a `stop`
+                                              also=fixture_up)   # the fixture too, before the helper may sample
             else:
                 got = owner_round.surface_read(session, f"capture{n}", exe, fixture, rect,
                                                lambda: members(fixture_key), runs.halt, oneshot._lock)
@@ -379,8 +388,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
             return {"status": "pending", "why": str(exc)}
         if not got.get("read"):
             return {"status": "failed", "why": f"캡처를 읽지 못했다 — {got.get('why')}"}
-        if why := running(report, key):   # and after it: the frame counts only as the running app's
-            return {"status": "failed", "why": f"캡처 뒤에 앱이 살아 있지 않았다 — {why}"}
+        if why := both_up(report, key):   # and after it: the frame counts only while both still stand
+            return {"status": "failed", "why": f"캡처 뒤에 {why}"}
         file = keep / f"c{n}-{what}.png"
         shutil.copyfile(got["file"], file)   # the session's folders go with its cleanup
         return {"status": "judge", "file": str(file), "shows": seen["shows"], "page": page}
