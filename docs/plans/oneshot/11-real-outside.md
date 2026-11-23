@@ -255,7 +255,16 @@ comes from:
   refusal of these stages is masked. A PC look whose app carried secrets
   keeps only the shots it checked and copied: the desktop session removes its
   `evidence` folder (the driver's raw shots and reports, the app's output)
-  with its data folders, and recovery does the same.
+  with its data folders, and recovery does the same. On Android each
+  hierarchy dump is removed from the device as soon as it is read. A phone
+  round whose last removal fails keeps it owed on its record, the kept app's
+  included, and the card shows it until the phone is listed again and the
+  removal succeeds.
+- A secret cannot take a name a look sets when it starts the app (`PORT`,
+  `APP_DATA_DIR`, `ONESHOT_SCREEN`, `APPDATA`, `TEMP` and the rest of
+  `oneshot_needs.STARTED`): the look's value would reach the app in its
+  place. The design refuses it, and a design saved before the rule stays
+  at R1.
 
 The check stops at text here too. A value drawn as pixels, or shown on
 Android only between the two reads, is not seen. The phone round's frame and

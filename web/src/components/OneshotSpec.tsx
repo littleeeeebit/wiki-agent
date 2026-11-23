@@ -129,15 +129,15 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       <Fault text={fault} />
       <Leaked needs={view.needs ?? []} />
       {/* Shown on the run, whatever its stage, until the phone is listed again and the cleanup finishes. */}
-      {view.phone_owned?.map((r) => r.state === 'unsure' ? (
+      {view.phone_owned?.map((r) => (
         <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
-          휴대폰 <span className="font-mono">{r.serial}</span> 에 이 실행의 앱이 있지만, 이 실행이 설치를 마쳤는지 확인하지 못해 지우지
-          않았다: {(r.unsure ?? []).join(', ')}. 필요 없으면 휴대폰에서 직접 지우고 [휴대폰 찾기] 를 누른다.
-        </p>
-      ) : (
-        <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
-          휴대폰 <span className="font-mono">{r.serial}</span> 에 이 실행이 설치한 앱이 남아 있다: {(r.left.length ? r.left : r.packages).join(', ')}.
-          그 휴대폰을 연결하고 [휴대폰 찾기] 를 누르면 지운다.
+          휴대폰 <span className="font-mono">{r.serial}</span> 에 {r.state === 'released'   // a kept app's round: its dump alone
+            ? '화면 검사가 읽은 화면 계층 파일이 남아 있다. 비밀 값을 담았을 수 있다. 그 휴대폰을 연결하고 [휴대폰 찾기] 를 누르면 지운다.'
+            : r.state === 'unsure'
+              ? `이 실행의 앱이 있지만, 이 실행이 설치를 마쳤는지 확인하지 못해 지우지 않았다: ${(r.unsure ?? []).join(', ')}. `
+                + '필요 없으면 휴대폰에서 직접 지우고 [휴대폰 찾기] 를 누른다.'
+              : `이 실행이 설치한 앱이 남아 있다: ${(r.left.length ? r.left : r.packages).join(', ')}. `
+                + '그 휴대폰을 연결하고 [휴대폰 찾기] 를 누르면 지운다.'}
         </p>
       ))}
       {/* Any stage: a passed round's cleanup can be left pending at R3, where no phone prompt stands. */}

@@ -155,16 +155,29 @@ def settle(repo: str, home: Path, index: int) -> None:
     the run cannot tell its installation from the owner's of the same APK."""
 
     r = oneshot_spec.spec_of(repo)["oneshot"]["phone_owned"][index]
+    if r.get("dump"):
+        undumped(repo, home, index)
     left, foreign, unsure = uninstalled(home, r["digests"], r.get("installed") or {})
     state = "pending" if left else "unsure" if unsure else "cleaned"
     recorded(repo, index, state=state, left=left, foreign=foreign, unsure=unsure, ts=time.time())
 
 
+def undumped(repo: str, home: Path, index: int) -> None:
+    """The round's hierarchy dump removed from the bound phone, its text possibly holding a secret: the record's
+    `dump` stays owed until a removal succeeds."""
+
+    try:
+        call(home, "shell", "rm", "-f", device.DUMP)
+    except ValueError:
+        return
+    recorded(repo, index, dump=False)
+
+
 def owning(o: dict) -> list[dict]:
     """Records whose packages may still be on a phone: a cleanup that did not finish, a round cut off, or an
-    app the run cannot prove it installed."""
+    app the run cannot prove it installed; and a round whose hierarchy dump is still owed, its app kept or not."""
 
-    return [r for r in o.get("phone_owned") or [] if r["state"] in ("owning", "pending", "unsure")]
+    return [r for r in o.get("phone_owned") or [] if r["state"] in ("owning", "pending", "unsure") or r.get("dump")]
 
 
 def recorded(repo: str, index: int | None = None, **fields) -> int:
@@ -187,9 +200,14 @@ def tidy(repo: str, home: Path, found: list[dict]) -> None:
 
     listed = {x["serial"] for x in found if x["state"] == "device"}
     for index, r in enumerate(oneshot_spec.spec_of(repo)["oneshot"].get("phone_owned") or []):
-        if r["state"] in ("owning", "pending", "unsure") and r["serial"] in listed:
+        if r["serial"] not in listed:
+            continue
+        if r["state"] in ("owning", "pending", "unsure"):
             android_phone.bind(home, r["serial"])
             settle(repo, home, index)
+        elif r.get("dump"):   # a kept app's round: only its dump is owed
+            android_phone.bind(home, r["serial"])
+            undumped(repo, home, index)
     android_phone.bind(home, "")
 
 
@@ -299,10 +317,8 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
                 "findings": findings, "timing": frames, "memory_kb": used, "head": o["front_built_head"],
                 "apks": o["apks"], "front_build": o.get("front_build"), "detail": ""}
     finally:
-        try:
-            call(home, "shell", "rm", "-f", device.DUMP)
-        except ValueError:
-            pass
+        recorded(repo, index, dump=True)   # owed until a removal is confirmed, whether or not the app stays
+        undumped(repo, home, index)
         with _ending:   # from here a stop is refused; one accepted before it takes the cleanup
             if final := not stopped():
                 _final.add(repo)

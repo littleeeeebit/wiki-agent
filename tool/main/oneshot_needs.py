@@ -39,6 +39,9 @@ ENV = re.compile(r"[A-Z][A-Z0-9_]*")
 # agent CLI reads as its own login: a need of that name would never reach the agent as given.
 LAUNCH = re.compile(r"WIKI_AGENT_.*|ORCA_.*|RELEASE_KEY_PASSWORD|ANTHROPIC_.*|CLAUDE_.*|DEEPSEEK_API_KEY|"
                     r"OPENAI_API_KEY|CODEX_.*")
+# What a look sets when it starts the product (`oneshot_look.served`, `oneshot_desktop.LOOK_ENV` and `OWNED_ENV`): a
+# need of that name would reach the started app as the look's value, never the owner's.
+STARTED = re.compile(r"PORT|APP_DATA_DIR|PYTHONUNBUFFERED|ONESHOT_SCREEN|ONESHOT_STATE|APPDATA|LOCALAPPDATA|TEMP|TMP")
 KINDS = {"secret": "비밀 값", "account": "계정", "tool": "프로그램", "file": "파일"}
 MAX_SECRET = 2560   # bytes Credential Manager holds in one credential, as UTF-16
 
@@ -63,6 +66,8 @@ def parsed(value, where: str) -> list[dict]:
             raise ValueError(f"{where} {n['id']}: 비밀 값은 `env` 에 대문자 환경 변수 이름을 적는다")
         if n["kind"] == "secret" and LAUNCH.fullmatch(env):
             raise ValueError(f"{where} {n['id']}: `{env}` 는 서버가 에이전트를 띄울 때 정하는 이름이다 — 다른 이름을 적는다")
+        if n["kind"] == "secret" and STARTED.fullmatch(env):
+            raise ValueError(f"{where} {n['id']}: `{env}` 는 화면 검사가 앱을 띄울 때 정하는 이름이다 — 다른 이름을 적는다")
         if n["kind"] != "secret" and env is not None:
             raise ValueError(f"{where} {n['id']}: `env` 는 비밀 값에만 붙는다")
         out.append({"id": n["id"], "what": " ".join(n["what"].split()), "kind": n["kind"], **({"env": env} if env else {})})
@@ -211,6 +216,9 @@ def launchable(spec: dict) -> str:
     never reaches the build cell (`agent`), only the gate, and its row says so (`shown`)."""
     if bad := sorted({n["env"] for _, n in secret_needs(spec) if LAUNCH.fullmatch(n["env"])}):
         return (f"비밀 값 이름 {', '.join(f'`{b}`' for b in bad)} 은(는) 에이전트를 띄울 때 서버가 정하는 이름이다 "
+                "— 그 항목을 수정 의견으로 다른 이름으로 바꾼 뒤 승인한다")
+    if bad := sorted({n["env"] for _, n in secret_needs(spec) if STARTED.fullmatch(n["env"])}):
+        return (f"비밀 값 이름 {', '.join(f'`{b}`' for b in bad)} 은(는) 화면 검사가 앱을 띄울 때 정하는 이름이다 "
                 "— 그 항목을 수정 의견으로 다른 이름으로 바꾼 뒤 승인한다")
     return ""
 

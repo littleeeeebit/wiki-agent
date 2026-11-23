@@ -300,9 +300,16 @@ class Device:
             self.adb("shell", "cmd", "statusbar", "collapse")
 
     def hierarchy(self) -> ElementTree.Element:
+        """The screen's hierarchy; the dump is removed from the device as soon as it is read, since its text can
+        hold a secret. A removal that fails raises, and the phone round keeps it owed (`oneshot_phone.undumped`)."""
+
         self.adb("shell", "uiautomator", "dump", DUMP)
         try:
-            return ElementTree.fromstring(self.adb("exec-out", "cat", DUMP))
+            text = self.adb("exec-out", "cat", DUMP)
+        finally:
+            self.adb("shell", "rm", "-f", DUMP)
+        try:
+            return ElementTree.fromstring(text)
         except ElementTree.ParseError as exc:
             raise ValueError(f"화면 계층을 읽지 못했다 — {exc}") from exc
 

@@ -63,7 +63,9 @@ export type Critique = {
 /** One phone the run's own ADB server lists (`android_phone.listed`). */
 export type Handset = { serial: string; state: string; model: string }
 /** What a phone round installed and whether it is gone again (`oneshot_phone.recorded`). */
-export type Owned = { serial: string; model: string; packages: string[]; state: string; left: string[]; unsure?: string[] }
+export type Owned = {
+  serial: string; model: string; packages: string[]; state: string; left: string[]; unsure?: string[]; dump?: boolean
+}
 /** The phone round before R3 (`oneshot_phone`): `waiting` for the owner's pick, then its last outcome. */
 export type PhoneRound = {
   status: string; detail?: string; serial?: string; keep?: boolean; round?: number; model?: string
