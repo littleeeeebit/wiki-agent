@@ -758,6 +758,19 @@ def test_a_streamed_value_written_in_json_escapes_is_held_until_it_is_whole():
         assert json.loads((shown + "".join(t for _, t, _ in veil.rest())).split("\n")[1]) == {"q": "x [N1] y"}, at
 
 
+def test_a_stream_never_splits_an_escaped_backslash_before_a_value_part_written_and_part_escaped():
+    value = f"tok-{uuid.uuid4().hex[:8]}"
+    spelled = value[:3] + "".join(f"\\u{ord(c):04x}" for c in value[3:6]) + value[6:]
+    # JSON: an escaped backslash right before the value, two more, then the value again inside escaped quotes.
+    text = f'```choices\n{{"q": "C:\\\\{spelled} \\\\\\\\ \\"{spelled}\\" end"}}\n```\n'
+    assert json.loads(text.split("\n")[1])["q"].count(value) == 2
+    for at in range(1, len(text)):
+        veil = Veil({value: "[N1]"})
+        shown = veil.stream("d", text[:at], {}) + veil.stream("d", text[at:], {})
+        whole = shown + "".join(t for _, t, _ in veil.rest())
+        assert value not in unescaped(whole) and json.loads(whole.split("\n")[1])["q"].count("[N1]") == 2, at
+
+
 def test_masking_many_short_matches_among_many_escapes_stays_linear():
     text = '{"a": "' + "\\u0041x" * 20000 + '"}'
     started = time.perf_counter()

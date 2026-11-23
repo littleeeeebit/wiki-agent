@@ -308,12 +308,15 @@ class Veil:
                     if any(n.startswith(flat[j:]) for _, n in self.needles)), len(text))
         cut = next((i for i in range(max(0, len(text) - self.raw), cut)
                     if any(v.startswith(text[i:]) for v, _ in self.needles)), cut)
-        if "\\" in text:   # as its JSON decodes: an escape not yet complete, and a value written in escapes
-            # 12: the longest escape, a surrogate pair. What follows is held; what is before it is read decoded.
-            tail = text.rfind("\\", max(0, len(text) - 12))
-            tail = len(text) if tail < 0 else tail
-            if re.search(r"\\u[dD][89abAB][0-9a-fA-F]{2}$", text[:tail]):   # a pair's first half is held with it
-                tail -= 6
+        tokens = [m.span() for m in _ESCAPE.finditer(text)] if "\\" in text else []
+        if tokens or "\\" in text:   # as its JSON decodes: an escape not yet complete, and a value written in escapes
+            # Read as JSON reads it, left to right from this buffer's start, which is always an escape's boundary: a
+            # backslash past the last complete escape may start one not yet complete (12: a surrogate pair's length),
+            # and a pair's first half at the end waits for its second.
+            done = tokens[-1][1] if tokens else 0
+            tail = next((i for i in range(max(done, len(text) - 12), len(text)) if text[i] == "\\"), len(text))
+            if tokens and done == tail and re.fullmatch(r"\\u[dD][89abAB][0-9a-fA-F]{2}", text[slice(*tokens[-1])]):
+                tail = tokens[-1][0]
             plain, where = _unescape(text[:tail])
             pfolds = _folds(plain)
             pflat, powner = "".join(pfolds), [i for i, f in enumerate(pfolds) for _ in f]
@@ -324,6 +327,9 @@ class Veil:
         for start, end, _ in _spans(text, self.hide):
             if start < cut < end:   # spans never overlap: one at most holds the cut
                 cut = start
+        # Never inside an escape: what goes out and what is held each start at a boundary JSON reads there too.
+        if tokens and (i := bisect.bisect_right([s for s, _ in tokens], cut) - 1) >= 0 and tokens[i][0] < cut < tokens[i][1]:
+            cut = tokens[i][0]
         if cut < len(text):
             self.held[key] = (text[cut:], meta)
         return masked(text[:cut], self.hide)
