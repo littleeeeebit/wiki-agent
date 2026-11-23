@@ -257,9 +257,10 @@ comes from:
   `evidence` folder (the driver's raw shots and reports, the app's output)
   with its data folders, and recovery does the same. On Android each
   hierarchy dump is removed from the device as soon as it is read. A phone
-  round whose last removal fails keeps it owed on its record, the kept app's
-  included, and the card shows it until the phone is listed again and the
-  removal succeeds.
+  round's record owes the dump from its first save, before any read can leave
+  one, so a round cut by a failed removal or by a restart keeps it owed, the
+  kept app's included. The card shows it until the phone is listed again and
+  a removal succeeds.
 - A secret cannot take a name a look sets when it starts the app (`PORT`,
   `APP_DATA_DIR`, `ONESHOT_SCREEN`, `APPDATA`, `TEMP` and the rest of
   `oneshot_needs.STARTED`): the look's value would reach the app in its

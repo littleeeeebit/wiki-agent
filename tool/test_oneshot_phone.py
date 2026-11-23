@@ -292,6 +292,21 @@ def test_a_round_cut_by_a_restart_is_cleaned_on_the_next_listing(handset):
     assert {"state": "cleaned", "left": [], "foreign": [TESTS]}.items() <= o()["phone_owned"][-1].items()
 
 
+def test_a_round_cut_by_a_restart_still_owes_its_dump_and_the_next_listing_removes_it(handset):
+    seen = []
+    handset.on_call = lambda args: seen.append(o()["phone_owned"][-1].get("dump")) if args[0] == "install" else None
+    played(handset)
+    assert seen and all(seen)   # owed from the record's first save, before any read can leave one
+    handset.on_call = None
+    mine = o()["apks"][DEVICE["apk"]]
+    phone_round.recorded("budget", serial=SERIAL, model="", packages=[PKG], digests={PKG: mine},
+                         installed={PKG: handset.which(PKG)}, state="owning", left=[], dump=True)   # as the cut round left it
+    handset.sent = []
+    phone_round.devices("budget")
+    assert ["shell", "rm", "-f", device.DUMP] in handset.sent
+    assert {"state": "cleaned", "dump": False}.items() <= o()["phone_owned"][-1].items()
+
+
 def test_the_same_apk_installed_by_the_owner_after_a_crash_is_never_removed(handset):
     """The server died after the record was saved and before an install was confirmed: the same bytes on the
     phone prove nothing about who installed them, so they stay, shown on the run until the owner removes them."""

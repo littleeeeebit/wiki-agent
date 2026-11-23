@@ -289,7 +289,8 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
     # `instance` read right after. The same APK the owner installed, before or since, is not the run's.
     digests = {package: o["apks"][apk] for apk, package in device.apks(o["device"])}
     index = recorded(repo, serial=serial, model=picked["model"], packages=packages, digests=digests,
-                     installed={}, state="owning", left=[], ts=time.time())
+                     installed={}, state="owning", left=[], ts=time.time(),
+                     dump=True)   # owed from before any read can leave one, until a removal is confirmed
     passed, installed = False, {}
 
     def mine(package: str, which: str | None) -> None:
@@ -317,8 +318,7 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
                 "findings": findings, "timing": frames, "memory_kb": used, "head": o["front_built_head"],
                 "apks": o["apks"], "front_build": o.get("front_build"), "detail": ""}
     finally:
-        recorded(repo, index, dump=True)   # owed until a removal is confirmed, whether or not the app stays
-        undumped(repo, home, index)
+        undumped(repo, home, index)   # whether or not the app stays
         with _ending:   # from here a stop is refused; one accepted before it takes the cleanup
             if final := not stopped():
                 _final.add(repo)
