@@ -501,6 +501,11 @@ def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_m
             patch.object(oneshot_needs, "secret_needs", lambda s: [("N1", {"env": "A_TOKEN"})]):
         env, _ = measure.env_of(spec(), {"inputs": [{"id": "M1", "kind": "secret", "env": "A_TOKEN"}]})
     assert env["A_TOKEN"] == "tok" and len(reads) == 1   # named by the design and the plan: read once
+    with patch.object(measure.release, "secret_read", lambda name: None), \
+            patch.object(oneshot_needs, "secret_needs", lambda s: [("N1", {"env": "A_TOKEN"})]), \
+            patch.dict(measure.os.environ, {"A_TOKEN": "server's own"}, clear=True):   # filtered down to nothing
+        assert "A_TOKEN" not in measure.env_of(spec(), {"inputs": [{"id": "M1", "kind": "secret", "env": "A_TOKEN"}]})[0]
+        assert oneshot_needs.gate_env(spec(), dict(measure.os.environ), True) == {}   # the verdict's base: never None
     plan = {"inputs": [{"id": "M1", "kind": "secret", "env": "A_TOKEN"}, {"id": "M2", "kind": "secret", "env": "B_TOKEN"}]}
     with patch.object(measure.release, "secret_read", lambda name: "same-token"):   # two inputs, one value
         env, hide = measure.env_of(spec(), plan, {"A_TOKEN": "server's own"})

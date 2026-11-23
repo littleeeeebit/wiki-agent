@@ -219,7 +219,8 @@ def env_of(spec: dict, plan: dict, base: dict | None = None) -> tuple[dict, dict
     if base is None:   # `oneshot_build.built_env`, its design secrets read strictly
         android = "android" in oneshot_build.kinds_of(spec["oneshot"])
         base = oneshot_needs.gate_env(spec, oneshot_build.oneshot_android.build_env() if android else None, True)
-    env, design = dict(base or os.environ), {n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)}
+    env = dict(os.environ if base is None else base)   # an empty filtered one stays empty: never the server's again
+    design = {n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)}
     secrets = {}
     for x in plan["inputs"]:
         if x["kind"] == "secret":
@@ -699,7 +700,7 @@ def decide(repo: str, body: Decision) -> dict:
         try:   # held until the verdict is saved: no turn moves HEAD between the check and the record of it
             why = oneshot_review.moved(spec, tree, "built_head")
             try:   # the mask, read apart from the launch toolchain: every secret of the plan, or none
-                env, hide = env_of(spec, plan, oneshot_needs.gate_env(spec, None, True) or dict(os.environ)) if plan \
+                env, hide = env_of(spec, plan, oneshot_needs.gate_env(spec, dict(os.environ), True)) if plan \
                     else ({}, None)
                 if hide is not None and not all(x["env"] in env for x in plan["inputs"] if x["kind"] == "secret"):
                     hide = None   # a secret the store no longer holds
