@@ -108,7 +108,7 @@ needs. Run is instead the command that builds the debug APK,
 connected with USB debugging on: adb's install command with that APK's path.
 """ + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else ""))
             .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}. "
-                     "Neither that job nor that step has an `if`. "
+                     "That job has no `if` or `needs`, and that step no `if` or `background`. "
                      "After that step, in the same job, add this step exactly as written; it lists in the run's "
                      f"summary the tests CI skipped for want of a secret:\n\n```yaml\n{SKIPS}```"
                      if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
@@ -158,11 +158,12 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     # `gate_cmd`, which may span lines (the front build extends the backend's).
     want = [line.strip() for line in gate.splitlines() if line.strip()]
     for job in flow["jobs"].values():
-        if not isinstance(job, dict) or job.get("if") is not None:   # a condition can skip it on a push or a PR
+        # A condition, or a job it waits on that a condition skips, can skip it on a push or a pull request.
+        if not isinstance(job, dict) or job.get("if") is not None or job.get("needs") is not None:
             continue
         steps = [s for s in job.get("steps") or [] if isinstance(s, dict)]
         for at, s in enumerate(steps):
-            if s.get("if") is not None:
+            if s.get("if") is not None or s.get("background") is not None:   # the summary reads it once finished
                 continue
             have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()]
             if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):

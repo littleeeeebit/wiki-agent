@@ -171,6 +171,10 @@ def test_a_public_repository_needs_its_committed_ci_workflow(finished, more):
     ("on: [push, pull_request]\njobs:\n  gate:\n    if: github.event_name == 'pull_request'\n    steps:\n"
      "      - run: uv run pytest\n" + SKIPS, False),
     (workflow("      - if: github.event_name == 'push'\n        run: uv run pytest\n" + SKIPS), False),
+    # A job the gate's job waits on may be skipped, and a gate in the background may not be done yet.
+    ("on: [push, pull_request]\njobs:\n  setup:\n    if: github.event_name == 'pull_request'\n    steps:\n"
+     "      - run: ls\n  gate:\n    needs: setup\n    steps:\n      - run: uv run pytest\n" + SKIPS, False),
+    (workflow("      - background: true\n        run: uv run pytest\n" + SKIPS), False),
 ])
 def test_the_public_ci_runs_the_gate_on_every_push_and_pull_request(finished, text, runs):
     tree, _ = finished
