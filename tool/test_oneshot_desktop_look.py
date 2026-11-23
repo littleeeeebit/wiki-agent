@@ -204,7 +204,7 @@ def test_a_look_whose_clean_teardown_ends_past_its_deadline_goes_back_to_the_bui
     import desktop_session
 
     @contextmanager
-    def slow(root, name):
+    def slow(root, name, disposable=False):
         yield type("Look", (), {"folder": tmp_path})()
         monkeypatch.setattr(pc_look, "LOOK_SECONDS", 0)   # the clock crosses the deadline while the desktop ends
 
@@ -222,7 +222,7 @@ def test_a_look_whose_cleanup_is_not_proven_stops_the_stage(tmp_path):
     import desktop_session
 
     @contextmanager
-    def held(root, name):
+    def held(root, name, disposable=False):
         yield type("Look", (), {"folder": tmp_path})()
         raise desktop_session.Refused("the desktop look is held: pid 4 is still running")
 

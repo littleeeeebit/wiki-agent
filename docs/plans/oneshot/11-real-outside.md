@@ -252,7 +252,10 @@ comes from:
   string of the PC app's start state, and every attribute of the Android
   hierarchy read before and after its picture. A screen whose text holds a
   secret is a high finding and its picture is never kept. Every finding and
-  refusal of these stages is masked.
+  refusal of these stages is masked. A PC look whose app carried secrets
+  keeps only the shots it checked and copied: the desktop session removes its
+  `evidence` folder (the driver's raw shots and reports, the app's output)
+  with its data folders, and recovery does the same.
 
 The check stops at text here too. A value drawn as pixels, or shown on
 Android only between the two reads, is not seen. The phone round's frame and

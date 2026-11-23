@@ -146,6 +146,20 @@ def test_a_setting_the_start_maps_to_none_reaches_the_app_in_no_spelling(tmp_pat
         assert json.loads(log.read_text(encoding="utf-8")) == []
 
 
+@pytest.mark.parametrize("disposable", [False, True])
+def test_a_disposable_looks_evidence_goes_with_it_and_another_looks_stays(tmp_path, disposable):
+    with desktop_session.look(tmp_path, "kept", disposable=disposable) as look:
+        look.start("app", python("print('raw output', flush=True)"), tmp_path)
+        (look.folder / "evidence" / "driver1").mkdir()
+        (look.folder / "evidence" / "driver1" / "s00-1.png").write_bytes(b"shot")
+        log = tmp_path / "kept" / "evidence" / "app.log"
+        assert waited(lambda: log.stat().st_size > 0)
+    record = desktop_session.load(tmp_path / "kept")
+    assert record["state"] == "proven" and record["proof"]["clean"], record["proof"]
+    assert (tmp_path / "kept" / "evidence").exists() is not disposable
+    assert desktop_session.recover(tmp_path / "kept") == []
+
+
 def test_the_record_names_each_part_before_it_is_made(tmp_path, monkeypatch):
     seen = {}
     early = tmp_path / "early"

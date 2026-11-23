@@ -226,7 +226,9 @@ def _look(spec: dict, build: dict, folder: Path, stopped, given: dict, hide: dic
     for old in folder.glob("*.png"):
         old.unlink()
     try:
-        with desktop_session.look(looks, f"look-{build['identity'][:12]}-{uuid.uuid4().hex[:8]}") as session:
+        # A look whose app carried secrets keeps only the checked shots it copied: its raw evidence goes with it.
+        with desktop_session.look(looks, f"look-{build['identity'][:12]}-{uuid.uuid4().hex[:8]}",
+                                  disposable=bool(hide)) as session:
             runs = Launches(session, build, size(spec["oneshot"]["profile"]), stopped, given)
             found = inspect(runs, spec, folder, session.folder / "evidence", hide) + checks(runs, spec, build)
     except desktop_session.Refused as exc:

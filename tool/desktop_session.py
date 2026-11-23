@@ -195,8 +195,9 @@ class Look:
     """One look: an owned desktop, its apps' jobs and their disposable folders, all named in `folder`'s record.
     Use it through `look()`, which runs `close()` on every outcome."""
 
-    def __init__(self, root: Path, name: str):
+    def __init__(self, root: Path, name: str, disposable: bool = False):
         self.root = Path(root).absolute()   # a child starts elsewhere: its data paths must not be relative
+        self.disposable = disposable   # `evidence` too is removed with the look: its apps carried secrets
         self.folder = self.root / name
         self.result = None   # the teardown's reasons, kept until its proof is saved
         self.closing = False
@@ -216,6 +217,8 @@ class Look:
                        "listeners": [], "proof": None}
         self.folder.mkdir()
         (self.folder / "evidence").mkdir()
+        if self.disposable:   # its raw shots, reports and app logs go as its data folders go, recovery included
+            self.record["folders"].append({"name": "evidence", "owned": True})
         save(self.folder, self.record)
 
     def _open_for_more(self) -> None:
@@ -501,11 +504,11 @@ class Look:
 
 
 @contextmanager
-def look(root: Path, name: str):
+def look(root: Path, name: str, disposable: bool = False):
     """A look in `root/name`, its desktop open; cleaned and proven on every exit. A proof that is not clean
-    raises, naming what it could not prove."""
+    raises, naming what it could not prove. A `disposable` look's `evidence` is removed with it."""
 
-    session_ = Look(root, name)
+    session_ = Look(root, name, disposable)
     failure = None
     try:
         session_.open()
