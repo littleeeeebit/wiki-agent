@@ -253,12 +253,25 @@ def stored(repo: str, env: str, value: str | None) -> None:
         raise HTTPException(409, f"기다리는 결과를 먼저 내려놓지 못해 비밀 값을 바꾸지 않았다 ({type(e).__name__}) — "
                                  "다시 시도한다") from None
     try:
-        release.secret_write(name(repo, env), value) if value is not None else release.secret_delete(name(repo, env))
+        if value is None:
+            changed = release.secret_delete(name(repo, env))   # one already gone changes nothing
+        elif changed := not same(name(repo, env), value):   # the same value given again changes nothing either
+            release.secret_write(name(repo, env), value)
     except ValueError:
         raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
     except OSError as e:
         raise HTTPException(409, f"자격 증명 관리자를 고치지 못했다 — {e}") from None
-    CHANGES[repo] = CHANGES.get(repo, 0) + 1   # only a change made: a refused one leaves a running result alone
+    if changed:   # only a change made: a refused or empty one leaves a running result alone
+        CHANGES[repo] = CHANGES.get(repo, 0) + 1
+
+
+def same(key: str, value: str) -> bool:
+    """Whether Credential Manager holds `value` under `key` already; an unreadable one counts as different."""
+
+    try:
+        return release.secret_read(key) == value
+    except OSError:
+        return False
 
 
 @router.post("/api/oneshot/spec/{repo}/needs/{nid}")

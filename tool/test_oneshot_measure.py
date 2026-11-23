@@ -302,6 +302,8 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
         with patch.object(measure, "retire", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))), \
                 pytest.raises(HTTPException, match="바꾸지 않았다"):
             oneshot_needs.forget("budget", ENV)
+        oneshot_needs.forget("budget", "NEVER_GIVEN_KEY")   # nothing there to remove
+        oneshot_needs.stored("budget", ENV, KEY)   # the value it ran with, given again
         return gate(*args, **kwargs)
     given()
     with patch.object(measure.specs, "gate", refused):
