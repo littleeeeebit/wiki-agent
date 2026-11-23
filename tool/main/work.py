@@ -30,7 +30,8 @@ from pydantic import BaseModel
 from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, deepseek, output_of
 from common.process import background_options
 from common.paths import RAW
-from common import errorlog
+from common import Veil, errorlog, masked
+from secrets_held import SECRETS_HELD
 from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
@@ -275,7 +276,9 @@ def record(path: Path) -> Path:
 
 
 def remember(path: Path, role: str, text: str, **extra) -> None:
-    memory.append(record(path), {"ts": time.time(), "role": role, "text": text, "path": str(path), **extra})
+    veil = Veil(getattr(_sessions.get(str(path)), "hide", None))   # a session's secrets reach none of its rows
+    memory.append(record(path), {"ts": time.time(), "role": role, "text": masked(text, veil.hide), "path": str(path),
+                                 **veil.row(extra)})
 
 
 def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:
@@ -503,6 +506,7 @@ class Answer(BaseModel):
     allow: bool
     scope: Literal["once", "session"] = "once"
     answers: list[str] | None = None   # a question's, one per question
+    picks: list[list[int] | None] | None = None   # each question's picked options by index; `None` where typed
 
 
 def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSession:
@@ -513,9 +517,12 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
     owns gets the spec as its system prompt, every time a session is made.
     """
 
-    from . import release_repair, specs  # both import this module
+    from . import oneshot_needs, release_repair, specs  # they import this module
 
     spec = specs.owner(path)
+    # A oneshot's session carries the owner's secrets, and starts again when they change (`oneshot_needs.agent`).
+    secrets, hide = oneshot_needs.agent(spec)
+    env = {**release_repair.unshared(spec).get("env", {}), **secrets, **({SECRETS_HELD: "1"} if hide else {})}
     # A refactoring card's work cell was fixed at its survey's start, a oneshot's at its run's: nothing moves it.
     if any(((spec or {}).get(k) or {}).get(f) for k, f in (("refactor", "roles"), ("oneshot", "models"))):
         model, effort, fast = spec["cell"]["model"], spec["cell"]["effort"], spec["cell"].get("fast", False)
@@ -530,15 +537,17 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
             chat.close()
             remember(path, "context", "CLI 변경")
             chat = None
-        if chat is not None and getattr(chat, "_spec_system", prompt) != prompt:
+        if chat is not None and (getattr(chat, "_spec_system", prompt), getattr(chat, "_spec_env", env)) != (prompt, env):
             chat.close()
             _sessions.pop(key)
             chat = None
         if chat is None:
             chat = ChatSession(path, model=model, effort=effort, write=True, system=prompt,
-                               bypass=bypass, **release_repair.unshared(spec))
-            chat._spec_system = prompt
+                               bypass=bypass, **({"env": env} if env else {}))
+            chat._spec_system, chat._spec_env = prompt, env
             chat.settled = SETTLING.search
+            if (digest := oneshot_needs.rotated(spec, secrets, recall(path, 0))) is not None:   # ends the old one
+                remember(path, "context", "비밀 값이 바뀌었다 — 새 대화로 시작한다", secrets=digest)
             chat.session_id = resumable(recall(path), deepseek.provider(model))
             _sessions[key] = chat
         else:
@@ -547,6 +556,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
                 chat.bypass = bypass
                 chat.close()
             chat.reconfigure(model, effort)
+        chat.hide = hide   # read for this turn: a gate-only value may change while the environment does not
         if getattr(chat, "fast", False) != fast:
             chat.fast = fast
             chat.close()
@@ -645,13 +655,19 @@ class Run:
         self.chat = chat
         self.session_id = chat.id
         self.events: list[dict] = []
+        self.asked: dict[str, list] = {}   # a question's options as asked (`Veil.options`), until it is answered
         self.done = False
         self.halt = threading.Event()   # set by a stop; the session reads it too
+        self.saving = threading.Lock()   # held over a save this turn decided on (`handoff`); a stop waits on it
         self.wake = threading.Condition()
         self.diff_base: str | None = None
         self.report_at: dict | None = None
 
     def put(self, payload: dict) -> None:
+        if hide := getattr(self.chat, "hide", None):   # every event the screen and the record get, the server's too
+            if payload.get("kind") == "approval" and Veil.question(payload.get("meta") or {}):
+                self.asked[str(payload["meta"].get("id"))] = Veil.options(payload["meta"])
+            payload = {**payload, "text": masked(payload.get("text") or "", hide), "meta": Veil(hide).meta(payload.get("meta") or {})}
         if payload.get("kind") == "error" or (payload.get("meta") or {}).get("error"):
             errorlog.record("agent", payload.get("text", "Failed turn"), turn=self.turn, session=self.session_id)
         with self.wake:
@@ -792,7 +808,11 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
     to the CLI; `text` is the server's line this turn shows and keeps."""
 
     chat, final, failed, meta, then = run.chat, "", "", {}, None
+    hide = getattr(chat, "hide", None) or {}   # a oneshot's secrets: shown and kept as `[N1]`, checked as given
+    veil = Veil(hide)
     try:
+        from . import oneshot_needs   # owed from its start: a turn that never reaches its last scan still holds
+        oneshot_needs.owe(path, run)
         events = None
         if replay is not None:
             final, events = text, ()
@@ -823,8 +843,12 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                     failed = final or "완료된 답이 없다"
             elif ev.kind == "error":
                 failed = ev.text = "사람이 멈춤" if run.halt.is_set() else ev.text
-            run.put({"kind": ev.kind, "text": ev.text, "meta": ev.meta,
-                     "session_id": ev.session_id, "parent_id": ev.parent_id})
+            key = ("delta",) if ev.kind == "delta" else ("tool", item) if (item := output_of(ev.kind, ev.meta)) else None
+            for kind, held, m in veil.rest() if ev.kind in ("done", "error") else ():   # the texts ended: held tails first
+                run.put({"kind": kind, "text": held, "meta": m, "session_id": ev.session_id, "parent_id": ev.parent_id})
+            if (said := veil.stream(key, ev.text, ev.meta) if key else ev.text) or not key or not hide:   # put masks
+                run.put({"kind": ev.kind, "text": said, "meta": ev.meta,
+                         "session_id": ev.session_id, "parent_id": ev.parent_id})
         if not failed and not final.strip():
             failed = "완료된 답이 없다"
             run.put({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})
@@ -835,9 +859,10 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
 
             then = specs.check(path, run, final if replay is None else replay)
     except Exception as exc:  # a turn that broke still owes the screen a reason
-        errorlog.record("agent-exception", exc, turn=run.turn, path=str(path))
+        errorlog.record("agent-exception", masked(f"{type(exc).__name__}: {exc}", hide) if hide else exc,
+                        turn=run.turn, path=str(path))
         # A stop while the process started breaks the start, not the turn.
-        failed = "사람이 멈춤" if run.halt.is_set() else f"{type(exc).__name__}: {exc}"
+        failed = "사람이 멈춤" if run.halt.is_set() else masked(f"{type(exc).__name__}: {exc}", hide)
         run.put({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})
     finally:
         try:
@@ -847,9 +872,9 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
                 # the gate — is shown after it, in the record too.
                 at = next((i for i, e in enumerate(run.events) if e["kind"] == "done"), None)
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
-            remember(path, "assistant", final, error=failed, steps=made,
+            remember(path, "assistant", masked(final, hide), error=masked(failed, hide), steps=made,
                      turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
-                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **meta)
+                     provider=deepseek.of(chat), diff_base=run.diff_base, **answered, **veil.meta(meta))
             if REFUSED.search(failed):
                 remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
                          handoff=handoff(recall(path), deepseek.of(chat)), provider=deepseek.of(chat))
@@ -858,6 +883,8 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
             # record must not skip an already accepted review/plan handoff.
             errorlog.record("work-record", exc, turn=run.turn, path=str(path))
         finally:
+            from . import oneshot_needs   # a failed, stopped or person's turn: its history checked while it holds the tree
+            then = then if oneshot_needs.settle(path, run, final, moving=bool(then)) else None   # refused: stops
             # Released before the end is told, so a screen that sees the end
             # can send the next instruction at once.
             release()
@@ -1049,8 +1076,9 @@ def stop(body: Stop) -> dict:
     if run.turn != body.turn:
         raise HTTPException(409, "지금 도는 턴이 아니다")
     if not run.done:
-        run.halt.set()   # first: a process not started yet is stopped by this
-        run.chat.stop(run.halt)   # only this turn's process, not the next one's
+        run.halt.set()   # first: no process, save or follow-up turn starts after this
+        with run.saving:   # and a save already past its stop check lands before the Stop answers
+            run.chat.stop(run.halt)   # only this turn's process, not the next one's
     return {"ok": True}
 
 
@@ -1146,12 +1174,15 @@ def answer(body: Answer) -> dict:
     # CLI does with it — the record is read from there.
     with run.wake if run else nullcontext():
         try:
-            sent = chat.answer(body.id, body.allow, body.scope, body.answers)
+            asked = run.asked.get(body.id) if run else None   # a picked option goes back as asked, by its index
+            given = Veil.chosen(body.answers, body.picks, asked) if asked is not None and body.answers else body.answers
+            sent = chat.answer(body.id, body.allow, body.scope, given)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         if not sent:
             raise HTTPException(409, "이미 답했거나, 물은 프로세스가 내려갔다")
         if run:
+            run.asked.pop(body.id, None)   # kept until now: a refused answer can be corrected and sent again
             # Another window, and a reattached one, draw the card as answered.
             run.put({"kind": "answered", "text": "", "meta": {"id": body.id, "allow": body.allow, "by": "person",
                                                               **({"answers": body.answers} if body.answers else {})},

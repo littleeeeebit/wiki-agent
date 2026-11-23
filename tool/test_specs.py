@@ -109,7 +109,9 @@ def repo(tmp_path):
 def spec_block(**extra) -> dict:
     return {"slug": "Fix Login!", "goal": "로그인 뒤 원래 페이지로 돌아간다", "out": ["세션 만료"],
             "done": ["돌아오는 테스트가 있다"], "grounds": {"pages": ["craft/x"], "files": ["a.txt:1", "nope.py"]},
-            "decisions": [{"what": "서버에서 돌린다", "why": "화면은 기록을 모른다", "rejected": "history"}], **extra}
+            "decisions": [{"what": "서버에서 돌린다", "why": "화면은 기록을 모른다", "rejected": "history"}],
+            "task": {"kind": "fix", "what": "로그인 뒤 원래 페이지로 돌려보낸다"},
+            "precedence": [{"ref": "a.txt", "role": "current"}], **extra}
 
 
 def made(repo: Path, block: dict, session: str = "s1") -> list[dict]:
@@ -326,6 +328,22 @@ def test_the_persons_words_hold_every_turn_of_a_conversation_past_the_replay_lim
     assert original.count("turn ") == (chat.MAX_REPLAY + 10 + 1) // 2
 
 
+def test_a_saved_spec_reaches_the_disk_before_it_replaces_the_old_one(repo):
+    sid = made(repo, spec_block())[0]["id"]
+    spec, order, real_replace = specs.load("proj", sid), [], Path.replace
+
+    def fsync(fd):
+        order.append("fsync")
+
+    def replace(self, target):
+        order.append("replace")
+        return real_replace(self, target)
+
+    with patch("common.os.fsync", fsync), patch.object(Path, "replace", replace):
+        specs.save({**spec, "goal": "디스크에 먼저"})
+    assert order == ["fsync", "replace"] and specs.load("proj", sid)["goal"] == "디스크에 먼저"
+
+
 def test_a_save_from_a_stale_card_is_refused(repo):
     web = client()
     sid = made(repo, spec_block())[0]["id"]
@@ -502,7 +520,11 @@ sys.stdin.read()
     # A spec-sized prompt on the command line overran Windows' limit (WinError 206).
     assert not any("Task: carry out" in arg for arg in commands[0])
     assert not Path(commands[0][commands[0].index("--append-system-prompt-file") + 1]).exists()
-    assert system.startswith("Task: carry out the current spec") and "로그인 뒤 원래 페이지로 돌아간다" in system
+    # The task, the documents' order and the stop conditions come first, with each file's length.
+    assert system.startswith("## Read this first\n\n**Task (fix):** 로그인 뒤 원래 페이지로 돌려보낸다")
+    assert "1. `a.txt` (1 lines) — **current**" in system and "Stop and hand back" in system
+    assert system.index("Task: carry out the current spec") > system.index("Stop and hand back")
+    assert "로그인 뒤 원래 페이지로 돌아간다" in system
     assert json.loads(system.split("```json\n")[1].split("```")[0])["done"][0] == PASS
     spec = specs.load("proj", sid)
     assert spec["state"] == "작업 중" and spec["worktree"] == path

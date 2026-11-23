@@ -20,6 +20,7 @@ from test_main import no_machine_settings  # noqa: F401 — the fixture is autou
 from test_oneshot_front_build import Run, git, o, report, spec, staged, write  # noqa: F401 — `staged` is a fixture
 from test_oneshot_spec import fenced, world  # noqa: F401 — `world` is the temporary worktree's fixture
 
+SECRETS = device.SECRETS
 SUFFIX = ".oneshot0123456789abcdef"   # the test spec's run id (`test_oneshot_spec.world`)
 PKG, SIZE = f"com.example.budget{SUFFIX}", {"width": 1080, "height": 2400, "dpi": 420}
 DEVICE = {"apk": "app/app-debug.apk", "package": PKG, "activity": "com.example.budget.MainActivity",
@@ -73,10 +74,22 @@ class Phone:
     def __init__(self, screens: dict):
         self.screens, self.at, self.sent, self.events, self.frame = screens, None, [], "", b""
         self.instrument, self.packages = PASSED, set()
+        # The app's `SECRETS` file as `run-as` writes it; `stored` holds what it held at each start and test run.
+        self.secret, self.stored, self.refuse = None, [], set()
 
-    def call(self, folder, args, *, device=True, timeout=0, binary=False, stream=False):
+    def call(self, folder, args, *, device=True, timeout=0, binary=False, stream=False, data=None):
         self.sent.append(args)
         out = ""
+        if args[:2] == ["shell", "-T"] and args[2] == f"run-as {PKG} sh -c 'mkdir -p files && cat > {SECRETS}'":
+            if "hold" in self.refuse:   # adb's error quotes what the device said, here the value it was sent
+                raise ValueError(f"adb shell -T failed: run-as: package not debuggable: {data.decode()}")
+            self.secret = data.decode()
+        elif args[:5] == ["shell", "run-as", PKG, "rm", "-f"] and args[5] == SECRETS:
+            if "rm" in self.refuse:
+                raise ValueError("adb shell run-as failed: rm: Permission denied")
+            self.secret = None
+        elif args[:2] == ["shell", "am"] and args[2] in ("start", "instrument"):
+            self.stored.append(self.secret)
         if args[:2] == ["shell", "am"] and args[2] == "start":
             extras = dict(zip(args[args.index("--es") + 1::3], args[args.index("--es") + 2::3]))
             self.at = extras["oneshot.screen"]
@@ -294,6 +307,54 @@ def test_a_stop_during_the_look_ends_it_inside_the_owned_emulator(phone, tmp_pat
 
 
 # -- The mechanical checks ------------------------------------------------------------------------------
+
+VALUE = "tok-7Hq2kZ"
+HIDE = {VALUE: "[N1]"}
+
+
+def held(phone, tmp_path, given=None):
+    return device.look(phone.tree, DEVICE, android_spec(), tmp_path / "device", tmp_path / "shots",
+                       given={"API_KEY": VALUE, "GONE_KEY": None} if given is None else given, hide=HIDE)
+
+
+def test_the_app_holds_each_given_secret_in_its_own_storage_while_it_runs_and_never_after(phone, tmp_path):
+    assert held(phone, tmp_path) == []
+    # Every start and the test run saw the file; a need not given is not in it, and no value is on a command line.
+    assert phone.stored and all(json.loads(s) == {"API_KEY": VALUE} for s in phone.stored)
+    assert phone.secret is None and phone.sent[-1] == ["shell", "run-as", PKG, "rm", "-f", device.SECRETS]
+    assert not any(VALUE in a for args in phone.sent for a in args)
+    assert len(list((tmp_path / "shots").iterdir())) == 3 * len(device.STATES)
+
+
+def test_without_a_given_secret_the_app_gets_no_file(phone, tmp_path):
+    assert held(phone, tmp_path, given={"GONE_KEY": None}) == []
+    assert not any(a[:2] == ["shell", "-T"] or "run-as" in a for a in phone.sent)
+
+
+@pytest.mark.parametrize("spelled", [VALUE.upper(), f"key: {VALUE[:4]}\n{VALUE[4:]}"])
+def test_a_screen_whose_text_holds_a_secret_is_a_finding_and_never_kept(phone, tmp_path, spelled):
+    phone.screens["S2"] = [*phone.screens["S2"], node(desc=spelled)]
+    phone.instrument = PASSED.replace("STATUS_CODE: 0", f"STATUS_CODE: -2\nINSTRUMENTATION_STATUS: stack=Expected {VALUE}")
+    found = held(phone, tmp_path)
+    said = whats(found)
+    assert VALUE not in said and VALUE.upper() not in said and "[N1]" in said
+    assert {f["screen"] for f in found if "비밀 값 [N1]" in f["what"]} == {"S2"}
+    assert not list((tmp_path / "shots").glob("S2-*.png")) and len(list((tmp_path / "shots").glob("S1-*.png"))) == 4
+
+
+def test_a_secret_the_app_cannot_hold_or_a_file_left_behind_fails_the_stage_without_the_value(phone, tmp_path):
+    phone.refuse = {"hold"}
+    with pytest.raises(ValueError, match="디버그 빌드") as caught:
+        held(phone, tmp_path)
+    assert VALUE not in str(caught.value) and caught.value.__cause__ is None
+    phone.refuse, phone.sent = {"rm"}, []
+    with pytest.raises(ValueError, match="지우지 못했다"):
+        held(phone, tmp_path)
+    phone.refuse, phone.screens["S1"] = set(), None   # a failure mid-look still removes the file
+    with pytest.raises(Exception):
+        held(phone, tmp_path)
+    assert phone.secret is None
+
 
 def root(*nodes):
     from xml.etree import ElementTree

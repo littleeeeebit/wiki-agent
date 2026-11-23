@@ -277,6 +277,46 @@ def test_codex_hooks_show_and_a_question_is_answered_by_its_id(tree):
     assert json.loads(events[-1].text) == {"fruit": {"answers": ["A"]}}
 
 
+def test_a_batch_its_reply_cannot_key_is_only_declined(tree):
+    """Codex answers by id and Claude by question text: a batch with an entry that is no question, or the reply's key
+    missing or shared, would lose an answer, so it asks nothing and is only declined. Two questions alike under
+    distinct ids are answered. Neither adapter fails on any of them."""
+
+    codex = CODEX_START + '''for rid, batch in ((7, [{"id": "a", "question": "Pick"}, {"question": "Plain"}]), (8, 5),
+                   (9, [{"id": "a", "question": "Pick"}, {"id": "b", "question": "Pick"}])):
+    say({"id": rid, "method": "item/tool/requestUserInput", "params": {"questions": batch}})
+    say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": json.dumps(read()["result"])}}})
+say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+sys.stdin.read()
+'''
+    session = ChatSession(tree, model="codex:m", write=True)
+
+    def reply(event):
+        if not event.meta["input"]["questions"]:
+            for answers in (["x", "y"], [], None):   # nothing to answer: only declining is left
+                with pytest.raises(ValueError):
+                    session.answer(event.meta["id"], True, answers=answers)
+            assert session.answer(event.meta["id"], False)
+        else:
+            assert session.answer(event.meta["id"], True, answers=["A", "typed"])
+
+    _, events = run(session, codex, tree, reply)
+    said = [json.loads(e.text) for e in events if e.kind == "progress" and e.text.startswith('{"answers"')]
+    assert said == [{"answers": {}}, {"answers": {}}, {"answers": {"a": {"answers": ["A"]}, "b": {"answers": ["typed"]}}}]
+
+    claude = CLAUDE_QUESTION.replace('"input": {"questions": [q]}', '"input": {"questions": [q, q]}').replace(
+        'json.dumps(got["updatedInput"]["answers"])', 'json.dumps(got["behavior"])')
+    session = ChatSession(tree, write=True, bypass=True)
+
+    def decline(event):
+        with pytest.raises(ValueError):
+            session.answer(event.meta["id"], True, answers=["A", "B"])
+        assert session.answer(event.meta["id"], False)
+
+    _, events = run(session, claude, tree, decline)
+    assert json.loads(events[-1].text) == "deny"
+
+
 def test_a_tool_line_shows_the_command_beside_what_it_is_for():
     """How long a step may take is read off the command, not its description."""
 

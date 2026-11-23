@@ -26,17 +26,25 @@ import runpy
 import sys
 from pathlib import Path
 
+# Before anything that touches the disk, this file's own path included: imported, it arms a PreToolUse wrapper's
+# credential-session deny (`hook_deadline.PRETOOL`). Run as a script, this folder is already first on the path.
+# The project lookup and the data paths load inside `main`, after it.
+import hook_deadline
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-
-import hook_deadline  # noqa: E402
-
-from common import layout  # noqa: E402
-from common.paths import RAW  # noqa: E402
 
 # The scripts that read a target repository and need to be told which one.
 PROJECT = {"inject.py", "session_state.py", "sync.py"}
 LEGACY = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
+
+
+def closed(script: str, why: str) -> int:
+    """A PreToolUse check (`claude_pretool`, `codex_pretool`) that never ran: denied in a session carrying a
+    oneshot's secrets (`secrets_held`, which loads with nothing else), passed as before in any other."""
+    if script in hook_deadline.PRETOOL and (out := __import__("secrets_held").held_closed(why)):
+        hook_deadline.send(out)   # the one answer: the deadline's never follows it
+    return 0
 
 
 def project_for(cwd: Path) -> tuple[Path, Path] | None:
@@ -49,6 +57,8 @@ def project_for(cwd: Path) -> tuple[Path, Path] | None:
         cwd = cwd.resolve()
         # git could not start in a folder that is missing or refuses listing, and the hooks passed.
         os.scandir(cwd).close()
+        from common import layout
+
         found = layout(cwd)
     except OSError:
         return None
@@ -102,15 +112,17 @@ def main(argv: list[str]) -> int:
     # the project is known to be attached, and an empty one never exits — the
     # host decides then. Only as the host's process: a test calling `main`
     # would be ended by the timer.
-    timed = len(argv) > 1 and argv[1] in hook_deadline.LIMITS and Path(sys.argv[0]).name == "hook.py"
-    if timed:
-        try:
-            hook_deadline.arm(hook_deadline.LIMITS[argv[1]][0], None)
+    pre = len(argv) > 1 and argv[1] in hook_deadline.PRETOOL
+    timed = len(argv) > 1 and (argv[1] in hook_deadline.LIMITS or pre) and Path(sys.argv[0]).name == "hook.py"
+    if timed and not (pre and hook_deadline._armed):   # imported as the host's process, it is armed already
+        try:   # a wrapper's deny is in place from here, before stdin and the project are read
+            hook_deadline.arm(hook_deadline.PRETOOL[argv[1]] if pre else hook_deadline.LIMITS[argv[1]][0],
+                              hook_deadline.pretool() if pre else None)
         except Exception:  # noqa: BLE001 — without a deadline the hook still runs, as it did before one
             timed = False
     if len(argv) < 2 or argv[0] not in LEGACY or not (HERE / argv[1]).is_file():
         print("hook skipped: usage hook.py <claude|codex> <script> [args]", file=sys.stderr)
-        return 0
+        return closed(argv[1] if len(argv) > 1 else "", "훅이 검사 스크립트를 찾지 못했다")   # a wrapper gone
     host, script, extra = argv[0], argv[1], argv[2:]
     raw = sys.stdin.buffer.read()
     try:
@@ -119,11 +131,13 @@ def main(argv: list[str]) -> int:
         cwd = Path.cwd()
     found = project_for(cwd)
     if found is None:
-        return 0
+        return closed(script, "훅이 이 작업의 프로젝트를 찾지 못했다")
     project, top = found
-    if legacy(top, host, script):
+    # A credential session runs every check here: a legacy entry may not cover this call (its matcher, its event).
+    held = bool(os.environ.get(__import__("secrets_held").SECRETS_HELD))
+    if not held and legacy(top, host, script):
         return 0
-    if script == "claude_pretool.py":
+    if script == "claude_pretool.py" and not held:
         # Each check it holds keeps the rule it had as a hook of its own.
         from claude_pretool import MEMBERS
 
@@ -147,7 +161,10 @@ def main(argv: list[str]) -> int:
     nonce = os.environ.get("WIKI_PROBE", "")
     # The fallback goes live only now, the project known to be attached, and
     # in probe mode only once the buffer that forwards it is in place.
-    fallback = hook_deadline.stalled(script) if timed else None
+    # A PreToolUse check still running then denies in a credential session (`secrets_held`); in any other there is
+    # no fallback, and the host decides as before.
+    fallback = (hook_deadline.stalled(script) if script in hook_deadline.LIMITS else hook_deadline.pretool()) \
+        if timed else None
     if not nonce:
         hook_deadline.best = fallback
         runpy.run_path(str(HERE / script), run_name="__main__")
@@ -206,6 +223,8 @@ def probed(nonce: str, host: str, script: str, raw: bytes, printed: str) -> None
             context = json.loads(printed)["hookSpecificOutput"]["additionalContext"]
         except (ValueError, KeyError, TypeError):
             context = ""
+        from common.paths import RAW
+
         folder = Path(os.environ["WIKI_PROBE_ROOT"]) if os.environ.get("WIKI_PROBE_ROOT") else RAW / "connect/probe"
         folder.mkdir(parents=True, exist_ok=True)
         with open(folder / f"{nonce}.jsonl", "a", encoding="utf-8") as fh:
@@ -215,12 +234,16 @@ def probed(nonce: str, host: str, script: str, raw: bytes, printed: str) -> None
         pass
 
 
-if __name__ == "__main__":
+def run(argv: list[str]) -> int:
+    script = argv[1] if len(argv) > 1 else ""   # read first: `main` hands `sys.argv` to the script it runs
     try:
-        _code = main(sys.argv[1:])
+        return main(argv)
     except SystemExit:
         raise
-    except Exception as _error:  # noqa: BLE001
-        print(f"hook skipped: {type(_error).__name__}", file=sys.stderr)
-        _code = 0
-    raise SystemExit(_code)
+    except Exception as error:  # noqa: BLE001
+        print(f"hook skipped: {type(error).__name__}", file=sys.stderr)
+        return closed(script, f"훅이 실패했다 ({type(error).__name__})")
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(sys.argv[1:]))

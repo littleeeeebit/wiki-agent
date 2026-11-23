@@ -282,7 +282,7 @@ export const reset = (id: string, keep: Keep) =>
 
 /** Every channel shares the project; conversations are kept per project and
  *  per channel. */
-export const setConfig = (id: string, cfg: { repo: string; model: string; effort: string; refactor_mode?: RefactorMode }) =>
+export const setConfig = (id: string, cfg: { repo: string; model?: string; effort?: string; refactor_mode?: RefactorMode }) =>
   post(`/api/config/${id}`, cfg).then((r) => json<{ kept: boolean; switched: boolean; repo: string }>(r, '설정'))
 
 /** Name one category at the moment it went wrong, in the census's format. */
@@ -1052,6 +1052,7 @@ export const workReset = (path: string, keep: Keep) =>
   post('/api/work/reset', { path, keep }).then((r) => json<Kept>(r, '작업 문맥 비우기'))
 export const workAnswer = (body: {
   path: string; session_id: string; id: string; allow: boolean; scope: 'once' | 'session'; answers?: string[]
+  picks?: (number[] | null)[]
 }) => post('/api/work/answer', body).then((r) => json(r, '승인'))
 export const workStop = (path: string, turn: string) =>
   post('/api/work/stop', { path, turn }).then((r) => json(r, '멈춤'))

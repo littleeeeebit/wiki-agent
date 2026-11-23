@@ -309,7 +309,8 @@ def design(repo: str) -> None:
     if found is None:
         return
     made, _, _, warnings = found
-    saved(repo, oneshot={"design": made, "stage": "r1", "working": "brief",
+    saved(repo, oneshot={"design": made, "design_author": store(repo).get()["answering"]["design"],
+                         "stage": "r1", "working": "brief",
                          "r1": {"round": 1, "decisions": {}, "marks": {}, "warnings": warnings}})
     briefed(repo)
 
@@ -354,7 +355,7 @@ def redesign(repo: str, comments: dict[str, str], reach: list[str]) -> None:
     r1 = spec["oneshot"]["r1"]
     marks, decisions = marked(sheet.decidable(made, reqs), comments, reach, old, new, r1["decisions"])
     saved(repo, requirements=reqs, oneshot={
-        "design": made, "glossary": glossary, "working": "brief",
+        "design": made, "design_author": store(repo).get()["answering"]["design"], "glossary": glossary, "working": "brief",
         "r1": {"round": r1["round"] + 1, "decisions": decisions, "marks": marks, "warnings": warnings}})
     briefed(repo)
 
@@ -384,7 +385,12 @@ def approved(repo: str) -> None:
     head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
                                      f"(R1 round {o['r1']['round']})")
     if head:
-        saved(repo, oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
+        # What the build reads first (`handoff`): the design just committed governs, and the spec model that
+        # wrote it answers the builder's escalations.
+        saved(repo, task={"kind": "feature", "what": spec["goal"]},
+              precedence=[{"ref": f, "role": "current", "why": "the approved design"} for f in files], escalate=[],
+              author=o.get("design_author") or oneshot.role_config("design", store(repo)),
+              oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
 
 
 def within(base: Path, *parts: str) -> Path | None:
@@ -751,8 +757,8 @@ def decide(repo: str, body: Decisions) -> dict:
                   reading=read(o, "r1", body.reading, comments, briefed))
             return view(spec_of(repo))
         from . import oneshot_needs   # it imports this module
-        if lacking := oneshot_needs.missing(spec):   # plan 11: no run proceeds on a stand-in for what the owner gives
-            raise HTTPException(409, "주인이 줄 것이 아직 없다 — " + ", ".join(f"{x['id']} {x['what']}" for x in lacking))
+        if why := oneshot_needs.unready(spec):   # plan 11: no run proceeds on a stand-in for what the owner gives
+            raise HTTPException(409, why)
         saved(repo, oneshot={"r1": {**o["r1"], "decisions": decisions},
                              "reading": read(o, "r1", body.reading, (), briefed)})
         approved(repo)

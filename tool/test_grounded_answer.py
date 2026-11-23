@@ -1304,6 +1304,8 @@ def test_a_closed_stream_leaves_the_run_going_and_its_draft_unpublished(tmp_path
 def test_a_spec_keeps_known_provenance_without_approving_the_proposal(tmp_path, active):
     d, reply = mixed(tmp_path)
     spec = {"slug": "port-note", "goal": "Document the daemon port.",
+            "task": {"kind": "docs", "what": "Document the daemon port."},
+            "precedence": [{"ref": "docs/architecture.md", "role": "current"}],   # the card is the hub's
             "grounds": {"files": ["docs/ports.md:3", "docs/owners.md:3"], "pages": [], "rules": [],
                         "evidence": ["e1", "e9"]}}
     session, _sent = session_saying(reply, blocks=f"\n```spec\n{json.dumps(spec)}\n```\n")

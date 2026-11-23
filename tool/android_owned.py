@@ -240,9 +240,10 @@ class Relay:
 
 
 def call(folder: Path, args: list[str], *, device: bool = True, timeout: float = CALL_SECONDS,
-         binary: bool = False, stream: bool = False):
+         binary: bool = False, stream: bool = False, data: bytes | None = None):
     """`adb [-s <owned serial>] args` through a `Relay` to the owned server, after the listener checks.
-    `stream` hands adb this process's own output and waits for it, as `logcat` needs."""
+    `stream` hands adb this process's own output and waits for it, as `logcat` needs; `data` is adb's standard
+    input, never its command line."""
 
     record = load(folder)
     if not record or not server_ok(record):
@@ -259,7 +260,7 @@ def call(folder: Path, args: list[str], *, device: bool = True, timeout: float =
             done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,
                                   env=environment(), **process.background_options())
         else:
-            done = subprocess.run(argv, capture_output=True, timeout=timeout, env=environment(),
+            done = subprocess.run(argv, input=data, capture_output=True, timeout=timeout, env=environment(),
                                   **process.background_options())
     if relay.refused:
         raise ValueError(f"adb {' '.join(args[:2])} reached nothing: {relay.refused}")

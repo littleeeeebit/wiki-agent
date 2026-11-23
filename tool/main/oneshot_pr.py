@@ -22,9 +22,10 @@ from pathlib import Path
 import yaml
 
 import android_owned
+from common import masked
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_device, oneshot_spec, pr_text, release, specs
+from . import github_release, oneshot_build, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -158,19 +159,30 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
     ran = [backend, gate] if gate != backend else [gate]
-    verdict = oneshot_build.judged(path, run, spec, ran, oneshot_build.built_env(spec), expect=checked)
+    android = "android" in kinds_of(o)
+    if android and (why := oneshot_device.cleared(path, o["device"])):   # the gate makes the APK frozen below
+        return why
+    env = oneshot_build.built_env(spec)   # read once: the freeze scan below looks for exactly these values
+    verdict = oneshot_build.judged(path, run, spec, ran, env, expect=checked)
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    if why := oneshot_build.held(path, run, spec, verdict):
-        return why
     frozen = None
-    if "android" in kinds_of(o):   # the APK S8 attaches, frozen while the check still holds the tree
-        if why := oneshot_device.built(path, o["device"]) or release_checked(path, spec, verdict["head"], run.halt):
+    if android:   # the APK S8 attaches: the gate's own output, frozen before a later command can rebuild it
+        if why := oneshot_device.built(path, o["device"]):
             return why
         try:
-            frozen = froze(spec, verdict["head"])
+            frozen = froze(spec, verdict["head"], oneshot_needs.hidden(spec, env))
         except OSError as exc:   # the attachment is optional: the pull request opens and its body says why
             frozen = {"head": verdict["head"], "error": f"최종 게이트가 만든 APK 를 복사하지 못했다 — {exc}"}
+    why = "raised"   # until the later checks answer: a raise keeps it, and the copy goes with it
+    try:
+        why = oneshot_build.held(path, run, spec, verdict) or android and release_checked(
+            path, spec, verdict["head"], run.halt)
+    finally:
+        if why and frozen and frozen.get("path"):   # failed or raised: the copy is never kept
+            shutil.rmtree(Path(frozen["path"]).parent, ignore_errors=True)
+    if why:
+        return why
     report = next(b["value"] for b in specs.blocks(final)[1] if b["name"] == "done-report")
     tail = (verdict.get("tail") or "").strip()
     # The pull request's body reads these as every spec's: the worker's report and the server's gate.
@@ -263,7 +275,7 @@ def decisions(o: dict) -> list[str]:
     return out
 
 
-def froze(spec: dict, head: str) -> dict:
+def froze(spec: dict, head: str, hide: dict) -> dict:
     """The APK the final gate just built, copied out of the worktree while the check holds it, with its
     digest: the APK is a build output Git does not track, so nothing read from the tree later is the one the
     gate passed. An earlier gate's copy goes first."""
@@ -274,9 +286,13 @@ def froze(spec: dict, head: str) -> dict:
     try:
         into.mkdir(parents=True)
         shutil.copyfile(Path(spec["worktree"]) / spec["oneshot"]["device"]["apk"], into / name)
-        return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name)}
-    except OSError:
-        shutil.rmtree(into, ignore_errors=True)   # never a partial copy left behind
+        # Read under the values its build ran with (`hide`, from the gate's own environment): an upload later,
+        # after a value changed or was taken back, still needs this scan, bound to these bytes by their digest.
+        scan = oneshot_needs.asset(into / name, spec, hide)
+        return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name),
+                "scan": scan}
+    except BaseException:
+        shutil.rmtree(into, ignore_errors=True)   # never a partial copy left behind, whatever stopped it
         raise
 
 
@@ -297,6 +313,10 @@ def released(spec: dict) -> dict:
     try:
         if not file.is_file() or android_owned.sha256(file) != frozen["sha256"]:
             raise ValueError("최종 게이트가 고정한 APK 사본이 없거나 바뀌었다")
+        # The exact bytes that go up: clean under the values the build ran with (`froze`) and under today's.
+        if why := ("scan" not in frozen and "최종 게이트가 고정한 APK 를 검사한 기록이 없다") or frozen["scan"] \
+                or oneshot_needs.asset(file, spec):
+            raise ValueError(why)
         repo = github_release.slug(release.remote(path))
 
         def found() -> dict | None:
@@ -347,6 +367,8 @@ def asked(repo: str) -> None:
     worker for the pull request's text, as every spec's does."""
 
     spec = oneshot_spec.spec_of(repo)
+    if why := oneshot_needs.publishable(Path(spec["worktree"]), spec):   # before anything goes out
+        return oneshot_spec.store(repo).stop(STAGE, why) and None   # stopped: no next turn
     if "android" in kinds_of(spec["oneshot"]):   # alone or among several kinds
         spec = oneshot_spec.saved(repo, oneshot={"apk": released(spec)})
     path, head = Path(spec["worktree"]), oneshot_spec.spec_of(repo)["oneshot"]["final_head"]
@@ -370,7 +392,8 @@ def handed(path: Path, run, spec: dict, final: str):
     try:
         then = specs.written(specs.channels.repo_for(repo), path, run, spec, final, ask)
     except Exception as exc:   # a push that timed out: stopped with its reason, resumed from the README turn
-        oneshot_spec.store(repo).stop(STAGE, f"PR 을 만들지 못했다 — {type(exc).__name__}: {exc}")
+        oneshot_spec.store(repo).stop(STAGE, masked(f"PR 을 만들지 못했다 — {type(exc).__name__}: {exc}",
+                                                    getattr(run.chat, "hide", None)))
         raise
     fresh = specs.load(repo, spec["id"])
     if fresh.get("pr"):

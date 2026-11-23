@@ -8,17 +8,25 @@ a name no run uses, removed afterwards; the files and programs are real ones.
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 
+from agent.chat_session import Event
+from common import Veil, host, masked, overlaps, question_list, unescaped
+from guard_git import SECRETS_HELD
+
 from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
-    oneshot_sheet as sheet, oneshot_spec, release, specs
+    oneshot_sheet as sheet, oneshot_spec, prerequisite_review, release, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_core import DESIGN, GLOSSARY, REQS, STACK, android  # noqa: F401 — `android` is the fixture
 from test_oneshot_spec import DESIGN as WEB, GLOSSARY as WEB_GLOSSARY, PROFILE, REQS as WEB_REQS, o, on_sheet, world  # noqa: F401 — `world` is the temporary worktree's fixture
@@ -95,10 +103,53 @@ def test_every_design_prompt_asks_for_needs_in_the_shape_the_server_takes(prompt
     text = (Path(__file__).parent / "prompts" / f"{prompt}.md").read_text(encoding="utf-8")
     example = json.loads(re.search(r"- `oneshot-outside`: `(\[.*?\])`\n", text)[1])
     assert needs.parsed(example[0]["needs"], "X1") == [{"id": "N1", "what": "…", "kind": "secret", "env": "SERVICE_API_KEY"}]
+    for launch in ("WIKI_AGENT_MANAGED", "ORCA_TOKEN", "RELEASE_KEY_PASSWORD", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"):   # the agent's launch sets these
+        with pytest.raises(ValueError, match="에이전트를 띄울 때"):
+            needs.parsed([{"id": "N1", "what": "x", "kind": "secret", "env": launch}], "X1")
+    assert needs.ENV.fullmatch("WIKI_AGENT_MANAGED")   # a saved need of that name can still be removed by it
+    # A design saved before the rule: R1 is not approved with it (an edit renames it); one approved before runs, its
+    # value never in the agent's environment, only the gate's, and masked in what the agent sees.
+    saved_need = [("N1", {"id": "N1", "env": "ANTHROPIC_API_KEY"})]
+    with patch.object(needs, "secret_needs", lambda s: saved_need), \
+            patch.object(needs, "_given", lambda s: [("N1", "ANTHROPIC_API_KEY", "v" * 20)]), \
+            patch.object(needs, "missing", lambda s: []):
+        assert "ANTHROPIC_API_KEY" in needs.unready({"oneshot": {}})
+        env, hide = needs.agent({"oneshot": {"run": 1}, "repo": "budget"})
+        assert env == {} and hide == {"v" * 20: "[N1]"}
+        assert needs.gate_env({}, {}) == {"ANTHROPIC_API_KEY": "v" * 20}
     assert all(f"`{k}`" in text for k in needs.KINDS) and "for it to run for real" in text
 
 
-WEB_CALL = {"id": "X1", "target": "환율 서비스", "does": "오늘 환율을 받아 온다", "failure": "어제 환율로 적고 그렇다고 보여 준다",
+def test_a_name_a_look_sets_when_it_starts_the_app_is_never_a_secrets():
+    from main import oneshot_desktop
+
+    started = {"PORT", "APP_DATA_DIR", "PYTHONUNBUFFERED", *oneshot_desktop.LOOK_ENV, *oneshot_desktop.OWNED_ENV}
+    for name in started:   # the look's value would reach the app in its place
+        assert needs.STARTED.fullmatch(name), name
+        with pytest.raises(ValueError, match="앱을 띄울 때"):
+            needs.parsed([{"id": "N1", "what": "x", "kind": "secret", "env": name}], "X1")
+    assert not needs.STARTED.fullmatch("PORTAL_KEY") and not needs.STARTED.fullmatch("TEMP_TOKEN")
+    with patch.object(needs, "secret_needs", lambda s: [("N1", {"id": "N1", "env": "ONESHOT_SCREEN"})]):
+        assert "앱을 띄울 때" in needs.launchable({"oneshot": {}})   # a design saved before the rule stays at R1
+    # One approved before runs: a launcher that sets the name keeps its own value, and the prompt and its row say
+    # so; a launcher that does not set it, and the Android file, carry the owner's.
+    old = {"id": "N1", "kind": "secret", "env": "ONESHOT_SCREEN", "what": "키"}
+    spec = {"repo": "budget", "oneshot": {"design": {"outside": [{"id": "X1", "needs": [old, {**KEY, "id": "N2"}]}]}}}
+    env = {"ONESHOT_SCREEN": "v" * 20, ENV: "w" * 20}
+    assert needs.given_in(spec, env, oneshot_desktop.LOOK_ENV) == {ENV: "w" * 20}
+    assert needs.given_in(spec, env) == {"ONESHOT_SCREEN": "v" * 20, ENV: "w" * 20}
+    # Its row and prompt name only the kinds whose look keeps its own value.
+    for kinds, said in ((["desktop", "android"], ["PC 앱"]), (["android"], []), (["webapp"], [])):
+        spec["oneshot"]["intent"] = {"kinds": kinds}
+        with patch.object(needs, "held", lambda *a: True), patch.object(needs, "kept", lambda repo: []):
+            assert [n["started"] for n in needs.shown(spec)] == [said, []], kinds
+        assert ("the desktop screen check sets `ONESHOT_SCREEN` itself" in needs.told(spec)) is bool(said), kinds
+    spec["oneshot"]["design"]["outside"][0]["needs"][0]["env"] = "PORT"
+    spec["oneshot"]["intent"] = {"kinds": ["webapp", "desktop"]}
+    assert needs.kept_from(spec, "PORT") == ["webapp"] and needs.kept_from(spec, "TEMP") == ["desktop"]
+
+
+WEB_CALL ={"id": "X1", "target": "환율 서비스", "does": "오늘 환율을 받아 온다", "failure": "어제 환율로 적고 그렇다고 보여 준다",
             "depends_on": ["R1", "P1"], "needs": [KEY]}
 
 
@@ -183,6 +234,21 @@ def test_a_need_given_wrong_is_refused_naming_nothing_typed_and_nothing_is_kept(
 def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     give("N1", value="k" * 1280)
     assert release.secret_read(needs.name("budget", ENV)) == "k" * 1280
+    give("N1", value="n1")   # a value `[N1]` would show through is kept too: its label is spelled otherwise
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: "n1"})
+    assert hide == {"n1": "■■"} and masked(masked("an1 n1", hide), hide) == masked("an1 n1", hide) == "a■■ ■■"
+    assert hide["n1"].need == "N1"   # a refusal still names the need, whatever its label spells
+    why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 n1 이다")   # `N1` would show the value: its label
+    assert f"비밀 값 {ENV} 이(가) 답 에" in why and masked(why, hide) == why   # as the sheet names it
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: "N1 이(가)"})   # `N1` is safe alone, not in the sentence
+    why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 N1 이(가) 다")
+    assert "비밀 값 [N1] 이(가) 답 에" in why and masked(why, hide) == why
+    wrapped = masked(f"The server refused this build turn: {why}\n\nFix it", hide)   # as `checked` sends it
+    assert "비밀 값 [N1] 이(가) 답 에" in wrapped and "N1 이(가)" not in wrapped.replace("[N1] 이(가)", "")
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: f"{ENV}[n1"})   # meets both `[N1]` and the variable
+    why = needs.leaked(at_r1, needs.spec_of("budget"), hide, f"키는 {ENV}[n1 이다")
+    assert "비밀 값 시트의 1번째 항목 이(가) 답 에" in why and masked(why, hide) == why   # its row on the sheet
+    assert needs.shown(needs.spec_of("budget"))[0]["leaked"]   # and the sheet marks it, whatever the text names
 
 
 def test_a_value_given_on_a_sheet_a_redesign_replaced_is_refused(at_r1):
@@ -305,6 +371,10 @@ def test_every_gate_the_run_runs_has_each_given_secret_and_the_prompts_name_only
 def test_a_run_whose_calls_need_nothing_is_told_so():
     assert needs.told({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}) == \
         "- none: no outside call needs anything from the owner"
+    # A launch name the agent's shell never has is told as the gate's alone.
+    gate_only = {"N1": ({"id": "N1", "what": "a key", "kind": "secret", "env": "ANTHROPIC_API_KEY"}, [{"id": "X1"}])}
+    with patch.object(needs, "owed", lambda design: gate_only):
+        assert "server's gate alone has: it is not in your shell" in needs.told({"repo": "budget", "oneshot": {}})
 
 
 REPORTER = """import os, sys
@@ -352,6 +422,32 @@ def test_a_secret_not_given_never_falls_back_to_a_variable_the_server_has(at_r1,
     assert needs.gate_env({"repo": "budget", "oneshot": {"design": sheet.parsed(DESIGN, "android")}}, None) is None
 
 
+def test_a_secret_spelled_with_json_escapes_is_masked_where_it_stands_and_scanned_in_any_fence():
+    hide = {"tok-31415926": "[N1]"}
+    choices = '```choices\n{"questions": [{"q": "use \\u0074ok-31415926?", "o": ["\\u0054OK\\u002d31415926"]}]}\n```\n'
+    out = masked(choices, hide)
+    assert "31415926" not in out and json.loads(out.split("\n")[1]) == {"questions": [{"q": "use [N1]?", "o": ["[N1]"]}]}
+    # An escaped backslash is a backslash: what follows it is plain text, as JSON reads it.
+    assert masked('"\\\\u0074ok-31415926"', hide) == '"\\\\u0074ok-31415926"'
+    assert masked('a\\/b', {"a/b": "[N2]"}) == "[N2]"
+    # The scan reads every fence the same way, the test runner's included, whichever parser takes it later.
+    runner = '```oneshot-runner\n{"command": ["run", "--key", "\\u0074ok-31415926"]}\n```\n'
+    assert "tok-31415926" not in runner and needs.held_in(needs.decoded(runner), hide) == ["N1"]
+    # A character outside the Basic Multilingual Plane, written as a surrogate pair, is read as JSON parsers read it.
+    pair = {"k\U0001F511y-1": "[N3]"}
+    written = '{"q": "k\\ud83d\\udd11y-1"}'
+    assert json.loads(masked(written, pair)) == {"q": "[N3]"} and needs.held_in(written, pair) == ["N3"]
+    # A value meeting part of an escape never leaves half of it: the label covers the whole escape, JSON stays JSON.
+    part = {"u0074o": "[N4]", "tok-31415926": "[N1]"}
+    assert json.loads(masked('{"q": "\\u0074ok-31415926"}', part)) == {"q": "[N1]"}
+    assert json.loads(masked('{"q": "a\\u0074ob"}', {"u0074": "[N5]"})) == {"q": "a[N5]ob"}
+
+
+def test_the_publication_scan_reads_a_json_file_as_it_decodes(tmp_path):
+    hide = {"tok-31415926": "[N1]"}
+    assert needs.held_in('+{"key": "\\u0074ok-31415926"}', hide) == ["N1"]   # a diff line of a JSON file
+
+
 def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
     from common import masked
 
@@ -386,3 +482,472 @@ def test_a_secret_that_folds_to_nothing_shows_on_no_page():
     assert not secrets_shown(page, {"key-İx": "[N1]"})   # never across two streams
     Frame.evaluate = lambda self, _: {"texts": ["KEY-I\n" + chr(0x307) + "X"], "values": []}
     assert secrets_shown(page, {"key-" + chr(0x130) + "x": "[N1]"})   # a casing broken where its fold depends
+
+
+# -- 11b2a: the build agent's own turns --------------------------------------------------
+
+def test_a_build_session_carries_each_given_secret_and_starts_again_when_it_changes(at_r1, monkeypatch):
+    monkeypatch.setenv(ENV, "the server's own key")
+    monkeypatch.setattr(specs, "owner", lambda path: specs.load("budget", oneshot.BRANCH))   # the fixture's tree
+    made = []
+
+    class Chat:
+        is_codex, fast = False, False
+
+        def __init__(self, path, env=None, bypass=False, **k):
+            made.append(env)
+            self.bypass, self.closed = bypass, False
+
+        def reconfigure(self, model, effort):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    turned = lambda sid: work.remember(at_r1, "assistant", "끝냈다", session_id=sid, model="claude-opus-5-5")  # noqa: E731
+    turned("the conversation before")
+    with patch.object(work, "ChatSession", Chat), patch.dict(work._sessions, clear=True):
+        first = work.session(at_r1, "opus", "low")
+        assert made == [{ENV: None}] and first.hide == {}   # not given: the server's own variable is dropped
+        value = f"key-{uuid.uuid4().hex}"
+        give("N1", value=value)
+        second = work.session(at_r1, "opus", "low")
+        # A session carrying a value is marked: its agent never pushes; the server does after its secret check.
+        assert first.closed and made[-1] == {ENV: value, SECRETS_HELD: "1"} and second.hide == {value: "[N1]"}
+        assert second.session_id is None   # a conversation that held other values never resumes
+        work._sessions.clear()   # a restart before the new conversation's first turn: still not resumed
+        assert work.session(at_r1, "opus", "low").session_id is None
+        turned("the new conversation")
+        work._sessions.clear()   # the same values since its turn: it resumes
+        second = work.session(at_r1, "opus", "low")
+        assert second.session_id == "the new conversation"
+        assert work.session(at_r1, "opus", "low") is second   # nothing changed: the same session goes on
+        assert needs.take_back("budget", "N1", src())
+        third = work.session(at_r1, "opus", "low")
+        assert third is not second and second.closed and made[-1] == {ENV: None} and third.session_id is None
+    kept = json.dumps([specs.load("budget", oneshot.BRANCH), work.recall(at_r1, 0)], ensure_ascii=False)
+    assert value not in kept and "비밀 값이 바뀌었다" in kept   # only a digest is kept
+    assert ENV not in host.environment({ENV: None})   # `None` drops the variable from the child
+
+
+def test_a_turn_whose_answer_commits_or_files_hold_a_secret_is_refused_naming_only_the_need(at_r1, monkeypatch,
+                                                                                             tmp_path_factory):
+    value = f"Key-{uuid.uuid4().hex}"
+    give("N1", value=value)
+    spec = lambda: specs.load("budget", oneshot.BRANCH)  # noqa: E731
+    _, hide = needs.agent(spec())
+
+    def git(*args):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=at_r1, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    oneshot_spec.saved("budget", oneshot={"design_head": git("rev-parse", "HEAD")})
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == ""
+    why = needs.leaked(at_r1, spec(), hide, f"키는 {value.lower()} 이다")   # any casing
+    assert "N1" in why and "답" in why and value.lower() not in why.lower()
+    (at_r1 / "config.txt").write_text(f"key = {value.upper()}\n", encoding="utf-8")
+    assert "커밋하지 않은 파일" in needs.leaked(at_r1, spec(), hide, "끝냈다")
+    git("add", "config.txt")
+    git("commit", "-m", "Add the key")
+    git("rm", "-q", "config.txt")
+    git("commit", "-m", "Remove the key")
+    why = needs.leaked(at_r1, spec(), hide, "끝냈다")   # gone from the tree, still in the history the PR pushes
+    assert "커밋" in why and "다시 써서" in why and value.lower() not in why.lower()
+    added = git("rev-parse", "HEAD~1")   # the removal's diff quotes the value too
+    assert spec()["oneshot"]["tainted"] == sorted([added, git("rev-parse", "HEAD")])
+    assert spec()["oneshot"]["tainted_needs"] == {added: ["N1"], git("rev-parse", "HEAD"): ["N1"]}
+
+    def mark():
+        return next(n for n in needs.shown(spec()) if n["id"] == "N1")["leaked"]
+
+    assert mark()
+    # Taken back or replaced, the value is no longer in the mask, but its commit stays refused, and marked.
+    assert added[:12] in needs.leaked(at_r1, spec(), {}, "끝냈다")
+    assert spec()["oneshot"]["leaked"] == [] and mark()
+    git("commit", "--allow-empty", "-m", f"Again {value}")   # made while the refusal stands: recorded too
+    assert added[:12] in needs.leaked(at_r1, spec(), hide, "끝냈다")
+    assert git("rev-parse", "HEAD") in spec()["oneshot"]["tainted"]
+    nowhere = tmp_path_factory.mktemp("no-repository")   # Git cannot read it: the record is kept, never cleared
+    assert "아직 기록에 있다" in needs.still_tainted(nowhere, spec()) and spec()["oneshot"]["tainted"]
+    git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])   # the history rewritten
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == "" and spec()["oneshot"]["tainted"] == []
+    assert not mark() and spec()["oneshot"]["tainted_needs"] == {}   # the mark clears with the refusal
+    assert needs.leaked(at_r1, spec(), {}, value) == ""   # a session that carried no secret is never checked
+    # A merge's resolution: in neither parent, read against the first parent.
+    git("checkout", "-q", "-b", "side")
+    (at_r1 / "side.txt").write_text("side\n", encoding="utf-8")
+    git("add", "side.txt")
+    git("commit", "-q", "-m", "Side")
+    git("checkout", "-q", "-")
+    git("merge", "-q", "--no-ff", "--no-commit", "side")
+    (at_r1 / "side.txt").write_text(f"side {value}\n", encoding="utf-8")
+    git("add", "side.txt")
+    git("commit", "-q", "-m", "Merge side")
+    assert "커밋" in needs.leaked(at_r1, spec(), hide, "끝냈다")
+    git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])
+    git("branch", "-q", "-D", "side")
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == ""
+    head = spec()["oneshot"]["design_head"]
+    oneshot_spec.saved("budget", oneshot={"design_head": "f" * 40})   # a history git cannot read is never clean
+    failed = needs.leaked(at_r1, spec(), hide, "끝냈다")   # named by what failed, never by Git's own words
+    assert failed.endswith(" / 비밀 값이 남았는지 확인하지 못했다 — git log 이(가) 실패했다 (OSError)")
+    assert spec()["oneshot"]["unscanned"] and "검사를 끝내지 못한" in failed   # held until a scan finishes
+    oneshot_spec.saved("budget", oneshot={"design_head": git("rev-parse", "HEAD")})
+    git("commit", "--allow-empty", "-m", f"Use {value.upper()} for the call")   # the message is pushed too
+    assert "커밋" in needs.leaked(at_r1, spec(), hide, "끝냈다")
+    git("reset", "-q", "--hard", "HEAD~1")   # rewritten: the message is gone from the history
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == ""
+    # A stage check whose reason quotes the value sends it on as its need.
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "attempts": 0})
+    quoted = []
+    monkeypatch.setattr(build, "send", lambda repo, stage, text: quoted.append(text))
+    monkeypatch.setitem(build.STAGES, "build", (lambda *a: f"게이트 실패 — {value}", *build.STAGES["build"][1:]))
+    notes = []
+    run = SimpleNamespace(halt=threading.Event(), put=notes.append, person=False,
+                          chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
+    build.checked(at_r1, run, spec(), "끝냈다")()
+    said = json.dumps([quoted, notes], ensure_ascii=False)
+    assert "게이트 실패 — [N1]" in quoted[0] and value.lower() not in said.lower()
+
+    def broke(*a):
+        raise KeyError(value)
+
+    monkeypatch.setitem(build.STAGES, "build", (broke, *build.STAGES["build"][1:]))
+    with pytest.raises(RuntimeError) as raised:   # what `specs.check` logs and notes
+        build.checked(at_r1, run, spec(), "끝냈다")
+    assert "[N1]" in str(raised.value) and raised.value.__cause__ is None and raised.value.__suppress_context__
+    assert value not in str(raised.value) and value not in json.dumps(spec()["oneshot"]["stopped"])
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    oneshot_spec.saved("budget", oneshot={"design_head": head})
+    # The stage's own check never reads a refused answer: the turn goes back with the need named.
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "attempts": 0})
+    sent, notes = [], []
+    monkeypatch.setattr(build, "send", lambda repo, stage, text: sent.append(text))
+    monkeypatch.setitem(build.STAGES, "build", (lambda *a: pytest.fail("the check read a leaking answer"),
+                                                *build.STAGES["build"][1:]))
+    run = SimpleNamespace(halt=threading.Event(), put=notes.append, person=False,
+                          chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
+    build.checked(at_r1, run, spec(), f"키는 {value} 이다")()
+    assert "The server refused this build turn: 비밀 값 [N1]" in sent[0] and value.lower() not in sent[0].lower()
+    # A person's turn, or one that failed or was stopped, moves nothing; its end scans what it made under its mask.
+    monkeypatch.setattr(specs, "owner", lambda path: spec())
+    git("commit", "--allow-empty", "-m", f"Stage {value}")   # what a stage check committed after its own scan
+    assert needs.settle(at_r1, run, "끝냈다") and git("rev-parse", "HEAD") in spec()["oneshot"]["tainted"]
+    git("commit", "--allow-empty", "-m", f"Person {value}")
+    person = SimpleNamespace(halt=threading.Event(), put=notes.append, person=True,
+                             chat=SimpleNamespace(hide=hide, id="c", parent_id=None))
+    assert build.checked(at_r1, person, spec(), "끝냈다") is None and spec()["oneshot"]["stage"] == "build"
+    needs.settle(at_r1, person, "끝냈다")
+    person_commit = git("rev-parse", "HEAD")
+    assert person_commit in spec()["oneshot"]["tainted"] and mark()
+    # A rescan finding fewer needs in a commit keeps every need it was found holding.
+    oneshot_spec.saved("budget", oneshot={"tainted_needs": {**spec()["oneshot"]["tainted_needs"], person_commit: ["N1", "N9"]}})
+    needs.leaked(at_r1, spec(), hide, "끝냈다")
+    assert spec()["oneshot"]["tainted_needs"][person_commit] == ["N1", "N9"]
+    # A scan that broke leaves a hold for its set of values, refused and shown as unsure, until a scan with the
+    # same values finishes; a second set's failure is held apart.
+    git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])
+    assert needs.leaked(at_r1, spec(), hide, "끝냈다") == ""
+
+    def broke(*a):
+        raise RuntimeError("no")
+
+    git("commit", "--allow-empty", "-m", "Later")   # with no history after the design commit, nothing is held
+    other = SimpleNamespace(halt=threading.Event(), put=notes.append, person=True,
+                            chat=SimpleNamespace(hide={"x" * 16: "[N2]"}, id="c", parent_id=None))
+    with patch.object(needs, "leaked", broke):
+        assert needs.settle(at_r1, person, "끝냈다") and needs.settle(at_r1, other, "끝냈다")
+
+    def held():
+        return sorted(h["needs"] for h in spec()["oneshot"]["unscanned"].values())
+
+    def row():
+        return next(n for n in needs.shown(spec()) if n["id"] == "N1")
+
+    assert held() == [["N1"], ["N2"]] and row()["unsure"] and not row()["leaked"]   # awaiting a scan, not found
+    assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), {}, "끝냈다")   # no values: it cannot clear
+    # A scan with the same values answers for its own hold, never the other set's; only a turn's last scan ends it.
+    assert "검사를 끝내지 못한" in needs.leaked(at_r1, spec(), hide, "끝냈다") and held() == [["N1"], ["N2"]]
+    assert needs.settle(at_r1, person, "끝냈다") and held() == [["N2"]] and not row()["unsure"]
+    # The end scan gates what a passed stage was to start: refused, the run stops; a repair turn goes on.
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    passed = SimpleNamespace(**{**vars(person), "person": False, "passed": True})
+    assert needs.settle(at_r1, person, "끝냈다", moving=True)   # a person's turn moves nothing
+    assert not needs.settle(at_r1, passed, "끝냈다", moving=True) and spec()["oneshot"]["stopped"]["reason"] == "block"
+    assert needs.settle(at_r1, SimpleNamespace(**{**vars(passed), "passed": False}), "끝냈다", moving=True)
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    # Nothing goes out while a hold is owed: every push of the branch, whatever stage pushes it, and its refusal
+    # is masked as kept.
+    assert "검사를 끝내지 못한" in needs.publishable(at_r1, spec())
+    pushed = prerequisite_review.push(at_r1, {}, ["git", "push", "origin", "HEAD"])
+    assert pushed.returncode == 1 and "검사를 끝내지 못한" in pushed.stderr
+    # A turn's hold is written at its start (`owe`): one that never reaches its last scan, or whose failed mark
+    # cannot be written either, still holds, a restart included; a hold that cannot be written stops the start.
+    def fails(*a, **k):
+        raise OSError("disk")
+
+    owing = SimpleNamespace(chat=SimpleNamespace(hide={"y" * 16: "[N3]"}))
+    needs.owe(at_r1, owing)
+    assert ["N3"] in held()
+    with patch.object(needs, "leaked", broke), patch.object(needs, "saved", fails):
+        assert not needs.settle(at_r1, SimpleNamespace(**{**vars(passed), "chat": owing.chat}), "끝냈다", moving=True)
+        with pytest.raises(OSError):
+            needs.owe(at_r1, SimpleNamespace(chat=SimpleNamespace(hide={"z" * 16: "[N4]"})))
+    assert ["N3"] in held() and ["N4"] not in held()
+    git("reset", "-q", "--hard", spec()["oneshot"]["design_head"])   # the history gone and the tree clean
+    assert needs.leaked(at_r1, spec(), {}, "끝냈다") == "" and spec()["oneshot"]["unscanned"] == {}
+    # The APK that goes up is read itself, every entry decompressed, UTF-16 text included.
+    apk = tmp_path_factory.mktemp("apk") / "a.apk"
+    with zipfile.ZipFile(apk, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("resources.arsc", f"x{value}y".encode("utf-16-le"))
+        z.writestr("a.txt", "clean")
+    with patch.object(needs, "agent", lambda s: ({}, hide)):
+        why = needs.asset(apk, spec())
+        assert "[N1]" in why and value.lower() not in why.lower()
+    # Big-endian text, an entry's name and the archive's comment are read too; the values passed (the build's)
+    # stand in for today's; a file that cannot be read is refused, its reason masked.
+    for name, data, comment in (("a.txt", f"x{value}y".encode("utf-16-be"), b""), (f"{value}.txt", b"c", b""),
+                                ("a.txt", b"c", value.encode())):
+        with zipfile.ZipFile(apk, "w") as z:
+            z.writestr(name, data)
+            z.comment = comment
+        assert "[N1]" in needs.asset(apk, spec(), hide), name
+    assert needs.asset(apk.with_name("gone.apk"), spec(), hide).startswith("올릴 파일을 읽지 못해")
+    with zipfile.ZipFile(apk, "w") as z:   # bytes no entry holds (a signing block's place) are read raw
+        z.writestr("a.txt", "c")
+    apk.write_bytes(value.encode() + apk.read_bytes())
+    assert zipfile.is_zipfile(apk) and "[N1]" in needs.asset(apk, spec(), hide)
+    for enc in ("utf-16-le", "utf-16-be"):   # UTF-16 starting at an odd byte, raw and in an entry
+        apk.write_bytes(b"x" + value.encode(enc))
+        assert "[N1]" in needs.asset(apk, spec(), hide), enc
+        with zipfile.ZipFile(apk, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("a.bin", b"x" + value.encode(enc))
+        assert "[N1]" in needs.asset(apk, spec(), hide), enc
+    assert not needs.ENV.fullmatch(SECRETS_HELD)   # the server's marker is never a need's name
+    with zipfile.ZipFile(apk, "w", zipfile.ZIP_DEFLATED) as z:   # a compressed entry whose bytes are broken
+        z.writestr("a.bin", b"x" * 4096)
+    raw = bytearray(apk.read_bytes())
+    at = raw.index(b"a.bin") + len(b"a.bin")
+    raw[at:at + 8] = b"\xff" * 8
+    apk.write_bytes(bytes(raw))
+    assert needs.asset(apk, spec(), hide).startswith("올릴 파일을 읽지 못해")
+    with patch.object(needs, "agent", lambda s: ({}, {"OSError": "[N9]"})), patch.object(needs, "leaked", broke := (
+            lambda *a: (_ for _ in ()).throw(OSError()))):
+        assert "OSError" not in needs.publishable(at_r1, spec())   # a failure's reason is masked as well
+
+
+def test_a_turn_shows_and_keeps_each_secret_as_its_need_but_the_check_reads_the_answer_as_given(tmp_path, monkeypatch):
+    value = f"key-{uuid.uuid4().hex}"
+    command = {"tool": "commandExecution", "item_id": "c1"}
+    events = [Event("tool", f"curl -H 'x-key: {value}'", {"tool": "Bash", "diff": f"+KEY={value}"}, "w"),
+              # A value split across parts of one text, and inside an approval's structured input.
+              Event("delta", f"키는 {value[:6]}", {}, "w"), Event("delta", value[6:], {}, "w"),
+              Event("tool", f"out {value[:9]}", command, "w"), Event("tool", f"{value[9:]} end", command, "w"),
+              Event("approval", "묻는다", {"id": f"q-{value}", "tool": "AskUserQuestion",   # nested ids are the agent's
+                                          "input": {"questions": [{"id": value, "question": f"{value} 를 쓸까?"}]}}, "w"),
+              Event("delta", f" 이고 {value[:3]}", {}, "w"),   # a tail that could start the value, then the end
+              Event("done", f"끝냈다 — {value}", {"error": False}, "w")]
+    chat = SimpleNamespace(id="w", parent_id=None, is_codex=False, model="opus", path=tmp_path,
+                           hide={value: "[N1]"}, say=lambda *_: iter(events))
+    recorded, checked = [], []
+    monkeypatch.setattr(work, "feed", work.Feed())
+    monkeypatch.setattr(work, "remember", lambda *args, **kwargs: recorded.append((args, kwargs)))
+    monkeypatch.setattr(work, "dispatch", lambda *_: None)
+    monkeypatch.setattr(specs, "check", lambda path, run, final: checked.append(final))
+    run = work.Run(chat)
+    work.run_turn(tmp_path, run, "Build it", lambda: None)
+    assert checked == [f"끝냈다 — {value}"]   # the leak check sees the value, to refuse it
+    # The handle the answer comes back with is the server's own, kept as it was; nothing else holds the value.
+    assert [e["meta"].pop("id") for e in run.events if e["kind"] == "approval"] == [f"q-{value}"]
+    kept = json.dumps([run.events, recorded], ensure_ascii=False, default=str)
+    assert value not in kept and "x-key: [N1]" in kept and "+KEY=[N1]" in kept and "끝냈다 — [N1]" in kept
+    assert value[6:] not in kept and value[9:] not in kept and "[N1] 를 쓸까?" in kept
+    shown = lambda kind: "".join(e["text"] for e in run.events if e["kind"] == kind and e["meta"].get("item_id") in (None, "c1"))  # noqa: E731
+    assert shown("delta") == f"키는 [N1] 이고 {value[:3]}" and "out [N1] end" in shown("tool")
+
+
+def test_a_streamed_value_in_a_spelling_that_folds_shorter_is_held_until_it_is_whole():
+    value = f"INDI{uuid.uuid4().hex}"
+    spelled = value.replace("I", "I\u0307")   # folds to the same, three characters longer
+    for at in range(1, len(spelled)):
+        veil = Veil({value: "[N1]"})
+        shown = veil.stream("d", f"x {spelled[:at]}", {}) + veil.stream("d", f"{spelled[at:]} y", {})
+        assert shown + "".join(t for _, t, _ in veil.rest()) == "x [N1] y", at
+
+
+def test_a_streamed_value_starting_inside_a_ligature_is_held_until_it_is_whole():
+    value = f"fi{uuid.uuid4().hex}"
+    text = f"x \ufb03{value[2:]} y"   # the ligature folds to `ffi`: the value starts inside it
+    whole = masked(text, {value: "[N1]"})
+    for at in range(1, len(text)):
+        veil = Veil({value: "[N1]"})
+        shown = veil.stream("d", text[:at], {}) + veil.stream("d", text[at:], {})
+        assert shown + "".join(t for _, t, _ in veil.rest()) == whole and value[2:] not in whole, at
+
+
+def test_a_streamed_value_written_in_json_escapes_is_held_until_it_is_whole():
+    value = f"tok-{uuid.uuid4().hex[:8]}\U0001F511"
+    spelled = "".join(f"\\u{ord(c):04x}" if c != "\U0001F511" else "\\ud83d\\udd11" for c in value)
+    text = f'```choices\n{{"q": "x {spelled} y"}}\n```\n'
+    whole = masked(text, {value: "[N1]"})
+    assert json.loads(whole.split("\n")[1]) == {"q": "x [N1] y"}
+    for at in range(1, len(text)):   # split anywhere, inside an escape too: nothing of the value goes out early
+        veil = Veil({value: "[N1]"})
+        first = veil.stream("d", text[:at], {})
+        assert needs.held_in(first, {value: "[N1]"}) == [] and value[:4] not in unescaped(first), at
+        shown = first + veil.stream("d", text[at:], {})
+        assert json.loads((shown + "".join(t for _, t, _ in veil.rest())).split("\n")[1]) == {"q": "x [N1] y"}, at
+
+
+def test_a_stream_never_splits_an_escaped_backslash_before_a_value_part_written_and_part_escaped():
+    value = f"tok-{uuid.uuid4().hex[:8]}"
+    spelled = value[:3] + "".join(f"\\u{ord(c):04x}" for c in value[3:6]) + value[6:]
+    # JSON: an escaped backslash right before the value, two more, then the value again inside escaped quotes.
+    text = f'```choices\n{{"q": "C:\\\\{spelled} \\\\\\\\ \\"{spelled}\\" end"}}\n```\n'
+    assert json.loads(text.split("\n")[1])["q"].count(value) == 2
+    for at in range(1, len(text)):
+        veil = Veil({value: "[N1]"})
+        shown = veil.stream("d", text[:at], {}) + veil.stream("d", text[at:], {})
+        whole = shown + "".join(t for _, t, _ in veil.rest())
+        assert value not in unescaped(whole) and json.loads(whole.split("\n")[1])["q"].count("[N1]") == 2, at
+
+
+def test_masking_many_short_matches_among_many_escapes_stays_linear():
+    text = '{"a": "' + "\\u0041x" * 20000 + '"}'
+    started = time.perf_counter()
+    out = masked(text, {"x": "[N1]"})
+    assert time.perf_counter() - started < 5 and out.count("[N1]") == 20000 and json.loads(out)
+    assert unescaped("plain text") == "plain text"
+
+
+def test_a_broken_check_is_logged_and_noted_masked(monkeypatch):
+    value, logged, notes = f"key-{uuid.uuid4().hex}", [], []
+
+    def broke(*a):
+        raise RuntimeError(f"push failed for {value}")
+
+    monkeypatch.setattr(specs, "_check", broke)
+    monkeypatch.setattr(specs.errorlog, "record", lambda source, error, **k: logged.append(str(error)))
+    run = SimpleNamespace(turn="t", put=notes.append, chat=SimpleNamespace(hide={value: "[N1]"}, id="c", parent_id=None))
+    assert specs.check(Path("."), run, "끝냈다") is None
+    said = json.dumps([logged, notes], ensure_ascii=False)
+    assert value not in said and "push failed for [N1]" in said
+
+
+def test_every_event_a_turn_puts_is_masked_but_the_tags_the_screen_dispatches_on(monkeypatch):
+    value, logged, faults = f"Ask{uuid.uuid4().hex}", [], []
+    monkeypatch.setattr(work, "feed", work.Feed())
+    run = work.Run(SimpleNamespace(id="w", parent_id=None, hide={value: "[N1]"}))
+    # A person's answer to a question, put by the server outside the provider's events.
+    run.put({"kind": "answered", "text": "", "meta": {"id": "q1", "allow": True, "by": "person", "answers": [value]}})
+    run.put({"kind": "approval", "text": "묻는다", "meta": {"id": "q2", "tool": "AskUserQuestion",
+                                                       "input": {"questions": [{"question": f"{value}?"}]}}})
+    assert value not in json.dumps(run.events) and run.events[0]["meta"]["answers"] == ["[N1]"]
+    assert run.events[1]["meta"]["tool"] == "AskUserQuestion"   # the form the screen draws, never masked
+    # A returned failure: the log, the note and the spec's fault.
+    monkeypatch.setattr(specs.errorlog, "record", lambda source, error, **k: logged.append(str(error)))
+    monkeypatch.setattr(specs, "update", lambda repo, sid, **k: faults.append(k["fault"]))
+    specs.failed(run, {"repo": "r", "id": "s"}, f"push failed: {value}")
+    assert [logged, faults, run.events[-1]["text"]] == [["push failed: [N1]"], ["push failed: [N1]"], "push failed: [N1]"]
+
+
+def test_only_a_tool_field_keeps_its_tag_and_label_shaped_text_is_still_masked():
+    veil = Veil({"AskUserQuestion": "[N1]", "N2": "[N2]"})
+    meta = {"tool": "Bash", "session_id": "N2-1", "answers": ["AskUserQuestion"],
+            "input": {"tool": "AskUserQuestion", "steps": [{"tool": "mcp__AskUserQuestion", "text": "AskUserQuestion"}]}}
+    shown = veil.meta(meta)
+    assert shown["tool"] == "Bash" and shown["session_id"] == "N2-1"
+    assert shown["answers"] == ["[N1]"] and shown["input"]["tool"] == "[N1]"   # a tool's arguments are text
+    assert shown["input"]["steps"] == [{"tool": "mcp__[N1]", "text": "[N1]"}]
+    assert veil.meta({"tool": {"a": "AskUserQuestion"}, "input": {"tool": ["AskUserQuestion"]}}) == {
+        "tool": {"a": "[N1]"}, "input": {"tool": ["[N1]"]}}   # structured, never a tag
+    row = veil.row({"steps": [{"kind": "approval", "tool": "AskUserQuestion", "input": {"questions": "AskUserQuestion"}}]})
+    assert row["steps"] == [{"kind": "approval", "tool": "AskUserQuestion", "input": {"questions": []}}]
+    # A name a value is in: the mapping becomes its pairs, so nothing merges and no unchecked text is added.
+    assert veil.meta({"input": {"AskUserQuestion": {"N2x": 1}}}) == {"input": [["[N1]", [["[N2]x", 1]]]]}
+    assert Veil({"a": "[N4]", "b": "[N4]"}).meta({"input": {"a": 2, "b": 3}}) == {"input": [["[N4]", 2], ["[N4]", 3]]}
+    assert masked("see [N2]", veil.hide) == "see [[N2]]"   # what the text spells never stands for the masker's own
+
+
+def test_a_question_keeps_its_schema_and_drops_what_the_provider_added(monkeypatch):
+    monkeypatch.setattr(work, "feed", work.Feed())
+    monkeypatch.setattr(work, "notice", lambda *a: None)
+    veil = Veil({"options": "[N3]", "secret": "[N4]"})
+    given = {"questions": [{"question": "options?", "header": 7, "multiSelect": True, "secret": "secret",
+                            "options": [{"label": "a secret", "extra": "secret"}, "not an option"]}, {"question": "two"}],
+             "secret": {"options": "secret"}}
+    shown = veil.meta({"kind": "approval", "tool": "AskUserQuestion", "input": given})
+    assert shown["input"] == {"questions": [
+        {"question": "[N3]?", "multiSelect": True, "options": [{"label": "a [N4]"}, {"label": "not an option"}]},
+        {"question": "two", "options": []}]}
+    assert Veil.options({"input": given}) == [["a secret", "not an option"], []]   # the options as asked
+    assert Veil.options({"input": {"questions": [{"question": "?", "options": 1}]}}) == [[]]
+    # Every option asked keeps its entry, as text, so the indices line up with the provider's.
+    assert Veil.questions({"questions": [{"question": "q", "options": [{"label": 3}, "plain"]}]}) == [
+        {"question": "q", "options": [{"label": "3"}, {"label": "plain"}]}]
+    # A batch its reply cannot key one answer per entry holds no question: it is only declined.
+    for batch in (1, [{"question": "q"}, "plain"], [{"question": ""}], [{"question": {"q": 1}}]):
+        assert Veil.questions({"questions": batch}) == [] and Veil.options({"input": {"questions": batch}}) == []
+    alike = [{"question": "q", "id": "a"}, {"question": "q", "id": "b"}]
+    assert question_list(alike, "id") == alike and question_list(alike, "question") == []   # by the reply's key
+    # Questions a mask spells alike stay two in the record, as the screen showed them.
+    two = veil.meta({"tool": "AskUserQuestion", "input": {"questions": [{"question": "Choose SECRET"}, {"question": "Choose secret"}]}})
+    assert len(veil.row({"steps": [two]})["steps"][0]["input"]["questions"]) == 2
+    assert veil.meta({"tokens": {"in": 3, "out": None, "reasoning": 2, "secret": 1, "cache_read": "secret"}}) == {
+        "tokens": {"in": 3, "out": None, "cache_read": "[N4]", "reasoning": 2}}   # the counts by their names
+    structured = {"questions": [{"question": "q", "options": [{"label": ['a"secret']}, {"label": {"k": 'say "secret"'}}]}]}
+    assert "secret" not in json.dumps(veil.meta({"tool": "AskUserQuestion", "input": structured}))   # masked, then text
+    run = work.Run(SimpleNamespace(id="w", parent_id=None, hide={"x": "[N1]"}))
+    run.put({"kind": "approval", "text": "실행할까?", "meta": {"id": "b", "tool": "Bash", "input": {"questions": 1}}})
+    assert run.events[-1]["meta"]["input"] == {"questions": 1} and "b" not in run.asked   # an ordinary tool is not asked
+
+
+def test_overlaps_finds_a_value_that_can_meet_a_label_and_any_other_is_masked_once():
+    labels = ["[N1]", "[N2]"]
+    assert all(overlaps(v, labels) for v in ("N2", "n1", "1", "1]x", "x[N", "a[n2]b", "]"))
+    assert not any(overlaps(v, labels) for v in ("1234", "N1x", "key-abc", "ab]c"))
+    hide = {"abc1": "[N1]", "N1x": "[N2]"}
+    once = masked("abc1N1x and N1X", hide)
+    assert once == "[N1][N2] and [N2]" and masked(once, hide) == once
+
+
+def test_a_picked_option_goes_back_as_asked_by_index_and_typed_text_as_typed():
+    options = Veil.options({"input": {"questions": [{"question": "?", "options": [{"label": "Ask me"}, {"label": "Later"}]}]}})
+    assert Veil.chosen(["[N3] me, Later"], [[0, 1]], options) == ["Ask me, Later"]
+    assert Veil.chosen(["[N3] me, plus a comment"], [None], options) == ["[N3] me, plus a comment"]
+    with pytest.raises(ValueError):
+        Veil.chosen(["x"], [[5]], options)
+
+
+def test_a_refused_answer_keeps_the_options_for_the_corrected_one(monkeypatch):
+    value = f"key-{uuid.uuid4().hex}"
+    monkeypatch.setattr(work, "feed", work.Feed())
+    monkeypatch.setattr(work, "notice", lambda *a: None)
+
+    class Chat:
+        id, parent_id, hide, sent = "w", None, {value: "[N1]"}, []
+
+        def answer(self, rid, allow, scope, answers):
+            if len(answers) != 1:
+                raise ValueError("질문 1개에 답이 하나씩 있어야 한다")
+            self.sent.append(answers)
+            return True
+
+    chat = Chat()
+    run = work.Run(chat)
+    run.put({"kind": "approval", "text": "묻는다", "meta": {"id": "q", "tool": "AskUserQuestion", "input": {
+        "questions": [{"question": "?", "options": [{"label": f"{value} 로"}]}]}}})
+    ask = dict(path="p", session_id="w", id="q", allow=True)
+    with patch.dict(work._sessions, {"p": chat}), patch.dict(work._runs, {"p": run}):
+        with pytest.raises(HTTPException):
+            work.answer(work.Answer(**ask, answers=["[N1] 로", "more"], picks=[[0], None]))
+        work.answer(work.Answer(**ask, answers=["[N1] 로"], picks=[[0]]))
+    assert chat.sent == [[f"{value} 로"]] and value not in json.dumps(run.events) and not run.asked
+
+
+def test_every_row_of_a_session_holding_secrets_is_masked(at_r1):
+    value = f"key-{uuid.uuid4().hex}"
+    with patch.dict(work._sessions, {str(at_r1): SimpleNamespace(hide={value: "[N1]"})}):
+        work.remember(at_r1, "user", f"{value} 를 써라", turn="t", session_id=f"s-{value}")
+    row = work.recall(at_r1, 0)[-1]
+    assert (row["text"], row["session_id"]) == ("[N1] 를 써라", f"s-{value}")   # the handle resumes as given

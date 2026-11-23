@@ -25,7 +25,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
-from common import folded, masked, process, shell
+from common import masked, process, shell
 
 from .oneshot_screens import VIEWPORTS, api_paths
 
@@ -521,6 +521,8 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
 
     from playwright.sync_api import Error
 
+    from . import oneshot_needs   # it reaches the stages that import this module
+
     try:
         read = [frame.evaluate(SHOWN) for frame in page.frames]
         texts, values = [t for r in read for t in r["texts"]], [v for r in read for v in r["values"]]
@@ -528,27 +530,14 @@ def secrets_shown(page, hide: dict[str, str]) -> str:
             raise TypeError
     except (Error, TypeError, KeyError):
         return "화면의 프레임 하나를 읽지 못해 비밀 값이 보이지 않는지 확인하지 못했다"
-    # A value as spelled, or in any casing `text-transform` can draw (`folded`, whose fold of a character can depend
-    # on the one before); within one stream, a value broken across lines reads as one
-    def compact(text: str) -> str:
-        return "".join(text.split())
+    # A value as spelled, or in any casing `text-transform` can draw
+    return shown_secret(oneshot_needs.carried(texts, values, hide))
 
-    def flats(form, text: str) -> set[str]:   # whitespace gone before and after the spelling, since a fold can
-        return {form(compact(text)), compact(form(text))}   # depend on the character a line break stood next to
 
-    spellings = [(form, [form(x) for x in texts + values], [f for t in texts for f in flats(form, t)])
-                 for form in (str, folded)]
+def shown_secret(leaked: list[str]) -> str:
+    """The finding for a screen whose text holds the secrets `leaked` names, or empty."""
 
-    def seen(value: str) -> bool:
-        for form, whole, streams in spellings:
-            v = form(value)
-            if v and any(v in t for t in whole):
-                return True
-            if any(f and any(f in s for s in streams) for f in flats(form, value)):
-                return True
-        return False
-
-    if leaked := sorted({label for value, label in hide.items() if seen(value)}):
+    if leaked:
         return f"화면이 담은 글자에 비밀 값 {', '.join(leaked)} 이 들어 있다 — 비밀은 서버에서만 쓰고 화면에 내보내지 않는다"
     return ""
 

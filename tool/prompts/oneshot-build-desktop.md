@@ -37,10 +37,16 @@ A refusal comes back with the reason, at most three times in all.
 
 {needs}
 
-  The server's gate sets each secret's environment variable. Your own shell
-  does not have them, so a test that needs one skips when you run it, and it
-  must pass in the server's gate. Never print a secret's value, and never
-  write it into a file, a commit or your answer.
+  Your shell and the server's gate both have each secret's environment
+  variable, so a test that needs one runs and must pass when you run it too —
+  except a secret the list marks as the gate's alone: it is not in your shell,
+  so its test is left to the gate, which runs it live.
+  Never print a secret's value, and never write it into a file, a commit or
+  your answer. The server refuses a turn whose answer, commits since the
+  design commit or uncommitted files hold one, naming only the need.
+  The screen check starts the PC app with each secret's variable set, as the
+  gate does, and the app reads it there. A screen whose text holds a secret is
+  refused, so a secret never reaches the screen.
 - Commit everything and leave nothing uncommitted, then end with the
   `done-report`. No `test-cleanup` block is needed in this stage.
 - Do not push, open a pull request, or ask the person anything: nobody answers

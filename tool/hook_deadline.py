@@ -37,6 +37,16 @@ LIMITS = {
         "plans under `docs/plans/`, and the recent records in `.wiki/decisions/`."
     ), "위키: 시간 안에 현재 상태를 못 읽어 넣지 못했다"),
 }
+# The PreToolUse wrappers: answered a few seconds under their `timeout` (10, `apply.py`) with the deny of a
+# session carrying a oneshot's secrets (`secrets_held`), and with nothing in any other, where the host decides.
+PRETOOL = {"claude_pretool.py": 7.0, "codex_pretool.py": 7.0}
+
+
+def pretool() -> dict | None:
+    """A PreToolUse wrapper's fallback: the credential-session deny, or `None`."""
+    return __import__("secrets_held").held_closed("훅이 시간 안에 검사를 끝내지 못했다")
+
+
 # Follows the pages the hook found but could not finish: not translated, and
 # not checked against what this session already holds. After them, not before,
 # so a body over the ceiling still opens with its rule index in the preview.
@@ -65,11 +75,16 @@ def send(answer: dict) -> bool:
     with lock:
         if _sent:
             return False
-        json.dump(answer, sys.stdout, ensure_ascii=False)
-        sys.stdout.flush()
-        # Once per armed process. Unarmed — a test calling `main` again — it
-        # writes every time.
+        # Serialised and encoded whole first: a failure there writes nothing.
+        text = json.dumps(answer, ensure_ascii=False)
+        text.encode(sys.stdout.encoding or "utf-8")
+        # Once per armed process, counted from the first byte: a write that
+        # fails partway is a broken pipe, and no second answer is appended to
+        # what it left. Unarmed — a test calling `main` again — it writes
+        # every time.
         _sent = _armed
+        sys.stdout.write(text)
+        sys.stdout.flush()
         return True
 
 
@@ -129,7 +144,16 @@ def arm(seconds: float, fallback: dict | None) -> None:
 
 # Run directly by the host. Through `hook.py` the dispatcher arms instead, and
 # earlier: resolving the project counts against the host's limit too.
-if Path(sys.argv[0]).name in LIMITS:
+# Through the dispatcher (`hook.py <host> <wrapper>`), armed at its first import too: what it does before `main` is
+# watched as well.
+_ran = Path(sys.argv[0]).name
+_wrapper = sys.argv[2] if _ran == "hook.py" and len(sys.argv) > 2 and sys.argv[2] in PRETOOL else _ran
+if _wrapper in PRETOOL:
+    try:
+        arm(PRETOOL[_wrapper], pretool())
+    except Exception:  # noqa: BLE001 — a deadline that fails to arm leaves the hook as it was
+        pass
+elif _ran in LIMITS:
     try:
         arm(LIMITS[Path(sys.argv[0]).name][0], stalled(Path(sys.argv[0]).name))
     except Exception:  # noqa: BLE001 — a deadline that fails to arm leaves the hook as it was

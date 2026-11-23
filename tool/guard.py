@@ -971,6 +971,20 @@ def judged(effect: tuple, g) -> str | None:
 
 
 def verdict(payload: dict, host: str = "claude") -> dict | None:
+    """What the installed hooks (`claude_pretool`, `codex_pretool`) and this file's own entry ask; a failure
+    denies the call in a session carrying a oneshot's secrets (`secrets_held`) and raises otherwise."""
+    from secrets_held import held_closed
+
+    try:
+        return checked(payload, host)
+    except Exception as error:
+        if closed := held_closed(f"가드가 실패했다 ({type(error).__name__})"):
+            return closed
+        raise
+
+
+def checked(payload: dict, host: str) -> dict | None:
+    from secrets_held import held_closed
     from guard_grant import grant, temps
 
     if os.environ.get("WIKI_AGENT_MANAGED") != "1":
@@ -982,7 +996,7 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
     cwd = Path(str(payload.get("cwd") or os.getcwd()))
     g = grant(cwd, payload)
     if g is None:
-        return None
+        return held_closed("가드가 이 작업의 허가를 찾지 못했다")
     ctx = Ctx("posix", frozenset({run_dir(cwd, given) if tool in SHELL_TOOLS else posix(cwd)}),
               posix(Path.home()), temps()[0].as_posix(), os.name == "nt", remotes=g.remotes, repo=g.top)
     bad = [(render(e), why) for e in sorted(call_effects(tool, given, ctx, host, payload)) if (why := judged(e, g))]
@@ -1007,3 +1021,4 @@ if __name__ == "__main__":
             json.dump(answer, sys.stdout, ensure_ascii=False)
     except Exception as error:
         print(f"hook skipped: {type(error).__name__}", file=sys.stderr)
+        __import__("secrets_held").closed_out(error)

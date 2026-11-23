@@ -5,6 +5,8 @@ and the one place `agent` opens a write session. Held here so the two cannot
 drift apart: a worktree created by another tool is not ours.
 """
 
+import bisect
+import json
 import os
 from pathlib import Path
 import re
@@ -63,9 +65,12 @@ def layout(cwd: Path) -> tuple | None:
 
 
 def swap(temporary: Path, file: Path) -> None:
-    """`temporary` replaces `file` whole. A Windows reader holding `file`
-    open refuses the swap for a moment, so it is tried again."""
+    """`temporary` replaces `file` whole. Its bytes reach the disk first: a power loss after an unflushed rename
+    left a spec of NUL bytes, and the run vanished from the list. A Windows reader holding `file` open refuses
+    the swap for a moment, so it is tried again."""
 
+    with open(temporary, "rb+") as written:
+        os.fsync(written.fileno())
     for attempt in range(40):
         try:
             Path(temporary).replace(file)
@@ -91,21 +96,80 @@ def folded(text: str) -> str:
     return "".join(_folds(text))
 
 
+# A JSON escape: what a reader of the JSON gets differs from how the text spells it. A surrogate pair first, read
+# as the one character a JSON parser makes of it.
+_ESCAPE = re.compile(r'\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\["\\/bfnrt]')
+
+
+def _unescape(text: str) -> tuple[str, list[tuple[int, int]]]:
+    """`text` with every JSON escape decoded, wherever it stands, and each character's `(start, end)` in `text`:
+    a surrogate pair is one character covering both escapes, as JSON parsers read it."""
+    chars, where, last = [], [], 0
+    for m in _ESCAPE.finditer(text):
+        chars += text[last:m.start()]
+        where += [(i, i + 1) for i in range(last, m.start())]
+        chars.append(json.loads(f'"{m.group()}"'))
+        where.append(m.span())
+        last = m.end()
+    chars += text[last:]
+    where += [(i, i + 1) for i in range(last, len(text))]
+    return "".join(chars), where
+
+
+def unescaped(text: str) -> str:
+    """`text` as a reader of its JSON gets it: every escape decoded, wherever it stands. No source map: a scan of
+    an archive or a history allocates only the decoded text, and nothing without a backslash."""
+    return _ESCAPE.sub(lambda m: json.loads(f'"{m.group()}"'), text) if "\\" in text else text
+
+
 def masked(text: str, hide: dict[str, str] | None) -> str:
     """`text` with each of `hide`'s values, such as a secret a child's environment held, replaced by its label as
     spelled and in every casing `folded` treats as the same, the longest first; a match inside one character covers
     all of it. Each character is claimed once, so the work grows with the matches, never with their square."""
     if not hide:
         return text
+    out, last = [], 0
+    for start, end, label in _spans(text, hide):
+        out += [text[last:start], label]
+        last = end
+    return "".join(out + [text[last:]])
+
+
+def overlaps(value: str, labels) -> bool:
+    """Whether `value` could lie inside one of `labels`, hold one, or run into one from either side, read as `masked`
+    reads (`folded`). Such a label cannot mask that value, and masking twice could change what masking once showed;
+    with labels no value overlaps, a value found in `masked`'s output lies in text it left, so a second pass is a no-op."""
+
+    v = folded(value)
+    return any(v in f or f in v or any(v.startswith(f[i:]) or v.endswith(f[:i]) for i in range(1, len(f)))
+               for f in map(folded, labels))
+
+
+def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
+    """Where `masked` puts each label in `text`, as `(start, end, label)` in order, none overlapping."""
     folds = _folds(text)
     flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
     taken, chosen = bytearray(len(text)), []
+    tokens = [m.span() for m in _ESCAPE.finditer(text)] if "\\" in text else []
+    starts = [s for s, _ in tokens]
+
+    def widened(at: int, side: int) -> int:
+        """`at` moved out of the escape it falls inside, if any, to that escape's start (0) or end (1)."""
+        i = bisect.bisect_right(starts, at) - 1
+        return tokens[i][side] if i >= 0 and tokens[i][0] < at < tokens[i][1] else at
 
     def claim(start: int, end: int, label: str) -> None:
+        # Never part of an escape: the label covers each one it touches, so JSON stays JSON.
+        start, end = (widened(start, 0), widened(end, 1)) if tokens else (start, end)
         if not any(taken[start:end]):
             taken[start:end] = b"\x01" * (end - start)
             chosen.append((start, end, label))
 
+    # Also as its JSON decodes: each match there covers the escapes it was written with.
+    plain, where = _unescape(text) if tokens else (text, [])
+    pfolds = _folds(plain) if tokens else []
+    pflat, powner = "".join(pfolds), [i for i, f in enumerate(pfolds) for _ in f]
+    # The longest value first, in each view: a shorter one meeting part of it never leaves the rest shown.
     for value in sorted(hide, key=lambda v: max(len(v), len(folded(v))), reverse=True):
         at = 0
         while value and (at := text.find(value, at)) >= 0:   # as spelled: a fold can depend on what is around it
@@ -115,11 +179,185 @@ def masked(text: str, hide: dict[str, str] | None) -> str:
         while needle and (at := flat.find(needle, at)) >= 0:
             claim(owner[at], owner[at + len(needle) - 1] + 1, hide[value])
             at += 1
-    out, last = [], 0
-    for start, end, label in sorted(chosen):
-        out += [text[last:start], label]
-        last = end
-    return "".join(out + [text[last:]])
+        for hay, own, needle in ((plain, None, value), (pflat, powner, folded(value))) if plain != text else ():
+            at = 0
+            while needle and (at := hay.find(needle, at)) >= 0:
+                first, end = (at, at + len(needle) - 1) if own is None else (own[at], own[at + len(needle) - 1])
+                claim(where[first][0], where[end][1], hide[value])
+                at += 1
+    return sorted(chosen)
+
+
+class Veil:
+    """`masked` over a stream: every string in an event, however nested, and each running text (an answer's
+    deltas, one command's output) masked as a whole. The tail a value could still be starting in is held until the
+    next part of that text, or `rest`, so a value split across parts is never shown in pieces."""
+
+    # The handles at the top of an event or a record row, kept as they are: an approval is answered by its `id` as
+    # the screen got it, and a conversation resumes by its `session_id`.
+    IDS = frozenset({"id", "request", "item_id", "session_id", "parent_id", "turn"})
+    # The tags the screen and the record dispatch on, kept only as the `tool` string at the top of an event's meta or
+    # of a saved step: constants of this code. A provider's own tool name, which is none of them, and any field of a
+    # tool's arguments, whatever its name, are masked like any text.
+    TAGS = frozenset({"AskUserQuestion", "requestUserInput", "commandExecution", "command_execution", "tool_result"})
+
+    def __init__(self, hide: dict[str, str] | None):
+        self.hide, self.held = hide or {}, {}
+        self.needles = [(v, folded(v)) for v in self.hide if v]
+        self.raw, self.flat = (max((len(x[i]) for x in self.needles), default=0) for i in (0, 1))
+
+    def deep(self, value):
+        if not self.hide:
+            return value
+        if isinstance(value, str):
+            return masked(value, self.hide)
+        if isinstance(value, dict):
+            # A name is masked too. Masking can make two names one, so a mapping a value's name is in becomes its
+            # `[name, value]` pairs: every entry kept, and no text added the mask has not seen.
+            if any(isinstance(k, str) and masked(k, self.hide) != k for k in value):
+                return [[self.deep(k), self.deep(v)] for k, v in value.items()]
+            return {k: self.deep(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self.deep(v) for v in value]
+        return value
+
+    def meta(self, meta: dict) -> dict:
+        """An event's meta, every string in it masked but the server's own handles at its top."""
+        if not self.hide:
+            return meta
+        return {k: v if isinstance(v, str) and (k in self.IDS or (k == "tool" and v in self.TAGS))
+                else self.asked(v) if k == "input" and self.question(meta)
+                else self.counted(v) if k == "tokens" else self.deep(v)
+                for k, v in meta.items()}
+
+    def counted(self, tokens):
+        """A turn's token counts by the adapters' names: a number or nothing kept, any other value masked."""
+        if not isinstance(tokens, dict):
+            return self.deep(tokens)
+        return {k: tokens[k] if tokens[k] is None or type(tokens[k]) in (int, float) else self.deep(tokens[k])
+                for k in self.TOKENS if k in tokens}
+
+    # The two hosts' question tools: their input is read by the screen in a schema of its own.
+    QUESTIONS = frozenset({"AskUserQuestion", "requestUserInput"})
+
+    @classmethod
+    def question(cls, meta: dict) -> bool:
+        """Whether an event is a question tool's: its `tool` a string, and one of `QUESTIONS`."""
+        return isinstance(tool := meta.get("tool"), str) and tool in cls.QUESTIONS
+
+    @staticmethod
+    def questions(given, show=None) -> list[dict]:
+        """A question tool's questions in their schema's shape and nothing else: each one's `question` and `id`,
+        `header` and `multiSelect` when given, and its options' `label`, `description` and `preview`. One entry stays
+        for every question and option asked, whatever its shape, so the answers and the option indices line up with
+        the provider's; a question and a label are always text. `show` turns each field's value into that text
+        (`text` by default); the shape is read off the input as given, so no name a value is in can lose a field."""
+
+        show = show or text
+        return [{"question": show(q.get("question")), **{k: show(q[k]) for k in ("id", "header") if isinstance(q.get(k), str)},
+                 **({"multiSelect": q["multiSelect"]} if isinstance(q.get("multiSelect"), bool) else {}),
+                 "options": [{"label": show(o.get("label")),
+                              **{k: show(o[k]) for k in ("description", "preview") if isinstance(o.get(k), str)}}
+                             if isinstance(o, dict) else {"label": show(o)}
+                             for o in (q["options"] if isinstance(q.get("options"), list) else [])]}
+                for q in question_list(given.get("questions") if isinstance(given, dict) else None)]
+
+    def asked(self, given) -> dict:
+        """A question tool's input as the screen reads it (`questions`): its fields by their schema's names, each
+        value masked before it becomes text, so a value is never spelled otherwise first, as a structured field's
+        JSON would spell it. A name the provider added is left out with its value."""
+        return {"questions": self.questions(given, lambda value: text(self.deep(value)))}
+
+    # The adapters' token counts: fixed names, numbers or nothing.
+    TOKENS = ("in", "out", "cache_read", "cache_write", "reasoning")
+
+    def row(self, fields: dict) -> dict:
+        """A work-record row's fields: as `meta`, and each saved step as an event's meta."""
+        steps = fields.get("steps")
+        return {**self.meta(fields), **({"steps": [self.meta(s) if isinstance(s, dict) else self.deep(s) for s in steps]}
+                                        if isinstance(steps, list) else {})}
+
+    @staticmethod
+    def options(meta: dict) -> list[list]:
+        """An asked question's option labels as asked, one list per question (`questions`)."""
+        return [[o.get("label") for o in q["options"]] for q in Veil.questions(meta.get("input"))]
+
+    @staticmethod
+    def chosen(answers: list[str], picks: list | None, options: list[list]) -> list[str]:
+        """Each answer: picked options by their indices, as asked and in the screen's `, ` join; typed text as typed.
+        An index the question does not have raises `ValueError`."""
+        out = []
+        for i, a in enumerate(answers):
+            p = (picks or [])[i] if i < len(picks or []) else None
+            if p and not all(isinstance(j, int) and 0 <= j < len(row := options[i] if i < len(options) else [])
+                             and isinstance(row[j], str) for j in p):
+                raise ValueError("고른 선택지가 그 질문에 없다")
+            out.append(", ".join(options[i][j] for j in p) if p else a)
+        return out
+
+    def stream(self, key, chunk: str, meta: dict) -> str:
+        """What of `key`'s text can be shown now, `chunk` added: all but a tail some value starts with."""
+        if not self.hide:
+            return chunk
+        text = self.held.pop(key, ("", meta))[0] + chunk
+        # Where a value could still start, read as the complete match reads: at any folded position, even inside
+        # one character's expansion (a ligature), mapped back to the character that holds it; or as spelled.
+        folds = _folds(text)
+        flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
+        cut = next((owner[j] for j in range(max(0, len(flat) - self.flat), len(flat))
+                    if any(n.startswith(flat[j:]) for _, n in self.needles)), len(text))
+        cut = next((i for i in range(max(0, len(text) - self.raw), cut)
+                    if any(v.startswith(text[i:]) for v, _ in self.needles)), cut)
+        tokens = [m.span() for m in _ESCAPE.finditer(text)] if "\\" in text else []
+        if tokens or "\\" in text:   # as its JSON decodes: an escape not yet complete, and a value written in escapes
+            # Read as JSON reads it, left to right from this buffer's start, which is always an escape's boundary: a
+            # backslash past the last complete escape may start one not yet complete (12: a surrogate pair's length),
+            # and a pair's first half at the end waits for its second.
+            done = tokens[-1][1] if tokens else 0
+            tail = next((i for i in range(max(done, len(text) - 12), len(text)) if text[i] == "\\"), len(text))
+            if tokens and done == tail and re.fullmatch(r"\\u[dD][89abAB][0-9a-fA-F]{2}", text[slice(*tokens[-1])]):
+                tail = tokens[-1][0]
+            plain, where = _unescape(text[:tail])
+            pfolds = _folds(plain)
+            pflat, powner = "".join(pfolds), [i for i, f in enumerate(pfolds) for _ in f]
+            cut = min([cut, tail, *(where[powner[j]][0] for j in range(max(0, len(pflat) - self.flat), len(pflat))
+                                    if any(n.startswith(pflat[j:]) for _, n in self.needles)),
+                       *(where[i][0] for i in range(max(0, len(plain) - self.raw), len(plain))
+                         if any(v.startswith(plain[i:]) for v, _ in self.needles))])
+        for start, end, _ in _spans(text, self.hide):
+            if start < cut < end:   # spans never overlap: one at most holds the cut
+                cut = start
+        # Never inside an escape: what goes out and what is held each start at a boundary JSON reads there too.
+        if tokens and (i := bisect.bisect_right([s for s, _ in tokens], cut) - 1) >= 0 and tokens[i][0] < cut < tokens[i][1]:
+            cut = tokens[i][0]
+        if cut < len(text):
+            self.held[key] = (text[cut:], meta)
+        return masked(text[:cut], self.hide)
+
+    def rest(self) -> list[tuple[str, str, dict]]:
+        """Every held tail as `(kind, text, meta)`, masked: the stream ended, so no value completes it."""
+        out = [(key[0], masked(text, self.hide), self.meta(meta)) for key, (text, meta) in self.held.items()]
+        self.held.clear()
+        return out
+
+
+def question_list(value, unique: str | None = None) -> list[dict]:
+    """A question tool's batch: a list of mappings, each with its `question` a non-empty string, so nothing is made
+    text before masking. Any other batch holds no question and can only be declined. An adapter names the key its
+    reply answers by (`unique`): a batch where that key is missing, empty or shared would lose an answer, so it holds
+    none either. The screen, the record and the answer count read the batch the adapter published, by shape alone,
+    so a mask that spells two questions alike never changes how many there are."""
+
+    if not isinstance(value, list) or not all(isinstance(q, dict) and isinstance(q.get("question"), str) and q["question"]
+                                              for q in value):
+        return []
+    keys = [q.get(unique) for q in value] if unique else []
+    return [] if not all(isinstance(k, str) and k for k in keys) or len(set(keys)) != len(keys) else value
+
+
+def text(value) -> str:
+    """A field the screen reads as text: a string as given, nothing as empty, any other value as its JSON."""
+    return value if isinstance(value, str) else "" if value is None else json.dumps(value, ensure_ascii=False, default=str)
 
 
 def python_environment(env: dict | None = None) -> dict:

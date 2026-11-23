@@ -453,7 +453,7 @@ export default function App() {
     if (!wiki) return
     setFault('')
     try {
-      const { repo: now } = await api.setConfig(wiki.id, { repo: next, model: wiki.model, effort: wiki.effort })
+      const { repo: now } = await api.setConfig(wiki.id, { repo: next })   // a switch sets no model
       // The server has switched; the screen follows from this answer, not
       // from the next request — if that one failed, the picker stayed on the
       // old project while every API answered for the new one.
@@ -740,7 +740,7 @@ export default function App() {
             specs={specs}
             selectedSpec={spec}
             onSpecs={readSpecs}
-            onStart={start}
+            onStart={start} startChoice={choices[blank] ?? NO_CHOICE}
             onPlanned={planned}
             onMapRun={(run) => {
               setMapRun({ repo, run })
@@ -825,7 +825,7 @@ export default function App() {
                 progressOn={full}
                 onChoice={setChoice}
                 onSend={order}
-                onAnswer={(turn, id, allow, scope, answers) => work.answer(path, turn, id, allow, scope, answers)}
+                onAnswer={(turn, id, allow, scope, answers, picks) => work.answer(path, turn, id, allow, scope, answers, picks)}
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
                 onSteer={(turn, text) => void work.steer(path, turn, text)}
                 queued={work.queued[path]}

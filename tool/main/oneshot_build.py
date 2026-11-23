@@ -24,6 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
+from common import masked
 from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
@@ -173,8 +174,7 @@ def resolve_tools(repo: str, stage: str) -> bool:
     o = oneshot_spec.spec_of(repo)["oneshot"]
     if (declared_tools := tools(o)) is None:
         return True
-    # The name as S2 declared it, found from the server's folder and saved absolute: a relative `PATH` entry
-    # would otherwise point at another file once the gate runs in the worktree.
+    # As S2 declared it, found from the server's folder, saved absolute: a relative one misses in the worktree.
     found = {t["name"]: (at := shutil.which(t["name"])) and os.path.abspath(at) for t in declared_tools}
     if missing := [name for name, at in found.items() if not at]:
         oneshot_spec.store(repo).stop("toolchain", f"PC 앱을 만드는 데 쓰기로 한 도구를 이 PC 에서 찾지 못했다: "
@@ -590,8 +590,7 @@ def pinned(path: Path, o: dict) -> str:
             new = (path / name).read_bytes()
         except OSError:
             return f"계약 테스트 `{name}` 가 없다 — 새 테스트는 새 파일에 쓴다"
-        # The blob as `git add` would write it now, filters and line endings included, then the same file in
-        # another form; the committed bytes, never text decoded on the way.
+        # The blob `git add` would write now (filters, line endings) against the committed bytes: never decoded text.
         blob = specs.sh(["git", "rev-parse", f"{o['tests_head']}:{name}"], path).stdout.strip()
         now = specs.sh(["git", "hash-object", "--", name], path).stdout.strip()
         old = subprocess.run(["git", "cat-file", "blob", blob], cwd=path, capture_output=True).stdout if blob else None
@@ -616,38 +615,41 @@ def owns(spec: dict) -> bool:
 
 
 def checked(path: Path, run, spec: dict, final: str):
-    """`specs._check`'s hand-over: the stage's check, then the next turn to send, as `specs` returns it.
-    A person's turn, or a turn in a stage S4 does not own, changes nothing."""
-
+    """`specs._check`'s hand-over: the stage's check, then the next turn to send; a person's turn, or one in a
+    stage S4 does not own, changes nothing."""
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
-    if getattr(run, "person", False) or stage not in STAGES:
+    if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
-    if (hand := HANDOVERS.get(stage)) and hand[0](spec):
+    hide = getattr(run.chat, "hide", None)
+    why = oneshot_needs.leaked(path, spec, hide, final)   # before any check reads it; again at the turn's end
+    if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
     run.checked = True
     check, stop, _, after = STAGES[stage]
     try:
-        why = check(path, run, spec, final)
+        why = why or check(path, run, spec, final)
     except (ValueError, OSError) as exc:
         why = str(exc)
     except Exception as exc:   # an unforeseen failure still stops with a reason, never leaves the stage running
-        oneshot_spec.store(repo).stop("block", f"{type(exc).__name__}: {exc}")
+        oneshot_spec.store(repo).stop("block", why := masked(f"{type(exc).__name__}: {exc}", hide))
+        if hide:   # the caller logs and notes what it catches: it gets the masked reason, never the values
+            raise RuntimeError(why) from None
         raise
+    why = why and type(why)(masked(why, hide))   # a check's reason can quote what the turn wrote; an `Again` stays one
     if not why:
-        if kind_held(oneshot_spec.spec_of(repo)["oneshot"]):   # the pass left the run at its kind's stop: no next
-            return None
-        return unless_stopped(run, repo, lambda: after(repo))
+        run.passed = True   # what follows moves the run on: the turn's end scan (`oneshot_needs.settle`) gates it
+        held = kind_held(oneshot_spec.spec_of(repo)["oneshot"])   # the pass left the run at its kind's stop: no next
+        return None if held else unless_stopped(run, repo, lambda: after(repo))
     specs.note(run, why)
     was, store = spec["oneshot"], oneshot_spec.store(repo)   # a backend build turn without a commit is not counted
     attempts = int(was.get("attempts") or 0) + (type(why) is str and (stage != "build" or was.get("turn_head") != head(path)))
+    store.put(attempts=attempts)   # `working` stays until the turn goes: a restart in between is recovered
     if attempts >= MAX_ATTEMPTS or run.halt.is_set():
-        store.put(attempts=attempts)
         store.stop(stop, why)
         return None
-    store.put(attempts=attempts)   # `working` stays until the turn goes: a restart in between is recovered
-    return unless_stopped(run, repo, lambda: send(
-        repo, stage, f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
-                     + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else ".")))
+    return unless_stopped(run, repo, lambda: send(repo, stage, masked(   # as composed: a value can span the words
+        f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
+        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else "."), hide)))
 
 
 def unless_stopped(run, repo: str, then):
@@ -674,8 +676,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
         return f"HEAD 가 승인된 설계 커밋 {o['design_head'][:12]} 위에 있지 않다"
     runner = declared(path, final, shape(o), tools(o))   # several kinds: the core's tests alone, each kind's build is 9c's
     names = changed(path, o["design_head"])
-    # A case is pinned by its class and name, its file only when named: a planned test outside the named files
-    # could be weakened later with nothing to show for it.
+    # Pinned by class and name, by file only when named: a planned test outside them could be weakened unseen.
     tests = [t["test_name"].lower() for t in planned(spec)]
     mentions = lambda f: (path / f).is_file() and any(   # noqa: E731
         t in (path / f).read_bytes().decode("utf-8", "ignore").lower() for t in tests)
@@ -794,7 +795,6 @@ def reviewed(repo: str) -> None:
     oneshot_publish.begin(repo)
 
 
-# A stage's turn: `(check, stop reason after the last refusal, the turn's text, what follows a pass)`.
-# A later stage's module adds its own.
+# A stage's turn: `(check, stop after the last refusal, its text, what follows a pass)`; later stages add theirs.
 STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, "build", build_text(oneshot_spec.spec_of(repo)))),
           "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}

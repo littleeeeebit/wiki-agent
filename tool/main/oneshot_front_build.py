@@ -288,17 +288,19 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
     PC app's frozen `build` started on a desktop the run owns."""
 
     o, store = spec["oneshot"], oneshot_spec.store(spec["repo"])
+    # Each app runs with the owner's secrets (`env`, a `gate_env`), and its text the look keeps shows `[N1]`.
+    hide = oneshot_needs.hidden(spec, env)
     if kind == "desktop":
-        return oneshot_desktop_look.look(spec, build, shots, stopped)
+        return oneshot_desktop_look.look(spec, build, shots, stopped, env=env, hide=hide)
     if kind != "android":
-        # The web app runs with the owner's secrets (`env`, a `gate_env`), and its text the look keeps shows `[N1]`.
         return oneshot_look.look(path, live, o["front"], o["frequency"], o["inventory"], views(o["profile"]), shots,
-                                 stopped, env=env, hide=oneshot_needs.hidden(spec, env))
+                                 stopped, env=env, hide=hide)
     # The emulator installs copies, and their digests are what the phone round must install again.
     copies = store.folder / "apks" / f"look-{time.time_ns()}"
     try:
         apks.update(oneshot_device.frozen(path, device, copies))
-        return oneshot_device.look(copies, device, spec, store.folder / "device", shots, stopped)
+        return oneshot_device.look(copies, device, spec, store.folder / "device", shots, stopped,
+                                   given=oneshot_needs.given_in(spec, env), hide=hide)
     finally:
         shutil.rmtree(copies, ignore_errors=True)
 

@@ -104,7 +104,7 @@ def english_block(**extra) -> dict:
             "out": ["session expiry"], "done": ["a test covers the return"],
             "grounds": {"pages": ["craft/x"], "files": ["a.txt:1"], "rules": []},
             "decisions": [{"what": "run it on the server", "why": "the screen has no history", "rejected": ""}],
-            **extra}
+            "task": {"kind": "fix", "what": "Return to the original page after login"}, "precedence": [{"ref": "a.txt", "role": "current"}], **extra}
 
 
 # -- the proposal and its boundary ----------------------------------------------
