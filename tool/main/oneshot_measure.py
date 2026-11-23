@@ -40,7 +40,8 @@ from pydantic import BaseModel
 from common import masked, process, shell
 
 from . import oneshot, oneshot_build, oneshot_needs, oneshot_publish, oneshot_spec, release, runtime, specs, work
-from .oneshot_kept import CLIPS, MAX_CLIPS, clips_of, fresh, kept_from, label_of, plain, spelled, strict  # noqa: F401
+from .oneshot_kept import (CLIPS, MAX_CLIPS, clips_of, fresh, kept_from, label_of, plain, spelled,  # noqa: F401
+                           strict, tail)
 from .query import _lock as work_lock, hold
 
 router = APIRouter()
@@ -335,13 +336,6 @@ def accepted_by(psutil, server: tuple, client: tuple, seconds: float = 3.0) -> i
         time.sleep(0.1)
 
 
-def tail(log: Path, hide: dict, size: int = 1500) -> str:   # masked whole first: the cut never splits a secret
-    try:
-        return masked(log.read_text(encoding="utf-8", errors="replace"), hide)[-size:].strip() or "(출력 없음)"
-    except OSError:
-        return "(출력 없음)"
-
-
 def serve_check(path: Path, run, spec: dict) -> str:
     """At the build's gate: the plan holds and the backend starts and answers its health address, or why not."""
 
@@ -440,8 +434,9 @@ def measure(repo: str) -> None:
         if left:   # the copy failed, or the script's own folder is still there: the owner's reason, before any other
             store.stop("measure", left)
             return None
-        if failed:
-            raise failed
+        if failed:   # unforeseen, a launch error naming an input included: its text masked like every other reason
+            store.stop("measure", f"실측이 예상하지 못한 오류로 멈췄다 — {masked(f'{type(failed).__name__}: {failed}', hide)}")
+            return None
         record["tail"] = (text or "").strip()[-3000:]
         if halt.is_set():
             store.stop("measure", "사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
@@ -686,6 +681,9 @@ def decide(repo: str, body: Decision) -> dict:
         try:   # held until the verdict is saved: no turn moves HEAD between the check and the record of it
             why = oneshot_review.moved(spec, tree, "built_head")
             hide = env_of(spec, plan)[1] if plan else spelled(oneshot_needs.hidden(spec, oneshot_build.built_env(spec)))
+            if note and (not plan or any(f"[{x['env']}]" not in hide.values() for x in plan["inputs"] if x["kind"] ==
+                                         "secret")):   # a note is kept only behind a mask holding every secret
+                raise HTTPException(409, "메모를 가릴 비밀값을 지금 읽지 못했다 — 메모 없이 승인하거나 다시 시도한다")
             runs[-1] = {**last, "owner": {"approve": body.approve, "note": masked(note, hide), "ts": time.time()}}
             if why:
                 spec = retire(spec, f"실측한 뒤 작업트리가 바뀌었다 — {why}", stage="build", fix=None, attempts=0,

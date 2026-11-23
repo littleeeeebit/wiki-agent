@@ -214,9 +214,13 @@ of the report while it is kept, or a failed look at any entry (`plain`
 answers "no" only for a missing one), stops the run like a failed copy, and
 so does any unforeseen error of the keeping; only invalid UTF-8 JSON is left
 out. Every mask of a run comes from `env_of`, which holds each secret in
-its literal, URL-quoted and JSON-escaped spellings (`spelled`). So the
-script's output, the report's metrics and notes, the backend's log, the
-owner's note and every error mask the same forms. When the backend fails to
+its literal, URL-quoted and JSON-escaped spellings (`spelled`), each also
+with its line endings as a text-mode read turns them. So the script's
+output, the report's metrics and notes, the backend's log, the owner's note
+and every error, an unforeseen one included, mask the same forms. A note is
+kept only behind a mask holding every secret of the plan: when the plan or a
+secret cannot be read at the verdict, a note is refused (409) and the owner
+approves without one or tries again. When the backend fails to
 start, its log is masked whole before its end is cut for the error, so the
 cut never splits a secret. The removal counts a
 folder as gone only when looking at it finds nothing; one that cannot be

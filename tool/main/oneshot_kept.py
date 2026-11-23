@@ -170,10 +170,21 @@ def written(p: Path, text: str) -> None:
 
 
 def spelled(hide: dict[str, str]) -> dict[str, str]:
-    """`hide` with each value also in the spellings JSON escaping gives it, for text a backend may log as JSON."""
+    """`hide` with each value also in the spellings JSON escaping gives it, for text a backend may log as JSON, and
+    with its line endings as a text-mode read turns them (`\\r\\n` and `\\r` to `\\n`), each spelling too."""
 
     return {**hide, **{form: label for value, label in hide.items()
-                       for form in (json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1])}}
+                       for v in {value, value.replace("\r\n", "\n").replace("\r", "\n")}
+                       for form in (v, json.dumps(v)[1:-1], json.dumps(v, ensure_ascii=False)[1:-1])}}
+
+
+def tail(log: Path, hide: dict, size: int = 1500) -> str:
+    """The end of a backend's log for an error, masked whole first: the cut never splits a secret."""
+
+    try:
+        return masked(log.read_text(encoding="utf-8", errors="replace"), hide)[-size:].strip() or "(출력 없음)"
+    except OSError:
+        return "(출력 없음)"
 
 
 def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:

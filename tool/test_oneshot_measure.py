@@ -114,6 +114,10 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=False))
     with pytest.raises(HTTPException, match="판정할 실측이 없다"):   # a screen showing another run
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"] + 1, approve=True))
+    with patch.object(measure.release, "secret_read", lambda name: (_ for _ in ()).throw(OSError("locked"))), \
+            pytest.raises(HTTPException, match="읽지 못했다"):   # no note kept behind a mask missing a secret
+        measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=True, note=f"자연스럽다 {KEY}"))
+    assert not o()["measures"][-1].get("owner") and not any(k == spec()["worktree"] for k in measure.work._busy)
     begun, held, save = [], [], measure.oneshot_spec.saved
 
     def saving(repo, **kw):   # the worktree stays held through the verdict's save: no turn moves HEAD meanwhile
@@ -215,6 +219,8 @@ def test_the_end_of_a_startup_log_is_cut_only_after_its_secrets_are_masked(tmp_p
     log.write_text(json.dumps({"key": 'sk-"q\\uote'}), encoding="utf-8")   # logged as JSON: its escaped spelling
     hide = measure.spelled({'sk-"q\\uote': "[K]"})   # as `env_of` gives it
     assert "uote" not in measure.tail(log, hide) and "[K]" in measure.tail(log, hide)
+    log.write_bytes(b"start sk-line\r\nend-part done")   # a text-mode read turns the value's CRLF into LF
+    assert "end-part" not in measure.tail(log, measure.spelled({"sk-line\r\nend-part": "[K]"}))
 
 
 def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(at_measure, tmp_path):
@@ -439,6 +445,10 @@ def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_m
             patch.object(measure, "kept_from", lambda *a: "실측 원본 폴더 `x` 를 지우지 못했다"):
         measure.measure("budget")
     assert "지우지 못했다" in o()["stopped"]["detail"] and not o().get("measures")
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    with patch.object(measure, "served", lambda *a: (_ for _ in ()).throw(FileNotFoundError(f"{KEY}\\gate"))):
+        measure.measure("budget")   # a launch error naming an input: the folder goes, and the text is masked
+    assert "FileNotFoundError" in o()["stopped"]["detail"] and KEY not in json.dumps(o(), ensure_ascii=False)
 
 
 def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):
