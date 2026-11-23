@@ -42,6 +42,7 @@ LAUNCH = re.compile(r"WIKI_AGENT_.*|ORCA_.*|RELEASE_KEY_PASSWORD|ANTHROPIC_.*|CL
 # What a look sets when it starts the product (`oneshot_look.served`, `oneshot_desktop.LOOK_ENV` and `OWNED_ENV`): a
 # need of that name would reach the started app as the look's value, never the owner's.
 STARTED = re.compile(r"PORT|APP_DATA_DIR|PYTHONUNBUFFERED|ONESHOT_SCREEN|ONESHOT_STATE|APPDATA|LOCALAPPDATA|TEMP|TMP")
+WEB_STARTED = frozenset({"PORT", "APP_DATA_DIR", "PYTHONUNBUFFERED"})   # what `oneshot_look.served` sets itself
 KINDS = {"secret": "비밀 값", "account": "계정", "tool": "프로그램", "file": "파일"}
 MAX_SECRET = 2560   # bytes Credential Manager holds in one credential, as UTF-16
 
@@ -137,7 +138,8 @@ def shown(spec: dict) -> list[dict]:
     kept = o.get("given") or {}
     return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid)),
              "leaked": nid in marked(o), "unsure": nid in unsure(o) - marked(o),
-             "launch": bool(LAUNCH.fullmatch(n.get("env") or "")), "started": bool(STARTED.fullmatch(n.get("env") or ""))}
+             "launch": bool(LAUNCH.fullmatch(n.get("env") or "")),
+             "started": [sheet.KIND_NAMES[k] for k in kept_from(spec, n.get("env") or "")]}
             for nid, (n, calls) in owed(o.get("design") or {}).items()]
 
 
@@ -365,6 +367,17 @@ def carried(texts: list[str], values: list[str], hide: dict) -> list[str]:
     return sorted({label for value, label in hide.items() if seen(value)})
 
 
+def kept_from(spec: dict, env: str) -> list[str]:
+    """The run's kinds whose look sets `env` itself when it starts the app (a `STARTED` name only a design approved
+    before the rule can bear), so that start runs without the owner's value; the Android file carries every name."""
+
+    from . import oneshot_desktop   # it reaches the stages that import this module
+    from .oneshot_profile import kinds_of
+
+    own = {"webapp": WEB_STARTED, "desktop": oneshot_desktop.LOOK_ENV | oneshot_desktop.OWNED_ENV}
+    return [k for k in kinds_of(spec["oneshot"]) if env.upper() in own.get(k, ())]
+
+
 def given_in(spec: dict, env: dict | None, own: frozenset[str] | set[str] = frozenset()) -> dict[str, str | None]:
     """What a started product gets over the server's environment: each secret the design names by its `env`, its
     value in `env` (a `gate_env` result), or `None` (dropped) for one `env` does not hold, so a variable of that name
@@ -559,9 +572,9 @@ def told(spec: dict) -> str:
         if n["kind"] == "secret" and LAUNCH.fullmatch(n["env"]):   # never in the agent's shell (`agent`)
             lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret the server's gate alone has: it is not in "
                          f"your shell, so do not set, read or repair it there; the gate runs its live check ({uses})")
-        elif n["kind"] == "secret" and STARTED.fullmatch(n["env"]):   # a look's own value wins (`given_in`)
-            lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret the gate has, but the screen check that sets "
-                         f"`{n['env']}` itself starts the app with its own value, so the app runs there without it ({uses})")
+        elif n["kind"] == "secret" and (kept := kept_from(spec, n["env"])):   # a look's own value wins (`given_in`)
+            lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret the gate has, but the {' and '.join(kept)} "
+                         f"screen check sets `{n['env']}` itself, so the app runs there without it ({uses})")
         elif n["kind"] == "secret":
             lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret ({uses})")
         elif n["kind"] in ("tool", "file") and (path := (given.get(nid) or {}).get("path")):

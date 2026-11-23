@@ -138,9 +138,15 @@ def test_a_name_a_look_sets_when_it_starts_the_app_is_never_a_secrets():
     env = {"ONESHOT_SCREEN": "v" * 20, ENV: "w" * 20}
     assert needs.given_in(spec, env, oneshot_desktop.LOOK_ENV) == {ENV: "w" * 20}
     assert needs.given_in(spec, env) == {"ONESHOT_SCREEN": "v" * 20, ENV: "w" * 20}
-    assert "the app runs there without it" in needs.told(spec)
-    with patch.object(needs, "held", lambda *a: True), patch.object(needs, "kept", lambda repo: []):
-        assert [n["started"] for n in needs.shown(spec)] == [True, False]
+    # Its row and prompt name only the kinds whose look keeps its own value.
+    for kinds, said in ((["desktop", "android"], ["PC 앱"]), (["android"], []), (["webapp"], [])):
+        spec["oneshot"]["intent"] = {"kinds": kinds}
+        with patch.object(needs, "held", lambda *a: True), patch.object(needs, "kept", lambda repo: []):
+            assert [n["started"] for n in needs.shown(spec)] == [said, []], kinds
+        assert ("the desktop screen check sets `ONESHOT_SCREEN` itself" in needs.told(spec)) is bool(said), kinds
+    spec["oneshot"]["design"]["outside"][0]["needs"][0]["env"] = "PORT"
+    spec["oneshot"]["intent"] = {"kinds": ["webapp", "desktop"]}
+    assert needs.kept_from(spec, "PORT") == ["webapp"] and needs.kept_from(spec, "TEMP") == ["desktop"]
 
 
 WEB_CALL ={"id": "X1", "target": "환율 서비스", "does": "오늘 환율을 받아 온다", "failure": "어제 환율로 적고 그렇다고 보여 준다",

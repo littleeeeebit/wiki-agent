@@ -7,7 +7,7 @@ export type Decision = { approve?: boolean; edit?: string }
 export type Feature = { id: string; name: string; class: Freq; why: string; endpoints?: string[]; parts?: string[]; kinds?: string[] }
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 /** What the owner gives an outside call (`oneshot_needs.shown`): a secret's value never comes back, only `given`. */
-export type Need = { id: string; what: string; kind: 'secret' | 'account' | 'tool' | 'file'; env?: string; calls: string[]; given: boolean; leaked?: boolean; unsure?: boolean; launch?: boolean; started?: boolean }
+export type Need = { id: string; what: string; kind: 'secret' | 'account' | 'tool' | 'file'; env?: string; calls: string[]; given: boolean; leaked?: boolean; unsure?: boolean; launch?: boolean; started?: string[] }
 /** A program a PC app's stack runs on this PC, and how a CI runner gets it (`oneshot_profile.tools_of`). */
 export type Tool = { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, string> } }
 /** A tool with its whole setup, as the owner confirms it: the setup's kind named, then its value, an action's
@@ -65,6 +65,22 @@ export type Handset = { serial: string; state: string; model: string }
 /** What a phone round installed and whether it is gone again (`oneshot_phone.recorded`). */
 export type Owned = {
   serial: string; model: string; packages: string[]; state: string; left: string[]; unsure?: string[]; dump?: boolean
+}
+
+/** What the card says of one record a phone round may have left (`oneshot_phone.owning`): the apps still owed and
+ * the hierarchy dump still owed, each whenever it is, so one never hides the other. */
+export function ownedNotice(r: Owned): string {
+  const apps = r.state === 'unsure'
+    ? `이 실행의 앱이 있지만, 이 실행이 설치를 마쳤는지 확인하지 못해 지우지 않았다: ${(r.unsure ?? []).join(', ')}. `
+      + '필요 없으면 휴대폰에서 직접 지우고 [휴대폰 찾기] 를 누른다.'
+    : ['owning', 'pending'].includes(r.state)
+      ? `이 실행이 설치한 앱이 남아 있다: ${(r.left.length ? r.left : r.packages).join(', ')}. `
+        + '그 휴대폰을 연결하고 [휴대폰 찾기] 를 누르면 지운다.'
+      : ''
+  const dump = r.dump
+    ? '화면 검사가 읽은 화면 계층 파일이 남아 있다. 비밀 값을 담았을 수 있다. 그 휴대폰을 연결하고 [휴대폰 찾기] 를 누르면 지운다.'
+    : ''
+  return [apps, dump].filter(Boolean).join(' ')
 }
 /** The phone round before R3 (`oneshot_phone`): `waiting` for the owner's pick, then its last outcome. */
 export type PhoneRound = {
