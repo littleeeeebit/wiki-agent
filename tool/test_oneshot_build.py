@@ -416,7 +416,7 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     refused = git(tree, "rev-parse", "HEAD")
     finding = {"location": "app.py:2", "severity": "P1", "reason": "음수를 받는다", "evidence": "add(-1)",
                "area": "amount validation", "breaks": ["R1"]}
-    oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "attempts": 0,
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "attempts": 0, "built_head": refused,
                                           "reviews": [{"verdict": "refuse", "head": refused, "findings": [finding]}]})
     answer = {"area": "Amount validation", "location": "app.py:2", "evidence": "음수는 환불이다", "breaks": ["R1"],
               "test": "test_refund.py::test_a_refund_is_negative"}

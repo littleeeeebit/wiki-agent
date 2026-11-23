@@ -45,14 +45,16 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
     change, the requirement a change would break, and the test committed since that refusal which pins the
     behaviour it defends. `ValueError` says what is wrong; a turn sent back by nothing answers nothing."""
 
-    from . import oneshot_review   # it imports `oneshot_build`, which imports this module
+    from . import oneshot_measure, oneshot_review   # they import `oneshot_build`, which imports this module
 
     o = spec["oneshot"]
     found = ANSWER.findall(final)
     if not found:
         return []
-    last = (o.get("reviews") or [None])[-1]
-    if len(found) > 1 or o.get("fix") != "review" or not last or last["verdict"] != "refuse":
+    # The refusal `oneshot_review.build_turn` sent, read off the same records its text is: a refusal recorded
+    # before `fix` existed is answered like any other, and a turn the failed measurement sent answers none.
+    last = None if o.get("fix") == "measure" and oneshot_measure.fixing(spec) else oneshot_review.standing(o)
+    if len(found) > 1 or not last:
         raise ValueError("`oneshot-answers` 는 리뷰가 거절해 돌아온 빌드 턴에 하나만 적는다")
     try:
         value = json.loads(found[0])

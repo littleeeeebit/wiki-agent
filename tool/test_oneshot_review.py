@@ -636,8 +636,9 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
         git(tree, "add", name)
     git(tree, "commit", "-m", "pins")
     refused = git(tree, "rev-parse", "HEAD")
-    oneshot_spec.saved("budget", oneshot={"fix": "review", "reviews": [{"verdict": "refuse", "head": refused,
-                                                                         "findings": [P1]}]})
+    # No `fix`: the refusal as an earlier version recorded it. The turn's text carried it, so its answers count.
+    oneshot_spec.saved("budget", oneshot={"built_head": refused, "reviews": [{"verdict": "refuse", "head": refused,
+                                                                              "findings": [P1]}]})
     (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\ndef test_refund():\n    pass\n", encoding="utf-8")
     git(tree, "commit", "-am", "a new pin")
     (tree / "test_other.py").write_text("def test_late():\n    pass\n", encoding="utf-8")   # never committed
@@ -661,6 +662,10 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # a folder at that path is no test file
         oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
     assert oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
+    # A turn the failed measurement sent back carried no refusal: it answers none.
+    s["oneshot"].update(fix="measure", measures=[{**approved(refused), "status": "failed", "owner": None}])
+    with pytest.raises(ValueError, match="하나만"):
+        oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))
 
 
 def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_did_not_answer(reviewed):
