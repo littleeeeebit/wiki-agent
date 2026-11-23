@@ -32,13 +32,32 @@ def body(spec: dict, head: str) -> str:
     return "\n".join(lines)
 
 
+def unready(spec: dict, path: Path) -> str:
+    """Why the branch may not be pushed now, or empty: once PR #1 exists, a push goes up only while that draft is
+    the branch's open pull request, since a push moves whichever one is open on it. The lookup at the pull request
+    write checks the number again, for a draft closed while the push ran."""
+
+    if not (n := (spec["oneshot"].get("pr1") or {}).get("number")):
+        return ""
+    base = specs.base_of(spec, path)
+    if base.returncode or not base.stdout.strip():
+        return f"기본 브랜치를 모른다 — {specs.said(base)}"
+    try:
+        specs.existing_pr(path, specs.branch_of(spec), base.stdout.strip(), n)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+        return str(exc)
+    return ""
+
+
 def published(repo: str) -> dict:
     """The built HEAD pushed, and the run's pull request opened as a draft, or found and its body brought up to
     date; `ValueError` says why not. The final stage reuses it (`specs.pull_request` finds it) and makes it ready."""
 
     spec = oneshot_spec.spec_of(repo)
     path, head, branch = Path(spec["worktree"]), spec["oneshot"]["built_head"], specs.branch_of(spec)
-    pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", f"{head}:refs/heads/{branch}"])
+    if why := unready(spec, path):
+        raise ValueError(why)
+    pushed =prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", f"{head}:refs/heads/{branch}"])
     if pushed.returncode:
         raise ValueError(f"push 실패 — {specs.said(pushed)}")
     base = specs.base_of(spec, path)

@@ -343,9 +343,12 @@ It does so only for the publication of this hand-over: a pull request record
 left by an earlier one, after a push that failed since or a text turn that
 moved HEAD, stops S8 with that fault instead. Once pull request #1 exists,
 every publication goes to that draft, the one measured and reviewed: a
-repair's draft publication and S8's final one alike. When it is not the open
-pull request of the branch, the publication stops with that reason and opens
-no replacement. The owner reopens the draft and resumes.
+repair's draft publication and S8's final one alike. That draft is checked
+to be the branch's open pull request before the push, since a push moves
+whichever pull request is open on the branch, and its number again at the
+pull request write. When it is not, the publication stops with that reason,
+pushes nothing and opens no replacement. The owner reopens the draft and
+resumes.
 
 ## Steps
 

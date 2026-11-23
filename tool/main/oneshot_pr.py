@@ -26,7 +26,8 @@ import android_owned
 from common import masked, shell
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
+from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_publish, oneshot_spec
+from . import pr_text, release, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -452,6 +453,9 @@ def handed(path: Path, run, spec: dict, final: str):
     run.checked = True
     # The text asked again is the run's own turn: charged, and stopping the stage if it fails.
     ask = lambda text: oneshot_build.send(repo, STAGE, text) or True   # noqa: E731 — sent stops itself on a refusal
+    if why := oneshot_publish.unready(spec, path):   # before `specs.opened` pushes: the draft, or nothing
+        oneshot_spec.store(repo).stop(STAGE, why)
+        return None
     try:
         then = specs.written(specs.channels.repo_for(repo), path, run, spec, final, ask)
     except Exception as exc:   # a push that timed out: stopped with its reason, resumed from the README turn

@@ -295,7 +295,8 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     remote = Remote()
-    with patch.object(specs, "sh", lambda args, cwd, timeout=60: remote(args, cwd, timeout) if args[:2] != ["git", "push"]
+    open7 = listing(remote, 7)
+    with patch.object(specs, "sh", lambda args, cwd, timeout=60: open7(args, cwd, timeout) if args[:2] != ["git", "push"]
                       else subprocess.CompletedProcess(args, 1, "", "rejected")):
         assert check(tree, SUMMARIZED) is None
     assert not any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls)
@@ -321,7 +322,9 @@ def test_s8_publishes_only_to_the_draft_it_measured_never_a_replacement(finished
     remote = Remote()
     with patch.object(specs, "sh", listing(remote, *open_now)):
         assert check(tree, SUMMARIZED) is None
-    assert not remote.created() and not any(c[:3] in (["gh", "pr", "ready"], ["gh", "pr", "edit"]) for c in remote.calls)
+    # Nothing is pushed either: a push to the branch would move the pull request open on it.
+    assert not remote.pushes() and not remote.created()
+    assert not any(c[:3] in (["gh", "pr", "ready"], ["gh", "pr", "edit"]) for c in remote.calls)
     assert o()["stage"] == "pr" and "초안 PR #7 이 열려 있지 않다" in o()["stopped"]["detail"] and not spec().get("pr")
 
 
@@ -333,7 +336,7 @@ def test_a_repairs_publication_stacks_on_the_measured_draft_never_a_replacement(
     remote = Remote()
     with patch.object(specs, "sh", listing(remote, *open_now)), pytest.raises(ValueError, match="초안 PR #7 이 열려"):
         oneshot_publish.published("budget")
-    assert not remote.created() and o()["pr1"] == pr1
+    assert not remote.pushes() and not remote.created() and o()["pr1"] == pr1
     with patch.object(specs, "sh", listing(remote, 7)):   # reopened: the repair goes up on it
         assert oneshot_publish.published("budget")["number"] == 7
     assert not remote.created() and o()["pr1"]["head"] == git(tree, "rev-parse", "HEAD")
