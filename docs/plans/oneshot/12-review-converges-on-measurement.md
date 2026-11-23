@@ -341,10 +341,11 @@ declared in `requirements-chat.txt`.
 S8 makes the draft ready; when GitHub refuses, S8 stops instead of finishing.
 It does so only for the publication of this hand-over: a pull request record
 left by an earlier one, after a push that failed since or a text turn that
-moved HEAD, stops S8 with that fault instead. The pull request S8 finishes is
-the draft that was measured and reviewed: when GitHub no longer shows it open,
-S8 stops before it pushes, and a different number coming back stops it too,
-so the owner reopens that draft and resumes.
+moved HEAD, stops S8 with that fault instead. Once pull request #1 exists,
+every publication goes to that draft, the one measured and reviewed: a
+repair's draft publication and S8's final one alike. When it is not the open
+pull request of the branch, the publication stops with that reason and opens
+no replacement. The owner reopens the draft and resumes.
 
 ## Steps
 

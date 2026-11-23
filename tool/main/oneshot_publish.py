@@ -50,7 +50,8 @@ def published(repo: str) -> dict:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(body(spec, head))
     try:
-        found = specs.existing_pr(path, branch, base)   # `RuntimeError` when GitHub cannot be read
+        # `RuntimeError` when GitHub cannot be read, or a repair's draft is not the one measured and reviewed
+        found = specs.existing_pr(path, branch, base, (spec["oneshot"].get("pr1") or {}).get("number"))
         if found:
             done = specs.sh(["gh", "pr", "edit", str(found[0]), "--body-file", fh.name], path, 120)
             if done.returncode:

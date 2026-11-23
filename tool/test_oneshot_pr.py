@@ -18,7 +18,8 @@ import pytest
 
 import android_owned
 from main import github_release as gh
-from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_device, oneshot_pr, oneshot_spec, pr_text
+from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_device, oneshot_pr, oneshot_publish
+from main import oneshot_spec, pr_text
 from main import release, specs
 from test_github_release import FakeGitHub
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -284,9 +285,9 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     remote = Remote()   # answers `gh pr ready` as a logged-out gh does
-    with patch.object(specs, "sh", remote):
+    with patch.object(specs, "sh", listing(remote, 7)):   # the draft, open: its text is edited, then ready asked
         assert check(tree, SUMMARIZED) is None
-    assert any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls)
+    assert any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls) and not remote.created()
     assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "pr" and "초안을 풀지 못했다" in o()["stopped"]["detail"]
     # Resumed, a new README commit's push fails: the record of the earlier publication never finishes the run.
     oneshot_spec.resume("budget")
@@ -301,28 +302,41 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
     assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "pr" and "push 실패" in o()["stopped"]["detail"]
 
 
-def test_s8_finishes_only_the_draft_it_measured_never_a_replacement(finished):
+def listing(remote, *numbers):
+    """`remote`, with `gh pr list` answering these open pull requests from the task's branch into `main`."""
+
+    rows = [{"number": n, "url": f"https://github.com/o/proj/pull/{n}", "headRefName": specs.branch_of(spec()),
+             "baseRefName": "main", "isCrossRepository": False} for n in numbers]
+    return lambda args, cwd, timeout=60: (subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
+                                          if args[:3] == ["gh", "pr", "list"] else remote(args, cwd, timeout))
+
+
+@pytest.mark.parametrize("open_now", [(), (9,)])   # the draft closed, or another pull request open on the branch
+def test_s8_publishes_only_to_the_draft_it_measured_never_a_replacement(finished, open_now):
     tree, sent = finished
     readme(tree)
     oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     remote = Remote()
-    shut = lambda args, cwd, timeout=60: (subprocess.CompletedProcess(args, 0, json.dumps({"state": "CLOSED"}), "")  # noqa: E731
-                                          if args[:3] == ["gh", "pr", "view"] else remote(args, cwd, timeout))
-    with patch.object(specs, "sh", shut):   # closed on GitHub since: nothing is pushed, nothing opened
+    with patch.object(specs, "sh", listing(remote, *open_now)):
         assert check(tree, SUMMARIZED) is None
-    assert not remote.pushes() and not remote.created() and o()["stage"] == "pr"
-    assert "PR #7" in o()["stopped"]["detail"] and "CLOSED" in o()["stopped"]["detail"]
-    # Open when looked at, yet GitHub hands back another number: the run never finishes on that one.
-    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 9, "url": "https://github.com/o/proj/pull/9"}})
-    oneshot_spec.resume("budget")
-    readme(tree, ("NOTES.md", "다시\n"))
-    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
-        check(tree, answer(report()))()
-    with patch.object(specs, "sh", Remote()):
-        assert check(tree, SUMMARIZED) is None
-    assert o()["stage"] == "pr" and "PR #9 이 아닌 PR #7" in o()["stopped"]["detail"]
+    assert not remote.created() and not any(c[:3] in (["gh", "pr", "ready"], ["gh", "pr", "edit"]) for c in remote.calls)
+    assert o()["stage"] == "pr" and "초안 PR #7 이 열려 있지 않다" in o()["stopped"]["detail"] and not spec().get("pr")
+
+
+@pytest.mark.parametrize("open_now", [(), (9,)])
+def test_a_repairs_publication_stacks_on_the_measured_draft_never_a_replacement(finished, open_now):
+    tree, _ = finished
+    pr1 = {"number": 7, "url": "https://github.com/o/proj/pull/7", "head": "old"}
+    oneshot_spec.saved("budget", oneshot={"pr1": pr1, "built_head": git(tree, "rev-parse", "HEAD")})
+    remote = Remote()
+    with patch.object(specs, "sh", listing(remote, *open_now)), pytest.raises(ValueError, match="초안 PR #7 이 열려"):
+        oneshot_publish.published("budget")
+    assert not remote.created() and o()["pr1"] == pr1
+    with patch.object(specs, "sh", listing(remote, 7)):   # reopened: the repair goes up on it
+        assert oneshot_publish.published("budget")["number"] == 7
+    assert not remote.created() and o()["pr1"]["head"] == git(tree, "rev-parse", "HEAD")
 
 
 @pytest.mark.parametrize("change, said", [
