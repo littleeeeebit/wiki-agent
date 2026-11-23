@@ -335,11 +335,11 @@ def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
 
 
 # A value that leads out of the checkout: drive-qualified anywhere (`C:\x`, and `C:..\x`, relative to that drive's own
-# folder), or, itself or past its switch (`/out:`, `-o:`), a share, rooted at the current drive, a home or a root with
+# folder), or, itself or past its switch (`/out:`, `-o:`, `--dist=`), a share, rooted at the current drive, a home or a root with
 # a folder in it. A word that is a lone `/name` is a switch (`/p:x`, `cmd /c`); an option's value never is.
 DRIVE = re.compile(r"(?<![\w$%/\\.-])[A-Za-z]:")
 ROOTED = re.compile(r"\\|~[\\/]|/[^/\\:]*[/\\]")
-SWITCH = re.compile(r"^[-/]+[\w.-]*:")
+SWITCH = re.compile(r"^[-/]+[\w.-]*[:=]")   # `/out:`, `-o:`, and `--dist=` a quote kept in one value
 
 
 def values(command: str) -> list[tuple[str, bool]]:
