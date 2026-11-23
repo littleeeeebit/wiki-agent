@@ -347,9 +347,10 @@ source, and the server assigns it:
     without UI Automation's defaults, so a provider that does not supply it
     leaves the value unknown, never empty. So does a value that is not
     whole UTF-16. A toggle state is read the same way, so an unsupplied one
-    is unknown, never `Indeterminate`. So is an expansion state: a
-    container whose state is unsupplied has its items audited, never taken
-    for a leaf. An element's id or name that is not
+    is unknown, never `Indeterminate`. So is an expansion state. Only a
+    supplied `Collapsed` or `LeafNode` skips a container's item audit. Any
+    other state is audited, including one that is unsupplied or out of
+    range. An element's id or name that is not
     whole UTF-16 leaves its window's read not whole. The driver reads every element's automation id again
     after its value and compares the two ordinally. One that changed (a
     control rebound meanwhile) leaves that window's read not whole. Such a

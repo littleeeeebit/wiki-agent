@@ -245,8 +245,9 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
   if (-not $open) {
     try {   # without defaults: an unsupplied state is unknown, never the client's `LeafNode`
       $e = $element.GetCurrentPropertyValue([System.Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty, $true)
-      $open = -not ($e -is [System.Windows.Automation.ExpandCollapseState]) -or $e -in
-        @([System.Windows.Automation.ExpandCollapseState]::Expanded, [System.Windows.Automation.ExpandCollapseState]::PartiallyExpanded)
+      # Closed only as one of the two closed states named: any other value, out of range included, is audited.
+      $open = -not ($e -is [System.Windows.Automation.ExpandCollapseState] -and $e -in
+        @([System.Windows.Automation.ExpandCollapseState]::Collapsed, [System.Windows.Automation.ExpandCollapseState]::LeafNode))
     } catch { $open = $true }   # its state unread: its items are owed
   }
   if ($open -and ($patterns -contains "ItemContainer" -or $node.type -eq "TreeItem")) { $script:lists += , @($element, $node) }

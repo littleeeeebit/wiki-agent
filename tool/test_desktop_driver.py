@@ -386,7 +386,16 @@ def test_an_unsupplied_expansion_state_has_its_items_audited_never_taken_for_a_l
     nodes = desktop_driver.SCRIPT.read_text(encoding="utf-8").split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
     assert "ExpandCollapsePattern]::ExpandCollapseStateProperty, $true)" in nodes and \
         ".Current.ExpandCollapseState" not in nodes
-    assert "$open = -not ($e -is [System.Windows.Automation.ExpandCollapseState]) -or" in nodes
+    assert "$open = -not ($e -is [System.Windows.Automation.ExpandCollapseState] -and $e -in" in nodes
+    # The rule itself, run: only Collapsed and LeafNode close a container; unsupplied and out of range are audited.
+    rule = nodes.split("$open = ", 2)[2].split("\n    } catch", 1)[0]
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
+                            "Add-Type -AssemblyName UIAutomationTypes, UIAutomationClient; "
+                            "$S = [System.Windows.Automation.ExpandCollapseState]; "
+                            "foreach ($e in @($S::Collapsed, $S::LeafNode, $S::Expanded, $S::PartiallyExpanded, "
+                            "[Enum]::ToObject($S, 42), [System.Windows.Automation.AutomationElement]::NotSupported, $null)) "
+                            "{ $open = " + rule + "; [string]$open }"], capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["False", "False", "True", "True", "True", "True", "True"], probe
 
 
 def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
