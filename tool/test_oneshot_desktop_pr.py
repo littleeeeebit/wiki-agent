@@ -1,9 +1,12 @@
-"""oneshot step 9e6b: S8 of a PC app — the README turn's `PC 앱` section, the installer the final gate builds frozen
-with its HEAD and digest, and the draft prerelease carrying it (with the APK when an Android app is among the kinds),
-each file reused only for the same HEAD and digest; the run then waits before its pull request's text.
+"""oneshot step 9e6b: S8 of a PC app — the README turn writes the PC app's section and its `[release.desktop]`
+table; after the final gate the server builds that table's installer once from a clean checkout, checks it as a
+release does and freezes it; one draft prerelease per head carries it (with the APK when an Android app is among
+the kinds), each file reused only for the same HEAD and digest; the run then waits before its pull request's text.
 
-See `docs/plans/oneshot/9-kinds.md` ("R3 and S8", "Steps and their stops"). Git and the gate run for real in a
-temporary worktree; GitHub's Releases API is `FakeGitHub`, so nothing goes out.
+See `docs/plans/oneshot/9-kinds.md` ("R3 and S8", "Steps and their stops") and `docs/plans/release/0-overview.md`
+(7b). Git and the gate run for real in a temporary worktree. The release build is a stand-in writing a synthetic NSIS
+installer, which the real checks read (`test_release_desktop.nsis`). GitHub's Releases API is `FakeGitHub`, so
+nothing goes out.
 """
 
 import os
@@ -13,54 +16,70 @@ from unittest.mock import patch
 
 import pytest
 
-import android_owned
-from main import github_release, oneshot_build, oneshot_pr, oneshot_spec, pr_text, release
+from main import github_release, oneshot_build, oneshot_needs, oneshot_pr, oneshot_spec, pr_text, release, \
+    release_desktop as rd
 from test_github_release import FakeGitHub
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_device import DEVICE
 from test_oneshot_front_build import adapter, git, write
 from test_oneshot_pr import answer, check, finished, o, readme, report, spec  # noqa: F401 — `finished` is a fixture
 from test_oneshot_spec import world  # noqa: F401 — `world` is a fixture
+from test_release_desktop import APP, nsis, resources  # noqa: F401 — `resources` is a fixture
 
-INSTALLER = "dist/budget-setup.exe"
 RUNNER = "python -m pytest -p no:cacheprovider -q --junitxml={report}"   # the declared tool, by its name
 GATE = RUNNER.replace("{report}", oneshot_build.REPORT)
+DESKTOP = ('\n[release]\nversion_source = "version.json"\n\n[release.desktop]\nbuild = "cargo tauri build"\n'
+           'artifact = "nsis/r_{version}_x64-setup.exe"\nexe = "r.exe"\nproduct_name = "r"\npublisher = "o"\n')
+ANDROID = (f'\n[release.android]\nbuild = "gradlew.bat assembleRelease"\nartifact = "app/release.apk"\n'
+           f'application_id = "{DEVICE["package"]}"\nabi = "none"\n')
+NOT_YET = "the pull request is the next step's"
 
 
 @pytest.fixture
-def pc(finished, monkeypatch):  # noqa: F811 — the imported fixture, requested by name
-    """A PC app at S8: its frozen build names the installer, which the gate builds from `built.exe`."""
+def pc(finished, resources, tmp_path, monkeypatch):  # noqa: F811 — the imported fixtures, requested by name
+    """A PC app at S8 whose release build writes a synthetic NSIS installer holding the app EXE it made."""
 
     tree, sent = finished
-    stack = [{"part": "build", "choice": "python", "why": "주인이 골랐다", "status": "confirmed",
+    stack = [{"part": "build", "choice": "tauri", "why": "주인이 골랐다", "status": "confirmed",
               "tools": [{"name": "python"}]}]   # the gate's one program, found for this stage
-    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "desktop"}, "desktop_build": {"installer": INSTALLER},
-                                          "runner": RUNNER, "gate": GATE, "stack": stack, "toolpaths": {"stage": "pr", "paths": {
-                                              "python": os.path.abspath(shutil.which("python"))}}})
+    write(tree, ".gitignore", "__pycache__/\nartifacts/\n*.apk\n")
+    write(tree, ".wiki/adapter.toml", adapter(gate=GATE))
+    write(tree, "version.json", '{"version": "0.1.0"}')
+    git(tree, "add", "-A")
+    git(tree, "commit", "-m", "the approved build")
+    head = git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={
+        "intent": {"kind": "desktop"}, "tests_head": head, "front_built_head": head, "runner": RUNNER, "gate": GATE,
+        "stack": stack, "toolpaths": {"stage": "pr", "paths": {"python": os.path.abspath(shutil.which("python"))}},
+        "desktop_build": {"head": head, "installer": "src-tauri/target/release/bundle/nsis/r_0.1.0_x64-setup.exe"}})
     monkeypatch.setattr(oneshot_build, "toolchain", lambda spec: None)   # the gate runs as the test's own Python
     monkeypatch.setattr(oneshot_build, "built_env", lambda spec: None)
-    monkeypatch.setattr(oneshot_pr, "release_checked", lambda *a: "")   # Android's own tests build it
-    real = oneshot_build.judged
+    monkeypatch.setattr(release, "WORK", tmp_path / "release-work")
+    monkeypatch.setattr(release, "environment", lambda kit: {})
+    built = []
 
-    def building(path, *a, **k):   # the gate builds what each kind attaches, as a real gate does
-        verdict = real(path, *a, **k)
-        for name, out in ((INSTALLER, "built.exe"), (DEVICE["apk"], "built.apk")):
-            if not (Path(path) / name).exists() and (Path(path).parent / out).exists():
-                (Path(path) / name).parent.mkdir(parents=True, exist_ok=True)
-                (Path(path) / name).write_bytes((Path(path).parent / out).read_bytes())
-        return verdict
+    def build(src, kind, version, kit, halt, read=None):
+        assert release._stop.halt is halt   # under the stop's scope
+        built.append((git(src, "rev-parse", "HEAD"), git(src, "status", "--porcelain"), version, kind["artifact"]))
+        if "exe" not in kind:   # Android's, as `test_oneshot_pr.releasing` stands it in
+            return src / kind["artifact"]
+        (folder := tmp_path / f"build-{len(built)}").mkdir()
+        installer = release.output(src, kind, version)
+        installer.parent.mkdir(parents=True, exist_ok=True)
+        installer.write_bytes(nsis(folder).read_bytes())
+        release.output(src, kind, version, "exe").write_bytes(APP)
+        read(installer)
+        return installer
 
-    monkeypatch.setattr(oneshot_build, "judged", building)
-    write(tree, INSTALLER, "an earlier build's installer")   # removed before the gate, as an earlier build's APK is
-    (tree.parent / "built.exe").write_text("installer", encoding="utf-8")
-    write(tree, ".gitignore", "__pycache__/\nartifacts/\ndist/\n*.apk\n")
-    write(tree, ".wiki/adapter.toml", adapter(gate=GATE))
-    git(tree, "add", ".gitignore", ".wiki/adapter.toml")
-    git(tree, "commit", "-m", "ignore build outputs")
-    head = git(tree, "rev-parse", "HEAD")
-    oneshot_spec.saved("budget", oneshot={"tests_head": head, "front_built_head": head})
+    monkeypatch.setattr(release, "build", build)
     monkeypatch.setattr(release, "remote", lambda repo: "github.com/me/budget")
-    return tree, sent, FakeGitHub("me/budget").install(monkeypatch)
+    return tree, sent, FakeGitHub("me/budget").install(monkeypatch), built
+
+
+def tabled(tree, *more):
+    """The README turn's commit: the README and the release table."""
+
+    readme(tree, (".wiki/adapter.toml", (tree / ".wiki/adapter.toml").read_text(encoding="utf-8") + "".join(more)))
 
 
 def on_prerelease(fake, head):
@@ -68,32 +87,44 @@ def on_prerelease(fake, head):
     return rel, {a["name"]: github_release.digest(a) for a in rel["assets"]}
 
 
-def test_the_readme_turn_has_a_pc_section_naming_the_installer(pc):
-    text = oneshot_pr.readme_text(spec())
-    assert "This is a PC app (a Windows program)." in text and f"`{INSTALLER}`" in text and "adb's" not in text
-    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "webapp", "kinds": ["webapp", "desktop"]}})
-    text = oneshot_pr.readme_text(spec())
-    assert "In the PC app's section," in text and "a Windows app" in text and "Give each its own section" in text
+def staged() -> list[Path]:
+    return [p for key in oneshot_pr.ASSETS for p in oneshot_pr.staging(spec(), key).rglob("*") if p.is_file()]
 
 
-def test_a_pc_apps_installer_goes_alone_to_the_prerelease_and_the_run_waits_before_its_pull_request(pc):
-    tree, sent, github = pc
-    readme(tree)
+def test_the_readme_turn_has_a_pc_section_and_its_release_table(pc):
+    text = oneshot_pr.readme_text(spec())
+    assert "This is a PC app (a Windows program)." in text and "[release.desktop]" in text and "adb's" not in text
+    assert "version_source = " in text and "r_0.1.0_x64-setup.exe" in text and "not a Tauri app" in text
+    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "android", "kinds": ["android", "desktop"]}, "device": DEVICE})
+    text = oneshot_pr.readme_text(spec())
+    assert "In the PC app's section," in text and "beside `[release.android]`" in text
+    assert text.count("version_source = ") == 1   # one `[release]`, the Android table's
+    grant = oneshot_build.GRANTS[oneshot_pr.STAGE]   # the README turn alone may write the table
+    assert grant(spec()) and not grant({**spec(), "writing": {"head": "h", "asked": 1}})
+
+
+def test_the_release_tables_installer_goes_alone_to_the_prerelease_and_the_run_waits_before_its_pull_request(pc):
+    tree, sent, github, built = pc
+    tabled(tree, DESKTOP)
     asked = len(sent)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail("the pull request is the next step's")):
+    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
         check(tree, answer(report()))()
     head = o()["final_head"]
+    # Built once, from a clean checkout of the gate's HEAD, with the version a press would publish next.
+    assert built == [(head, "", "0.1.1", "nsis/r_{version}_x64-setup.exe")]
+    assert list((release.WORK / tree.name).iterdir()) == []   # the checkout went with the check
     rel, digests = on_prerelease(github, head)
-    name = f"budget-{head[:12]}-setup.exe"
-    assert rel["draft"] and rel["prerelease"] and digests == {name: android_owned.sha256(tree / INSTALLER)}
+    name = f"budget-{head[:12]}-x64-setup.exe"
+    assert rel["draft"] and rel["prerelease"] and list(digests) == [name]
     assert o()["installer"] == {"head": head, "name": name, "sha256": digests[name], "url": rel["html_url"],
-                                "tag": f"oneshot-{head[:12]}"} and "apk" not in o()
-    assert (tree / INSTALLER).read_text(encoding="utf-8") == "installer"   # the gate's own, not the earlier build's
-    assert not Path(o()["installer_frozen"]["path"]).exists()   # the copy it uploaded is gone
-    assert o()["stopped"]["reason"] == "kind" and "풀 리퀘스트는 다음 버전에서" in o()["stopped"]["detail"]
+                                "tag": f"oneshot-{head[:12]}", "version": "0.1.1"} and "apk" not in o()
+    assert not staged()   # the copy it uploaded is gone
+    stop = o()["stopped"]
+    assert stop["reason"] == "kind" and "풀 리퀘스트는 다음 버전에서" in stop["detail"]
+    assert "설치 파일 — 초안 프리릴리스에 올렸다" in stop["detail"]
     assert len(sent) == asked and not spec().get("writing")
     body = "\n".join(pr_text.apk_section(spec()))
-    assert f"- PC 앱 설치 파일: [{name}]({rel['html_url']})" in body and "## APK" not in body
+    assert f"- PC 앱 설치 파일: [{name}]({rel['html_url']})" in body and "버전 0.1.1" in body and "## APK" not in body
     # Held there through a restart, though the README turn's commit left the frozen build's HEAD: `[재개]` is refused.
     oneshot_spec.recover()
     assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "kind" and o()["desktop_build"]
@@ -101,50 +132,131 @@ def test_a_pc_apps_installer_goes_alone_to_the_prerelease_and_the_run_waits_befo
         oneshot_spec.resume("budget")
 
 
-def with_android(tree):
-    """An Android app among the kinds: the PC app's tools then live in `desktop.build`, and the gate builds the APK."""
+def test_a_pc_app_with_no_installer_table_still_finishes_its_gate_and_says_why(pc):
+    tree, _, github, built = pc
+    readme(tree)   # no `[release]`: not a Tauri app
+    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+        check(tree, answer(report()))()
+    assert o()["final_head"] and not built and not github.calls
+    assert o()["installer"]["error"] == oneshot_pr.NO_INSTALLER
+    assert "설치 파일 — 올리지 못했다" in o()["stopped"]["detail"] and o()["stopped"]["reason"] == "kind"
+    assert "PC 앱 설치 파일을 Release 에 올리지 못했다 — `[release.desktop]` 가 없다" in "\n".join(pr_text.apk_section(spec()))
 
-    stack = [{**o()["stack"][0], "part": "desktop.build"}]
+
+@pytest.mark.parametrize("wrong, said", [
+    ("build", "`[release.desktop]` 의 정식 빌드 — 빌드 실패"),
+    ("version", "`[release.desktop]` 의 정식 빌드가 배포 검사에 걸린다 — 설치 파일 버전"),
+    ("exe", "앱 EXE 와 다르다")])
+def test_a_release_table_whose_build_fails_its_checks_sends_the_readme_turn_back(pc, monkeypatch, wrong, said):
+    tree, sent, github, _ = pc
+    tabled(tree, DESKTOP)
+    if wrong == "build":
+        monkeypatch.setattr(release, "build", lambda *a, **k: (_ for _ in ()).throw(release.BuildFailed("빌드 실패")))
+    elif wrong == "version":   # a build that kept the source's version instead of the one it was given
+        monkeypatch.setattr(rd, "version_info", lambda file: {"version": "0.1.0", "ProductName": "r",
+                                                               "FileVersion": "0.1.0", "CompanyName": "o"})
+    else:   # the installer holds another app EXE than the one the build made
+        real = rd.facts
+
+        def other(installer, exe):
+            exe.write_bytes(b"MZ another")
+            return real(installer, exe)
+
+        monkeypatch.setattr(rd, "facts", other)
+    check(tree, answer(report()))()
+    assert sent[-1][1] == "pr" and said in sent[-1][2] and "final_head" not in o()
+    assert not staged() and not github.calls and list((release.WORK / tree.name).iterdir()) == []
+
+
+def test_with_an_android_app_both_files_go_to_one_prerelease_and_a_resumed_upload_sends_neither_again(pc, monkeypatch):
+    tree, sent, github, built = pc
+    stack = [{**o()["stack"][0], "part": "desktop.build"}]   # the PC app's tools, among several kinds
     oneshot_spec.saved("budget", oneshot={"intent": {"kind": "android", "kinds": ["android", "desktop"]},
                                           "device": DEVICE, "stack": stack})
     for apk in (DEVICE["apk"], DEVICE["tests"]["apk"]):
-        write(tree, apk, "apk")
-    (tree.parent / "built.apk").write_text("apk", encoding="utf-8")
+        write(tree, apk, "apk")   # as the gate builds them: ignored outputs
+    real = oneshot_build.judged
 
+    def building(path, *a, **k):   # the gate builds the debug APK again, as a real Android gate does
+        verdict = real(path, *a, **k)
+        (Path(path) / DEVICE["apk"]).write_text("apk", encoding="utf-8")
+        return verdict
 
-def test_with_an_android_app_both_files_go_to_one_prerelease_and_a_resumed_upload_sends_neither_again(pc):
-    tree, sent, github = pc
-    with_android(tree)
-    readme(tree)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail("the pull request is the next step's")):
+    monkeypatch.setattr(oneshot_build, "judged", building)
+    monkeypatch.setattr(release, "tools", lambda cfg: {"aapt2": "aapt2"})
+    monkeypatch.setattr(release, "run", lambda argv, env=None, timeout=300: "badging")
+    monkeypatch.setattr(release, "badging", lambda text: {"package": DEVICE["package"], "code": 1001, "name": "0.1.1",
+                                                          "abis": [], "debuggable": False})
+    tabled(tree, DESKTOP, ANDROID)
+    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
         check(tree, answer(report()))()
     head = o()["final_head"]
+    assert [b[3] for b in built] == ["app/release.apk", "nsis/r_{version}_x64-setup.exe"]   # one checkout, both kinds
     rel, digests = on_prerelease(github, head)
-    assert sorted(digests) == [f"budget-{head[:12]}-debug.apk", f"budget-{head[:12]}-setup.exe"]
+    assert sorted(digests) == [f"budget-{head[:12]}-debug.apk", f"budget-{head[:12]}-x64-setup.exe"]
     assert o()["apk"]["url"] == o()["installer"]["url"] == rel["html_url"]
     assert len([c for c in github.calls if c[0] == "POST" and c[1] == "releases"]) == 1
     first, calls = (o()["apk"], o()["installer"]), len(github.calls)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail("the pull request is the next step's")):
+    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
         oneshot_pr.asked("budget")   # a resumed S8: the same head and digests, so nothing goes up again
     assert (o()["apk"], o()["installer"]) == first and not [c for c in github.calls[calls:] if c[0] != "GET"]
     body = "\n".join(pr_text.apk_section(spec()))
     assert "## APK" in body and "## 설치 파일" in body
 
 
-def test_an_installer_the_gate_does_not_build_or_cannot_copy_is_said_and_the_apk_still_goes_up(pc):
-    tree, _, github = pc
-    with_android(tree)
-    (tree.parent / "built.exe").unlink()   # this gate builds no installer; the earlier build's is removed before it
-    readme(tree)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail("the pull request is the next step's")):
+def test_an_app_file_changed_after_the_approved_build_is_refused(pc):
+    tree, sent, _, built = pc
+    tabled(tree, DESKTOP)
+    write(tree, "app.py", "a change R3 never saw\n")
+    git(tree, "add", "-A")
+    git(tree, "commit", "-m", "more")
+    check(tree, answer(report()))()
+    assert "R3 가 승인한 PC 앱 빌드 뒤에 앱 파일이 바뀌었다" in sent[-1][2] and "app.py" in sent[-1][2]
+    assert "final_head" not in o() and not built
+
+
+def test_a_published_release_of_the_tag_is_left_untouched(pc):
+    tree, _, github, _ = pc
+    tabled(tree, DESKTOP)
+    github.add(f"oneshot-{git(tree, 'rev-parse', 'HEAD')[:12]}", assets={"kept.txt": b"published"})   # not a draft
+    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
         check(tree, answer(report()))()
-    assert not (tree / INSTALLER).exists() and f"`{INSTALLER}` 를 만들지 않았다" in o()["installer"]["error"]
-    assert o()["apk"]["url"] and "PC 앱 설치 파일을 Release 에 올리지 못했다" in "\n".join(pr_text.apk_section(spec()))
-    # A frozen copy changed before it goes up: said, nothing of it uploaded, and the copy removed.
-    write(tree, INSTALLER, "installer")
-    copy = oneshot_pr.froze(spec(), o()["final_head"], {}, "installer")
-    Path(copy["path"]).write_bytes(b"changed after the freeze")
-    oneshot_spec.saved("budget", oneshot={"installer_frozen": copy, "installer": None})
+    assert "초안 프리릴리스가 아니다" in o()["installer"]["error"] and "url" not in o()["installer"]
+    assert not [c for c in github.calls if c[0] != "GET"] and [a["name"] for a in github.rels[0]["assets"]] == ["kept.txt"]
+    assert not staged()
+
+
+def test_an_asset_already_uploaded_with_these_bytes_is_not_sent_again(pc):
+    # A restart after GitHub took the upload and before its record was saved: the next S8 finds it there.
+    tree, _, github, _ = pc
+    tabled(tree, DESKTOP)
+    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+        check(tree, answer(report()))()
+    [asset] = github.rels[0]["assets"]
+    (again := tree.parent / "again.exe").write_bytes(github.blobs[asset["id"]])   # a same-head build's same bytes
+    copy = oneshot_pr.froze(spec(), o()["final_head"], {}, "installer", again)
+    oneshot_spec.saved("budget", oneshot={"installer": None, "installer_frozen": {**copy, "version": "0.1.1"}})
     calls = len(github.calls)
-    assert "설치 파일 사본이 없거나 바뀌었다" in oneshot_pr.released(spec(), ["installer"])["installer"]["error"]
-    assert not [c for c in github.calls[calls:] if c[0] != "GET"] and not Path(copy["path"]).exists()
+    oneshot_pr.asked("budget")
+    assert o()["installer"]["url"] and o()["installer"]["sha256"] == copy["sha256"]
+    assert not [c for c in github.calls[calls:] if c[0] != "GET"] and github.rels[0]["assets"] == [asset]
+
+
+def test_a_secret_inside_the_packed_installer_is_found_across_chunks(tmp_path, monkeypatch):
+    secret = "s3cr3t-value-0123456789"
+    installer = nsis(tmp_path, files=(("helper.exe", b"MZ helper " + rd.MARKER + rd.NSIS),
+                                      ("cfg.json", f'{{"key": "{secret}"}}'.encode()), ("r.exe", b"MZ app")))
+    assert secret.encode() not in installer.read_bytes()   # packed: the raw file shows none of it
+    monkeypatch.setattr(rd, "CHUNK", 7)   # every value split across chunks
+    assert oneshot_needs.asset(installer, {}, {secret: "N1"}) == "비밀 값 [N1] 이(가) 올릴 파일에 들어 있다 — 올리지 않는다"
+    assert oneshot_needs.asset(installer, {}, {"absent-value-987": "N2"}) == ""
+
+
+def test_a_refusal_before_the_upload_keeps_no_frozen_copy(pc, monkeypatch):
+    tree, _, github, _ = pc
+    tabled(tree, DESKTOP)
+    then = check(tree, answer(report()))
+    assert staged()   # frozen by the gate
+    monkeypatch.setattr(oneshot_needs, "publishable", lambda *a: "비밀 값 [N1] 이(가) 커밋 에 들어 있다")
+    then()
+    assert not staged() and not github.calls and o()["stopped"]["detail"].startswith("비밀 값 [N1]")

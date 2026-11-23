@@ -455,25 +455,40 @@ ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be")
 
 
 def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
-    """Why an asset about to be uploaded (the frozen APK) is not sent: a value of `hide` (the store's now, by
-    default) anywhere in it, as UTF-8 or either UTF-16, in any casing: the raw file, every byte the upload sends,
-    and, an APK being a zip, each entry decompressed with its name. A file that cannot be read is refused too."""
+    """Why an asset about to be uploaded (the frozen APK or installer) is not sent: a value of `hide` (the store's
+    now, by default) anywhere in it, as UTF-8 or either UTF-16, in any casing: the raw file, every byte the upload
+    sends; an APK being a zip, each entry decompressed with its name; and an NSIS installer, its whole solid
+    stream unpacked, the script and every file it installs (`release_desktop.unpacked`), read in overlapping
+    windows. A file that cannot be read is refused too."""
 
     import zipfile
     import zlib
 
+    from . import release_desktop
+
     hide = agent(spec)[1] if hide is None else hide
     if not hide:
         return ""
+
+    def held(b: bytes) -> set[str]:   # UTF-16 pairs may start at an odd byte: read from the first and the second
+        return {n for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)}
+
     try:
-        parts = [file.read_bytes()]   # every byte that goes up, signing blocks and gaps included
+        parts, packed = [file.read_bytes()], False   # every byte that goes up, signing blocks and gaps included
         if zipfile.is_zipfile(file):
             with zipfile.ZipFile(file) as z:   # and what the entries hold compressed
                 parts += [b for i in z.infolist() for b in (i.filename.encode(), z.read(i))]
+        else:
+            packed = release_desktop.MAGIC in parts[0]
+        found = set().union(*map(held, parts))
+        if packed:   # a value split across two chunks is whole in the window that carries the last one's tail
+            reach, tail = 12 * max(map(len, hide)) + 16, b""   # a JSON `\uXXXX` escape in UTF-16 is 12 bytes a character
+            for chunk in release_desktop.unpacked(parts[0]):
+                found |= held(tail + chunk)
+                tail = (tail + chunk)[-reach:]
     except (OSError, zipfile.BadZipFile, RuntimeError, ValueError, zlib.error, EOFError) as exc:
         return masked(f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})", hide)
-    # UTF-16 pairs may start at an odd byte: each buffer is read from its first and its second byte.
-    found = sorted({n for b in parts for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)})
+    found = sorted(found)
     return masked(f"비밀 값 {', '.join(f'[{n}]' for n in found)} 이(가) 올릴 파일에 들어 있다 — 올리지 않는다", hide) \
         if found else ""
 

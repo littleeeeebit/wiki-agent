@@ -142,6 +142,42 @@ def _string(script: bytes, block: tuple[int, int], ptr: int) -> str | None:
         return None
 
 
+def _solid(data: bytes) -> tuple[int, int, int, lzma.LZMADecompressor]:
+    """The first header's place, the script's length, where the data ends, and a decoder for its one solid LZMA
+    stream, as Tauri packs it; any other compression is refused."""
+
+    at, length, end = _header(data)
+    props = data[at + 28:at + 33]
+    dictionary = struct.unpack("<I", props[1:])[0]
+    if props[0] >= 225 or dictionary > LIMITS["dictionary"] or length > LIMITS["script"]:
+        raise ValueError("Tauri 기본 압축(solid LZMA)이 아니거나 한도를 넘는다 — 담긴 앱을 읽을 수 없다")
+    lc, lp, pb = props[0] % 9, props[0] // 9 % 5, props[0] // 45
+    return at, length, end, lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[
+        {"id": lzma.FILTER_LZMA1, "lc": lc, "lp": lp, "pb": pb, "dict_size": dictionary}])
+
+
+def unpacked(data: bytes):
+    """Every byte the installer's solid stream holds, the script and every file it installs, as chunks of at most
+    `CHUNK`: what a scan reads, since the raw installer shows none of it. A stream past `LIMITS["unpacked"]`, or
+    one that is not Tauri's, raises `ValueError`."""
+
+    at, _, end, decoder = _solid(data)
+    packed, fed, total = memoryview(data)[at + 33:end], 0, 0
+    try:
+        while not decoder.eof:
+            feed = b""
+            if decoder.needs_input:
+                if fed >= len(packed):
+                    return
+                feed, fed = packed[fed:fed + CHUNK], fed + CHUNK
+            got = decoder.decompress(feed, max_length=CHUNK)
+            if (total := total + len(got)) > LIMITS["unpacked"]:
+                raise ValueError("압축을 푼 크기가 한도를 넘는다")
+            yield got
+    except lzma.LZMAError as exc:
+        raise ValueError("Tauri 기본 압축(solid LZMA)이 아니다 — 담긴 파일을 읽을 수 없다") from exc
+
+
 def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], dict[int, bool], dict[int, set], _Stream]:
     """An NSIS installer packed as Tauri's default is: Unicode NSIS 3, one solid LZMA stream, its CRC on. Gives
     the script's registry writes as (root, key, name, value, type); each extracted file's data offsets by its
@@ -150,15 +186,9 @@ def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], dict[int, bo
     positioned at the first file. Any other shape is refused: what it would install could not be read, so it
     could not be checked."""
 
-    at, length, end = _header(data)
-    props = data[at + 28:at + 33]
-    dictionary = struct.unpack("<I", props[1:])[0]
-    if props[0] >= 225 or dictionary > LIMITS["dictionary"] or length > LIMITS["script"]:
-        raise ValueError("Tauri 기본 압축(solid LZMA)이 아니거나 한도를 넘는다 — 담긴 앱을 읽을 수 없다")
-    lc, lp, pb = props[0] % 9, props[0] // 9 % 5, props[0] // 45
+    at, length, end, decoder = _solid(data)
     try:
-        stream = _Stream(memoryview(data)[at + 33:end], lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[
-            {"id": lzma.FILTER_LZMA1, "lc": lc, "lp": lp, "pb": pb, "dict_size": dictionary}]))
+        stream = _Stream(memoryview(data)[at + 33:end], decoder)
         if struct.unpack("<I", stream.read(4))[0] != length:
             raise ValueError("스크립트 길이가 머리말과 다르다")
         script = stream.read(length)

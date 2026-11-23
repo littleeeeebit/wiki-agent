@@ -26,18 +26,28 @@ import android_owned
 from common import masked, shell
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
+from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, \
+    release_desktop, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
 README_PROMPT = (ROOT / "tool/prompts/oneshot-readme.md").read_text(encoding="utf-8")
 ADAPTER = ".wiki/adapter.toml"
 RELEASE_PROMPT = (ROOT / "tool/prompts/oneshot-readme-release.md").read_text(encoding="utf-8")
+DESKTOP_RELEASE_PROMPT = (ROOT / "tool/prompts/oneshot-readme-release-desktop.md").read_text(encoding="utf-8")
+# `version_source` as the Android table's prompt words it, for a PC app with no Android app to share it.
+SOURCE_NOTE = """
+- `version_source` holds the app's version, `0.1.0` until the first release:
+  a `.json` file with a top-level `version`, or a `.toml` file with
+  `version` or `[package] version`, such as `src-tauri/tauri.conf.json`.
+"""
 STAGE = "pr"
 TRIES = 3   # the prerelease's create and each asset's upload, as GitHub's own CLI retried them
 # The files S8 attaches, by the record key their frozen copy (`<key>_frozen`) and upload keep: the kind that owes
 # one, and its name bare and with its object and subject particles.
 ASSETS = {"apk": ("android", "APK", "APK 를", "APK 가"), "installer": ("desktop", "설치 파일", "설치 파일을", "설치 파일이")}
+NO_INSTALLER = ("`[release.desktop]` 가 없다 — 설치 파일은 Tauri(NSIS) 앱의 정식 빌드 표로만 만든다. "
+                "다른 스택의 PC 앱은 아직 설치 파일을 붙이지 않는다")
 OS_NAMES = {"windows": "Windows", "macos": "macOS"}
 WORKFLOWS = ".github/workflows/"
 CI = f"{WORKFLOWS}ci.yml"
@@ -115,10 +125,16 @@ connected with USB debugging on: adb's install command with that APK's path.
 """ + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else "") + (f"""
 {"In the PC app's section," if several else 'This is a PC app (a Windows program).'} Setup names the tools its build
 needs. Run is the command that builds it and the one that starts the program
-the build leaves. Install names the installer the gate builds, `{installer}`:
-the pull request attaches it to a draft prerelease, and the section says how to
-run it.
-""" if (installer := (spec["oneshot"].get("desktop_build") or {}).get("installer")) and "desktop" in kinds else ""))
+the build leaves. Install says the pull request's draft prerelease carries the
+installer its release build makes, and how to run it.
+""" + DESKTOP_RELEASE_PROMPT.replace("{where}", "add this table to `.wiki/adapter.toml` beside `[release.android]`, in "
+                                     "the same `[release]`" if android else
+                                     "add these tables to `.wiki/adapter.toml` after the ones already there")
+            .replace("{head}", "" if android else '[release]\nversion_source = "the one .json or .toml file whose '
+                                                  "version is the app's\"\n\n")
+            .replace("{source}", "" if android else SOURCE_NOTE)
+            .replace("{installer}", (spec["oneshot"].get("desktop_build") or {}).get("installer") or "")
+            if "desktop" in kinds else ""))
             .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}"
                      "That job has no `if` or `needs`, and that step no `if` or `background`. "
                      "After that step, in the same job, add this step exactly as written; it lists in the run's "
@@ -205,6 +221,14 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     names = oneshot_build.changed(path, o.get("front_built_head") or o["tests_head"])
     if "README.md" not in names or not (path / "README.md").is_file():
         return "`README.md` 를 쓰지 않았다 — 설치, 실행, 테스트 명령을 적는다"
+    # A PC app's installer is of the build R3 approved: since that build's HEAD, only S8's own files may change. An
+    # Android app among the kinds may also wire its version into its build here (`RELEASE_PROMPT`), as alone.
+    if (approved := (o.get("desktop_build") or {}).get("head")) and "desktop" in kinds_of(o) \
+            and "android" not in kinds_of(o) and (moved := [
+            n for n in oneshot_build.changed(path, approved)
+            if n != "README.md" and not n.startswith((".wiki/", WORKFLOWS))]):
+        return ("R3 가 승인한 PC 앱 빌드 뒤에 앱 파일이 바뀌었다 — S8 은 README, `.wiki/`, CI 워크플로만 바꾼다: "
+                + ", ".join(moved[:5]))
     # Before its gate is read, let alone run: the turn may have added `[release]` and nothing else. The gate is
     # read from that very commit's adapter, and the gate runs only on that commit (`judge`'s `expect`).
     try:
@@ -234,28 +258,22 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     android = "android" in kinds_of(o)
     if android and (why := oneshot_device.cleared(path, o["device"])):   # the gate makes the APK frozen below
         return why
-    # A PC app's installer goes as the APK does, an earlier build's removed first, but never stops the gate: the
-    # gate the frontend approved may not build one, and the pull request's body then says why it has none.
-    installer = (o.get("desktop_build") or {}).get("installer") if "desktop" in kinds_of(o) else None
-    unmade = installer and oneshot_device.cleared(path, {"apk": installer})
     env = oneshot_build.built_env(spec)   # read once: the freeze scan below looks for exactly these values
     verdict = oneshot_build.judged(path, run, spec, ran, env, expect=checked)
     if not verdict["ok"]:
         return f"최종 게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    # Each file S8 attaches: the gate's own output, frozen before a later command can rebuild it.
-    frozen, head = {}, verdict["head"]
+    # Each file S8 attaches, frozen before a later command can rebuild it: the APK the gate built, and the
+    # installer the release table's build makes (`release_checked`). An earlier gate's copies go first.
+    frozen, head, hide = {}, verdict["head"], oneshot_needs.hidden(spec, env)
+    unstaged(spec)
     if android:
         if why := oneshot_device.built(path, o["device"]):
             return why
-        frozen["apk"] = kept(spec, head, oneshot_needs.hidden(spec, env), "apk")
-    if installer:
-        frozen["installer"] = {"head": head, "error": unmade} if unmade else kept(
-            spec, head, oneshot_needs.hidden(spec, env), "installer") if oneshot_device.inside(path, installer) and (
-            path / installer).is_file() else {"head": head, "error": f"최종 게이트가 `{installer}` 를 만들지 않았다"}
+        frozen["apk"] = kept(spec, head, hide, "apk")
     why = "raised"   # until the later checks answer: a raise keeps it, and the copies go with it
     try:
-        why = oneshot_build.held(path, run, spec, verdict) or android and release_checked(
-            path, spec, verdict["head"], run.halt)
+        why = oneshot_build.held(path, run, spec, verdict) or bool(
+            {"android", "desktop"} & set(kinds_of(o))) and release_checked(path, spec, head, run.halt, frozen, hide)
     finally:
         for copy in frozen.values() if why else ():   # failed or raised: no copy is ever kept
             if copy.get("path"):
@@ -273,30 +291,53 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     return ""
 
 
-def release_checked(path: Path, spec: dict, head: str, halt: threading.Event) -> str:
-    """The `[release]` table the README turn committed, read as a press reads it at `head`, and its Android
-    build made once from a clean checkout of `head` with the version a press would publish after the seed, so
-    the build is shown to take the version it is given, then checked as a release checks what a build made
-    (`release.built_wrong`). Unsigned: no key exists before the first press, and none is made. Only Android's
-    table, until step 7b. Every command ends within a second of a stop, the checkout's own included."""
+def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, frozen: dict | None = None,
+                    hide: dict | None = None) -> str:
+    """The `[release]` table the README turn committed, read as a press reads it at `head`, and each kind it
+    declares built once from one clean checkout of `head` with the version a press would publish after the seed,
+    so the build is shown to take the version it is given, then checked as a release checks what a build made
+    (`release.built_wrong`, `release_desktop.built_wrong`). Unsigned: no key exists before the first press, and
+    none is made. The installer so built and checked is the one S8 attaches: frozen into `frozen["installer"]`
+    under `hide` before the checkout goes; a PC app with no `[release.desktop]` gets a record saying why it has
+    none. Every command ends within a second of a stop, the checkout's own included."""
 
-    attempt = f"oneshot-{time.time_ns()}"
+    attempt, kind = f"oneshot-{time.time_ns()}", "android"
     try:
         with release.stoppable(halt):
             try:
-                android, later, kit = _declared(path, spec, head)
+                cfg, later, kit = _declared(path, spec, head)
             except ValueError as exc:
                 return f"`[release]` 표 — {exc}"
-            apk = release.build(release.checkout(path, head, attempt), android, later, kit, halt)
-            seen = release.badging(release.run([kit["aapt2"], "dump", "badging", apk], release.environment(kit)))
+            if "desktop" in kinds_of(spec["oneshot"]) and "desktop" not in cfg and frozen is not None:
+                frozen["installer"] = {"head": head, "error": NO_INSTALLER}
+            src = release.checkout(path, head, attempt) if {"android", "desktop"} & set(cfg) else None
+            for kind in [k for k in ("android", "desktop") if k in cfg]:
+                if kind == "android":
+                    apk = release.build(src, cfg[kind], later, kit, halt)
+                    seen = release.badging(release.run([kit["aapt2"], "dump", "badging", apk], release.environment(kit)))
+                    wrong = release.built_wrong(seen, later, cfg[kind])
+                else:
+                    installer = release.build(src, cfg[kind], later, kit, halt, read=release_desktop.readable)
+                    try:   # the installer and the app EXE the build made: one it does not hold is the build's
+                        seen = release_desktop.facts(installer, release.output(src, cfg[kind], later, "exe"))
+                    except ValueError as exc:
+                        raise release.BuildFailed(f"빌드가 만든 설치 파일이나 앱 EXE 를 읽지 못했다 — {exc}") from exc
+                    wrong = release_desktop.built_wrong(seen, later, cfg[kind])
+                if wrong:
+                    return f"`[release.{kind}]` 의 정식 빌드가 배포 검사에 걸린다 — {'; '.join(wrong)}"
+                if kind == "desktop" and frozen is not None:
+                    copy = kept(spec, head, hide or {}, "installer", installer)
+                    if copy.get("sha256") not in (None, seen["sha256"]):   # the copy must be the bytes checked
+                        shutil.rmtree(staging(spec, "installer"), ignore_errors=True)
+                        copy = {"head": head, "error": "검사한 설치 파일과 복사한 설치 파일이 다르다"}
+                    frozen["installer"] = {**copy, "version": later}
     except (ValueError, release.Stopped) as exc:   # `BuildFailed` among them
-        return f"`[release.android]` 의 정식 빌드 — {exc}"
+        return f"`[release.{kind}]` 의 정식 빌드 — {exc}"
     finally:
         with release.stoppable(None):   # the cleanup runs even after the stop
             if release.place(path, attempt).exists():
                 release.discard(path, attempt)
-    wrong = release.built_wrong(seen, later, android)
-    return f"`[release.android]` 의 정식 빌드가 배포 검사에 걸린다 — {'; '.join(wrong)}" if wrong else ""
+    return ""
 
 
 def kept_adapter(path: Path, o: dict, head: str, tree: bool = False) -> dict:
@@ -319,24 +360,27 @@ def kept_adapter(path: Path, o: dict, head: str, tree: bool = False) -> dict:
 
 
 def _declared(path: Path, spec: dict, head: str) -> tuple[dict, str, dict]:
-    """The Android table at `head`, the version its build is made with, and the tools; a `ValueError` says why
-    not. The adapter around it is the approved frontend's (`kept_adapter`)."""
+    """The release table at `head` (`release.settings`), the version its builds are made with, and the tools; a
+    `ValueError` says why not. An Android app needs its table; a PC app's is optional, and with no `[release]`
+    at all a PC app alone gives `({}, "", {})`. A kind the run does not have has no table. The adapter around
+    it is the approved frontend's (`kept_adapter`)."""
 
-    o = spec["oneshot"]
-    kept_adapter(path, o, head)
+    o, kinds = spec["oneshot"], kinds_of(spec["oneshot"])
+    if "release" not in kept_adapter(path, o, head) and "android" not in kinds:
+        return {}, "", {}
     cfg = release.settings(path, head)
-    if "android" not in cfg:
+    if "android" in kinds and "android" not in cfg:
         raise ValueError(f"`{ADAPTER}` 에 `[release.android]` 가 없다 — 정식 빌드 명령, APK 경로, 앱 ID, ABI 를 적는다")
-    if "desktop" in cfg:   # an installer's table comes with the oneshot's own installer (step 7b), checked then
-        raise ValueError("`[release.desktop]` 는 아직 쓰지 않는다 — 원샷은 Android 앱의 표만 쓴다")
-    android, first = cfg["android"], release.seed(path, head, cfg["version_source"])
-    if android["application_id"] != (want := o["device"]["package"]):
-        raise ValueError(f"`[release.android]` 의 `application_id` {android['application_id']!r} 가 앱의 {want!r} 와 다르다")
+    if extra := [k for k in release.KINDS if k in cfg and k not in kinds]:
+        raise ValueError(f"`[release.{extra[0]}]` 는 이 앱의 종류가 아니다 — 앱이 가진 종류의 표만 쓴다")
+    first = release.seed(path, head, cfg["version_source"])
+    if "android" in cfg and cfg["android"]["application_id"] != (want := o["device"]["package"]):
+        raise ValueError(f"`[release.android]` 의 `application_id` {cfg['android']['application_id']!r} 가 앱의 {want!r} 와 다르다")
     release.version([], [], None, first, cfg)   # a seed a declared kind cannot carry, refused as the card would
     # A version a press could publish next: a build that keeps the source's version instead fails on it.
     for bump in release.BUMPS:   # a patch past what Android carries moves on to the minor, as a person would
         try:
-            return android, release.version([{"tagName": f"v{first}"}], [], bump, first, cfg), release.tools(cfg)
+            return cfg, release.version([{"tagName": f"v{first}"}], [], bump, first, cfg), release.tools(cfg)
         except ValueError:
             if bump == release.BUMPS[-1]:
                 raise
@@ -354,30 +398,42 @@ def decisions(o: dict) -> list[str]:
     return out
 
 
-def kept(spec: dict, head: str, hide: dict, key: str) -> dict:
+def kept(spec: dict, head: str, hide: dict, key: str, source: Path | None = None) -> dict:
     """`froze`, or why it could not: the attachment is optional, so the pull request opens and its body says why."""
 
     try:
-        return froze(spec, head, hide, key)
+        return froze(spec, head, hide, key, source)
     except OSError as exc:
         return {"head": head, "error": f"최종 게이트가 만든 {ASSETS[key][2]} 복사하지 못했다 — {exc}"}
 
 
-def froze(spec: dict, head: str, hide: dict, key: str = "apk") -> dict:
-    """The file the final gate just built (the APK, or the PC app's installer: `ASSETS`), copied out of the
-    worktree while the check holds it, with its digest: a build output Git does not track, so nothing read from
-    the tree later is the one the gate passed. An earlier gate's copy of the same file goes first."""
+def staging(spec: dict, key: str) -> Path:
+    """Where the frozen copy of `key`'s file lives (`froze`)."""
 
-    o = spec["oneshot"]
-    base = oneshot_spec.store(spec["repo"]).folder / ("release" if key == "apk" else f"release-{key}")
+    return oneshot_spec.store(spec["repo"]).folder / ("release" if key == "apk" else f"release-{key}")
+
+
+def unstaged(spec: dict) -> None:
+    """Every frozen copy removed: a new final gate freezes its own, and a run whose files will not go up keeps none."""
+
+    for key in ASSETS:
+        shutil.rmtree(staging(spec, key), ignore_errors=True)
+
+
+def froze(spec: dict, head: str, hide: dict, key: str = "apk", source: Path | None = None) -> dict:
+    """The file S8 attaches (`ASSETS`), copied out while the check holds it, with its digest: the APK the final gate
+    built in the worktree, a build output Git does not track, or the installer at `source`, which the release
+    table's build made in its checkout (`release_checked`). Nothing read later is then other than what was
+    checked. An earlier copy of the same file goes first."""
+
+    base = staging(spec, key)
     shutil.rmtree(base, ignore_errors=True)
-    source = o["device"]["apk"] if key == "apk" else o["desktop_build"]["installer"]
-    # Only the suffix of the installer's own name: GitHub renames an asset whose name it does not take.
-    name = f"{spec['repo']}-{head[:12]}-" + ("debug.apk" if key == "apk" else f"setup{Path(source).suffix.lower()}")
+    source = Path(spec["worktree"]) / spec["oneshot"]["device"]["apk"] if key == "apk" else source
+    name = f"{spec['repo']}-{head[:12]}" + ("-debug.apk" if key == "apk" else release_desktop.SUFFIX)
     into = base / f"r{time.time_ns()}"
     try:
         into.mkdir(parents=True)
-        shutil.copyfile(Path(spec["worktree"]) / source, into / name)
+        shutil.copyfile(source, into / name)
         # Read under the values its build ran with (`hide`, from the gate's own environment): an upload later,
         # after a value changed or was taken back, still needs this scan, bound to these bytes by their digest.
         scan = oneshot_needs.asset(into / name, spec, hide)
@@ -415,8 +471,11 @@ def _prerelease(spec: dict, repo: str, head: str, tag: str) -> tuple[str, dict]:
     lost): a second draft of the same tag would leave the first behind. A transient failure is tried again, a
     bounded number of times, as GitHub's own CLI did."""
 
-    def found() -> dict | None:
-        return next((r for r in github_release.releases(repo) if r.get("tag_name") == tag), None)
+    def found() -> dict | None:   # only a draft prerelease is S8's: anything else of that tag is left untouched
+        held = next((r for r in github_release.releases(repo) if r.get("tag_name") == tag), None)
+        if held and not (held.get("draft") and held.get("prerelease")):
+            raise ValueError(f"태그 `{tag}` 의 릴리스가 초안 프리릴리스가 아니다 — 거기에 올리지 않는다")
+        return held
 
     for n in range(TRIES):
         if held := found():
@@ -457,8 +516,9 @@ def _released(spec: dict, key: str, prerelease, tag: str) -> dict:
         for n in range(TRIES + 1):   # the read after the last try decides: a last upload that landed counts
             mine = next((a for a in github_release.release(repo, held["id"]).get("assets") or []
                          if a["name"] == frozen["name"]), None)
-            if n and mine and mine.get("state") == "uploaded" and github_release.digest(mine) == frozen["sha256"]:
-                break   # the try before landed and only its answer was lost
+            # Already there with these bytes: the try before landed, or an earlier S8's whose record was never saved.
+            if mine and mine.get("state") == "uploaded" and github_release.digest(mine) == frozen["sha256"]:
+                break
             if n == TRIES:
                 raise failed
             if mine:   # S8's own policy: the asset of that name is replaced
@@ -470,7 +530,8 @@ def _released(spec: dict, key: str, prerelease, tag: str) -> dict:
                 if not exc.transient:
                     raise
                 failed = exc
-        return {"head": head, "name": frozen["name"], "sha256": frozen["sha256"], "url": held["html_url"], "tag": tag}
+        return {"head": head, "name": frozen["name"], "sha256": frozen["sha256"], "url": held["html_url"], "tag": tag,
+                **({"version": frozen["version"]} if frozen.get("version") else {})}
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return {"head": head, "error": str(exc) or type(exc).__name__}
     finally:
@@ -483,11 +544,14 @@ def asked(repo: str) -> None:
 
     spec = oneshot_spec.spec_of(repo)
     if why := oneshot_needs.publishable(Path(spec["worktree"]), spec):   # before anything goes out
+        unstaged(spec)   # a resume runs the final gate again, which freezes its own
         return oneshot_spec.store(repo).stop(STAGE, why) and None   # stopped: no next turn
     if keys := [key for key, (kind, *_) in ASSETS.items() if kind in kinds_of(spec["oneshot"])]:   # alone or among several
         spec = oneshot_spec.saved(repo, oneshot={**released(spec, keys), "attached": spec["oneshot"]["final_head"]})
-    if oneshot_spec.held(spec["oneshot"]):   # a PC app's pull request is the next step's
-        return oneshot_spec.store(repo).stop("kind", oneshot_spec.kind_stop(STAGE)["detail"]) and None
+    if oneshot_spec.held(spec["oneshot"]):   # a PC app's pull request is the next step's: the stop says what went up
+        went = [f"{ASSETS[key][1]} — " + ("초안 프리릴리스에 올렸다" if (r := spec["oneshot"].get(key) or {}).get("url")
+                                          else f"올리지 못했다: {r.get('error')}") for key in keys]
+        return oneshot_spec.store(repo).stop("kind", "; ".join([oneshot_spec.kind_stop(STAGE)["detail"], *went])) and None
     path, head = Path(spec["worktree"]), oneshot_spec.spec_of(repo)["oneshot"]["final_head"]
     spec = specs.update(repo, spec["id"], writing={"head": head, "asked": 1})
     said = decisions(spec["oneshot"])
@@ -523,8 +587,9 @@ def handed(path: Path, run, spec: dict, final: str):
 
 
 oneshot_build.STAGES[STAGE] = (readied, STAGE, restart, asked)
-# An Android app's README turn writes `[release]`; the pull request's text turn (`writing`) writes nothing there.
-oneshot_build.GRANTS[STAGE] = lambda spec: "android" in kinds_of(spec["oneshot"]) and not spec.get("writing")
+# An Android or PC app's README turn writes `[release]`; the pull request's text turn (`writing`) writes nothing there.
+oneshot_build.GRANTS[STAGE] = lambda spec: bool({"android", "desktop"} & set(kinds_of(spec["oneshot"]))) \
+    and not spec.get("writing")
 oneshot_build.HANDOVERS[STAGE] = lambda spec: bool(spec.get("writing")), handed
 oneshot_spec.TURNS.add(STAGE)
 

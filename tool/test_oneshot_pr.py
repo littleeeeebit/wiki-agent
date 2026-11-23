@@ -659,7 +659,7 @@ def test_a_stop_before_the_check_reads_the_commit_runs_nothing(releasing, monkey
     assert launched == [] and built == []
 
 
-def test_s8_refuses_an_installer_table_until_the_oneshot_ships_its_installer(releasing):
+def test_s8_refuses_an_installer_table_for_an_app_with_no_pc_app(releasing):
     tree = releasing[0]
     write(tree, ".wiki/adapter.toml", (tree / ".wiki/adapter.toml").read_text(encoding="utf-8") +
           '\n[release.desktop]\nbuild = "b"\nartifact = "../outside.exe"\nexe = "a.exe"\nproduct_name = "p"\n'
