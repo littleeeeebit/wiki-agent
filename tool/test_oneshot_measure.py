@@ -315,6 +315,11 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
                 pytest.raises(HTTPException, match="고치지 못했다"):
             refused_by_store()
         assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "owner"
+    with patch.object(oneshot_needs, "written", lambda repo: (_ for _ in ()).throw(PermissionError("busy"))), \
+            pytest.raises(HTTPException, match="확인하지 못해") as e:   # the set-aside's file unknown: undone first
+        measure.give("budget", "M2", measure.Value(value="sk-new", head=head, env=ENV, kind="secret"))
+    assert e.value.status_code == 409 and o()["measures"][-1]["status"] == "owner"
+    assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and not oneshot_needs.BACK.get("budget")
     with patch.object(measure.release, "secret_write", lambda *a: (_ for _ in ()).throw(OSError("denied"))), \
             patch.object(oneshot_needs, "saved", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))), \
             pytest.raises(HTTPException, match="되돌리지 못했다"):   # nor can the result be put back yet

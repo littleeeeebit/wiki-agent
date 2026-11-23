@@ -14,6 +14,7 @@ the gate's output shows `[N1]` where it would stand (`hidden`).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -265,8 +266,12 @@ def stored(repo: str, env: str, value: str | None) -> None:
                 undo.append(f(repo, env))
             try:
                 at = written(repo)
-            except OSError:   # which file the set-aside wrote is unknown: it is never put back
-                at = None
+            except OSError as e:   # which file the set-aside wrote is unknown: undone before the store is touched
+                for fields in filter(None, undo):   # nothing saved since: this lock and `oneshot._lock` are held
+                    with contextlib.suppress(OSError, HTTPException):   # one not undone stays set aside: measured again
+                        saved(repo, oneshot=fields)
+                raise HTTPException(409, f"명세 파일을 확인하지 못해 비밀 값을 바꾸지 않았다 ({type(e).__name__}) — "
+                                         "다시 시도한다") from None
     except (OSError, HTTPException) as e:
         if isinstance(e, HTTPException) and e.status_code != 404:
             raise
