@@ -221,7 +221,9 @@ and every error, an unforeseen one included, mask the same forms. The line
 endings include those a Windows text-mode write and a text-mode read give
 together. One read of each secret, just before the launch, gives its
 presence, the child's environment and the mask; the store is not read
-again for it. A read that fails stops the
+again for it. A plan input the design names too takes the design's read.
+A design secret the plan does not list is read the same strict way, so a
+failed read of it stops the run too. A read that fails stops the
 run before its folder is made. A secret the store does not hold is left out
 of the environment, so a variable of its name the server has never stands
 in for it. A note is kept only behind a mask holding every secret of the

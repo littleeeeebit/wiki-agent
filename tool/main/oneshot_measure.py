@@ -212,15 +212,20 @@ def has(spec: dict, x: dict) -> bool:
 
 def env_of(spec: dict, plan: dict, base: dict | None = None) -> tuple[dict, dict[str, str]]:
     """The measurement's environment: the gate's (or `base`), with the design's secrets, and each input under its
-    `env`; and what its output shows instead of each secret. A secret that cannot be read now raises `ValueError`;
-    one the store does not hold is left out, so a variable of its name the server has never stands in for it."""
+    `env`; and what its output shows instead of each secret. A secret, the design's or the plan's, that cannot be
+    read now raises `ValueError`; one the store does not hold is left out, so a variable of its name the server has
+    never stands in for it. Each secret is read once: an input the design names too takes the design's read."""
 
-    env = dict(base if base is not None else (oneshot_build.built_env(spec) or os.environ))
+    if base is None:   # `oneshot_build.built_env`, its design secrets read strictly
+        android = "android" in oneshot_build.kinds_of(spec["oneshot"])
+        base = oneshot_needs.gate_env(spec, oneshot_build.oneshot_android.build_env() if android else None, True)
+    env, design = dict(base or os.environ), {n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)}
     secrets = {}
     for x in plan["inputs"]:
         if x["kind"] == "secret":
             try:
-                value = release.secret_read(oneshot_needs.name(spec["repo"], x["env"]))
+                value = ({k.upper(): v for k, v in env.items()}.get(x["env"].upper()) if x["env"].upper() in design
+                         else release.secret_read(oneshot_needs.name(spec["repo"], x["env"])))
             except (OSError, ValueError):
                 raise ValueError(f"`{x['env']}` 의 비밀값을 지금 읽지 못했다 — 다시 시도한다") from None
             env.pop(x["env"], None)

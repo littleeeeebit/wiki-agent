@@ -493,7 +493,14 @@ def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_m
             patch.object(oneshot_needs, "secret_needs", lambda s: [("N1", {"env": "DESIGN_KEY"})]):
         with pytest.raises(ValueError, match="읽지 못했다"):   # a design secret for the verdict: never taken for none
             oneshot_needs.gate_env(spec(), None, True)
-        assert oneshot_needs.gate_env(spec(), {}) == {}   # the launch's own read still treats it as not given
+        assert oneshot_needs.gate_env(spec(), {}) == {}   # the gates' own read still treats it as not given
+        with pytest.raises(ValueError, match="DESIGN_KEY"):   # the measurement's launch: a design-only secret too
+            measure.env_of(spec(), {"inputs": []})
+    reads = []
+    with patch.object(measure.release, "secret_read", lambda name: reads.append(name) or "tok"), \
+            patch.object(oneshot_needs, "secret_needs", lambda s: [("N1", {"env": "A_TOKEN"})]):
+        env, _ = measure.env_of(spec(), {"inputs": [{"id": "M1", "kind": "secret", "env": "A_TOKEN"}]})
+    assert env["A_TOKEN"] == "tok" and len(reads) == 1   # named by the design and the plan: read once
     plan = {"inputs": [{"id": "M1", "kind": "secret", "env": "A_TOKEN"}, {"id": "M2", "kind": "secret", "env": "B_TOKEN"}]}
     with patch.object(measure.release, "secret_read", lambda name: "same-token"):   # two inputs, one value
         env, hide = measure.env_of(spec(), plan, {"A_TOKEN": "server's own"})
