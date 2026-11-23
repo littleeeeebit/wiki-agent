@@ -39,6 +39,17 @@ def _git(path: Path, *args: str) -> str:
                           encoding="utf-8").stdout.strip()
 
 
+def frozen_read(first: str) -> dict:
+    """The refreeze card's read (`refactor_api.frozen_of`). Just after a card lands, the run's last turn can still hold
+    the worktree and the read answers 409 for it: wait out that hold, never taking the refusal for a change."""
+
+    end = time.monotonic() + 60
+    while (read := client().get(f"/api/refactors/specs/{first}/frozen")).status_code == 409:
+        assert time.monotonic() < end, read.json()
+        time.sleep(0.05)
+    return read.json()
+
+
 def report(pid: str) -> dict:
     return {"id": pid, "what": f"{pid} work", "inputs": "an order", "outputs": "a result",
             "links": [{"pipeline": "billing" if pid == "orders" else "orders", "how": "calls"}],
