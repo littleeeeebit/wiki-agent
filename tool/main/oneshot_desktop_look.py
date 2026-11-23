@@ -209,7 +209,9 @@ def look(spec: dict, build: dict, folder: Path, stopped=never, *, env: dict | No
     high finding and is never kept, and neither a finding nor a refusal carries one (`common.masked`)."""
 
     try:
-        found = _look(spec, build, folder, stopped, oneshot_needs.given_in(spec, env), hide or {})
+        # The names the look and its desktop set themselves keep their values; every other secret is the owner's.
+        own = oneshot_desktop.LOOK_ENV | oneshot_desktop.OWNED_ENV
+        found = _look(spec, build, folder, stopped, oneshot_needs.given_in(spec, env, own), hide or {})
     except (ValueError, RuntimeError) as exc:
         if hide and (said := masked(str(exc), hide)) != str(exc):
             raise type(exc)(said) from None

@@ -265,10 +265,11 @@ comes from:
   `APP_DATA_DIR`, `ONESHOT_SCREEN`, `APPDATA`, `TEMP` and the rest of
   `oneshot_needs.STARTED`): the look's value would reach the app in its
   place. The design refuses it, and a design saved before the rule stays
-  at R1. One approved before keeps running, as a launch name does: the PC and
-  web looks keep their own value, so the app runs there without the secret,
-  and the need's row and the build prompt say so. The Android file, which no
-  look's value shares, carries it.
+  at R1. One approved before keeps running, as a launch name does: a look that
+  sets the name itself keeps its own value, so the app runs there without the
+  secret, and the need's row and the build prompt say so. A look that does not
+  set it, the PC look for `PORT` or the web look for `TEMP`, gives the owner's
+  value as for any other name, and the Android file carries it.
 
 The check stops at text here too. A value drawn as pixels, or shown on
 Android only between the two reads, is not seen. The phone round's frame and

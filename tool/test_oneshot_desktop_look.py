@@ -370,6 +370,16 @@ def test_the_look_masks_its_findings_and_refusals_and_hands_each_start_the_given
         assert str(caught.value) == "PC 앱을 띄우지 못했다 — [N1]"
 
 
+def test_an_older_designs_start_name_is_the_owners_unless_the_pc_look_sets_it_itself(tmp_path):
+    names = [{"id": f"N{i}", "kind": "secret", "env": name, "what": "키"} for i, name in
+             enumerate(("PORT", "TEMP", "ONESHOT_STATE", "API_KEY"), 1)]
+    spec = {"repo": "budget", "oneshot": {"design": {"outside": [{"id": "X1", "needs": names}]}}}
+    got = []
+    with patch.object(pc_look, "_look", lambda *a: got.append(a) or []):
+        pc_look.look(spec, {}, tmp_path, env={"PORT": "p" * 12, "TEMP": "t" * 12, "ONESHOT_STATE": "s" * 12})
+    assert got[0][4] == {"PORT": "p" * 12, "API_KEY": None}   # the web look's name is the owner's here
+
+
 def copy(tmp_path) -> tuple[Path, dict]:
     """A frozen copy of one program, its manifest beside it, and the build the run saved for it."""
 

@@ -293,7 +293,7 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
     try:
         apks.update(oneshot_device.frozen(path, device, copies))
         return oneshot_device.look(copies, device, spec, store.folder / "device", shots, stopped,
-                                   given=oneshot_needs.given_in(spec, env, started=False), hide=hide)
+                                   given=oneshot_needs.given_in(spec, env), hide=hide)
     finally:
         shutil.rmtree(copies, ignore_errors=True)
 
