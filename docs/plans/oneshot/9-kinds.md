@@ -768,8 +768,11 @@ this on 2026-11-23. Each kind builds in its own checkout, Android's from the
 gate's HEAD. Each release build is plain commands joined by `&&` that start
 only the confirmed tools or the checkout's own files, as the gate's commands
 do, and names no path outside its checkout, so it never reads the live
-worktree. Neither may the approved commit's Tauri config: its frontend's
-files and the commands it runs first must stay inside the checkout. It runs without any variable a secret need names, and without any
+worktree: no absolute path, and no `..` step that climbs above the
+repository root. The check covers what S8 writes, the release command. What
+the approved commit's own files name, its Tauri config, resources, scripts
+and build files, is the app R3 built and approved. A path among them that
+leads out of the checkout is an accepted limit (owner, 9e6b round 7). It runs without any variable a secret need names, and without any
 variable holding a secret's value, so a mistake can put a secret into what
 ships only through the source, which the commit scan reads. A build that
 reads the owner's credentials on purpose is an app deceiving its own run,
