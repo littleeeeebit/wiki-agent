@@ -163,12 +163,22 @@ function Items([string]$at) {   # each open item container's items, realized or 
   # The walk's identities, then each container, are operations of their own: none grows with the whole tree.
   if (-not $script:lists.Count) { return }
   Enter "identify $at"
-  $seen = New-Object 'System.Collections.Generic.HashSet[string]'
-  foreach ($e in $script:walked) { try { [void]$seen.Add((Rid $e)) } catch { } }   # unread: its items stay unread
-  $n = 0
-  foreach ($pair in $script:lists) {
-    $element, $node = $pair
-    Enter "items $at $(($n++))"
+  # Each container's walked elements, by runtime id: an item is read only as an element walked inside that very
+  # container, never one of a sibling's that a provider gave the same id. One without an id stays unread.
+  $seen = @{}
+  foreach ($w in $script:walked) {
+    $e, $within = $w
+    if (-not @($within).Count) { continue }
+    try { $r = Rid $e } catch { continue }
+    foreach ($i in @($within)) {
+      if (-not $seen.ContainsKey($i)) { $seen[$i] = New-Object 'System.Collections.Generic.HashSet[string]' }
+      [void]$seen[$i].Add($r)
+    }
+  }
+  for ($n = 0; $n -lt $script:lists.Count; $n++) {
+    $element, $node = $script:lists[$n]
+    Enter "items $at $n"
+    $set = $seen[$n]
     $node.items, $node.unread = $null, $null
     try {
       $container = $element.GetCurrentPattern([System.Windows.Automation.ItemContainerPattern]::Pattern)
@@ -179,7 +189,7 @@ function Items([string]$at) {   # each open item container's items, realized or 
         if ($item) {
           $count++
           # An id met twice here names two items one walked element cannot both be: the second is unread.
-          try { $r = Rid $item; if (-not $mine.Add($r) -or -not $seen.Contains($r)) { $unread++ } } catch { $unread++ }
+          try { $r = Rid $item; if (-not $mine.Add($r) -or -not ($set -and $set.Contains($r))) { $unread++ } } catch { $unread++ }
         }
       } while ($item -and $count -le $MAX_ITEMS)
       if (-not $item) { $node.items, $node.unread = $count, $unread }
@@ -246,7 +256,8 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
   foreach ($k in @("id", "name")) {
     if (-not (Whole $node[$k])) { $node[$k] = ""; $script:rebound = "an element's $k is not whole UTF-16" }
   }
-  $script:walked.Add($element)   # its identity is read by `Items`, under that operation's own deadline
+  # Its identity is read by `Items`, under that operation's own deadline, with the containers it was walked inside.
+  $script:walked.Add(@($element, $script:under))
   $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded
   if (-not $open) {
     try {   # without defaults: an unsupplied state is unknown, never the client's `LeafNode`
@@ -256,12 +267,17 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
         @([System.Windows.Automation.ExpandCollapseState]::Collapsed, [System.Windows.Automation.ExpandCollapseState]::LeafNode))
     } catch { $open = $true }   # its state unread: its items are owed
   }
-  if ($open -and ($patterns -contains "ItemContainer" -or $node.type -eq "TreeItem")) { $script:lists += , @($element, $node) }
+  $outer = $script:under
+  if ($open -and ($patterns -contains "ItemContainer" -or $node.type -eq "TreeItem")) {
+    $script:lists += , @($element, $node)
+    $script:under = @($outer) + ($script:lists.Count - 1)   # its children are walked inside it
+  }
   $script:nodes += $node
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $inner = $scrolled -or $patterns -contains "Scroll"
   $child = $walker.GetFirstChild($element)
   while ($child) { Nodes $child $hwnd ($depth + 1) $inner; $child = $walker.GetNextSibling($child) }
+  $script:under = $outer
 }
 
 function State([string]$name) {   # every window of the app in this state, shot and read
@@ -280,7 +296,7 @@ function State([string]$name) {   # every window of the app in this state, shot 
     $state.shots += $shot
     if (-not $shot.drawn -and -not $shot.unshot) { continue }
     Enter "read $id $($w.hwnd)"
-    $script:nodes, $script:lists, $script:rebound = @(), @(), $null
+    $script:nodes, $script:lists, $script:rebound, $script:under = @(), @(), $null, @()
     $script:walked = New-Object 'System.Collections.Generic.List[object]'
     $read = [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
     if (Current $w) {

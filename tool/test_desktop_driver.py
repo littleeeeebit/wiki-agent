@@ -354,7 +354,7 @@ def test_an_element_whose_id_changes_while_it_is_read_leaves_its_window_read_not
     assert at == sorted(at), at
     assert nodes.index("$script:rebound = ") < nodes.index("$script:walked.Add")   # every element, not only valued
     state = script.split("function State(", 1)[1].split("\nfunction ", 1)[0]
-    assert "$script:rebound = @(), @(), $null" in state and "elseif ($script:rebound) { $read.error = $script:rebound }" in state
+    assert "$script:rebound, $script:under = @(), @(), $null, @()" in state and "elseif ($script:rebound) { $read.error = $script:rebound }" in state
     # Ordinal, never PowerShell's culture-aware -eq/-ceq, which takes a soft hyphen for nothing.
     probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
                             "[string]::Equals('se' + [char]0xAD + 'en', 'seen', [System.StringComparison]::Ordinal)"],
@@ -409,7 +409,8 @@ def test_an_element_without_a_runtime_id_is_never_taken_for_one_already_read():
                            capture_output=True, text=True, timeout=60)
     assert probe.stdout.split() == ["refused", "refused", "42.7"], probe
     items = script.split("function Items(", 1)[1].split("\nfunction ", 1)[0]
-    assert "try { $r = Rid $item; if (-not $mine.Add($r) -or -not $seen.Contains($r)) { $unread++ } } catch { $unread++ }" in items
+    assert "try { $r = Rid $item; if (-not $mine.Add($r) -or -not ($set -and $set.Contains($r))) { $unread++ } } " \
+        "catch { $unread++ }" in items
 
 
 def test_two_items_of_one_container_sharing_a_runtime_id_leave_one_of_them_unread():
@@ -424,10 +425,31 @@ def test_two_items_of_one_container_sharing_a_runtime_id_leave_one_of_them_unrea
                             "$container = [pscustomobject]@{}; $container | Add-Member ScriptMethod FindItemByProperty "
                             "{ param($after, $p, $v) if ($null -eq $after) { $peers[0] } elseif ($after.n -eq 1) "
                             "{ $peers[1] } else { $null } }\n"
-                            "$seen = New-Object 'System.Collections.Generic.HashSet[string]'; [void]$seen.Add('42.7')\n"
+                            "$set = New-Object 'System.Collections.Generic.HashSet[string]'; [void]$set.Add('42.7')\n"
                             "$count, $unread, $item = 0, 0, $null\n$mine = " + audit + "} while ($item)\n"
                             "\"$count $unread\""], capture_output=True, text=True, timeout=60)
     assert probe.stdout.split() == ["2", "1"], probe
+
+
+def test_an_item_is_read_only_as_an_element_walked_inside_its_own_container():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    rid = "function Rid(" + script.split("function Rid(", 1)[1].split("\nfunction ", 1)[0]
+    # How `Items` sorts the walk: two sibling lists (0 and 1), each walking one element; the second list's element
+    # has the id the first's has too, as list-local counters give. Then a tree, 2, whose item 3 holds an element.
+    identify = script.split("function Items(", 1)[1].split("$seen = @{}", 1)[1].split("  for ($n = 0;", 1)[0]
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", rid + "\n"
+                            "function El($id) { $p = [pscustomobject]@{}; $p | Add-Member NoteProperty k $id; "
+                            "$p | Add-Member ScriptMethod GetRuntimeId { ,@($this.k) }; $p }\n"
+                            "$script:walked = New-Object 'System.Collections.Generic.List[object]'\n"
+                            "$script:walked.Add(@((El 5), @(0))); $script:walked.Add(@((El 9), @()))\n"
+                            "$script:walked.Add(@((El 6), @(2, 3)))\n"
+                            "$seen = @{}" + identify +
+                            "foreach ($i in 0, 1, 2, 3) { if ($seen[$i]) { \"$i=\" + (@($seen[$i]) -join ',') } "
+                            "else { \"$i=none\" } }"], capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["0=5", "1=none", "2=6", "3=6"], probe   # list 1's item 5 is not list 0's
+    nodes = script.split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
+    assert nodes.index("$script:walked.Add(@($element, $script:under))") < nodes.index("$script:under = @($outer) +")
+    assert nodes.rstrip().endswith("$script:under = $outer\n}") or nodes.rstrip().endswith("$script:under = $outer")
 
 
 def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
