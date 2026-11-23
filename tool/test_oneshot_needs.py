@@ -22,7 +22,7 @@ import pytest
 from fastapi import HTTPException
 
 from agent.chat_session import Event
-from common import Veil, host, masked, overlaps, question_list
+from common import Veil, host, masked, overlaps, question_list, unescaped
 from guard_git import SECRETS_HELD
 
 from main import oneshot, oneshot_android, oneshot_brief as brief, oneshot_build as build, oneshot_needs as needs, \
@@ -742,6 +742,28 @@ def test_a_streamed_value_starting_inside_a_ligature_is_held_until_it_is_whole()
         veil = Veil({value: "[N1]"})
         shown = veil.stream("d", text[:at], {}) + veil.stream("d", text[at:], {})
         assert shown + "".join(t for _, t, _ in veil.rest()) == whole and value[2:] not in whole, at
+
+
+def test_a_streamed_value_written_in_json_escapes_is_held_until_it_is_whole():
+    value = f"tok-{uuid.uuid4().hex[:8]}\U0001F511"
+    spelled = "".join(f"\\u{ord(c):04x}" if c != "\U0001F511" else "\\ud83d\\udd11" for c in value)
+    text = f'```choices\n{{"q": "x {spelled} y"}}\n```\n'
+    whole = masked(text, {value: "[N1]"})
+    assert json.loads(whole.split("\n")[1]) == {"q": "x [N1] y"}
+    for at in range(1, len(text)):   # split anywhere, inside an escape too: nothing of the value goes out early
+        veil = Veil({value: "[N1]"})
+        first = veil.stream("d", text[:at], {})
+        assert needs.held_in(first, {value: "[N1]"}) == [] and value[:4] not in unescaped(first), at
+        shown = first + veil.stream("d", text[at:], {})
+        assert json.loads((shown + "".join(t for _, t, _ in veil.rest())).split("\n")[1]) == {"q": "x [N1] y"}, at
+
+
+def test_masking_many_short_matches_among_many_escapes_stays_linear():
+    text = '{"a": "' + "\\u0041x" * 20000 + '"}'
+    started = time.perf_counter()
+    out = masked(text, {"x": "[N1]"})
+    assert time.perf_counter() - started < 5 and out.count("[N1]") == 20000 and json.loads(out)
+    assert unescaped("plain text") == "plain text"
 
 
 def test_a_broken_check_is_logged_and_noted_masked(monkeypatch):

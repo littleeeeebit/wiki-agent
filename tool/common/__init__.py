@@ -5,6 +5,7 @@ and the one place `agent` opens a write session. Held here so the two cannot
 drift apart: a worktree created by another tool is not ours.
 """
 
+import bisect
 import json
 import os
 from pathlib import Path
@@ -116,8 +117,9 @@ def _unescape(text: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 def unescaped(text: str) -> str:
-    """`text` as a reader of its JSON gets it: every escape decoded, wherever it stands."""
-    return _unescape(text)[0]
+    """`text` as a reader of its JSON gets it: every escape decoded, wherever it stands. No source map: a scan of
+    an archive or a history allocates only the decoded text, and nothing without a backslash."""
+    return _ESCAPE.sub(lambda m: json.loads(f'"{m.group()}"'), text) if "\\" in text else text
 
 
 def masked(text: str, hide: dict[str, str] | None) -> str:
@@ -149,10 +151,16 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
     flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
     taken, chosen = bytearray(len(text)), []
     tokens = [m.span() for m in _ESCAPE.finditer(text)] if "\\" in text else []
+    starts = [s for s, _ in tokens]
+
+    def widened(at: int, side: int) -> int:
+        """`at` moved out of the escape it falls inside, if any, to that escape's start (0) or end (1)."""
+        i = bisect.bisect_right(starts, at) - 1
+        return tokens[i][side] if i >= 0 and tokens[i][0] < at < tokens[i][1] else at
 
     def claim(start: int, end: int, label: str) -> None:
-        for s, e in tokens:   # never part of an escape: the label covers each one it touches, so JSON stays JSON
-            start, end = (s if s < start < e else start), (e if s < end < e else end)
+        # Never part of an escape: the label covers each one it touches, so JSON stays JSON.
+        start, end = (widened(start, 0), widened(end, 1)) if tokens else (start, end)
         if not any(taken[start:end]):
             taken[start:end] = b"\x01" * (end - start)
             chosen.append((start, end, label))
@@ -300,6 +308,19 @@ class Veil:
                     if any(n.startswith(flat[j:]) for _, n in self.needles)), len(text))
         cut = next((i for i in range(max(0, len(text) - self.raw), cut)
                     if any(v.startswith(text[i:]) for v, _ in self.needles)), cut)
+        if "\\" in text:   # as its JSON decodes: an escape not yet complete, and a value written in escapes
+            # 12: the longest escape, a surrogate pair. What follows is held; what is before it is read decoded.
+            tail = text.rfind("\\", max(0, len(text) - 12))
+            tail = len(text) if tail < 0 else tail
+            if re.search(r"\\u[dD][89abAB][0-9a-fA-F]{2}$", text[:tail]):   # a pair's first half is held with it
+                tail -= 6
+            plain, where = _unescape(text[:tail])
+            pfolds = _folds(plain)
+            pflat, powner = "".join(pfolds), [i for i, f in enumerate(pfolds) for _ in f]
+            cut = min([cut, tail, *(where[powner[j]][0] for j in range(max(0, len(pflat) - self.flat), len(pflat))
+                                    if any(n.startswith(pflat[j:]) for _, n in self.needles)),
+                       *(where[i][0] for i in range(max(0, len(plain) - self.raw), len(plain))
+                         if any(v.startswith(plain[i:]) for v, _ in self.needles))])
         for start, end, _ in _spans(text, self.hide):
             if start < cut < end:   # spans never overlap: one at most holds the cut
                 cut = start
