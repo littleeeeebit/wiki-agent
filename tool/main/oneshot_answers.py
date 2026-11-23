@@ -87,6 +87,17 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
     return out
 
 
+def still(o: dict) -> str:
+    """The refusal a build turn was sent (`sent_refusal`), named again when the server sends that turn back: the
+    retry's text says what its answers may answer, as the record does."""
+
+    if not (sent := o.get("sent_refusal")):
+        return ""
+    return (f"\n\nThe review's refusal of HEAD `{sent['head']}`, sent earlier in this conversation, still stands: fix "
+            "its findings or answer them in one `oneshot-answers` block. The areas it may answer: "
+            + ", ".join(f"`{a}`" for a in sent["areas"]) + ".")
+
+
 def committed(path: Path, rev: str, file: str) -> str:
     """`file` as `rev` holds it, or empty when it does not or holds a folder there."""
 

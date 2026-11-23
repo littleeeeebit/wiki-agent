@@ -602,7 +602,6 @@ def snapshot(path: Path, names: list[str]) -> dict[str, bytes | None]:
 
 
 # -- The two checks --------------------------------------------------------------------
-
 def owns(spec: dict) -> bool:
     """Every turn in a oneshot spec's worktree until the oneshot publishes: none of them may reach the
     general path, which publishes a pull request, before that. After it the task is an ordinary one under
@@ -615,6 +614,7 @@ def owns(spec: dict) -> bool:
 def checked(path: Path, run, spec: dict, final: str):
     """`specs._check`'s hand-over: the stage's check, then the next turn to send; a person's turn, or one in a
     stage S4 does not own, changes nothing."""
+    from . import oneshot_answers as sent   # it imports this module
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
     if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
@@ -647,7 +647,7 @@ def checked(path: Path, run, spec: dict, final: str):
         return None
     return unless_stopped(run, repo, lambda: send(repo, stage, masked(   # as composed: a value can span the words
         f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
-        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else "."), hide)))
+        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else ".") + sent.still(was), hide)))
 
 
 def unless_stopped(run, repo: str, then):
