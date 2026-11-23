@@ -85,7 +85,7 @@ def test_the_plan_names_each_step_its_copied_value_and_every_outside_call(at_mea
         measure.checked(blind, s, tree)
     with pytest.raises(ValueError, match="health"):
         measure.checked({**plan, "serve": {**plan["serve"], "health": "http://example.com/health"}}, s, tree)
-    for name in measure.LAUNCHER:   # the script's launcher would set its own value over the owner's
+    for name in ("PATH", "TMP", "TEMP", "TMPDIR", "PYTHONUNBUFFERED", "PSMODULEPATH"):   # the launcher sets these
         with pytest.raises(ValueError, match="띄우는 쪽이 정하는"):
             measure.checked({**plan, "inputs": [{**plan["inputs"][1], "env": name}]}, s, tree)
     s["oneshot"]["design"]["outside"] = [{"id": "X1"}]

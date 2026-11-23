@@ -48,8 +48,9 @@ from .query import _lock as work_lock, hold
 router = APIRouter()
 PLAN = ".wiki/measure.json"
 IID = re.compile(r"M[1-9]\d*")
-# What the script's launcher sets over the inputs (`common.python_environment`, `specs.gate`, `runtime.gate`).
-LAUNCHER = frozenset({"PATH", "TMP", "TEMP", "TMPDIR", "PYTHONUNBUFFERED"})
+# What the script's launcher sets over the inputs (`common.python_environment`, `specs.gate`, `runtime.gate`, and
+# PowerShell 7, which puts its own module folders in front of `PSModulePath` as it starts).
+LAUNCHER = frozenset({"PATH", "TMP", "TEMP", "TMPDIR", "PYTHONUNBUFFERED", "PSMODULEPATH"})
 MID = re.compile(r"[a-z][a-z0-9_]{0,40}")
 OPS = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge, "==": operator.eq}
 MAX_MINUTES, MAX_SERVE_SECONDS = 60, 600
