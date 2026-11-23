@@ -111,10 +111,14 @@ def test_a_run_an_earlier_version_held_before_r3_opens_it_on_recovery(passed_rou
         oneshot_spec.recover()
     if not read:   # an unread HEAD opens nothing: the owner's round waits, and its approval reads HEAD again
         assert o()["stage"] == "pc" and o()["pc"]["status"] == "waiting" and not o().get("r3") and not o()["stopped"]
-        return
+        # With no `owner` check owed, that approval runs nothing: the frozen build read again, R3's sheet opens.
+        oneshot_spec.saved("budget", oneshot={"owed": [x for x in o()["owed"] if x["kind"] != "desktop"]})
+        assert not pc.plan(o())["checks"] and not o().get("working")
+        pc.approve("budget", pc.Approval(plan=pc.plan(o()), surface=False))
     after = o()
     assert after["stage"] == "r3" and not after.get("stopped") and after["r3"]["round"] == 1
-    assert "## PC에서 확인한 지적" in critique.extra(oneshot_spec.spec_of("budget"))["r3_sheet"]
+    # The PC section lists the owner's checks: none are left in the run with no `owner` check owed.
+    assert ("## PC에서 확인한 지적" in critique.extra(oneshot_spec.spec_of("budget"))["r3_sheet"]) == read
 
 
 def test_a_run_held_before_r3_whose_owner_round_no_longer_stands_waits_for_it_again(passed_round):

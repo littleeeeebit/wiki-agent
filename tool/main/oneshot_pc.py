@@ -222,10 +222,16 @@ def earlier(repo: str, o: dict) -> None:
         elif oneshot_spec.held(o):
             pass
         elif at_head(repo, o.get("front_built_head")):   # a pass on the current build stands: R3's sheet, no brief
-            from . import oneshot_critique   # it imports this module
-            oneshot_spec.saved(repo, oneshot={"stopped": None, "r3": oneshot_critique.opening(o)})
+            opened(repo, o)
         else:   # a HEAD that cannot be read confirms nothing: the owner's round waits, its approval reads HEAD again
             waits(repo, {})
+
+
+def opened(repo: str, o: dict) -> None:
+    """R3's sheet for a run an earlier version held before it, read at its HEAD with no round due: no brief."""
+
+    from . import oneshot_critique   # it imports this module
+    oneshot_spec.saved(repo, oneshot={"stage": "r3", "working": None, "stopped": None, "r3": oneshot_critique.opening(o)})
 
 
 def base(repo: str) -> Path:
@@ -640,12 +646,18 @@ def approve(repo: str, body: Approval) -> dict:
         if o.get("stage") != STAGE or o.get("working"):
             raise HTTPException(409, "주인 화면 회차를 기다리고 있지 않다")
         now = plan(o)
-        if not now["checks"]:
+        # No `owner` check owed (the wait recovery puts a run whose HEAD it could not read in, `earlier`): the
+        # approval runs nothing and only reads the frozen build again, then R3's sheet opens. One owed that cannot
+        # run is refused, as before.
+        if not now["checks"] and oneshot_desktop.owner_owed(o):
             raise HTTPException(409, "주인 화면에서 돌릴 수 있는 검사가 없다")
         if not now["attempt"] or not confirmed(repo, o.get("desktop_build") or {}):
             raise HTTPException(409, "얼린 PC 앱 빌드가 지금 작업트리의 것이 아니다 — 다시 빌드한 뒤 승인한다")
         if body.plan != now:
             raise HTTPException(409, "승인한 회차가 지금 회차와 다르다 — 화면을 다시 읽고 승인한다")
+        if not now["checks"]:
+            opened(repo, o)
+            return oneshot_spec.view(oneshot_spec.spec_of(repo))
         pc = {**(o.get("pc") or {}), "status": "running", "detail": "",
               "approval": {**now, "surface": body.surface, "ts": time.time()}}
         _halts.setdefault(repo, threading.Event()).clear()   # before `working` names the round: a stop then holds
