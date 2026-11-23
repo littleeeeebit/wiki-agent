@@ -298,6 +298,16 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     assert o()["measures"][-1]["status"] == "stale" and shown["oneshot"]["measures"][-1]["status"] == "stale"
     gate = measure.specs.gate
 
+    def refused(*args, **kwargs):   # a removal refused while the script runs changes nothing it ran with
+        with patch.object(measure, "retire", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))), \
+                pytest.raises(HTTPException, match="바꾸지 않았다"):
+            oneshot_needs.forget("budget", ENV)
+        return gate(*args, **kwargs)
+    given()
+    with patch.object(measure.specs, "gate", refused):
+        measure.measure("budget")
+    assert o()["measures"][-1]["status"] == "owner"
+
     def changing(*args, **kwargs):   # the value removed while the script runs
         oneshot_needs.forget("budget", ENV)
         return gate(*args, **kwargs)

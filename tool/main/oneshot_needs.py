@@ -234,7 +234,8 @@ def need_of(repo: str, nid: str, source: str) -> tuple[dict, dict]:
     return o, found[0]
 
 
-CHANGED: list = []   # `f(repo, env)` after any secret changes, by whichever route: `oneshot_measure` registers one
+CHANGED: list = []   # `f(repo, env)` before any secret changes, by whichever route: `oneshot_measure` registers one
+CHANGES: dict[str, int] = {}   # changes made per repository, so a measurement sees one made while it ran
 
 
 def stored(repo: str, env: str, value: str | None) -> None:
@@ -257,6 +258,7 @@ def stored(repo: str, env: str, value: str | None) -> None:
         raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
     except OSError as e:
         raise HTTPException(409, f"자격 증명 관리자를 고치지 못했다 — {e}") from None
+    CHANGES[repo] = CHANGES.get(repo, 0) + 1   # only a change made: a refused one leaves a running result alone
 
 
 @router.post("/api/oneshot/spec/{repo}/needs/{nid}")

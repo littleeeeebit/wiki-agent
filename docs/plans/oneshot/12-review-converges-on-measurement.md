@@ -268,8 +268,9 @@ owner without a failed run. The copy and the removal run on every exit,
 a failed read of the report included. A stored
 value changed at any moment of the run sets that result aside: the values
 and the change count are read together, and compared and saved together,
-under the lock every change takes. The run then stops for the owner to
-measure again. The health check goes through no proxy.
+under the lock every change takes. The count moves only once Credential
+Manager changed, so a refused change leaves the run's result standing. The
+run then stops for the owner to measure again. The health check goes through no proxy.
 Its stop is made before the worker starts and also
 holds while the server shuts down. A plan that no longer holds sends the run
 back to the build agent from the same button. A failed metric, a missing report or a backend

@@ -426,7 +426,7 @@ def measure(repo: str) -> None:
                            if x["env"] not in env or x["kind"] != "secret" and not has(now, x)]:
                 store.stop("measure", f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")   # no failure counted
                 return None
-            since = CHANGES.get(repo, 0)
+            since = oneshot_needs.CHANGES.get(repo, 0)
         if why := fresh(out, raw):   # made only once the run goes ahead: an early stop leaves no folder
             store.stop("measure", why)
             return None
@@ -481,7 +481,7 @@ def decided(repo: str, store, record: dict, since: int):
     stored-value change takes, so a change made at any moment of the run sets it aside."""
 
     with oneshot._lock:
-        if CHANGES.get(repo, 0) != since:
+        if oneshot_needs.CHANGES.get(repo, 0) != since:
             record = {**record, "status": "stale", "error": "실측하는 동안 비밀 값이 바뀌었다 — [실측 시작]으로 다시 잰다"}
         return result(repo, store, record)
 
@@ -784,14 +784,12 @@ def shown(spec: dict) -> dict:
 
 
 oneshot_spec.VIEWS.append(shown)
-CHANGES: dict[str, int] = {}   # stored-value changes per repository, so a measurement sees one made while it ran
 
 
 def secret_changed(repo: str, env: str) -> None:
-    """A secret changed by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran with
-    it, and a running one is set aside when it ends."""
+    """A secret about to change by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran
+    with it. A running one is set aside when it ends, by `oneshot_needs.CHANGES`, counted once the store changed."""
 
-    CHANGES[repo] = CHANGES.get(repo, 0) + 1
     retire(oneshot_spec.spec_of(repo), "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다")
 
 
