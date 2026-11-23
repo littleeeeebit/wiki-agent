@@ -167,6 +167,10 @@ def test_a_public_repository_needs_its_committed_ci_workflow(finished, more):
     (workflow("      - run: uv run pytest\n" + SKIPS.replace("N[1-9]", "X[1-9]")), False),
     ("on: [push, pull_request]\njobs:\n  a:\n    steps:\n      - run: uv run pytest\n"
      "  b:\n    steps:\n" + SKIPS, False),
+    # A condition on the job or on the gate's step skips both on one of the events.
+    ("on: [push, pull_request]\njobs:\n  gate:\n    if: github.event_name == 'pull_request'\n    steps:\n"
+     "      - run: uv run pytest\n" + SKIPS, False),
+    (workflow("      - if: github.event_name == 'push'\n        run: uv run pytest\n" + SKIPS), False),
 ])
 def test_the_public_ci_runs_the_gate_on_every_push_and_pull_request(finished, text, runs):
     tree, _ = finished
@@ -210,7 +214,7 @@ SKIPPED = '<testsuite><testcase classname="t" name="{name}"><skipped message="{w
     ({"app": SKIPPED.format(name="test_values[a|b]", why="N1")}, r"| t test_values[a\|b] | N1 |"),
     ({"": SKIPPED.format(name="test_values[a\\|b]", why="N1")}, r"| t test_values[a\\\|b] | N1 |"),
     # A need id before a Korean particle is still the id; a longer one is another.
-    ({"": SKIPPED.format(name="test_rate", why="N1이 없다, N12 도")}, "| t test_rate | N1, N12 |"),
+    ({"": SKIPPED.format(name="test_rate", why="N1이 없다, N12 도, N2cache N3_fixture")}, "| t test_rate | N1, N12 |"),
     # Two reports: which is the gate's is not known, so none is listed.
     ({"": SKIPPED.format(name="test_rate", why="N1"), "fixture": SKIPPED.format(name="test_old", why="N2")},
      "어느 것이 이 게이트의 것인지 정할 수 없다: `artifacts/junit.xml`, `fixture/artifacts/junit.xml`"),

@@ -42,15 +42,32 @@ def reached(spec: dict, found: list[tuple[str, str, str, str]]) -> None:
 
     from .oneshot_build import named   # it imports this module
 
+    design = spec["oneshot"].get("design") or {}
+    shared = {n.lower() for n in twins(design.get("tests") or [])}   # names no case can be told apart by
     pins = {tuple(p) for p in spec["oneshot"].get("cases") or []}
     ran = [c for c in found if c[3] != "skipped" and (not pins or tuple(c[:3]) in pins)]
-    hit = [x for x, names in reaching(spec["oneshot"].get("design") or {}).items()
-           if any(named(n, c[1]) for c in ran for n in names)]
+    hit = [x for x, names in reaching(design).items()
+           if any(named(n, c[1]) for c in ran for n in names if n.lower() not in shared)]
     if not hit:
         return
     with oneshot._lock:   # read and written as one step, so two gates never lose a count
         calls = dict(oneshot_spec.spec_of(spec["repo"])["oneshot"].get("calls") or {})
         oneshot_spec.saved(spec["repo"], oneshot={"calls": {**calls, **{x: calls.get(x, 0) + 1 for x in hit}}})
+
+
+def twins(tests: list[dict]) -> list[str]:
+    """Each `test_name` two planned tests share, in any case: a case is matched to its planned test by name
+    (`oneshot_build.named`), so such a case names neither. A design saved before the sheet refused them can hold them."""
+
+    names = [t["test_name"].lower() for t in tests]
+    return sorted({t["test_name"] for t in tests if names.count(t["test_name"].lower()) > 1})
+
+
+def held(design: dict) -> str:
+    """Why R1's approval waits on a design saved before the rule, or empty."""
+
+    twice = twins(design.get("tests") or [])
+    return f"계획 테스트 이름이 겹친다 — {', '.join(twice)}: 그 테스트에 고칠 내용을 적어 이름을 나눠 달라고 한다" if twice else ""
 
 
 def ran(spec: dict, reports: list[Path]) -> None:

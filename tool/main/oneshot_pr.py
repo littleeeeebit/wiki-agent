@@ -60,7 +60,7 @@ SKIPS = r"""- name: Tests owed to the local gate
     for case in cases or []:
         skip = case.find("skipped")
         why = "" if skip is None else (skip.get("message") or "") + " " + (skip.text or "")
-        if ids := sorted(set(re.findall(r"(?<![A-Za-z0-9_])N[1-9][0-9]*(?![0-9])", why))):
+        if ids := sorted(set(re.findall(r"(?<![A-Za-z0-9_])N[1-9][0-9]*(?![A-Za-z0-9_])", why))):
             name = f"{case.get('classname') or ''} {case.get('name') or ''}"
             name = " ".join(name.replace("\\", "\\\\").replace("|", "\\|").split())
             rows.append(f"| {name} | {', '.join(ids)} |")
@@ -108,6 +108,7 @@ needs. Run is instead the command that builds the debug APK,
 connected with USB debugging on: adb's install command with that APK's path.
 """ + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else ""))
             .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}. "
+                     "Neither that job nor that step has an `if`. "
                      "After that step, in the same job, add this step exactly as written; it lists in the run's "
                      f"summary the tests CI skipped for want of a secret:\n\n```yaml\n{SKIPS}```"
                      if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
@@ -157,8 +158,12 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     # `gate_cmd`, which may span lines (the front build extends the backend's).
     want = [line.strip() for line in gate.splitlines() if line.strip()]
     for job in flow["jobs"].values():
-        steps = [s for s in (job.get("steps") or [] if isinstance(job, dict) else []) if isinstance(s, dict)]
+        if not isinstance(job, dict) or job.get("if") is not None:   # a condition can skip it on a push or a PR
+            continue
+        steps = [s for s in job.get("steps") or [] if isinstance(s, dict)]
         for at, s in enumerate(steps):
+            if s.get("if") is not None:
+                continue
             have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()]
             if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
                 if any(all(later.get(k) == SKIP_STEP[k] for k in ("if", "shell", "run")) for later in steps[at + 1:]):

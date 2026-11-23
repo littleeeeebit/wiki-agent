@@ -75,3 +75,11 @@ def test_each_command_of_a_gate_writes_and_counts_its_own_report(world):  # noqa
                              [f"pytest --junitxml={oneshot_build.REPORT}", f"pytest --junitxml={oneshot_build.REPORT} && build"], None)
     assert len(set(seen)) == 2 and not any(r.exists() for r in seen)
     assert oneshot_spec.spec_of("budget")["oneshot"]["calls"] == {"X1": 1, "X2": 1}
+
+
+def test_a_name_two_planned_tests_of_a_saved_design_share_counts_toward_neither(world):  # noqa: F811
+    twins = {**WEB, "tests": [{"test_name": "test_calls", "depends_on": ["P2"]}, {"test_name": "test_calls", "depends_on": ["P1"]},
+                              {"test_name": "test_rates", "depends_on": ["P1"]}]}
+    oneshot_spec.saved("budget", oneshot={"design": twins})
+    calls.reached(oneshot_spec.spec_of("budget"), [("t", "test_calls", "", "passed"), ("t", "test_rates", "", "passed")])
+    assert oneshot_spec.spec_of("budget")["oneshot"]["calls"] == {"X2": 1}
