@@ -450,6 +450,20 @@ def test_an_app_window_replaced_after_the_drivers_read_is_never_read(held, desk,
     assert got["status"] == "failed" and not desk[0]["window"]
 
 
+def test_a_report_counts_only_while_the_app_that_wrote_it_is_still_up_once_it_is_read(held, desk, monkeypatch):
+    _, root = desk
+    (root / "data" / "seen.txt").write_text("apple river garden", encoding="utf-8")
+    assert checked(desk, SCREEN, driven())["status"] == "passed"
+    assert desk[0]["bound"][-1] == {"hwnd": 101, "pid": 7, "class": "App"}   # the main window as the driver read it
+
+    def crashed(job, hwnd, members, title=None, seen=None):   # its window gone with its process
+        raise ValueError(f"window {hwnd} is not one of {job}'s")
+
+    monkeypatch.setattr(owner_round, "bind", crashed)
+    got = checked(desk, SCREEN, driven())
+    assert got["status"] == "failed" and "살아 있지" in got["why"], got
+
+
 def test_a_handle_naming_another_class_than_the_driver_read_is_never_bound(monkeypatch):
     # Already replaced when the capture path starts: the job's own process, another window class.
     member = {"pid": 7, "created": 1, "exe": "app.exe"}

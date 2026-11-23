@@ -318,13 +318,30 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
         session.observe()
         return session.record["jobs"][key]["members"]
 
+    def running(report: dict, key: str) -> str:
+        """Why the app's main window, as the driver last read it, is no longer up in a live process of the app's
+        job, or empty. The process that owns the driven window, whichever member it is."""
+
+        hwnd = (report.get("main") or {}).get("hwnd")
+        if not hwnd:
+            return "the driver named no main window"
+        read = next((w for w in (report.get("states") or [{}])[-1].get("windows") or [] if w.get("hwnd") == hwnd), {})
+        try:
+            binding = owner_round.bind(key, hwnd, members(key), seen=read)
+        except ValueError as exc:
+            return str(exc)
+        return owner_round.proven(binding, members(key))
+
     def then(report: dict, key: str) -> dict:
         if why := ran(report, len(steps)):
             return {"status": "failed", "why": why}
         if why := owner_round.proven(fixture, members(fixture_key)):   # what the app read was not the round's page
             return {"status": "failed", "why": f"고정 창이 바뀌었다 — {why}"}
         if what == "report":
-            return {"status": "passed"} if owner_round.contains(reported(report, seen, Path(runs.data), page), page) else \
+            text = reported(report, seen, Path(runs.data), page)
+            if why := running(report, key):   # read, then the app proven still up: one that crashed is no pass
+                return {"status": "failed", "why": f"보고를 읽은 뒤 앱이 살아 있지 않았다 — {why}"}
+            return {"status": "passed"} if owner_round.contains(text, page) else \
                 {"status": "failed", "why": "앱이 캡처했다고 낸 것에 고정 창의 낱말이 다 들어 있지 않다"}
         if exe is None:
             return {"status": "pending", "why": missing}
