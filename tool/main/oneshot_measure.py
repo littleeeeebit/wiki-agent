@@ -42,6 +42,7 @@ from common import masked, process, shell
 from . import oneshot, oneshot_build, oneshot_needs, oneshot_publish, oneshot_spec, release, runtime, specs, work
 from .oneshot_kept import (CLIPS, MAX_CLIPS, clips_of, fresh, kept_from, label_of, plain, spelled,  # noqa: F401
                            strict, tail)
+from .oneshot_publish import commented
 from .query import _lock as work_lock, hold
 
 router = APIRouter()
@@ -209,18 +210,20 @@ def has(spec: dict, x: dict) -> bool:
     return bool(held.get("value")) and held.get("what") == x["what"]
 
 
-def env_of(spec: dict, plan: dict) -> tuple[dict, dict[str, str]]:
-    """The measurement's environment: the gate's, with the design's secrets, and each input under its `env`; and
-    what its output shows instead of each secret."""
+def env_of(spec: dict, plan: dict, base: dict | None = None) -> tuple[dict, dict[str, str]]:
+    """The measurement's environment: the gate's (or `base`), with the design's secrets, and each input under its
+    `env`; and what its output shows instead of each secret. A secret that cannot be read now raises `ValueError`;
+    one the store does not hold is left out, so a variable of its name the server has never stands in for it."""
 
-    env = dict(oneshot_build.built_env(spec) or os.environ)
+    env = dict(base if base is not None else (oneshot_build.built_env(spec) or os.environ))
     secrets = {}
     for x in plan["inputs"]:
         if x["kind"] == "secret":
             try:
                 value = release.secret_read(oneshot_needs.name(spec["repo"], x["env"]))
             except (OSError, ValueError):
-                value = None
+                raise ValueError(f"`{x['env']}` 의 비밀값을 지금 읽지 못했다 — 다시 시도한다") from None
+            env.pop(x["env"], None)
             if value:
                 env[x["env"]] = secrets[x["env"]] = value
         elif value := (kept(spec).get(x["env"]) or {}).get("value"):
@@ -406,10 +409,14 @@ def measure(repo: str) -> None:
         raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept_from` copies leave it
         with oneshot._lock:   # every stored-value change counts under this lock: the values and the count agree
             now = oneshot_spec.spec_of(repo)   # what the owner gave by now, a value taken back since included
-            if missing := [x["id"] for x in plan["inputs"] if not has(now, x)]:
+            try:   # one read gives the presence, the child's environment and the mask
+                env, hide = env_of(now, plan)
+            except ValueError as exc:
+                store.stop("measure", str(exc))
+                return None
+            if missing := [x["id"] for x in plan["inputs"] if not has(now, x) or x["env"] not in env]:
                 store.stop("measure", f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")   # no failure counted
                 return None
-            env, hide = env_of(now, plan)
             since = CHANGES.get(repo, 0)
         if why := fresh(out, raw):   # made only once the run goes ahead: an early stop leaves no folder
             store.stop("measure", why)
@@ -424,7 +431,7 @@ def measure(repo: str) -> None:
                     idle=limit, hide=hide)
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
-        except Exception as exc:   # unforeseen: raised again once the folder is dealt with
+        except Exception as exc:   # unforeseen: a masked owner stop once the folder is dealt with
             failed = exc
         finally:
             try:
@@ -680,10 +687,16 @@ def decide(repo: str, body: Decision) -> dict:
         let_go = hold(work._busy, work_lock, str(tree), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
         try:   # held until the verdict is saved: no turn moves HEAD between the check and the record of it
             why = oneshot_review.moved(spec, tree, "built_head")
-            hide = env_of(spec, plan)[1] if plan else spelled(oneshot_needs.hidden(spec, oneshot_build.built_env(spec)))
-            if note and (not plan or any(f"[{x['env']}]" not in hide.values() for x in plan["inputs"] if x["kind"] ==
-                                         "secret")):   # a note is kept only behind a mask holding every secret
+            try:   # the mask, read apart from the launch toolchain: every secret of the plan, or none
+                env, hide = env_of(spec, plan, oneshot_needs.gate_env(spec, None) or dict(os.environ)) if plan \
+                    else ({}, None)
+                if hide is not None and not all(x["env"] in env for x in plan["inputs"] if x["kind"] == "secret"):
+                    hide = None   # a secret the store no longer holds
+            except (OSError, ValueError):   # a secret not read now
+                hide = None
+            if note and hide is None:   # a note is kept only behind a mask holding every secret
                 raise HTTPException(409, "메모를 가릴 비밀값을 지금 읽지 못했다 — 메모 없이 승인하거나 다시 시도한다")
+            hide = hide or {}   # no note: the record was masked when it was made
             runs[-1] = {**last, "owner": {"approve": body.approve, "note": masked(note, hide), "ts": time.time()}}
             if why:
                 spec = retire(spec, f"실측한 뒤 작업트리가 바뀌었다 — {why}", stage="build", fix=None, attempts=0,
@@ -717,36 +730,6 @@ def noted_comment(repo: str, why: str) -> None:
         runs[-1] = {**runs[-1], "comment_error": why}
         oneshot_spec.saved(repo, oneshot={"measures": runs})
         work.notice("실측 기록을 PR 에 달지 못했다", f"{repo} · {why} — 기록은 원샷 화면에 남아 있다")
-
-
-def commented(spec: dict, record: dict) -> str:
-    """The approved measurement as a comment on pull request #1, so the review's record is the PR's; why it could
-    not be posted, or empty. The run goes on either way: the record is the spec's, the comment its copy."""
-
-    pr = spec["oneshot"].get("pr1")
-    if not pr:
-        return "PR #1 이 없다"
-    if pr.get("head") != record["head"] or spec["oneshot"].get("built_head") != record["head"]:
-        return f"PR #1 이 승인한 HEAD `{record['head'][:12]}` 를 보이지 않는다 — 실측 기록은 원샷 화면에만 있다"
-    rows = [f"| {m['what']} | {m['value']}{m['unit']} | {m['pass']['op']} {m['pass']['value']} | {'통과' if m['ok'] else '실패'} |"
-            for m in record.get("metrics") or []]
-    text = "\n".join([f"## 실측 {record['n']} · `{record['head'][:12]}` · 주인 승인", "",
-                      "| 측정 | 값 | 기준 | 결과 |", "| --- | --- | --- | --- |", *rows, "",
-                      f"주인 메모: {record['owner']['note'] or '(없음)'}", "",
-                      f"스크립트 메모: {record.get('notes') or '(없음)'}"])
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
-        fh.write(text)
-    try:   # GitHub's own head, read just before: a push from elsewhere since PR #1 was published is not approved
-        now = specs.sh(["gh", "pr", "view", str(pr["number"]), "--json", "headRefOid", "-q", ".headRefOid"],
-                       Path(spec["worktree"]), 60)
-        if now.returncode or now.stdout.strip() != record["head"]:
-            return f"PR #{pr['number']} 이 지금 승인한 HEAD `{record['head'][:12]}` 를 보이지 않는다 — {specs.said(now)}"
-        done = specs.sh(["gh", "pr", "comment", str(pr["number"]), "--body-file", fh.name], Path(spec["worktree"]), 60)
-        return f"PR #{pr['number']} 에 실측 기록을 달지 못했다 — {specs.said(done)}" if done.returncode else ""
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return f"PR #{pr['number']} 에 실측 기록을 달지 못했다 — {exc}"
-    finally:
-        os.unlink(fh.name)
 
 
 @router.get("/api/oneshot/spec/{repo}/measure/{n}/clips/{name}")

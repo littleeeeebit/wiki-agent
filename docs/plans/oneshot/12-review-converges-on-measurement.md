@@ -217,10 +217,18 @@ out. Every mask of a run comes from `env_of`, which holds each secret in
 its literal, URL-quoted and JSON-escaped spellings (`spelled`), each also
 with its line endings as a text-mode read turns them. So the script's
 output, the report's metrics and notes, the backend's log, the owner's note
-and every error, an unforeseen one included, mask the same forms. A note is
-kept only behind a mask holding every secret of the plan: when the plan or a
-secret cannot be read at the verdict, a note is refused (409) and the owner
-approves without one or tries again. When the backend fails to
+and every error, an unforeseen one included, mask the same forms. The line
+endings include those a Windows text-mode write and a text-mode read give
+together. One read of each secret, just before the launch, gives its
+presence, the child's environment and the mask. A read that fails stops the
+run before its folder is made. A secret the store does not hold is left out
+of the environment, so a variable of its name the server has never stands
+in for it. A note is kept only behind a mask holding every secret of the
+plan. That mask is read apart from the launch toolchain, so a toolchain
+gone since never blocks a verdict. When the plan or a secret cannot be read
+at the verdict, a note is refused (409), and the owner approves without one
+or tries again. A failed PR comment, its temporary file included, is kept on
+the record, and the review starts all the same. When the backend fails to
 start, its log is masked whole before its end is cut for the error, so the
 cut never splits a secret. The removal counts a
 folder as gone only when looking at it finds nothing; one that cannot be

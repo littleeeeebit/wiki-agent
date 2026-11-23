@@ -124,7 +124,9 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
         held.append(any(k == spec()["worktree"] for k in measure.work._busy))
         return save(repo, **kw)
     with patch.object(measure, "commented", lambda *a: f"PR #1 에 실측 기록을 달지 못했다 — 401 {KEY}"), \
-            patch("main.oneshot_review.begin", begun.append), patch.object(measure.oneshot_spec, "saved", saving):
+            patch("main.oneshot_review.begin", begun.append), patch.object(measure.oneshot_spec, "saved", saving), \
+            patch.object(measure.oneshot_build, "built_env", lambda *a: (_ for _ in ()).throw(ValueError("no SDK"))):
+        # the note's mask is read apart from the launch toolchain: a toolchain gone since never blocks the verdict
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=True, note=f"자연스럽다 {KEY}"))
     assert held[0] and not any(k == spec()["worktree"] for k in measure.work._busy)
     assert o()["stage"] == "review" and begun == ["budget"] and o()["measures"][-1]["owner"]["approve"]
@@ -138,6 +140,9 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
     with patch.object(measure.specs, "sh", github):
         assert "승인한 HEAD" in measure.commented(spec(), o()["measures"][-1])
     assert calls == [["gh", "pr", "view"]]   # never commented
+    with patch.object(measure.oneshot_publish.tempfile, "NamedTemporaryFile", lambda *a, **k: (_ for _ in ()).throw(
+            OSError("temp volume full"))):   # a failed body file is a failed comment, never a stranded review
+        assert "달지 못했다" in measure.commented(spec(), o()["measures"][-1])
     assert KEY not in json.dumps(o(), ensure_ascii=False) and "401" in o()["measures"][-1]["comment_error"]
     from main import oneshot_review
     assert "자연스럽다" in oneshot_review.measured_text(o(), run["head"])
@@ -219,8 +224,9 @@ def test_the_end_of_a_startup_log_is_cut_only_after_its_secrets_are_masked(tmp_p
     log.write_text(json.dumps({"key": 'sk-"q\\uote'}), encoding="utf-8")   # logged as JSON: its escaped spelling
     hide = measure.spelled({'sk-"q\\uote': "[K]"})   # as `env_of` gives it
     assert "uote" not in measure.tail(log, hide) and "[K]" in measure.tail(log, hide)
-    log.write_bytes(b"start sk-line\r\nend-part done")   # a text-mode read turns the value's CRLF into LF
-    assert "end-part" not in measure.tail(log, measure.spelled({"sk-line\r\nend-part": "[K]"}))
+    for written in (b"start sk-line\r\nend-part done", b"start sk-line\r\r\nend-part done"):   # read as text; and
+        log.write_bytes(written)                                    # a Windows text-mode write before the read
+        assert "end-part" not in measure.tail(log, measure.spelled({"sk-line\r\nend-part": "[K]"}))
 
 
 def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(at_measure, tmp_path):
@@ -449,6 +455,18 @@ def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_m
     with patch.object(measure, "served", lambda *a: (_ for _ in ()).throw(FileNotFoundError(f"{KEY}\\gate"))):
         measure.measure("budget")   # a launch error naming an input: the folder goes, and the text is masked
     assert "FileNotFoundError" in o()["stopped"]["detail"] and KEY not in json.dumps(o(), ensure_ascii=False)
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    with patch.object(measure, "has", lambda *a: True), \
+            patch.object(measure.release, "secret_read", lambda name: (_ for _ in ()).throw(OSError("locked"))):
+        measure.measure("budget")   # present a moment ago, the read for the launch failed: a stop, before any folder
+    assert "읽지 못했다" in o()["stopped"]["detail"] and not o().get("measures")
+    assert not list((oneshot_spec.store("budget").folder / "measure").glob("*.raw"))
+    plan = {"inputs": [{"id": "M1", "kind": "secret", "env": "A_TOKEN"}, {"id": "M2", "kind": "secret", "env": "B_TOKEN"}]}
+    with patch.object(measure.release, "secret_read", lambda name: "same-token"):   # two inputs, one value
+        env, hide = measure.env_of(spec(), plan, {"A_TOKEN": "server's own"})
+    assert env["A_TOKEN"] == env["B_TOKEN"] == "same-token" and "same-token" in hide
+    with patch.object(measure.release, "secret_read", lambda name: None):   # not held: never the server's variable
+        assert "A_TOKEN" not in measure.env_of(spec(), plan, {"A_TOKEN": "server's own"})[0]
 
 
 def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):

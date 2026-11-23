@@ -171,10 +171,14 @@ def written(p: Path, text: str) -> None:
 
 def spelled(hide: dict[str, str]) -> dict[str, str]:
     """`hide` with each value also in the spellings JSON escaping gives it, for text a backend may log as JSON, and
-    with its line endings as a text-mode read turns them (`\\r\\n` and `\\r` to `\\n`), each spelling too."""
+    with its line endings as a text-mode read turns them (`\\r\\n` and `\\r` to `\\n`), after a Windows text-mode
+    write too (each `\\n` written as `\\r\\n`), each spelling too."""
+
+    def read(v: str) -> str:
+        return v.replace("\r\n", "\n").replace("\r", "\n")
 
     return {**hide, **{form: label for value, label in hide.items()
-                       for v in {value, value.replace("\r\n", "\n").replace("\r", "\n")}
+                       for v in {value, read(value), read(value.replace("\n", "\r\n"))}
                        for form in (v, json.dumps(v)[1:-1], json.dumps(v, ensure_ascii=False)[1:-1])}}
 
 

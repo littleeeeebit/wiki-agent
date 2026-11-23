@@ -8,6 +8,7 @@ ready.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
@@ -89,3 +90,36 @@ def publish(repo: str) -> None:
         return
     oneshot_spec.saved(repo, oneshot={"working": None})
     work.notice(f"PR #{pr['number']} 초안 · 실측을 기다린다", f"{repo} · 입력을 넣고 [실측 시작]을 누른다")
+
+
+def commented(spec: dict, record: dict) -> str:
+    """The approved measurement as a comment on pull request #1, so the review's record is the PR's; why it could
+    not be posted, or empty. The run goes on either way: the record is the spec's, the comment its copy."""
+
+    pr = spec["oneshot"].get("pr1")
+    if not pr:
+        return "PR #1 이 없다"
+    if pr.get("head") != record["head"] or spec["oneshot"].get("built_head") != record["head"]:
+        return f"PR #1 이 승인한 HEAD `{record['head'][:12]}` 를 보이지 않는다 — 실측 기록은 원샷 화면에만 있다"
+    rows = [f"| {m['what']} | {m['value']}{m['unit']} | {m['pass']['op']} {m['pass']['value']} | {'통과' if m['ok'] else '실패'} |"
+            for m in record.get("metrics") or []]
+    text = "\n".join([f"## 실측 {record['n']} · `{record['head'][:12]}` · 주인 승인", "",
+                      "| 측정 | 값 | 기준 | 결과 |", "| --- | --- | --- | --- |", *rows, "",
+                      f"주인 메모: {record['owner']['note'] or '(없음)'}", "",
+                      f"스크립트 메모: {record.get('notes') or '(없음)'}"])
+    body = None
+    try:   # GitHub's own head, read just before: a push from elsewhere since PR #1 was published is not approved
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
+            body = fh.name   # a failed write is a failed comment too: the review starts all the same
+            fh.write(text)
+        now = specs.sh(["gh", "pr", "view", str(pr["number"]), "--json", "headRefOid", "-q", ".headRefOid"],
+                       Path(spec["worktree"]), 60)
+        if now.returncode or now.stdout.strip() != record["head"]:
+            return f"PR #{pr['number']} 이 지금 승인한 HEAD `{record['head'][:12]}` 를 보이지 않는다 — {specs.said(now)}"
+        done = specs.sh(["gh", "pr", "comment", str(pr["number"]), "--body-file", body], Path(spec["worktree"]), 60)
+        return f"PR #{pr['number']} 에 실측 기록을 달지 못했다 — {specs.said(done)}" if done.returncode else ""
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"PR #{pr['number']} 에 실측 기록을 달지 못했다 — {type(exc).__name__}: {exc}"
+    finally:
+        with contextlib.suppress(OSError):   # a temporary file left behind is no failed comment
+            body and os.unlink(body)
