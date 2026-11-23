@@ -263,7 +263,10 @@ def stored(repo: str, env: str, value: str | None) -> None:
         with specs._files:   # the file the set-aside wrote, read before a save by any other route can come
             for f in CHANGED:
                 undo.append(f(repo, env))
-            at = written(repo)
+            try:
+                at = written(repo)
+            except OSError:   # which file the set-aside wrote is unknown: it is never put back
+                at = None
     except (OSError, HTTPException) as e:
         if isinstance(e, HTTPException) and e.status_code != 404:
             raise
@@ -291,11 +294,12 @@ BACK: dict[str, list] = {}   # per repository, what a refused change set aside a
 
 def written(repo: str) -> tuple | None:
     """Which write the spec file is: `specs.save` writes a new file and swaps it in, so each save gets a new file
-    id, and the write time is kept beside it. `None` when it cannot be read, which matches no write."""
+    id, and the write time is kept beside it. `None` when it is gone, which matches no write; a failed read of it
+    raises `OSError`, since then which write it is stays unknown."""
 
     try:
         st = specs.file_of(repo, oneshot.BRANCH).stat()
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         return None
     return st.st_ino, st.st_mtime_ns
 
@@ -304,8 +308,9 @@ def settled(repo: str) -> None:
     """Each `(written, fields)` a refused change left in `BACK`, put back: only while the spec file is still the
     one that change's set-aside wrote. Any save since, by any route (an input, a new run, the task editor), swaps
     in a new file, even one that leaves the record as it was, and leaves the result set aside: the owner measures
-    again. The check and the put-back hold the spec file lock every save takes. While a put-back fails, the
-    result stays set aside (no verdict on it) and the request answers 409; the next secret request tries again.
+    again. The check and the put-back hold the spec file lock every save takes. While a put-back fails, or the
+    file cannot be read to tell which write it is, the result stays set aside (no verdict on it), the entry stays
+    and the request answers 409; the next secret request tries again. A file gone, or another write, drops it.
     `BACK` is memory: after a restart the result stays set aside."""
 
     while BACK.get(repo):

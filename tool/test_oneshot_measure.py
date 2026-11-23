@@ -320,6 +320,10 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
             pytest.raises(HTTPException, match="되돌리지 못했다"):   # nor can the result be put back yet
         measure.give("budget", "M2", measure.Value(value="sk-new", head=head, env=ENV, kind="secret"))
     assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "stale"
+    with patch.object(oneshot_needs, "written", lambda repo: (_ for _ in ()).throw(PermissionError("busy"))), \
+            pytest.raises(HTTPException, match="되돌리지 못했다"):   # which write the file is, unknown: kept for a retry
+        measure.give("budget", "M2", measure.Value(value=KEY, head=head, env=ENV, kind="secret"))
+    assert o()["measures"][-1]["status"] == "stale" and oneshot_needs.BACK.get("budget")
     measure.give("budget", "M2", measure.Value(value=KEY, head=head, env=ENV, kind="secret"))   # the retry puts it back
     assert o()["measures"][-1]["status"] == "owner" and not oneshot_needs.BACK.get("budget")
     with patch.object(measure.release, "secret_write", lambda *a: (_ for _ in ()).throw(OSError("denied"))), \

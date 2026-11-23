@@ -208,7 +208,9 @@ it back first, but only while the spec file is still the one the refused
 change's set-aside wrote. Every save, by any route, the task editor
 included, swaps in a new file, so a save that left the record as it was
 counts too. The set-aside, that file's reading, the check and the put-back
-each hold the spec file lock every save takes. Anything saved since (an input, a new run, any field)
+each hold the spec file lock every save takes. A file that cannot be read to
+tell which write it is keeps what is to be put back for the next request; a
+file gone, or another write, drops it. Anything saved since (an input, a new run, any field)
 leaves the result set aside, and the owner measures again. What is still to
 be put back is held in memory: after a restart the result stays set aside,
 and the owner measures again. A value Credential Manager returns but cannot be decoded counts
