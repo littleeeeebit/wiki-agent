@@ -44,9 +44,12 @@ def frozen_read(first: str) -> dict:
     the worktree and the read answers 409 for it: wait out that hold, never taking the refusal for a change."""
 
     end = time.monotonic() + 60
-    while (read := client().get(f"/api/refactors/specs/{first}/frozen")).status_code == 409:
+    # Only the hold's own refusal is waited out: the comparison's 409 (a failed diff) is the read failing.
+    while (read := client().get(f"/api/refactors/specs/{first}/frozen")).status_code == 409 \
+            and read.json().get("detail") == "그 작업트리를 다른 요청이 쓰고 있다":
         assert time.monotonic() < end, read.json()
         time.sleep(0.05)
+    assert read.status_code == 200, read.json()
     return read.json()
 
 
