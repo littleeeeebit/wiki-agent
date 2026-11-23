@@ -445,7 +445,7 @@ def test_a_failed_copy_still_removes_the_scripts_folder_and_leaves_no_partial_re
     assert why and sorted(p.name for p in (tmp_path / "m2").iterdir()) == []   # no report and no `.part` left
 
 
-def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_measure):
+def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_measure, tmp_path):
     given()
     with patch.object(measure, "served", lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))), \
             patch.object(measure, "kept_from", lambda *a: "실측 원본 폴더 `x` 를 지우지 못했다"):
@@ -461,6 +461,39 @@ def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_m
         measure.measure("budget")   # present a moment ago, the read for the launch failed: a stop, before any folder
     assert "읽지 못했다" in o()["stopped"]["detail"] and not o().get("measures")
     assert not list((oneshot_spec.store("budget").folder / "measure").glob("*.raw"))
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    read = set()
+
+    def once(now, x):   # the early check reads the store; a second read of the same secret fails
+        if x["kind"] == "secret" and x["id"] in read:
+            return False
+        read.add(x["id"])
+        return True
+
+    with patch.object(measure, "has", once), \
+            patch.object(measure, "served", lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))):
+        measure.measure("budget")   # a secret's presence is the launch read's, never a second read of the store
+    assert "예상하지 못한" in o()["stopped"]["detail"]
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    with patch.object(measure, "report_of", lambda *a: {"io": "실측 보고서를 읽지 못했다 (PermissionError)"}):
+        measure.measure("budget")   # the disk, not the build: no failure counted
+    assert "읽지 못했다" in o()["stopped"]["detail"] and not o().get("measures") and not o().get("measure_fails")
+    raw = tmp_path / "m1.raw"
+    (raw / "report.json").parent.mkdir()
+    (raw / "report.json").write_text("{}", encoding="utf-8")
+    with patch.object(measure.Path, "read_text", lambda *a, **k: (_ for _ in ()).throw(PermissionError("locked"))):
+        assert "io" in measure.report_of(raw, {"metrics": []}, {})
+    assert "error" in measure.report_of(tmp_path / "none", {"metrics": []}, {})   # no report: the build's
+    told = []
+    with patch.object(measure.oneshot_spec, "saved", lambda *a, **k: (_ for _ in ()).throw(OSError("locked"))), \
+            patch.object(measure.work, "notice", lambda *a: told.append(a)):
+        measure.noted_comment("budget", "PR #1 에 실측 기록을 달지 못했다")   # never raises into the review's start
+    assert "저장하지도 못했다" in told[-1][1]
+    with patch.object(measure.release, "secret_read", lambda name: (_ for _ in ()).throw(OSError("locked"))), \
+            patch.object(oneshot_needs, "secret_needs", lambda s: [("N1", {"env": "DESIGN_KEY"})]):
+        with pytest.raises(ValueError, match="읽지 못했다"):   # a design secret for the verdict: never taken for none
+            oneshot_needs.gate_env(spec(), None, True)
+        assert oneshot_needs.gate_env(spec(), {}) == {}   # the launch's own read still treats it as not given
     plan = {"inputs": [{"id": "M1", "kind": "secret", "env": "A_TOKEN"}, {"id": "M2", "kind": "secret", "env": "B_TOKEN"}]}
     with patch.object(measure.release, "secret_read", lambda name: "same-token"):   # two inputs, one value
         env, hide = measure.env_of(spec(), plan, {"A_TOKEN": "server's own"})

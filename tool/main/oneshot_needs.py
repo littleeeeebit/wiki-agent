@@ -130,24 +130,27 @@ def secret_needs(spec: dict) -> list[tuple[str, dict]]:
     return [(nid, n) for nid, (n, _) in owed(spec["oneshot"].get("design") or {}).items() if n["kind"] == "secret"]
 
 
-def _given(spec: dict) -> list[tuple[str, str, str]]:
-    """`(id, env, value)` for each given secret, read from the store for one use; a need not given is absent."""
+def _given(spec: dict, strict: bool = False) -> list[tuple[str, str, str]]:
+    """`(id, env, value)` for each given secret, read from the store for one use; a need not given is absent.
+    `strict`: a store that cannot be read raises `ValueError`, never taken for a secret not given."""
 
     out = []
     for nid, n in secret_needs(spec):
         try:
             value = release.secret_read(name(spec["repo"], n["env"]))
         except (OSError, ValueError):   # no store on this host, or one that cannot be read: it is not given
+            if strict:
+                raise ValueError(f"`{n['env']}` 의 비밀값을 지금 읽지 못했다 — 다시 시도한다") from None
             value = None
         if value:
             out.append((nid, n["env"], value))
     return out
 
 
-def secrets(spec: dict) -> dict[str, str]:
-    """Each given secret's value by its `env`."""
+def secrets(spec: dict, strict: bool = False) -> dict[str, str]:
+    """Each given secret's value by its `env` (`strict` as `_given`)."""
 
-    return {env: value for _, env, value in _given(spec)}
+    return {env: value for _, env, value in _given(spec, strict)}
 
 
 def hidden(spec: dict, env: dict | None) -> dict[str, str]:
@@ -161,14 +164,15 @@ def hidden(spec: dict, env: dict | None) -> dict[str, str]:
             for form in {value, quote(value, safe="")}}
 
 
-def gate_env(spec: dict, env: dict | None) -> dict | None:
+def gate_env(spec: dict, env: dict | None, strict: bool = False) -> dict | None:
     """`env`, the server's own when `None`, with every given secret set. A secret the design names but the store
-    does not hold is removed, so a variable of that name the server happens to have never stands in for it."""
+    does not hold is removed, so a variable of that name the server happens to have never stands in for it.
+    `strict`: a store that cannot be read raises `ValueError` (`_given`)."""
 
     if not (declared := {n["env"].upper() for _, n in secret_needs(spec)}):
         return env
     base = {k: v for k, v in (os.environ if env is None else env).items() if k.upper() not in declared}
-    return {**base, **secrets(spec)}
+    return {**base, **secrets(spec, strict)}
 
 
 def told(spec: dict) -> str:

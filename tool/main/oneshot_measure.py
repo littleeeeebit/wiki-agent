@@ -368,10 +368,12 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
 
     try:
         if not plain(out, stat.S_IFDIR) or not plain(out / "report.json"):   # never read through a link
-            raise OSError("링크이거나 일반 파일이 아니다")
+            raise FileNotFoundError("없거나, 링크이거나, 일반 파일이 아니다")
         value = strict((out / "report.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError) as exc:
+    except (FileNotFoundError, ValueError, RecursionError) as exc:
         return {"error": f"실측 명령이 `{{out}}/report.json` 을 쓰지 않았거나 JSON 이 아니다 — {masked(str(exc), hide)}"}
+    except OSError as exc:   # the disk, not the build: the owner's stop, never a counted failure
+        return {"io": f"실측 보고서를 읽지 못했다 ({type(exc).__name__}) — 디스크를 확인하고 [실측 시작]을 누른다"}
     if not isinstance(value, dict):
         return {"error": "`report.json` 은 metrics 를 담은 객체다"}
     if isinstance(bad := value.get("input_error"), dict) and isinstance(bad.get("why"), str):
@@ -414,7 +416,8 @@ def measure(repo: str) -> None:
             except ValueError as exc:
                 store.stop("measure", str(exc))
                 return None
-            if missing := [x["id"] for x in plan["inputs"] if not has(now, x) or x["env"] not in env]:
+            if missing := [x["id"] for x in plan["inputs"]   # a secret by the read just made, never read again
+                           if x["env"] not in env or x["kind"] != "secret" and not has(now, x)]:
                 store.stop("measure", f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")   # no failure counted
                 return None
             since = CHANGES.get(repo, 0)
@@ -443,6 +446,9 @@ def measure(repo: str) -> None:
             return None
         if failed:   # unforeseen, a launch error naming an input included: its text masked like every other reason
             store.stop("measure", f"실측이 예상하지 못한 오류로 멈췄다 — {masked(f'{type(failed).__name__}: {failed}', hide)}")
+            return None
+        if found.get("io"):   # the report could not be read off the disk: the owner's, the build is not charged
+            store.stop("measure", found["io"])
             return None
         record["tail"] = (text or "").strip()[-3000:]
         if halt.is_set():
@@ -688,7 +694,7 @@ def decide(repo: str, body: Decision) -> dict:
         try:   # held until the verdict is saved: no turn moves HEAD between the check and the record of it
             why = oneshot_review.moved(spec, tree, "built_head")
             try:   # the mask, read apart from the launch toolchain: every secret of the plan, or none
-                env, hide = env_of(spec, plan, oneshot_needs.gate_env(spec, None) or dict(os.environ)) if plan \
+                env, hide = env_of(spec, plan, oneshot_needs.gate_env(spec, None, True) or dict(os.environ)) if plan \
                     else ({}, None)
                 if hide is not None and not all(x["env"] in env for x in plan["inputs"] if x["kind"] == "secret"):
                     hide = None   # a secret the store no longer holds
@@ -723,12 +729,15 @@ def decide(repo: str, body: Decision) -> dict:
 
 def noted_comment(repo: str, why: str) -> None:
     """A comment that could not be posted: kept on its measurement, and told to the owner, whose screen has moved
-    on to the review by then."""
+    on to the review by then. A failed save of it is told too, and never keeps the review from starting."""
 
     if why:
-        runs = list(oneshot_spec.spec_of(repo)["oneshot"].get("measures") or [])
-        runs[-1] = {**runs[-1], "comment_error": why}
-        oneshot_spec.saved(repo, oneshot={"measures": runs})
+        try:
+            runs = list(oneshot_spec.spec_of(repo)["oneshot"].get("measures") or [])
+            runs[-1] = {**runs[-1], "comment_error": why}
+            oneshot_spec.saved(repo, oneshot={"measures": runs})
+        except Exception as exc:
+            why = f"{why} (그 사유를 원샷 기록에 저장하지도 못했다: {type(exc).__name__})"
         work.notice("실측 기록을 PR 에 달지 못했다", f"{repo} · {why} — 기록은 원샷 화면에 남아 있다")
 
 
