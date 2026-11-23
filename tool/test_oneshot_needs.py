@@ -131,6 +131,16 @@ def test_a_name_a_look_sets_when_it_starts_the_app_is_never_a_secrets():
     assert not needs.STARTED.fullmatch("PORTAL_KEY") and not needs.STARTED.fullmatch("TEMP_TOKEN")
     with patch.object(needs, "secret_needs", lambda s: [("N1", {"id": "N1", "env": "ONESHOT_SCREEN"})]):
         assert "앱을 띄울 때" in needs.launchable({"oneshot": {}})   # a design saved before the rule stays at R1
+    # One approved before runs: the look's own value wins at a PC or web start, and the prompt and its row say so;
+    # the Android file, which no look's value shares, carries it.
+    old = {"id": "N1", "kind": "secret", "env": "ONESHOT_SCREEN", "what": "키"}
+    spec = {"repo": "budget", "oneshot": {"design": {"outside": [{"id": "X1", "needs": [old, {**KEY, "id": "N2"}]}]}}}
+    env = {"ONESHOT_SCREEN": "v" * 20, ENV: "w" * 20}
+    assert needs.given_in(spec, env) == {ENV: "w" * 20}
+    assert needs.given_in(spec, env, started=False) == {"ONESHOT_SCREEN": "v" * 20, ENV: "w" * 20}
+    assert "the app runs there without it" in needs.told(spec)
+    with patch.object(needs, "held", lambda *a: True), patch.object(needs, "kept", lambda repo: []):
+        assert [n["started"] for n in needs.shown(spec)] == [True, False]
 
 
 WEB_CALL ={"id": "X1", "target": "환율 서비스", "does": "오늘 환율을 받아 온다", "failure": "어제 환율로 적고 그렇다고 보여 준다",

@@ -137,7 +137,7 @@ def shown(spec: dict) -> list[dict]:
     kept = o.get("given") or {}
     return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid)),
              "leaked": nid in marked(o), "unsure": nid in unsure(o) - marked(o),
-             "launch": bool(LAUNCH.fullmatch(n.get("env") or ""))}
+             "launch": bool(LAUNCH.fullmatch(n.get("env") or "")), "started": bool(STARTED.fullmatch(n.get("env") or ""))}
             for nid, (n, calls) in owed(o.get("design") or {}).items()]
 
 
@@ -365,13 +365,16 @@ def carried(texts: list[str], values: list[str], hide: dict) -> list[str]:
     return sorted({label for value, label in hide.items() if seen(value)})
 
 
-def given_in(spec: dict, env: dict | None) -> dict[str, str | None]:
+def given_in(spec: dict, env: dict | None, started: bool = True) -> dict[str, str | None]:
     """What a started product gets over the server's environment: each secret the design names by its `env`, its
     value in `env` (a `gate_env` result), or `None` (dropped) for one `env` does not hold, so a variable of that name
-    the server happens to have never stands in for it."""
+    the server happens to have never stands in for it. With `started`, a name a look sets when it starts the app
+    (`STARTED`, which only a design approved before the rule can bear) is left out: the look's own value wins, and
+    the need's row and the build prompt say the app runs there without it (`shown`, `told`)."""
 
     have = {k.upper(): v for k, v in (env or {}).items()}
-    return {n["env"]: have.get(n["env"].upper()) for _, n in secret_needs(spec)}
+    return {n["env"]: have.get(n["env"].upper()) for _, n in secret_needs(spec)
+            if not (started and STARTED.fullmatch(n["env"]))}
 
 
 def held_in(text: str, hide: dict) -> list[str]:
@@ -557,6 +560,9 @@ def told(spec: dict) -> str:
         if n["kind"] == "secret" and LAUNCH.fullmatch(n["env"]):   # never in the agent's shell (`agent`)
             lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret the server's gate alone has: it is not in "
                          f"your shell, so do not set, read or repair it there; the gate runs its live check ({uses})")
+        elif n["kind"] == "secret" and STARTED.fullmatch(n["env"]):   # a look's own value wins (`given_in`)
+            lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret the gate has, but the screen checks start the "
+                         f"app with their own `{n['env']}`, so the app runs there without it ({uses})")
         elif n["kind"] == "secret":
             lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret ({uses})")
         elif n["kind"] in ("tool", "file") and (path := (given.get(nid) or {}).get("path")):

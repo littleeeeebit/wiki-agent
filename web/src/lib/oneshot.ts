@@ -7,7 +7,7 @@ export type Decision = { approve?: boolean; edit?: string }
 export type Feature = { id: string; name: string; class: Freq; why: string; endpoints?: string[]; parts?: string[]; kinds?: string[] }
 export type Freq = 'every' | 'sometimes' | 'rarely' | 'never'
 /** What the owner gives an outside call (`oneshot_needs.shown`): a secret's value never comes back, only `given`. */
-export type Need = { id: string; what: string; kind: 'secret' | 'account' | 'tool' | 'file'; env?: string; calls: string[]; given: boolean; leaked?: boolean; unsure?: boolean; launch?: boolean }
+export type Need = { id: string; what: string; kind: 'secret' | 'account' | 'tool' | 'file'; env?: string; calls: string[]; given: boolean; leaked?: boolean; unsure?: boolean; launch?: boolean; started?: boolean }
 /** A program a PC app's stack runs on this PC, and how a CI runner gets it (`oneshot_profile.tools_of`). */
 export type Tool = { name: string; setup?: string | { run: string } | { uses: string; with?: Record<string, string> } }
 /** A tool with its whole setup, as the owner confirms it: the setup's kind named, then its value, an action's
