@@ -573,16 +573,20 @@ class Value(BaseModel):
 
 
 def shown_input(spec: dict, plan: dict, iid: str, body: Value) -> dict:
-    """The input the owner's screen showed, or 409 when the plan they followed is not this one. A result waiting
-    for the owner's verdict is retired: its inputs are no longer what it ran with."""
+    """The input the owner's screen showed, or 409 when the plan they followed is not this one. Its change retires
+    a result waiting for the owner's verdict: a secret's through `oneshot_needs.stored`, before the store changes;
+    a plain value's in the same save as the value (`plain_input`)."""
 
     x = next((x for x in plan["inputs"] if x["id"] == iid), None)
     if x is None:
         raise HTTPException(404, f"실측 계획에 없는 입력이다: {iid}")
     if (body.head, body.env, body.kind) != (spec["oneshot"].get("built_head"), x["env"], x["kind"]):
         raise HTTPException(409, "실측 계획이 그 사이 바뀌었다 — 다시 불러와 새 칸에 넣는다")
-    retire(spec, "입력이 바뀌었다 — 이 결과는 판정하지 않고 바뀐 입력으로 다시 잰다")
     return x
+
+
+def plain_input(spec: dict, given: dict) -> dict:
+    return retire(spec, "입력이 바뀌었다 — 이 결과는 판정하지 않고 바뀐 입력으로 다시 잰다", measure_given=given)
 
 
 def retire(spec: dict, why: str, **fields) -> dict:
@@ -608,7 +612,7 @@ def give(repo: str, iid: str, body: Value) -> dict:
         if x["kind"] == "secret":
             oneshot_needs.stored(repo, x["env"], value)
         else:
-            oneshot_spec.saved(repo, oneshot={"measure_given": {**kept(spec), x["env"]: {"value": value, "what": x["what"]}}})
+            plain_input(spec, {**kept(spec), x["env"]: {"value": value, "what": x["what"]}})
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 
@@ -620,7 +624,7 @@ def take_back(repo: str, iid: str, head: str = "", env: str = "", kind: str = ""
         if x["kind"] == "secret":
             oneshot_needs.stored(repo, x["env"], None)
         else:
-            oneshot_spec.saved(repo, oneshot={"measure_given": {k: v for k, v in kept(spec).items() if k != x["env"]}})
+            plain_input(spec, {k: v for k, v in kept(spec).items() if k != x["env"]})
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 

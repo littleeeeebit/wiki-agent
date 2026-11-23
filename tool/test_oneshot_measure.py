@@ -275,16 +275,20 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     given()
     measure.measure("budget")
     assert o()["measures"][-1]["status"] == "owner"
-    with patch.object(measure, "retire", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))), \
-            pytest.raises(HTTPException, match="바꾸지 않았다"):   # the result set aside first, or the store kept
-        oneshot_needs.forget("budget", ENV)
-    assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "owner"
+    head = o()["built_head"]
+    for change in (lambda: oneshot_needs.forget("budget", ENV),   # every route: the general one and the boxes
+                   lambda: measure.give("budget", "M2", measure.Value(value="sk-new", head=head, env=ENV, kind="secret")),
+                   lambda: measure.take_back("budget", "M2", head=head, env=ENV, kind="secret")):
+        with patch.object(measure, "retire", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))), \
+                pytest.raises(HTTPException, match="바꾸지 않았다"):   # the result set aside first, or the store kept
+            change()
+        assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "owner"
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
     measure.measure("budget")
     assert o()["measures"][-1]["status"] == "owner"
-    oneshot_needs.forget("budget", ENV)   # the general route that removes a secret at any stage
-    assert o()["measures"][-1]["status"] == "stale"
+    shown = oneshot_needs.forget("budget", ENV)   # the general route that removes a secret at any stage
+    assert o()["measures"][-1]["status"] == "stale" and shown["oneshot"]["measures"][-1]["status"] == "stale"
     gate = measure.specs.gate
 
     def changing(*args, **kwargs):   # the value removed while the script runs

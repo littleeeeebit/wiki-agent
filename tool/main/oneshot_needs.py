@@ -309,4 +309,4 @@ def forget(repo: str, env: str) -> dict:
     with oneshot._lock:
         spec = spec_of(repo)   # a repository with no oneshot spec here is refused before the store is touched
         stored(spec["repo"], env, None)
-    return view(spec)
+    return view(spec_of(repo))   # as saved now: a result the removal set aside shows so
