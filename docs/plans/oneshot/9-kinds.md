@@ -359,6 +359,11 @@ source, and the server assigns it:
     after its value and compares the two ordinally. One that changed (a
     control rebound meanwhile) leaves that window's read not whole. Such a
     read proves no value, no absence and no single holder of an id.
+    A known limit, accepted by the owner: the audit takes a runtime id as
+    the element's identity, as UI Automation promises it is unique within
+    its fragment. A provider that gives an unread item the id of another
+    element walked inside the same container, such as a grid header, has
+    that item counted as read.
     A known limit, accepted by the owner: UI Automation offers no snapshot
     of a tree, so the driver reads the tree live. The checks above catch a
     change that is still there when it is read again. They cannot catch an

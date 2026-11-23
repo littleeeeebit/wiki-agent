@@ -447,6 +447,28 @@ def test_an_item_is_read_only_as_an_element_walked_inside_its_own_container():
                             "foreach ($i in 0, 1, 2, 3) { if ($seen[$i]) { \"$i=\" + (@($seen[$i]) -join ',') } "
                             "else { \"$i=none\" } }"], capture_output=True, text=True, timeout=60)
     assert probe.stdout.split() == ["0=5", "1=none", "2=6", "3=6"], probe   # list 1's item 5 is not list 0's
+    # The whole audit, `Items` itself, over two sibling lists that each walked one element: the left walked and
+    # holds 5; the right walked 7 and 8 and holds them and an unwalked 5, its own counter's, the left row's id.
+    items = "function Items(" + script.split("function Items(", 1)[1].split("\nfunction ", 1)[0]
+    audit = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
+                            "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes\n" + rid + "\n" + items + "\n"
+                            "function Enter($what) { }\n$MAX_ITEMS = 100\n"
+                            "function El($id) { $p = [pscustomobject]@{}; $p | Add-Member NoteProperty k $id; "
+                            "$p | Add-Member ScriptMethod GetRuntimeId { ,@($this.k) }; $p }\n"
+                            "function List([object[]]$held) { $c = [pscustomobject]@{ held = $held }; "
+                            "$c | Add-Member ScriptMethod FindItemByProperty { param($after, $p, $v) "
+                            "$i = if ($null -eq $after) { 0 } else { [array]::IndexOf($this.held, $after) + 1 }; "
+                            "if ($i -lt $this.held.Count) { $this.held[$i] } else { $null } }; "
+                            "$e = [pscustomobject]@{ c = $c }; $e | Add-Member ScriptMethod GetCurrentPattern "
+                            "{ param($x) $this.c }; $e }\n"
+                            "$left, $right = @{}, @{}\n"
+                            "$script:lists = @(, @((List @((El 5))), $left)) + , @((List @((El 7), (El 5), (El 8))), $right)\n"
+                            "$script:walked = New-Object 'System.Collections.Generic.List[object]'\n"
+                            "$script:walked.Add(@((El 5), @(0))); $script:walked.Add(@((El 7), @(1)))\n"
+                            "$script:walked.Add(@((El 8), @(1)))\n"
+                            "Items 's00'\n\"left=$($left.items)/$($left.unread) right=$($right.items)/$($right.unread)\""],
+                           capture_output=True, text=True, timeout=60)
+    assert audit.stdout.split() == ["left=1/0", "right=3/1"], audit
     nodes = script.split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
     assert nodes.index("$script:walked.Add(@($element, $script:under))") < nodes.index("$script:under = @($outer) +")
     assert nodes.rstrip().endswith("$script:under = $outer\n}") or nodes.rstrip().endswith("$script:under = $outer")
