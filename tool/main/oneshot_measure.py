@@ -787,12 +787,12 @@ def shown(spec: dict) -> dict:
 oneshot_spec.VIEWS.append(shown)
 
 
-def secret_changed(repo: str, env: str):   # `{field: (as set aside, before)}` if the store refuses, or `None`
+def secret_changed(repo: str, env: str):   # `(oneshot as set aside, fields to put back)`, or `None`
     """A secret about to change by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran
     with it. A running one is set aside when it ends, by `oneshot_needs.CHANGES`, counted once the store changed."""
     spec = oneshot_spec.spec_of(repo)
     if (aside := retire(spec, "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다")) is not spec:
-        return {"measures": (aside["oneshot"]["measures"], spec["oneshot"]["measures"])}
+        return aside["oneshot"], {"measures": spec["oneshot"]["measures"]}
 
 
 oneshot_needs.CHANGED.append(secret_changed)

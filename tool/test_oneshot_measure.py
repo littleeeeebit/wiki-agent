@@ -322,6 +322,14 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "stale"
     measure.give("budget", "M2", measure.Value(value=KEY, head=head, env=ENV, kind="secret"))   # the retry puts it back
     assert o()["measures"][-1]["status"] == "owner" and not oneshot_needs.BACK.get("budget")
+    with patch.object(measure.release, "secret_write", lambda *a: (_ for _ in ()).throw(OSError("denied"))), \
+            patch.object(oneshot_needs, "saved", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))), \
+            pytest.raises(HTTPException, match="되돌리지 못했다"):
+        measure.give("budget", "M2", measure.Value(value="sk-new", head=head, env=ENV, kind="secret"))
+    measure.give("budget", "M1", measure.Value(value="https://example.test/other", head=head, env="BUDGET_URL",
+                                               kind="text"))   # saved over it: that result is never put back
+    measure.give("budget", "M2", measure.Value(value=KEY, head=head, env=ENV, kind="secret"))
+    assert o()["measures"][-1]["status"] == "stale" and not oneshot_needs.BACK.get("budget")
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
     measure.measure("budget")

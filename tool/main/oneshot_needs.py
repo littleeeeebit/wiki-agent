@@ -235,7 +235,8 @@ def need_of(repo: str, nid: str, source: str) -> tuple[dict, dict]:
 
 
 CHANGED: list = []   # `f(repo, env)` before any secret changes, by any route; returns what `settled` puts back
-                     # if the store then refuses, or `None`: `oneshot_measure` registers one
+                     # if the store then refuses, `(oneshot as set aside, fields)`, or `None`: `oneshot_measure`
+                     # registers one
 CHANGES: dict[str, int] = {}   # changes made per repository, so a measurement sees one made while it ran
 
 
@@ -287,15 +288,16 @@ BACK: dict[str, list] = {}   # per repository, what a refused change set aside a
 
 
 def settled(repo: str) -> None:
-    """Each `{field: (as set aside, before)}` a refused change left in `BACK`, put back: a field is restored only
-    while it still holds what was set aside, so nothing saved since is undone. While a put-back fails, the
-    result stays set aside (no verdict on it) and the request answers 409; the next secret request tries again.
-    `BACK` is memory: after a restart the result stays set aside and the owner measures again."""
+    """Each `(oneshot as set aside, fields)` a refused change left in `BACK`, put back: only while the run's whole
+    `oneshot` record is still exactly as that change saved it. Anything saved since (an input, a new run, any
+    field) leaves the result set aside, and the owner measures again. While a put-back fails, the result stays
+    set aside (no verdict on it) and the request answers 409; the next secret request tries again. `BACK` is
+    memory: after a restart the result stays set aside."""
 
     while BACK.get(repo):
         try:
-            o = spec_of(repo)["oneshot"]
-            if back := {k: was for k, (aside, was) in BACK[repo][0].items() if o.get(k) == aside}:
+            aside, back = BACK[repo][0]
+            if spec_of(repo)["oneshot"] == aside:
                 saved(repo, oneshot=back)
         except (OSError, HTTPException) as e:
             raise HTTPException(409, f"비밀 값은 그대로인데 내려놓았던 결과를 되돌리지 못했다 ({type(e).__name__}) — "
