@@ -290,7 +290,8 @@ such file it writes a list to the run's summary: each skipped test whose
 reason names a need id, with those ids. An id counts before a Korean
 particle (`N1이`) but not inside an ASCII name (`N2cache`). Each test is
 a code span whose fence outruns any backtick run in it, so the name shows as
-it is; a list item has no cell a `|` could split. No file says the report is missing; several say which they are and list nothing, since which
+it is, its spacing included; only a line break, which would end the item,
+becomes a space. A list item has no cell a `|` could split. No file says the report is missing; several say which they are and list nothing, since which
 is the gate's is not known. A single file the gate did not write, when the
 gate failed before writing its own, reads as the gate's: the checkout
 ignores `artifacts/`, so only the job itself could have put it there. The server's CI check (`ci_file`) requires
@@ -393,6 +394,6 @@ knows the values, at commit time, rather than in the reviewer's reading.
 | 11b1 | Tests and build prompts without fakes, told every need; every gate the server runs carries the given secrets | Done — #418 |
 | 11b2a | The build agent's own turns carry the secrets under the server's leak check | Done — #424 |
 | 11b2b | The PC app's screen check and the Android device stages get the secrets | Done — #427 |
-| 11b2c | The CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | In progress |
+| 11b2c | The CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Done — #428 |
 | 11c | The review refuses a fake inside a test file | Not started |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |
