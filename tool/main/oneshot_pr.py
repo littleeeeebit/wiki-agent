@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import posixpath
 import re
 import sys
 import shutil
@@ -305,8 +304,8 @@ def version_file(path: Path, head: str, name: str) -> bool:
 def scope(o: dict) -> str:
     """What the README turn may change, as `unapproved` checks it, told before it starts."""
 
-    paths = (" Each `build` names only relative paths from the repository root that stay inside it: it runs in a "
-             "fresh checkout.\n")
+    paths = (" Each `build` names paths only as plain relative paths from the repository root, with no drive, root, "
+             "share, `~` or `..` step: it runs in a fresh checkout.\n")
     if "android" in kinds_of(o):
         return ("\nThe PC app's installer is built from the commit R3 approved, so nothing this turn changes "
                 "reaches it but its `[release.desktop]` table." + paths)
@@ -334,48 +333,25 @@ def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
                     or n == source and n in added and version_file(path, head, n))]
 
 
-# A value that leads out of the checkout: drive-qualified anywhere (`C:\x`, and `C:..\x`, relative to that drive's own
-# folder), or, itself or past any `=` or `:` in it (`TAIL`), a share, rooted at the current drive, a home or a root with
-# a folder in it. A word that is a lone `/name` is a switch (`/p:x`, `cmd /c`); an option's value never is.
-DRIVE = re.compile(r"(?<![\w$%/\\.-])[A-Za-z]:")
-ROOTED = re.compile(r"\\|~[\\/]|/[^/\\:]*[/\\]")
-TAIL = re.compile(r"=|:(?!//)")   # where a value inside a value starts: `/out:`, `--dist=`, `/p:Name=`; not `https://`
-
-
-def values(command: str) -> list[tuple[str, bool]]:
-    """A command's values, quotes dropped and tracked one delimiter at a time, so a quoted space, comma or apostrophe
-    stays inside its value: split at whitespace and, outside quotes, at `=`, `,` and `;`, each with whether it
-    follows one of those, an option's value."""
-
-    out, cur, quote, lead = [], "", "", False
-    for ch in command:
-        if quote and ch == quote:
-            quote = ""
-        elif quote:
-            cur += ch
-        elif ch in "\"'":
-            quote = ch
-        elif ch.isspace() or ch in "=,;":
-            out += [(cur, lead)] * bool(cur)
-            cur, lead = "", ch in "=,;"
-        else:
-            cur += ch
-    return out + [(cur, lead)] * bool(cur)
+# A URL's scheme, where a value starts: what follows is a host, not a path.
+URL = re.compile(r"(?:^|(?<=[\s\"'=,;]))[A-Za-z][\w+.-]+://")
+# What is no plain relative path, wherever a value starts (the start, whitespace, a quote, `=`, `:`, `,`, `;`), a quote
+# allowed before it: a share or a root (`//`, `\`), a home (`~`), a drive (`C:`, `C:..`); a value rooted at `/`; a word
+# rooted at `/` unless shaped as a switch (`/p:x`, `cmd /c`, `"/p:x=y"`); and any `..` step.
+FAR = re.compile(r"""(?:^|[\s"'=:,;])["']?(?:[\\/]{2}|\\|~|[A-Za-z]:)|[=:,;]["']?/"""
+                 r"""|(?:^|\s)/(?![A-Za-z?][\w-]*(?:[:\s"'=,;]|$))|(?:^|\s)["']/(?![A-Za-z?][\w-]*[:"'=])"""
+                 r"""|(?:^|[\s"'=:,;\\/])\.\.(?=[\\/\s"'=:,;]|$)""")
 
 
 def outside(command: str) -> str:
-    """A path in a release `build`, S8's own words, that leads out of its checkout, or empty: an absolute one, or
-    one whose `..` steps climb above the repository root it runs from (`a/../b` stays inside). A command that names
-    the live worktree would build bytes R3 never saw. A variable (`$env:X`) is not a path. What the approved
-    commit's own files name, its Tauri config among them, is the app R3 built and approved (an accepted limit)."""
+    """What in a release `build`, S8's own words, is no plain relative path from the repository root, or empty: the
+    command may name paths only that way, no drive, root, share, home or `..` step, so it never reads outside its
+    checkout. A form that only looks like one is refused too: the README turn is told the rule and writes it again.
+    A lone word `/name` reads as a switch. A variable (`$env:X`) is not a path. What the approved commit's own
+    files name, its Tauri config among them, is the app R3 built and approved (an accepted limit)."""
 
-    for value, lead in values(command):   # the value, and each value inside it past a `=` or a `:`
-        if DRIVE.search(value) or any(
-                ROOTED.match(s) or inner and s[:1] in ("/", "\\")
-                or posixpath.normpath(s.replace("\\", "/")).split("/")[0] == ".."
-                for s, inner in [(value, lead), *((value[m.end():], True) for m in TAIL.finditer(value))] if s):
-            return value
-    return ""
+    text = URL.sub(" ", command)
+    return (m := FAR.search(text)) and text[max(m.start() - 10, 0):m.end() + 20].strip() or ""
 
 
 def tauri(o: dict) -> bool:

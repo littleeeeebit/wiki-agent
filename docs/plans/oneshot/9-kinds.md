@@ -774,8 +774,10 @@ this on 2026-11-23. Each kind builds in its own checkout, Android's from the
 gate's HEAD. Each release build is plain commands joined by `&&` that start
 only the confirmed tools or the checkout's own files, as the gate's commands
 do, and names no path outside its checkout, so it never reads the live
-worktree: no absolute path, and no `..` step that climbs above the
-repository root. The check covers what S8 writes, the release command. What
+worktree: it names paths only as plain relative paths from the repository
+root, with no drive, root, share, home or `..` step, and a form that only
+looks like one is refused too, the README turn told the rule and sent back
+to write it again. The check covers what S8 writes, the release command. What
 the approved commit's own files name, its Tauri config, resources, scripts
 and build files, is the app R3 built and approved. A path among them that
 leads out of the checkout is an accepted limit (owner, 9e6b round 7). It runs without any variable a secret need names, and without any

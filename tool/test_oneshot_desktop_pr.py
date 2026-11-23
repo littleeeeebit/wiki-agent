@@ -285,16 +285,17 @@ def test_with_a_web_app_the_pc_apps_files_are_held_as_alone(pc):
     assert "Any other change is refused." in oneshot_pr.scope(both)
 
 
-def test_a_build_path_that_climbs_but_stays_inside_the_repository_passes():
-    for kept in ("npm --prefix src-tauri/../frontend run build", "msbuild /p:Configuration=Release",
+def test_a_build_names_paths_only_as_plain_relative_paths():
+    for kept in ("python tauri.py --dist dist && cargo tauri build", "msbuild /p:Configuration=Release",
                  "cargo tauri build --config src-tauri/release.json", "x --config $env:RELEASE_TAURI_CONFIG",
-                 "curl https://example.invalid/a/b", 'x "Desktop App/build outputs/../../frontend"',
-                 "dotnet publish -p:Version=1 -c Release", "x --dist='a b/x/../../c'", "cmd /c x",
-                 'x "out/build,debug/../../frontend"', "msbuild /out:bin/x", "npm run build:release",
-                 'x --dist="Bob\'s app/x/../dist"', 'x "--dist=src/../dist"', 'msbuild "/p:Dist=src/dist"',
-                 "x --url=https://example.invalid/a/b"):
+                 "curl https://example.invalid/a/b", 'x "Desktop App/build outputs/dist"',
+                 "dotnet publish -p:Version=1 -c Release", "x --dist='a b/x/c'", "cmd /c x",
+                 'x "out/build,debug/frontend"', "msbuild /out:bin/x", "npm run build:release",
+                 'x --dist="Bob\'s app/dist"', 'msbuild "/p:Dist=src/dist"', "x --url=https://example.invalid/a/b",
+                 "x a.b..c --x=a..b"):
         assert oneshot_pr.outside(kept) == "", kept
-    for far in ("x ../wt", "x a/../../wt", "x --dist=..\\wt", "x C:/wt", "x \\wt\\dist", "x \\\\host\\s", "x ~/wt",
+    for far in ("x src-tauri/../frontend", "x a\\..\\b", "x ..", "x ~", "x /out://host/s", "x --dist=//host/s",
+                "x --x=https://h/p --y=C:\\w", "x ../wt", "x a/../../wt", "x --dist=..\\wt", "x C:/wt", "x \\wt\\dist", "x \\\\host\\s", "x ~/wt",
                 "x /home/wt", """x --config '{"build":{"frontendDist":"C:/wt/dist"}}'""", "x C:..\\shared\\dist",
                 "x --dist=D:dist", 'x "Desktop App/../../wt"', 'x "/Desktop App/wt"', 'x "\\Desktop App\\wt"',
                 "x /out:C:\\wt", "x -o:C:\\wt", "x /out:\\wt", "x /out:../wt", "x a,../wt", "x --dist=/wt",
