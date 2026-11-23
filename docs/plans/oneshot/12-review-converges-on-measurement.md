@@ -201,7 +201,11 @@ or a removal of a secret already gone) sets nothing aside. When Credential
 Manager cannot be read to tell, the request changes nothing and the owner
 tries again. A value too long for Credential Manager is refused before
 anything changes, and a write or removal the store refuses puts the result
-it set aside back. A value Credential Manager returns but cannot be decoded counts
+it set aside back. When that put-back fails too, the result stays set aside
+with no verdict on it, the answer says so, and the next secret request puts
+it back first, as long as nothing was saved over it since. What is still to
+be put back is held in memory: after a restart the result stays set aside,
+and the owner measures again. A value Credential Manager returns but cannot be decoded counts
 as different, so it can be replaced. [실측 시작] holds the worktree,
 starts `serve`, runs the script with the inputs in its environment and every
 secret masked from its output, and keeps only the clips it accepts, the

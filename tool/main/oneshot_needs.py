@@ -14,7 +14,6 @@ the gate's output shows `[N1]` where it would stand (`hidden`).
 
 from __future__ import annotations
 
-import contextlib
 import os
 import re
 import shutil
@@ -235,7 +234,8 @@ def need_of(repo: str, nid: str, source: str) -> tuple[dict, dict]:
     return o, found[0]
 
 
-CHANGED: list = []   # `f(repo, env)` before any secret changes, by whichever route: `oneshot_measure` registers one
+CHANGED: list = []   # `f(repo, env)` before any secret changes, by any route; returns what `settled` puts back
+                     # if the store then refuses, or `None`: `oneshot_measure` registers one
 CHANGES: dict[str, int] = {}   # changes made per repository, so a measurement sees one made while it ran
 
 
@@ -245,12 +245,12 @@ def stored(repo: str, env: str, value: str | None) -> None:
     result is set aside first, and when that fails the store is left as it was. A request that would change
     nothing (the value held already, or a removal of one already gone) changes nothing, a waiting result
     included, and so does one the store refuses: a value too long for it is refused before anything, and a
-    write or removal that fails puts back what `CHANGED` set aside (each callback returns how, or `None`).
-    Every caller read the spec before this, so a 404 here is a reread that failed (`specs.load` turns a refused
-    read into `None`)."""
+    write or removal that fails puts back what `CHANGED` set aside (`settled`). Every caller read the spec
+    before this, so a 404 here is a reread that failed (`specs.load` turns a refused read into `None`)."""
 
     if value is not None and len(value.encode("utf-16-le")) > MAX_SECRET:
         raise HTTPException(400, f"값이 너무 길다 — 자격 증명 관리자는 {MAX_SECRET}바이트까지 담는다")
+    settled(repo)   # one a refused change could not put back is put back first, or this request stops
     try:
         if same(name(repo, env), value):
             return
@@ -274,14 +274,33 @@ def stored(repo: str, env: str, value: str | None) -> None:
             release.secret_write(name(repo, env), value)
             changed = True
     except (ValueError, OSError) as e:
-        for put_back in filter(None, undo):   # the store kept its value: so does the result; a failed undo leaves
-            with contextlib.suppress(OSError, HTTPException):   # it set aside, the safe side
-                put_back()
+        BACK.setdefault(repo, []).extend(filter(None, undo))   # the store kept its value: so does the result
+        settled(repo)
         if isinstance(e, ValueError):
             raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
         raise HTTPException(409, f"자격 증명 관리자를 고치지 못했다 — {e}") from None
     if changed:   # only a change made: a refused or empty one leaves a running result alone
         CHANGES[repo] = CHANGES.get(repo, 0) + 1
+
+
+BACK: dict[str, list] = {}   # per repository, what a refused change set aside and has yet to put back
+
+
+def settled(repo: str) -> None:
+    """Each `{field: (as set aside, before)}` a refused change left in `BACK`, put back: a field is restored only
+    while it still holds what was set aside, so nothing saved since is undone. While a put-back fails, the
+    result stays set aside (no verdict on it) and the request answers 409; the next secret request tries again.
+    `BACK` is memory: after a restart the result stays set aside and the owner measures again."""
+
+    while BACK.get(repo):
+        try:
+            o = spec_of(repo)["oneshot"]
+            if back := {k: was for k, (aside, was) in BACK[repo][0].items() if o.get(k) == aside}:
+                saved(repo, oneshot=back)
+        except (OSError, HTTPException) as e:
+            raise HTTPException(409, f"비밀 값은 그대로인데 내려놓았던 결과를 되돌리지 못했다 ({type(e).__name__}) — "
+                                     "다시 시도하면 되돌린다") from None
+        BACK[repo].pop(0)
 
 
 def same(key: str, value: str | None) -> bool:
