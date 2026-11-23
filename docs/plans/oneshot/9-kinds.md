@@ -346,7 +346,9 @@ source, and the server assigns it:
     joined into one token, is no match. The driver reads a control's value
     without UI Automation's defaults, so a provider that does not supply it
     leaves the value unknown, never empty. So does a value that is not
-    whole UTF-16. The driver reads every element's automation id again
+    whole UTF-16. A toggle state is read the same way, so an unsupplied one
+    is unknown, never `Indeterminate`. An element's id or name that is not
+    whole UTF-16 leaves its window's read not whole. The driver reads every element's automation id again
     after its value and compares the two ordinally. One that changed (a
     control rebound meanwhile) leaves that window's read not whole. Such a
     read proves no value, no absence and no single holder of an id.

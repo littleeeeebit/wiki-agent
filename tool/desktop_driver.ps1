@@ -181,6 +181,12 @@ function Items([string]$at) {   # each open item container's items, realized or 
   }
 }
 
+$STRICT = New-Object System.Text.UTF8Encoding($false, $true)
+function Whole($text) {   # whole UTF-16, so the report's UTF-8 carries it as read, never with a replacement
+  if ($null -eq $text) { return $true }
+  try { [void]$STRICT.GetByteCount([string]$text); return $true } catch { return $false }
+}
+
 function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0, [bool]$scrolled = $false) {
   # `scrolled`: inside a container that scrolls, so a person reaches what lies past its edge by scrolling.
   # The process first, and nothing else of an element outside the app's job: an embedded fragment of another
@@ -208,9 +214,7 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
         $node.value = $null; $node.unvalued = $true
       } else {
         $v = [string]$raw
-        # A string that is not whole UTF-16 (a lone surrogate) would reach the report with a replacement: unknown.
-        try { [void](New-Object System.Text.UTF8Encoding($false, $true)).GetByteCount($v); $whole = $true }
-        catch { $whole = $false }
+        $whole = Whole $v   # a lone surrogate would reach the report as U+FFFD: unknown
         $node.value = if ($v.Length -gt $MAX_VALUE -or -not $whole) { $null } else { $v }
         if ($v.Length -gt $MAX_VALUE -or -not $whole) { $node.unvalued = $true }
       }
@@ -225,9 +229,16 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     $node.value = $null; $node.unvalued = $true
     $script:rebound = "an element's automation id changed while it was read: '$($node.id)' then '$again'"
   }
-  if ($patterns -contains "Toggle") {
-    try { $node.toggle = [string]$element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
-    catch { $node.toggle = $null }
+  if ($patterns -contains "Toggle") {   # without defaults: an unsupplied state is unknown, never `Indeterminate`
+    try {
+      $t = $element.GetCurrentPropertyValue([System.Windows.Automation.TogglePattern]::ToggleStateProperty, $true)
+      $node.toggle = if ($t -is [System.Windows.Automation.ToggleState]) { [string]$t } else { $null }
+    } catch { $node.toggle = $null }
+  }
+  # An id or a name that is not whole UTF-16 would reach the report as another string: this window's read is not
+  # whole, and the string is carried empty, as an element without one.
+  foreach ($k in @("id", "name")) {
+    if (-not (Whole $node[$k])) { $node[$k] = ""; $script:rebound = "an element's $k is not whole UTF-16" }
   }
   $script:walked.Add($element)   # its identity is read by `Items`, under that operation's own deadline
   $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded

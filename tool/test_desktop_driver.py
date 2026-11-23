@@ -362,6 +362,26 @@ def test_an_element_whose_id_changes_while_it_is_read_leaves_its_window_read_not
     assert probe.stdout.strip() == "False", probe
 
 
+def test_an_id_that_is_not_whole_utf16_leaves_its_window_read_not_whole(tmp_path):
+    script = tmp_path / "form.ps1"   # the app names its control `seen` + U+D800, which UTF-8 would carry as U+FFFD
+    script.write_text(WPF_FORM.replace('$A::SetAutomationId($box, "source")',
+                                       '$A::SetAutomationId($box, "seen" + [char]0xD800)'), encoding="utf-8")
+    with desktop_session.look(tmp_path, "badid") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [
+            {"name": "one", "action": "toggle", "id": "translate-on"}], wait=30, settle_ms=300)
+    last = report["states"][-1]
+    assert not any("�" in (n.get("id") or "") for n in last["nodes"]), last["nodes"]
+    assert [r["read"] for r in last["reads"]] == [False] and "not whole UTF-16" in last["reads"][0]["error"]
+
+
+def test_a_toggle_state_is_read_without_defaults_so_an_unsupplied_one_is_unknown():
+    nodes = desktop_driver.SCRIPT.read_text(encoding="utf-8").split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
+    assert "TogglePattern]::ToggleStateProperty, $true)" in nodes and ".Current.ToggleState" not in nodes
+    assert "if ($t -is [System.Windows.Automation.ToggleState]) { [string]$t } else { $null }" in nodes
+
+
 def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
     script = tmp_path / "form.ps1"
     # The app holds a lone surrogate itself: a request's JSON would carry one only as U+FFFD.
