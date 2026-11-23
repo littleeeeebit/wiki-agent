@@ -288,10 +288,12 @@ def test_with_a_web_app_the_pc_apps_files_are_held_as_alone(pc):
 def test_a_build_path_that_climbs_but_stays_inside_the_repository_passes():
     for kept in ("npm --prefix src-tauri/../frontend run build", "msbuild /p:Configuration=Release",
                  "cargo tauri build --config src-tauri/release.json", "x --config $env:RELEASE_TAURI_CONFIG",
-                 "curl https://example.invalid/a/b"):
+                 "curl https://example.invalid/a/b", 'x "Desktop App/build outputs/../../frontend"',
+                 "dotnet publish -p:Version=1 -c Release", "x --dist='a b/x/../../c'"):
         assert oneshot_pr.outside(kept) == "", kept
     for far in ("x ../wt", "x a/../../wt", "x --dist=..\\wt", "x C:/wt", "x \\wt\\dist", "x \\\\host\\s", "x ~/wt",
-                "x /home/wt", """x --config '{"build":{"frontendDist":"C:/wt/dist"}}'"""):
+                "x /home/wt", """x --config '{"build":{"frontendDist":"C:/wt/dist"}}'""", "x C:..\\shared\\dist",
+                "x --dist=D:dist", 'x "Desktop App/../../wt"'):
         assert oneshot_pr.outside(far), far
 
 

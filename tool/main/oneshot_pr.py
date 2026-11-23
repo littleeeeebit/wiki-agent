@@ -334,9 +334,12 @@ def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
                     or n == source and n in added and version_file(path, head, n))]
 
 
-# An absolute path: a drive, a share or a path rooted at the current drive, a home, a POSIX root with a folder in it.
-# A switch such as `/p:x` is not one.
-FAR = re.compile(r"(?<![\w$%./\\])(?:[A-Za-z]:[\\/]|\\|~[\\/]|/[^\s/:\"']+/)")
+# A path that is not relative to the checkout: any drive-qualified one (`C:\x`, and `C:..\x`, relative to that drive's
+# own folder), a share or a path rooted at the current drive, a home, a POSIX root with a folder in it. A switch such
+# as `/p:x` or `-p:x` is not one.
+FAR = re.compile(r"(?<![\w$%./\\-])(?:[A-Za-z]:|\\|~[\\/]|/[^\s/:\"']+/)")
+# A command's words, a quoted part kept whole with its spaces.
+WORD = re.compile(r"""(?:"[^"]*"|'[^']*'|[^\s"'])+""")
 def outside(command: str) -> str:
     """A path in a release `build`, S8's own words, that leads out of its checkout, or empty: an absolute one, or
     one whose `..` steps climb above the repository root it runs from (`a/../b` stays inside). A command that names
@@ -345,7 +348,7 @@ def outside(command: str) -> str:
 
     if m := FAR.search(command):
         return command[max(m.start() - 10, 0):m.end() + 20].strip()
-    parts = re.split(r"[\s\"'=,;]+", command)
+    parts = [p for w in WORD.findall(command) for p in re.split(r"[=,;]", re.sub(r"[\"']", "", w))]
     return next((p for p in parts if p and posixpath.normpath(p.replace("\\", "/")).split("/")[0] == ".."), "")
 
 
