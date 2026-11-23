@@ -343,6 +343,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
                 return {"status": "failed", "why": f"보고를 읽은 뒤 앱이 살아 있지 않았다 — {why}"}
             return {"status": "passed"} if owner_round.contains(text, page) else \
                 {"status": "failed", "why": "앱이 캡처했다고 낸 것에 고정 창의 낱말이 다 들어 있지 않다"}
+        if why := running(report, key):   # before a capture is allowed: a crashed app's child may still draw
+            return {"status": "failed", "why": f"캡처 전에 앱이 살아 있지 않았다 — {why}"}
         if exe is None:
             return {"status": "pending", "why": missing}
         try:
@@ -364,6 +366,8 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
             return {"status": "pending", "why": str(exc)}
         if not got.get("read"):
             return {"status": "failed", "why": f"캡처를 읽지 못했다 — {got.get('why')}"}
+        if why := running(report, key):   # and after it: the frame counts only as the running app's
+            return {"status": "failed", "why": f"캡처 뒤에 앱이 살아 있지 않았다 — {why}"}
         file = keep / f"c{n}-{what}.png"
         shutil.copyfile(got["file"], file)   # the session's folders go with its cleanup
         return {"status": "judge", "file": str(file), "shows": seen["shows"], "page": page}

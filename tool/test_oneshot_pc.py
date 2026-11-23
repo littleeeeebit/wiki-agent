@@ -438,8 +438,8 @@ def test_a_fixture_replaced_before_the_read_fails_and_nothing_is_read(held, desk
 
 def test_an_app_window_replaced_after_the_drivers_read_is_never_read(held, desk, monkeypatch):
     window = {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}
-    checked(desk, window, driven())   # bound against the window exactly as the driver read it
-    assert desk[0]["bound"] == [{"hwnd": 101, "pid": 7, "class": "App"}]
+    checked(desk, window, driven())   # bound against the window exactly as the driver read it, each time
+    assert desk[0]["bound"] == [{"hwnd": 101, "pid": 7, "class": "App"}] * 3   # up before, captured, up after
 
     def gone(job, hwnd, members, title=None, seen=None):
         raise ValueError(f"window {hwnd} is not one of {job}'s")
@@ -462,6 +462,24 @@ def test_a_report_counts_only_while_the_app_that_wrote_it_is_still_up_once_it_is
     monkeypatch.setattr(owner_round, "bind", crashed)
     got = checked(desk, SCREEN, driven())
     assert got["status"] == "failed" and "살아 있지" in got["why"], got
+
+
+@pytest.mark.parametrize("gone_at", [1, 2])   # the app's window gone before the capture, or by the time it is read
+def test_a_capture_counts_only_while_the_driven_app_is_up_before_and_after_it(held, desk, monkeypatch, gone_at):
+    assert checked(desk, SURFACE, driven())["status"] == "judge"
+    calls, bind = [], owner_round.bind
+
+    def app(job, hwnd, members, title=None, seen=None):
+        calls.append(job)
+        if job.startswith("app") and sum(c.startswith("app") for c in calls) >= gone_at:
+            raise ValueError(f"window {hwnd} is not one of {job}'s")
+        return bind(job, hwnd, members, title, seen)
+
+    monkeypatch.setattr(owner_round, "bind", app)
+    desk[0]["surface"].clear()
+    got = checked(desk, SURFACE, driven())
+    assert got["status"] == "failed" and "살아 있지" in got["why"], got
+    assert bool(desk[0]["surface"]) is (gone_at == 2)   # never sampled once the app was found gone
 
 
 def test_a_handle_naming_another_class_than_the_driver_read_is_never_bound(monkeypatch):
@@ -489,7 +507,8 @@ def test_a_window_check_reads_only_through_the_window_and_a_composition_only_the
 
 def test_no_capture_helper_leaves_a_capture_check_pending(held, desk):
     got = checked(desk, SURFACE, driven(), exe=None)
-    assert got == {"status": "pending", "why": "도우미가 없다"} and desk[0] == {"window": [], "surface": [], "bound": [], "ended": ["fixture1"]}
+    assert got == {"status": "pending", "why": "도우미가 없다"} and desk[0] == {
+        "window": [], "surface": [], "bound": [{"hwnd": 101, "pid": 7, "class": "App"}], "ended": ["fixture1"]}
 
 
 def test_the_critic_judges_a_capture_against_its_sentence_and_the_page(held, desk, monkeypatch):

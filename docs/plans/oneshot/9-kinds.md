@@ -579,10 +579,11 @@ order:
    `PrintWindow`.
 3. While both still run, the fixture's binding is proven, then what the
    check observes is read: the app's report, or a capture by the helper
-   (`tool/owner_capture.cs`). After a report is read, the app's main window
-   as the driver last read it must still be bound to a live process of the
-   app's job. That process is whichever member owns the window. An app that
-   crashed before the read is no pass.
+   (`tool/owner_capture.cs`). The app's main window as the driver last read
+   it must still be bound to a live process of the app's job. That process
+   is whichever member owns the window. It is checked after a report is
+   read, and before and after a window or composition capture. An app that
+   crashed meanwhile is no pass, even if a child of it still draws.
 
 The server builds the helper with the .NET Framework's `csc` against the
 system's WinMetadata, which every Windows 10 and 11 carries, and starts it in
