@@ -282,6 +282,30 @@ def test_a_container_that_only_scrolls_leaves_its_read_not_whole_while_it_scroll
     assert oneshot_desktop_look.partial(start, {w["hwnd"] for w in start["windows"]}) == (rows == 40)
 
 
+def test_a_view_counts_as_whole_only_not_scrollable_both_ways_at_a_full_size():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    rule = "if ($patterns -contains \"Scroll\" -and" + \
+        script.split("if ($patterns -contains \"Scroll\" -and", 1)[1].split("  $script:nodes += $node", 1)[0]
+    # The rule's own text over stand-ins answering the four scroll properties: (vertical, its size, horizontal,
+    # its size), `none` unsupplied. Only the first holds its view whole.
+    cases = ["$false 100 $false 100", "$false 25 $false 100", "$true 25 $false 100", "$false 100 $false 99.5",
+             "none 100 $false 100", "$false none $false 100", "'no' 100 $false 100"]
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
+                            "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes\n"
+                            "$P = [System.Windows.Automation.ScrollPattern]\n"
+                            "$patterns = @('Scroll')\n"
+                            "function Case($vc, $vs, $hc, $hs) {\n"
+                            "  $element = [pscustomobject]@{ k = @{ $P::VerticallyScrollableProperty.Id = $vc; "
+                            "$P::VerticalViewSizeProperty.Id = $vs; $P::HorizontallyScrollableProperty.Id = $hc; "
+                            "$P::HorizontalViewSizeProperty.Id = $hs } }\n"
+                            "  $element | Add-Member ScriptMethod GetCurrentPropertyValue { param($p, $d) "
+                            "$x = $this.k[$p.Id]; if ($x -eq 'none') { [System.Windows.Automation.AutomationElement]::NotSupported } "
+                            "elseif ($x -is [int]) { [double]$x } else { $x } }\n"
+                            "  $node = [ordered]@{}\n  " + rule + "\n  if ($node.Contains('unread')) { 'partial' } else { 'whole' }\n}\n"
+                            + "\n".join(f"Case {c}" for c in cases)], capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["whole"] + ["partial"] * (len(cases) - 1), probe
+
+
 WPF_OWNED = """Add-Type -AssemblyName PresentationFramework
 $A = [System.Windows.Automation.AutomationProperties]
 $w = New-Object System.Windows.Window

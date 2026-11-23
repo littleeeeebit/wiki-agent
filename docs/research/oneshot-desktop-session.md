@@ -266,11 +266,13 @@ The checks read the tree as the Android loop reads its hierarchy:
   S6's blocks. Absence counts only after every screen and state in that set
   was reached and read; one the look could not reach holds the check rather
   than passing it.
-- A virtualized container is read to its verified end before an absence in it
-  counts: through `ItemContainer.FindItemByProperty` and
-  `VirtualizedItem.Realize` where the container supports them, otherwise by its
-  `Scroll` pattern until the scroll position reports the end, reading each
-  viewport. A container whose end cannot be verified holds the check.
+- An absence in a container counts only once the read has verifiably reached
+  the container's end. The read neither realizes nor scrolls. Where the
+  container supports `ItemContainer`, `FindItemByProperty` counts its items,
+  realized or not, against the elements the walk read. A container that only
+  scrolls counts as read whole only when its view holds everything: both
+  directions not scrollable, with a view size of 100 percent. Any other
+  container whose end cannot be verified holds the check.
 
 ### Cleanup and its proof
 

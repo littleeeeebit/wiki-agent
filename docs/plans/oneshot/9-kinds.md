@@ -357,7 +357,8 @@ source, and the server assigns it:
     same container already had. A container that scrolls but offers no
     item enumeration leaves its window's read not whole, because the driver
     does not scroll and its end is unverified. Its view counts as holding
-    everything only when both directions are supplied as not scrollable.
+    everything only when both directions are supplied as not scrollable,
+    each with a view size of 100 percent.
     An element's id or name that is not
     whole UTF-16 leaves its window's read not whole. The driver reads every element's automation id again
     after its value and compares the two ordinally. One that changed (a
