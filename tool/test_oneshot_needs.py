@@ -111,7 +111,7 @@ def test_every_design_prompt_asks_for_needs_in_the_shape_the_server_takes(prompt
     # value never in the agent's environment, only the gate's, and masked in what the agent sees.
     saved_need = [("N1", {"id": "N1", "env": "ANTHROPIC_API_KEY"})]
     with patch.object(needs, "secret_needs", lambda s: saved_need), \
-            patch.object(needs, "_given", lambda s: [("N1", "ANTHROPIC_API_KEY", "v" * 20)]), \
+            patch.object(needs, "_given", lambda s, strict=False: [("N1", "ANTHROPIC_API_KEY", "v" * 20)]), \
             patch.object(needs, "missing", lambda s: []):
         assert "ANTHROPIC_API_KEY" in needs.unready({"oneshot": {}})
         env, hide = needs.agent({"oneshot": {"run": 1}, "repo": "budget"})
