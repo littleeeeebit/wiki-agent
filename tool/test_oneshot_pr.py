@@ -603,7 +603,7 @@ def releasing(android, tmp_path, monkeypatch):
     git(tree, "commit", "-m", "release table")
     seen, built = {"package": DEVICE["package"], "code": 1001, "name": "0.1.1", "abis": [], "debuggable": False}, []
 
-    def build(src, android, version, kit, halt):
+    def build(src, android, version, kit, halt, drop=frozenset()):
         assert release._stop.halt is halt   # under the stop's scope, the checkout's clone before it included
         built.append((git(src, "rev-parse", "HEAD"), git(src, "status", "--porcelain"), version, android["artifact"]))
         return src / android["artifact"]
@@ -672,7 +672,7 @@ def test_s8_refuses_an_installer_table_for_an_app_with_no_pc_app(releasing):
 def test_a_stop_during_the_release_build_ends_the_check_and_still_removes_its_checkout(releasing, monkeypatch):
     tree = releasing[0]
 
-    def stopped(src, android, version, kit, halt):
+    def stopped(src, android, version, kit, halt, drop=frozenset()):
         raise release.Stopped("멈췄다")
 
     monkeypatch.setattr(release, "build", stopped)
@@ -698,7 +698,7 @@ def test_s8_sends_back_a_missing_or_wrong_release_table_and_a_failed_release_bui
                                                                        threading.Event())
     git(tree, "revert", "--no-edit", "HEAD")
 
-    def failed(src, *a):
+    def failed(src, *a, **k):
         raise release.BuildFailed("빌드 실패 — 1 로 끝났다")
 
     monkeypatch.setattr(release, "build", failed)

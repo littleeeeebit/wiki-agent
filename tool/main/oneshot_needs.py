@@ -471,11 +471,11 @@ def asset(file: Path, spec: dict, hide: dict | None = None, packed: bool = False
     from . import release_desktop
 
     hide = agent(spec)[1] if hide is None else hide
-    if not hide:
+    if not hide and not packed:   # an installer's stream is read whole even with nothing to look for
         return ""
 
     def held(b: bytes) -> set[str]:   # UTF-16 pairs may start at an odd byte: read from the first and the second
-        return {n for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)}
+        return {n for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)} if hide else set()
 
     try:
         parts = [file.read_bytes()]   # every byte that goes up, signing blocks and gaps included
@@ -484,7 +484,7 @@ def asset(file: Path, spec: dict, hide: dict | None = None, packed: bool = False
                 parts += [b for i in z.infolist() for b in (i.filename.encode(), z.read(i))]
         found = set().union(*map(held, parts))
         if packed:   # a value split across two chunks is whole in the window that carries the last one's tail
-            reach, tail = WIDEST * max(len(s) for v in hide for s in (v, folded(v))) + 16, b""
+            reach, tail = WIDEST * max((len(s) for v in hide for s in (v, folded(v))), default=0) + 16, b""
             for chunk in release_desktop.unpacked(parts[0]):
                 found |= held(tail + chunk)
                 tail = (tail + chunk)[-reach:]

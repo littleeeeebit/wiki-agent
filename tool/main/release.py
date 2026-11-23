@@ -408,11 +408,12 @@ def output(path: Path, kind: dict, release: str, key: str = "artifact") -> Path:
     return file
 
 
-def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Event, read=None) -> Path:
+def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Event, read=None, drop=frozenset()):
     """The adapter's build command of one kind (`android`, or `desktop` with `read`) in the attempt's checkout,
     given `RELEASE_VERSION`, Android's `RELEASE_VERSION_CODE` and `RELEASE_TAURI_CONFIG`, an overlay beside the
     checkout a Tauri build passes as one more `-c` (`TAURI_CONFIG` cannot: the CLI replaces it with its own `-c`
-    values). No source file is edited. `read(file)` refuses an artifact its kind does not make; else it is an APK."""
+    values), and without the variables `drop` names in upper case. No source file is edited. `read(file)` refuses
+    an artifact its kind does not make; else it is an APK. Gives the artifact's path."""
 
     made = [k for k in ("artifact", "exe") if k in android]
     for k in made:   # a file the commit carries is not this build's output
@@ -422,8 +423,8 @@ def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Ev
     # Android's only. Off, or a target's `autoIncrementVersionCode` would replace the code the version maps to.
     codes = {} if "exe" in android else {"versionCode": code(release), "autoIncrementVersionCode": False}
     overlay.write_text(json.dumps({"version": release, "bundle": {"android": codes} if codes else {}}), encoding="utf-8")
-    env = {**environment(kit), "RELEASE_VERSION": release, "RELEASE_TAURI_CONFIG": str(overlay),
-           **({"RELEASE_VERSION_CODE": str(codes["versionCode"])} if codes else {})}
+    env = {**{k: v for k, v in environment(kit).items() if k.upper() not in drop}, "RELEASE_VERSION": release,
+           "RELEASE_TAURI_CONFIG": str(overlay), **({"RELEASE_VERSION_CODE": str(codes["versionCode"])} if codes else {})}
     exited, out, cut = specs.gate(android["build"], path, halt, env=env, timeout=BUILD_SECONDS, idle=QUIET_SECONDS)
     if exited != 0:
         tail = errorlog.redact("\n".join(out.splitlines()[-40:]))

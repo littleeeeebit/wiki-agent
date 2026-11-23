@@ -12,6 +12,7 @@ nothing goes out.
 import os
 import shutil
 import struct
+import threading
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -60,10 +61,10 @@ def pc(finished, resources, tmp_path, monkeypatch):  # noqa: F811 — the import
     monkeypatch.setattr(release, "environment", lambda kit: {})
     built = []
 
-    def build(src, kind, version, kit, halt, read=None):
+    def build(src, kind, version, kit, halt, read=None, drop=frozenset()):
         assert release._stop.halt is halt   # under the stop's scope
         built.append((git(src, "rev-parse", "HEAD"), git(src, "status", "--porcelain"), version, kind["artifact"],
-                      kind["build"]))
+                      kind["build"], drop))
         if "exe" not in kind:   # Android's, as `test_oneshot_pr.releasing` stands it in
             return src / kind["artifact"]
         (folder := tmp_path / f"build-{len(built)}").mkdir()
@@ -127,7 +128,7 @@ def test_the_release_tables_installer_goes_alone_to_the_prerelease_and_the_run_w
     head = o()["final_head"]
     # Built once, from a clean checkout of the gate's HEAD, with the version a press would publish next, its
     # program the confirmed tool's checked path.
-    [(at, status, version, artifact, command)] = built
+    [(at, status, version, artifact, command, _)] = built
     assert (at, status, version, artifact) == (head, "", "0.1.1", "nsis/r_{version}_x64-setup.exe")
     assert command != "python tauri.py" and Path(shutil.which("python")).name.lower() in command.lower()
     assert list((release.WORK / tree.name).iterdir()) == []   # the checkout went with the check
@@ -156,7 +157,8 @@ def test_the_release_tables_installer_goes_alone_to_the_prerelease_and_the_run_w
 
 def test_a_pc_app_with_no_installer_table_still_finishes_its_gate_and_says_why(pc):
     tree, _, github, built = pc
-    readme(tree)   # no `[release]`, and no Tauri config: another stack
+    oneshot_spec.saved("budget", oneshot={"stack": [{**o()["stack"][0], "choice": "WinUI 3"}]})   # another stack
+    readme(tree)   # so no `[release]`
     with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
         check(tree, answer(report()))()
     assert o()["final_head"] and not built and not github.calls
@@ -169,16 +171,17 @@ def test_a_pc_app_with_no_installer_table_still_finishes_its_gate_and_says_why(p
     ("build", "`[release.desktop]` 의 정식 빌드 — 빌드 실패"),
     ("version", "`[release.desktop]` 의 정식 빌드가 배포 검사에 걸린다 — 설치 파일 버전"),
     ("exe", "앱 EXE 와 다르다"),
-    ("tauri", "`[release.desktop]` 가 없다 — Tauri 앱이다"),
+    ("tauri", "`[release.desktop]` 가 없다 — 확정한 PC 앱 스택이 Tauri 다"),
     ("tool", "`cargo` 는 확정한 도구도 작업트리 안의 파일도 아니거나"),
+    ("chain", "`build` 는 평범한 명령을 ` && ` 로만 잇는다"),
     ("source", "빌드가 체크아웃의 커밋된 파일을 바꿨다")])
 def test_a_release_table_whose_build_fails_its_checks_sends_the_readme_turn_back(pc, monkeypatch, wrong, said):
     tree, sent, github, _ = pc
-    if wrong == "tauri":   # a Tauri app's README turn that left its table out
-        approved(tree, ("src-tauri/tauri.conf.json", '{"version": "0.1.0"}'))
+    if wrong == "tauri":   # the confirmed stack is Tauri, and the README turn left its table out
         readme(tree)
     else:
-        tabled(tree, DESKTOP.replace('"python tauri.py"', '"cargo tauri build"') if wrong == "tool" else DESKTOP)
+        tabled(tree, DESKTOP.replace('"python tauri.py"', {"tool": '"cargo tauri build"', "chain": '"python a.py; cargo b"'}
+                                     .get(wrong, '"python tauri.py"')))
     real = release.build
     if wrong == "source":   # a build that rewrites a committed file
         monkeypatch.setattr(release, "build", lambda src, *a, **k: (src / "version.json").write_text("{}")
@@ -228,7 +231,7 @@ def mixed(tree, monkeypatch):
 def test_with_an_android_app_both_files_go_to_one_prerelease_and_a_resumed_upload_sends_neither_again(pc, monkeypatch):
     tree, sent, github, built = pc
     mixed(tree, monkeypatch)
-    write(tree, "app/build.gradle.kts", "android { /* versionName from RELEASE_VERSION */ }\n")   # its version wiring
+    write(tree, "app/build.gradle.kts", 'android {}\nval versionName = System.getenv("RELEASE_VERSION")\n')   # its wiring
     tabled(tree, DESKTOP, ANDROID)
     with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
         check(tree, answer(report()))()
@@ -247,25 +250,30 @@ def test_with_an_android_app_both_files_go_to_one_prerelease_and_a_resumed_uploa
     assert "## APK" in body and "## 설치 파일" in body
 
 
-@pytest.mark.parametrize("android", [False, True])
-def test_an_app_file_changed_after_the_approved_build_is_refused(pc, monkeypatch, android):
-    # With an Android app among the kinds, only its Gradle scripts are added to what S8 may change.
+@pytest.mark.parametrize("android, name, text", [
+    (False, "app.py", "a change R3 never saw\n"),
+    (True, "app.py", "a change R3 never saw\n"),
+    # With an Android app among the kinds, only its module script's version lines are added to what S8 may change.
+    (True, "app/build.gradle.kts", 'android {}\ndependencies { implementation("x:y:1") }\n'),
+    (True, "build.gradle.kts", "// versionName, in a script outside the Android module\n"),
+    (False, "app-version.json", '{"version": "0.1.0", "server": "https://example.invalid"}')])   # more than the version
+def test_an_app_file_changed_after_the_approved_build_is_refused(pc, monkeypatch, android, name, text):
     tree, sent, _, built = pc
     if android:
         mixed(tree, monkeypatch)
-    write(tree, "app.py", "a change R3 never saw\n")
-    tabled(tree, DESKTOP, *([ANDROID] if android else []))
+    write(tree, name, text)
+    tabled(tree, DESKTOP.replace('"version.json"', '"app-version.json"'), *([ANDROID] if android else []))
     check(tree, answer(report()))()
-    assert "R3 가 승인한 PC 앱 빌드 뒤에 앱 파일이 바뀌었다" in sent[-1][2] and ": app.py" in sent[-1][2]
-    assert ("Gradle 빌드 스크립트" in sent[-1][2]) is android and "final_head" not in o() and not built
+    assert "R3 가 승인한 PC 앱 빌드 뒤에 앱 파일이 바뀌었다" in sent[-1][2] and f": {name}" in sent[-1][2]
+    assert ("`app/build.gradle.kts`" in sent[-1][2]) is android and "final_head" not in o() and not built
+    assert "`app/build.gradle.kts`, where every line it changes names the version" in oneshot_pr.readme_text(spec()) \
+        if android else "a version file it adds holding the version alone." in oneshot_pr.readme_text(spec())
 
 
 def test_a_version_file_the_readme_turn_adds_is_s8s_own(pc):
     tree, _, _, built = pc
-    tabled(tree, DESKTOP.replace('"version.json"', '"app-version.json"'))
     write(tree, "app-version.json", '{"version": "0.1.0"}')
-    git(tree, "add", "-A")
-    git(tree, "commit", "-m", "the version file")
+    tabled(tree, DESKTOP.replace('"version.json"', '"app-version.json"'))
     with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
         check(tree, answer(report()))()
     assert o()["final_head"] and len(built) == 1 and o()["installer"]["url"]
@@ -335,6 +343,39 @@ def test_a_secret_inside_the_packed_installer_is_found_across_chunks(tmp_path, m
     (tmp_path / "cut").mkdir()
     cut = nsis(tmp_path / "cut", tail=struct.pack("<I", 100) + b"short")
     assert "올릴 파일을 읽지 못해" in oneshot_needs.asset(cut, {}, {value: "N1"}, packed=True)   # a stream cut short
+    assert "올릴 파일을 읽지 못해" in oneshot_needs.asset(cut, {}, {}, packed=True)   # with no secret to look for too
+
+
+def test_a_copy_the_freezes_scan_flags_is_not_kept(pc, tmp_path):
+    secret = "s3cr3t-value-0123456789"
+    installer = nsis(tmp_path, files=(("helper.exe", b"MZ helper " + rd.MARKER + rd.NSIS),
+                                      ("cfg.json", secret.encode()), ("r.exe", b"MZ app")))
+    copy = oneshot_pr.froze(spec(), "h" * 40, {secret: "N1"}, "installer", installer)
+    assert copy["scan"].startswith("비밀 값 [N1]") and "path" not in copy
+    assert not list(oneshot_pr.staging(spec(), "installer").rglob("*.exe"))
+    oneshot_spec.saved("budget", oneshot={"final_head": "h" * 40, "installer_frozen": copy})
+    assert oneshot_pr._released(spec(), "installer", lambda: pytest.fail("nothing goes up"), "t")["error"] == copy["scan"]
+
+
+def test_the_release_build_runs_without_the_owners_secrets(pc, monkeypatch):
+    tree, _, _, built = pc
+    tabled(tree, DESKTOP)
+    monkeypatch.setattr(oneshot_needs, "secret_needs", lambda spec: [("N1", {"env": "budget_key"})])
+    monkeypatch.setenv("RENAMED_COPY", "x-s3cr3t-value-0123456789-x")   # the value under another name
+    assert oneshot_pr.release_checked(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event(), {},
+                                      {"s3cr3t-value-0123456789": "[N1]"}) == ""
+    assert {"BUDGET_KEY", "RENAMED_COPY"} <= built[-1][5]
+
+
+def test_release_build_leaves_out_the_variables_it_is_told_to(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(release, "environment", lambda kit: {"BUDGET_KEY": "k", "PATH": "p"})
+    monkeypatch.setattr(release.specs, "gate", lambda cmd, path, halt, env, **k: seen.update(env) or (0, "", None))
+    (tmp_path / "src").mkdir()
+    with pytest.raises(release.BuildFailed, match="만들지 않았다"):   # this stand-in builds nothing
+        release.build(tmp_path / "src", {"build": "b", "artifact": "a.apk"}, "0.1.1", {}, threading.Event(),
+                      drop=frozenset({"BUDGET_KEY"}))
+    assert "BUDGET_KEY" not in seen and seen["PATH"] == "p" and seen["RELEASE_VERSION"] == "0.1.1"
 
 
 def test_a_refusal_before_the_upload_keeps_no_frozen_copy(pc, monkeypatch):

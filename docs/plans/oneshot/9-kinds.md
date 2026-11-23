@@ -759,13 +759,16 @@ version a press would publish next. It checks the installer as a release
 does (`release_desktop`): its version, product name and publisher, what it
 registers with Windows, and that it holds the very app EXE the build made. A
 table that fails sends the README turn back. The installer that passes is
-frozen with its HEAD and digest, as an APK is. A Tauri app, one whose tree
-holds a Tauri config, must write the table. A PC app on another stack writes
-none and gets no installer; the body says why. The owner chose this on
-2026-11-23. Each kind's release build starts only the confirmed tools or
-the checkout's own files, as the gate's commands do. It must leave the
-checkout's committed files as they were, so one kind's build never changes
-the source of the next.
+frozen with its HEAD and digest, as an APK is. A Tauri app, one whose
+confirmed PC build stack names Tauri, must write the table. A PC app on
+another stack writes none and gets no installer; the body says why. The
+owner chose this on 2026-11-23. Each kind's release build is plain commands
+joined by `&&` that start only the confirmed tools or the checkout's own
+files, as the gate's commands do. It runs without any variable a secret need
+names, and without any variable holding a secret's value, so a secret can
+reach what ships only from the source, which the commit scan reads. It must
+leave the checkout's committed files as they were, so one kind's build never
+changes the source of the next.
 
 Before an upload, a secret scan reads the installer's whole packed stream:
 its script and every file it installs, whatever else the file also is. The
@@ -774,10 +777,13 @@ assets: the installer, the APK, or both. Each is reused only for the same
 HEAD and digest, and an asset already there with the same bytes is not sent
 again. A release of that tag that is not a draft prerelease, read before
 each file goes up, gets nothing more. A failed copy or upload never blocks
-the pull request; the stop and the body say why. Since the build R3
+the pull request; the stop and the body say why. A copy the freeze's scan
+flags is removed at once, and its record keeps why. Since the build R3
 approved, S8 may change only the README, `.wiki/`, the CI workflows and a
-version file it adds. With an Android app among the kinds, its Gradle build
-scripts may change too, where its version is wired.
+version file it adds holding the version alone. With an Android app among
+the kinds, its module build script may change too, where its version is
+wired, as long as every line changed names the version. The README turn is
+told this before it starts.
 
 S1's `ci` choice is kept. When CI is chosen and `desktop` is among the kinds,
 the workflow job runs on `windows-latest`:
