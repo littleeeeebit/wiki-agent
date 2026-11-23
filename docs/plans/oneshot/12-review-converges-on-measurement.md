@@ -161,7 +161,9 @@ Every build turn ends on the measurement contract
 - `inputs`: what only the owner can give, each a secret or a plain value,
   with its guide.
 - `during`: what the owner does while it runs, such as finishing a Google
-  sign-in.
+  sign-in. What the script prints shows on the running measurement's screen
+  as it comes, masked, in a `측정 로그` box, so a step can have the owner read
+  a device code there; nothing else it writes is in view before it ends.
 - `metrics`: each with its requirements, the design's outside calls it
   reaches, and its threshold.
 

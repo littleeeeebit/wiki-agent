@@ -247,6 +247,23 @@ def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(a
     assert "uote" not in found and "[K]" in found
 
 
+def test_the_scripts_output_reaches_the_screen_as_it_runs_masked_and_goes_when_it_ends(at_measure):
+    given()
+    from main import runtime
+    logs = []
+
+    def gate(*a, **k):   # the script prints a sign-in code the owner must read while it waits for them
+        runtime.gate_output.get()(f"기기 코드: AB-CD {KEY}\n".encode())
+        logs.append(measure.shown(oneshot_spec.spec_of("budget"))["measure"]["log"])
+        runtime.gate_output.get()(KEY.encode()[-6:] + b" cut\n" + b"y" * 4100)   # a 4 KB tail, its first line cut
+        logs.append(measure.LOGS["budget"])
+        return 1, "", ""
+    with patch.object(measure.specs, "gate", gate):
+        measure.measure("budget")
+    assert "AB-CD" in logs[0] and KEY not in logs[0] and KEY[-6:] not in logs[1] and logs[1].startswith("y")
+    assert "budget" not in measure.LOGS and measure.shown(oneshot_spec.spec_of("budget"))["measure"]["log"] == ""
+
+
 def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_never_text(at_measure):
     tree, _ = at_measure
     head = o()["built_head"]

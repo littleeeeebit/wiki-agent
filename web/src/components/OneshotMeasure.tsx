@@ -84,9 +84,11 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
   )
 }
 
-/** The running measurement, shown with the track: the owner's `during` steps stay in view, with a stop. */
+/** The running measurement, shown with the track: the owner's `during` steps stay in view, with a stop, and the
+ *  script's output as it comes (masked by the server), which a step may ask them to read, such as a sign-in code. */
 function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; busy: boolean; act: Act }) {
   const during = view.measure?.plan?.during ?? []
+  const log = view.working === 'measure' ? view.measure?.log : ''
   return (
     <section aria-label="실측 중" className={BOX}>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -94,6 +96,13 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
         {view.working === 'measure' && <Btn disabled={busy} onClick={() => void act(() => api.measureStop(repo))}>멈춤</Btn>}
       </div>
       {view.working === 'measure' && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
+      {view.working === 'measure' && (
+        <section aria-label="측정 로그" className="flex flex-col gap-1.5">
+          <p className="font-medium">측정 로그</p>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted px-3 py-2 font-mono text-[12px]">
+            {log || '아직 스크립트가 낸 출력이 없다.'}</pre>
+        </section>
+      )}
     </section>
   )
 }

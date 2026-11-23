@@ -430,7 +430,7 @@ def measure(repo: str) -> None:
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}, None
         try:
             with served(oneshot_build.run_as(plan["serve"]["command"], o, tree), tree, env, plan["serve"]["health"],
-                        plan["serve"]["seconds"], halt, raw / "serve.log", hide):
+                        plan["serve"]["seconds"], halt, raw / "serve.log", hide), watched(repo, hide):
                 limit = plan["measure"]["minutes"] * 60 + 300
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
                     "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
@@ -778,7 +778,28 @@ def shown(spec: dict) -> dict:
     inputs = [{**x, "given": has(spec, x)} for x in (plan or {}).get("inputs") or []]
     runs = [{k: v for k, v in m.items() if k != "folder"} for m in o.get("measures") or []]
     return {"measure": {"plan": plan and {**plan, "inputs": inputs}, "error": error, "runs": runs,
-                        "pr": o.get("pr1"), "head": o["built_head"]}}
+                        "pr": o.get("pr1"), "head": o["built_head"], "log": LOGS.get(spec["repo"], "")}}
+
+
+LOGS: dict[str, str] = {}   # each running measurement's output so far, masked, for the screen
+
+
+@contextmanager
+def watched(repo: str, hide: dict | None):
+    """The measuring script's output as it comes, masked, for the owner's screen (`shown`): a `during` step may
+    ask them to read what it prints, such as a sign-in code. Only the last 4 KB arrive: a first line cut short
+    is left out, since a value it ends on could not be masked. Gone when the run ends; its record keeps the end."""
+
+    def seen(tail: bytes) -> None:
+        text = tail.decode("utf-8", "replace")
+        LOGS[repo] = masked(text.partition("\n")[2] if len(tail) >= 4096 else text, hide)
+
+    token = runtime.gate_output.set(seen)
+    try:
+        yield
+    finally:
+        runtime.gate_output.reset(token)
+        LOGS.pop(repo, None)
 
 
 oneshot_spec.VIEWS.append(shown)

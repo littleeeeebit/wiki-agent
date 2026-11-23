@@ -132,7 +132,7 @@ export type MeasureRun = {
 export type MeasureView = {
   plan: { serve: { command: string; health: string }; measure: { command: string; minutes: number }; inputs: MeasureInput[]
           during: Step[]; metrics: Metric[]; clips: boolean } | null
-  error: string; runs: MeasureRun[]; pr: { number: number; url: string } | null; head: string
+  error: string; runs: MeasureRun[]; pr: { number: number; url: string } | null; head: string; log?: string
 }
 /** An area the builder and the review could not both meet (`oneshot_review.conflicted`). */
 export type Conflict = {
