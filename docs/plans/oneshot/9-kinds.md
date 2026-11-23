@@ -358,7 +358,10 @@ source, and the server assigns it:
     item enumeration leaves its window's read not whole, because the driver
     does not scroll and its end is unverified. Its view counts as holding
     everything only when both directions are supplied as not scrollable,
-    each with a view size of 100 percent and the position `NoScroll`.
+    each with a view size of 100 percent and the position `NoScroll`. An
+    item container's items enumerate only the direction they run in, so one
+    that scrolls owes the horizontal direction proven the same way. Until
+    then its unread count is unknown and the read is not whole.
     An element's id or name that is not
     whole UTF-16 leaves its window's read not whole. The driver reads every element's automation id again
     after its value and compares the two ordinally. One that changed (a

@@ -270,11 +270,13 @@ The checks read the tree as the Android loop reads its hierarchy:
 - An absence in a container counts only once the read has verifiably reached
   the container's end. The read neither realizes nor scrolls. Where the
   container supports `ItemContainer`, `FindItemByProperty` counts its items,
-  realized or not, against the elements the walk read. A container that only
-  scrolls counts as read whole only when its view holds everything: both
-  directions not scrollable, with a view size of 100 percent and the
-  position `NoScroll`. Any other
-  container whose end cannot be verified holds the check.
+  realized or not, against the elements the walk read. Its horizontal view
+  must also hold everything, because its items enumerate only the direction
+  they run in. A container that only scrolls counts as read whole only when
+  its view holds everything in both directions. A view holds everything in a
+  direction that is not scrollable, with a view size of 100 percent and the
+  position `NoScroll`. Any other container whose end cannot be verified
+  holds the check.
 
 ### Cleanup and its proof
 

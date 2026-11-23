@@ -176,7 +176,7 @@ function Items([string]$at) {   # each open item container's items, realized or 
     }
   }
   for ($n = 0; $n -lt $script:lists.Count; $n++) {
-    $element, $node = $script:lists[$n]
+    $element, $node, $clipped = $script:lists[$n]
     Enter "items $at $n"
     $set = $seen[$n]
     $node.items, $node.unread = $null, $null
@@ -192,7 +192,8 @@ function Items([string]$at) {   # each open item container's items, realized or 
           try { $r = Rid $item; if (-not $mine.Add($r) -or -not ($set -and $set.Contains($r))) { $unread++ } } catch { $unread++ }
         }
       } while ($item -and $count -le $MAX_ITEMS)
-      if (-not $item) { $node.items, $node.unread = $count, $unread }
+      # Its items all counted, unless what they hold across its view is unverified: then how many is unknown.
+      if (-not $item) { $node.items, $node.unread = $count, $(if ($clipped) { $null } else { $unread }) }
     } catch { }
   }
 }
@@ -201,6 +202,22 @@ $STRICT = New-Object System.Text.UTF8Encoding($false, $true)
 function Whole($text) {   # whole UTF-16, so the report's UTF-8 carries it as read, never with a replacement
   if ($null -eq $text) { return $true }
   try { [void]$STRICT.GetByteCount([string]$text); return $true } catch { return $false }
+}
+
+function Full($element, [string[]]$ways) {   # each direction named proven to hold its whole view
+  # Supplied, without defaults, as not scrollable, with a view of 100 percent and at the position `NoScroll`: any
+  # of them contradicting the others, or unread, leaves that direction's end unverified.
+  $P = [System.Windows.Automation.ScrollPattern]
+  try {
+    foreach ($w in $ways) {
+      $can = $element.GetCurrentPropertyValue($P::("${w}lyScrollableProperty"), $true)
+      $size = $element.GetCurrentPropertyValue($P::("${w}ViewSizeProperty"), $true)
+      $at = $element.GetCurrentPropertyValue($P::("${w}ScrollPercentProperty"), $true)
+      if (-not ($can -is [bool] -and -not $can -and $size -is [double] -and $size -eq 100 -and
+                $at -is [double] -and $at -eq $P::NoScroll)) { return $false }
+    }
+    $true
+  } catch { $false }
 }
 
 function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0, [bool]$scrolled = $false) {
@@ -267,32 +284,17 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
         @([System.Windows.Automation.ExpandCollapseState]::Collapsed, [System.Windows.Automation.ExpandCollapseState]::LeafNode))
     } catch { $open = $true }   # its state unread: its items are owed
   }
+  # The driver does not scroll, so what lies past a container's view in a direction is read only where that
+  # direction is proven to hold it all. An item container's items enumerate the direction they run in, never
+  # what each holds past the view across it: so it owes the horizontal direction, a container without one both.
+  $ways = if ($patterns -notcontains "Scroll") { @() } elseif ($patterns -contains "ItemContainer") { @("Horizontal") } else { @("Vertical", "Horizontal") }
+  $clipped = $ways.Count -gt 0 -and -not (Full $element $ways)
   $outer = $script:under
   if ($open -and ($patterns -contains "ItemContainer" -or $node.type -eq "TreeItem")) {
-    $script:lists += , @($element, $node)
+    $script:lists += , @($element, $node, $clipped)
     $script:under = @($outer) + ($script:lists.Count - 1)   # its children are walked inside it
   }
-  if ($patterns -contains "Scroll" -and $patterns -notcontains "ItemContainer") {
-    # No enumeration of what lies past its view, which a virtualized list never realizes: the driver does not
-    # scroll, so a container that scrolls has an unverified end and its read is not whole. Only both directions
-    # supplied, without defaults, as not scrollable, with a view of 100 percent and at the position `NoScroll`,
-    # prove its view holds it all: any of them contradicting the others leaves its end unverified.
-    $more = $true
-    try {
-      $P = [System.Windows.Automation.ScrollPattern]
-      $full = $true
-      foreach ($d in @(@($P::VerticallyScrollableProperty, $P::VerticalViewSizeProperty, $P::VerticalScrollPercentProperty),
-                       @($P::HorizontallyScrollableProperty, $P::HorizontalViewSizeProperty, $P::HorizontalScrollPercentProperty))) {
-        $can = $element.GetCurrentPropertyValue($d[0], $true)
-        $size = $element.GetCurrentPropertyValue($d[1], $true)
-        $at = $element.GetCurrentPropertyValue($d[2], $true)
-        $full = $full -and $can -is [bool] -and -not $can -and $size -is [double] -and $size -eq 100 -and
-          $at -is [double] -and $at -eq [System.Windows.Automation.ScrollPattern]::NoScroll
-      }
-      $more = -not $full
-    } catch { }
-    if ($more) { $node.items, $node.unread = $null, $null }
-  }
+  if ($clipped) { $node.items, $node.unread = $null, $null }   # an item container's audit keeps it so
   $script:nodes += $node
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $inner = $scrolled -or $patterns -contains "Scroll"

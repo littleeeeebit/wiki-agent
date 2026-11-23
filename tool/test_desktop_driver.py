@@ -282,10 +282,27 @@ def test_a_container_that_only_scrolls_leaves_its_read_not_whole_while_it_scroll
     assert oneshot_desktop_look.partial(start, {w["hwnd"] for w in start["windows"]}) == (rows == 40)
 
 
+def audited(script: str) -> str:
+    """`Rid` and `Items` of the driver's own text, with stand-ins: `El <id>`, an element of that runtime id, and
+    `List <elements>`, a container whose ItemContainer enumerates them in order."""
+
+    rid = "function Rid(" + script.split("function Rid(", 1)[1].split("\nfunction ", 1)[0]
+    items = "function Items(" + script.split("function Items(", 1)[1].split("\nfunction ", 1)[0]
+    return ("Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes\n" + rid + "\n" + items + "\n"
+            "function Enter($what) { }\n$MAX_ITEMS = 100\n"
+            "function El($id) { $p = [pscustomobject]@{}; $p | Add-Member NoteProperty k $id; "
+            "$p | Add-Member ScriptMethod GetRuntimeId { ,@($this.k) }; $p }\n"
+            "function List([object[]]$held) { $c = [pscustomobject]@{ held = $held }; "
+            "$c | Add-Member ScriptMethod FindItemByProperty { param($after, $p, $v) "
+            "$i = if ($null -eq $after) { 0 } else { [array]::IndexOf($this.held, $after) + 1 }; "
+            "if ($i -lt $this.held.Count) { $this.held[$i] } else { $null } }; "
+            "$e = [pscustomobject]@{ c = $c }; $e | Add-Member ScriptMethod GetCurrentPattern "
+            "{ param($x) $this.c }; $e }\n")
+
+
 def test_a_view_counts_as_whole_only_not_scrollable_both_ways_at_a_full_size():
     script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
-    rule = "if ($patterns -contains \"Scroll\" -and" + \
-        script.split("if ($patterns -contains \"Scroll\" -and", 1)[1].split("  $script:nodes += $node", 1)[0]
+    rule = "function Full(" + script.split("function Full(", 1)[1].split("\nfunction ", 1)[0]
     # The rule's own text over stand-ins answering the six scroll properties: (vertically scrollable, its view
     # size, its position, then the same horizontally), `none` unsupplied. Each later case breaks one property of
     # the first, the only one whose view holds it all. `(-1)`: a bare -1 in argument mode is the string "-1".
@@ -307,9 +324,34 @@ def test_a_view_counts_as_whole_only_not_scrollable_both_ways_at_a_full_size():
                             "$x = $this.k[$p.Id]; if ($x -is [string] -and $x -eq 'none') "
                             "{ [System.Windows.Automation.AutomationElement]::NotSupported } "
                             "elseif ($x -is [int]) { [double]$x } else { $x } }\n"
-                            "  $node = [ordered]@{}\n  " + rule + "\n  if ($node.Contains('unread')) { 'partial' } else { 'whole' }\n}\n"
+                            "  if (Full $element @('Vertical', 'Horizontal')) { 'whole' } else { 'partial' }\n}\n"
+                            + rule + "\n"
                             + "\n".join(f"Case {c}" for c in cases)], capture_output=True, text=True, timeout=60)
     assert probe.stdout.split() == ["whole"] + ["partial"] * (len(cases) - 1), probe
+
+
+def test_an_item_container_owes_the_view_across_its_items_and_a_plain_scroller_both():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    nodes = script.split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
+    ways = "$ways = " + nodes.split("$ways = ", 1)[1].split("\n", 1)[0]
+    # Which directions each kind owes, by the rule's own line.
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
+                            "foreach ($patterns in @(@('Invoke'), @('Scroll'), @('Scroll', 'ItemContainer'), "
+                            "@('ItemContainer'))) { " + ways + "; ($ways -join '+') + '.' }"],
+                           capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == [".", "Vertical+Horizontal.", "Horizontal.", "."], probe
+    assert "$clipped = $ways.Count -gt 0 -and -not (Full $element $ways)" in nodes
+    assert nodes.index("$clipped = ") < nodes.index("$script:lists += , @($element, $node, $clipped)")
+    # `Items` itself over a grid whose rows are all walked but whose columns run past its view: rows counted,
+    # how many it holds unread unknown; the same grid with its view across proven full reads whole.
+    audit = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", audited(script) +
+                            "foreach ($clipped in $true, $false) {\n"
+                            "  $grid = @{}; $script:lists = @(, @((List @((El 5))), $grid, $clipped))\n"
+                            "  $script:walked = New-Object 'System.Collections.Generic.List[object]'\n"
+                            "  $script:walked.Add(@((El 5), @(0))); Items 's00'\n"
+                            "  \"$($grid.items)/$(if ($null -eq $grid.unread) { 'unknown' } else { $grid.unread })\"\n}"],
+                           capture_output=True, text=True, timeout=60)
+    assert audit.stdout.split() == ["1/unknown", "1/0"], audit
 
 
 WPF_OWNED = """Add-Type -AssemblyName PresentationFramework
@@ -511,18 +553,7 @@ def test_an_item_is_read_only_as_an_element_walked_inside_its_own_container():
     assert probe.stdout.split() == ["0=5", "1=none", "2=6", "3=6"], probe   # list 1's item 5 is not list 0's
     # The whole audit, `Items` itself, over two sibling lists: the left walked and holds 5; the right walked 7
     # and 8 and holds them and an unwalked 5, its own counter's, the left row's id.
-    items = "function Items(" + script.split("function Items(", 1)[1].split("\nfunction ", 1)[0]
-    audit = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
-                            "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes\n" + rid + "\n" + items + "\n"
-                            "function Enter($what) { }\n$MAX_ITEMS = 100\n"
-                            "function El($id) { $p = [pscustomobject]@{}; $p | Add-Member NoteProperty k $id; "
-                            "$p | Add-Member ScriptMethod GetRuntimeId { ,@($this.k) }; $p }\n"
-                            "function List([object[]]$held) { $c = [pscustomobject]@{ held = $held }; "
-                            "$c | Add-Member ScriptMethod FindItemByProperty { param($after, $p, $v) "
-                            "$i = if ($null -eq $after) { 0 } else { [array]::IndexOf($this.held, $after) + 1 }; "
-                            "if ($i -lt $this.held.Count) { $this.held[$i] } else { $null } }; "
-                            "$e = [pscustomobject]@{ c = $c }; $e | Add-Member ScriptMethod GetCurrentPattern "
-                            "{ param($x) $this.c }; $e }\n"
+    audit = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", audited(script) +
                             "$left, $right = @{}, @{}\n"
                             "$script:lists = @(, @((List @((El 5))), $left)) + , @((List @((El 7), (El 5), (El 8))), $right)\n"
                             "$script:walked = New-Object 'System.Collections.Generic.List[object]'\n"
