@@ -26,7 +26,8 @@ import android_owned
 from common import masked, shell
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
+from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_publish, oneshot_spec
+from . import pr_text, release, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -452,6 +453,9 @@ def handed(path: Path, run, spec: dict, final: str):
     run.checked = True
     # The text asked again is the run's own turn: charged, and stopping the stage if it fails.
     ask = lambda text: oneshot_build.send(repo, STAGE, text) or True   # noqa: E731 — sent stops itself on a refusal
+    if why := oneshot_publish.unready(spec, path):   # before `specs.opened` pushes: the draft, or nothing
+        oneshot_spec.store(repo).stop(STAGE, why)
+        return None
     try:
         then = specs.written(specs.channels.repo_for(repo), path, run, spec, final, ask)
     except Exception as exc:   # a push that timed out: stopped with its reason, resumed from the README turn
@@ -459,7 +463,20 @@ def handed(path: Path, run, spec: dict, final: str):
                                                     getattr(run.chat, "hide", None)))
         raise
     fresh = specs.load(repo, spec["id"])
-    if fresh.get("pr"):
+    # Published by this hand-over only when no fault and no text asked again stands: an earlier publication's
+    # record, left by a push that failed since or a text turn that moved HEAD, never finishes the run.
+    if fresh.get("pr") and not fresh.get("fault") and not fresh.get("writing"):
+        if spec["oneshot"].get("pr1"):
+            # `specs.opened` published only to the draft the backend opened (`oneshot_publish.published`), never a
+            # replacement: the final text is in, so it leaves draft. A draft left stops, and `[재개]` asks again.
+            try:
+                ready = specs.sh(["gh", "pr", "ready", str(fresh["pr"]["number"])], path, 60)
+                why = specs.said(ready) if ready.returncode else ""
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                why = f"{type(exc).__name__}: {exc}"
+            if why:
+                oneshot_spec.store(repo).stop(STAGE, f"PR #{fresh['pr']['number']} 의 초안을 풀지 못했다 — {why}")
+                return None
         oneshot_spec.saved(repo, oneshot={"stage": "done", "working": None, "pr": fresh["pr"]})
     elif not fresh.get("writing"):   # neither open nor asked again: the reason is the spec's fault
         oneshot_spec.store(repo).stop(STAGE, fresh.get("fault") or "PR 을 만들지 못했다")
