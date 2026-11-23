@@ -301,6 +301,30 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
     assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "pr" and "push 실패" in o()["stopped"]["detail"]
 
 
+def test_s8_finishes_only_the_draft_it_measured_never_a_replacement(finished):
+    tree, sent = finished
+    readme(tree)
+    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    remote = Remote()
+    shut = lambda args, cwd, timeout=60: (subprocess.CompletedProcess(args, 0, json.dumps({"state": "CLOSED"}), "")  # noqa: E731
+                                          if args[:3] == ["gh", "pr", "view"] else remote(args, cwd, timeout))
+    with patch.object(specs, "sh", shut):   # closed on GitHub since: nothing is pushed, nothing opened
+        assert check(tree, SUMMARIZED) is None
+    assert not remote.pushes() and not remote.created() and o()["stage"] == "pr"
+    assert "PR #7" in o()["stopped"]["detail"] and "CLOSED" in o()["stopped"]["detail"]
+    # Open when looked at, yet GitHub hands back another number: the run never finishes on that one.
+    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 9, "url": "https://github.com/o/proj/pull/9"}})
+    oneshot_spec.resume("budget")
+    readme(tree, ("NOTES.md", "다시\n"))
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    with patch.object(specs, "sh", Remote()):
+        assert check(tree, SUMMARIZED) is None
+    assert o()["stage"] == "pr" and "PR #9 이 아닌 PR #7" in o()["stopped"]["detail"]
+
+
 @pytest.mark.parametrize("change, said", [
     # an adapter gate that dropped the contract's command: refused as any change outside `[release]`, unrun
     (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "`[release]` 밖이"),

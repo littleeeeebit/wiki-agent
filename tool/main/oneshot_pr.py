@@ -11,6 +11,7 @@ From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summa
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import shutil
@@ -444,6 +445,19 @@ def asked(repo: str) -> None:
     oneshot_build.send(repo, STAGE, text)
 
 
+def closed(path: Path, number: int) -> str:
+    """Why pull request `number` cannot take S8's publication (not open, or GitHub did not say), or empty."""
+
+    try:
+        shown = specs.sh(["gh", "pr", "view", str(number), "--json", "state"], path, 60)
+        if shown.returncode:
+            return specs.said(shown)
+        state = json.loads(shown.stdout).get("state")
+    except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return "" if state == "OPEN" else f"GitHub 상태가 {state} 다"
+
+
 def handed(path: Path, run, spec: dict, final: str):
     """`oneshot_build.checked`'s hand-over while a pull request's text is asked: `specs.written` checks it
     and opens the pull request; the run then keeps its summary and the spec its `PR #n`."""
@@ -452,6 +466,10 @@ def handed(path: Path, run, spec: dict, final: str):
     run.checked = True
     # The text asked again is the run's own turn: charged, and stopping the stage if it fails.
     ask = lambda text: oneshot_build.send(repo, STAGE, text) or True   # noqa: E731 — sent stops itself on a refusal
+    if (draft := (spec["oneshot"].get("pr1") or {}).get("number")) and (why := closed(path, draft)):
+        # The draft measured and reviewed is the one S8 finishes: a closed one is never replaced by a new one.
+        oneshot_spec.store(repo).stop(STAGE, f"실측하고 리뷰한 초안 PR #{draft} 에 올리지 못한다 — {why}: 다시 열고 [재개] 한다")
+        return None
     try:
         then = specs.written(specs.channels.repo_for(repo), path, run, spec, final, ask)
     except Exception as exc:   # a push that timed out: stopped with its reason, resumed from the README turn
@@ -462,7 +480,11 @@ def handed(path: Path, run, spec: dict, final: str):
     # Published by this hand-over only when no fault and no text asked again stands: an earlier publication's
     # record, left by a push that failed since or a text turn that moved HEAD, never finishes the run.
     if fresh.get("pr") and not fresh.get("fault") and not fresh.get("writing"):
-        if (spec["oneshot"].get("pr1") or {}).get("number") == fresh["pr"]["number"]:
+        if draft and draft != fresh["pr"]["number"]:   # closed between the look and the push: never finished on it
+            oneshot_spec.store(repo).stop(STAGE, f"실측하고 리뷰한 초안 PR #{draft} 이 아닌 PR #{fresh['pr']['number']} "
+                                                 f"이 열렸다 — PR #{draft} 을 다시 열고 [재개] 한다")
+            return None
+        if draft:
             # The draft the backend opened (`oneshot_publish.published`) is this one: the final text is in, so it
             # leaves draft. A draft left is no finished run: it stops, and `[재개]` asks again.
             try:
