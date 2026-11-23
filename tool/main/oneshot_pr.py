@@ -25,7 +25,7 @@ import android_owned
 from common import masked
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
+from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -40,6 +40,35 @@ CI = f"{WORKFLOWS}ci.yml"
 # The workflow's events. Written unquoted: `test_prerequisite_review` reads a quoted push as a git push.
 TRIGGERS = set("push pull_request".split())
 KIND_PROMPT_NAMES = {"webapp": "a web app", "android": "an Android app", "desktop": "a Windows app"}
+# The public CI's step after the gate, written as is: the tests skipped for want of a need, owed to the local gate.
+SKIPS = r"""- name: Tests owed to the local gate
+  if: always()
+  shell: python
+  run: |
+    import os, re
+    from xml.etree import ElementTree
+    try:
+        cases = list(ElementTree.parse("{report}").getroot().iter("testcase"))
+    except (OSError, ElementTree.ParseError):
+        cases = None
+    rows = []
+    for case in cases or []:
+        skip = case.find("skipped")
+        why = "" if skip is None else (skip.get("message") or "") + " " + (skip.text or "")
+        if ids := sorted(set(re.findall(r"\bN[1-9][0-9]*\b", why))):
+            rows.append(f"| {case.get('classname') or ''} {case.get('name') or ''} | {', '.join(ids)} |")
+    lines = ["## 로컬 게이트가 맡은 테스트", ""]
+    if cases is None:
+        lines.append("JUnit 보고서(`{report}`)가 없어 건너뛴 테스트를 셀 수 없다.")
+    elif not rows:
+        lines.append("비밀 값이 없어 건너뛴 테스트는 없다.")
+    else:
+        lines += ["CI 에는 비밀 값이 없어 아래 테스트를 건너뛰었다. 주인의 PC 에서 도는 게이트가 실제 호출로 돌린다.",
+                  "", "| 테스트 | 필요한 것 |", "| --- | --- |", *rows]
+    with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+        out.write("\n".join(lines) + "\n")
+""".replace("{report}", oneshot_build.REPORT)
+SKIP_STEP = yaml.safe_load(SKIPS)[0]
 
 
 def readme_text(spec: dict) -> str:
@@ -68,7 +97,9 @@ needs. Run is instead the command that builds the debug APK,
 `{spec['oneshot']['device']['apk']}`, and the one that installs it on a phone
 connected with USB debugging on: adb's install command with that APK's path.
 """ + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else ""))
-            .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}."
+            .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}. "
+                     "After that step, in the same job, add this step exactly as written; it lists in the run's "
+                     f"summary the tests CI skipped for want of a secret:\n\n```yaml\n{SKIPS}```"
                      if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
 
 
@@ -96,7 +127,7 @@ def workflows(path: Path) -> dict[str, str]:
 
 def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     """`ci.yml` committed as a plain file (a link points anywhere) whose workflow has a trigger and a
-    job step that runs the gate: a comment or an empty job is no CI."""
+    job step that runs the gate, followed in that job by `SKIPS`: a comment or an empty job is no CI."""
 
     if mode not in ("100644", "100755"):
         return False
@@ -111,15 +142,17 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     events = {on} if isinstance(on, str) else set(on) if isinstance(on, (list, dict)) else set()
     if not TRIGGERS <= events:   # on every push and pull request, not by hand only
         return False
-    steps = [s for job in flow["jobs"].values() if isinstance(job, dict) for s in job.get("steps") or []]
     # The gate's lines run as a block of `run`, each exactly: named in a comment or an `echo` it never runs,
     # and an argument added (`--collect-only`, a narrower selection) runs something else. Arguments live in
     # `gate_cmd`, which may span lines (the front build extends the backend's).
     want = [line.strip() for line in gate.splitlines() if line.strip()]
-    for s in steps:
-        have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()] if isinstance(s, dict) else []
-        if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
-            return True
+    for job in flow["jobs"].values():
+        steps = [s for s in (job.get("steps") or [] if isinstance(job, dict) else []) if isinstance(s, dict)]
+        for at, s in enumerate(steps):
+            have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()]
+            if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
+                if any(all(later.get(k) == SKIP_STEP[k] for k in ("if", "shell", "run")) for later in steps[at + 1:]):
+                    return True
     return False
 
 
@@ -154,7 +187,7 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
         return "이 저장소는 CI 워크플로를 두지 않는다 — " + ", ".join(flows[:5]) + " 를 지운다"
     if public and not ci_file(path, held.get(CI), gate):
         return (f"공개 저장소의 CI 워크플로(`{CI}`)가 없다 — 커밋된 보통 파일로, `on:` 트리거와 "
-                f"게이트(`{gate}`)를 `run` 하는 job step 을 둔다")
+                f"게이트(`{gate}`)를 `run` 하는 job step, 같은 job 에서 그 뒤에 README 턴이 준 건너뛴 테스트 요약 step 을 그대로 둔다")
     if why := oneshot_build.pinned(path, o):
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
@@ -423,7 +456,7 @@ def summary(spec: dict) -> dict:
                        "edited": sorted({i for e in reading.get(g) or [] for i in e.get("edited") or []})}
                       for g in ("r1", "r2", "r3")],
             "spend": o.get("spend") or {}, "critiques": len(o.get("critiques") or []),
-            "looks": len(o.get("looks") or []), "apk": o.get("apk")}
+            "looks": len(o.get("looks") or []), "apk": o.get("apk"), "calls": oneshot_calls.summary(spec)}
 
 
 def extra(spec: dict) -> dict:

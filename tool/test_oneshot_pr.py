@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import textwrap
 import threading
 from pathlib import Path
 from unittest.mock import patch
@@ -132,6 +133,9 @@ def workflow(steps: str) -> str:
     return f"name: ci\non: [push, pull_request]\njobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n{steps}"
 
 
+SKIPS = textwrap.indent(oneshot_pr.SKIPS, "      ")   # the summary step, as a job's step
+
+
 @pytest.mark.parametrize("more", [(), ((".github/workflows/notes.txt", "later\n"),),
                                   ((".github/workflows/ci.yml", "name: ci\n"),),
                                   ((".github/workflows/ci.yml", "# jobs: TODO\n"),),
@@ -153,9 +157,16 @@ def test_a_public_repository_needs_its_committed_ci_workflow(finished, more):
     ("on: push\njobs:\n  gate:\n    steps:\n      - run: uv run pytest\n", False),
     (workflow("      - shell: pwsh\n        run: |\n          uv run pytest --collect-only\n"), False),
     (workflow("      - run: uv run pytest tests/test_one.py\n"), False),
-    (workflow("      - run: |\n          uv sync\n          cd .\n          uv run pytest\n"), True),
+    (workflow("      - run: |\n          uv sync\n          cd .\n          uv run pytest\n" + SKIPS), True),
     ("on:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  a:\n    steps:\n      - run: ls\n"
-     "  b:\n    steps:\n      - run: uv run pytest\n", True),
+     "  b:\n    steps:\n      - run: uv run pytest\n" + SKIPS, True),
+    # The skip summary follows the gate in its own job, as written.
+    (workflow("      - run: uv run pytest\n"), False),
+    (workflow(SKIPS + "      - run: uv run pytest\n"), False),
+    (workflow("      - run: uv run pytest\n" + SKIPS.replace("always()", "success()")), False),
+    (workflow("      - run: uv run pytest\n" + SKIPS.replace("N[1-9]", "X[1-9]")), False),
+    ("on: [push, pull_request]\njobs:\n  a:\n    steps:\n      - run: uv run pytest\n"
+     "  b:\n    steps:\n" + SKIPS, False),
 ])
 def test_the_public_ci_runs_the_gate_on_every_push_and_pull_request(finished, text, runs):
     tree, _ = finished
@@ -170,7 +181,7 @@ def test_the_public_ci_runs_the_gate_on_every_push_and_pull_request(finished, te
 ])
 def test_a_gate_over_several_lines_runs_as_one_block(finished, run, runs):
     tree, _ = finished
-    readme(tree, (oneshot_pr.CI, workflow(f"      - shell: pwsh\n        run: |\n          {run}")))
+    readme(tree, (oneshot_pr.CI, workflow(f"      - shell: pwsh\n        run: |\n          {run}" + SKIPS)))
     gate = "uv run pytest &&\nnpm --prefix web test"
     assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), gate) is runs
 
@@ -178,12 +189,35 @@ def test_a_gate_over_several_lines_runs_as_one_block(finished, run, runs):
 def test_a_workflow_deleted_in_the_run_is_no_ci_and_a_committed_one_passes(finished):
     tree, sent = finished
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
-    readme(tree, (".github/workflows/ci.yml", workflow(f"      - uses: actions/checkout@v4\n      - run: |\n          {GATE}\n")))
+    readme(tree, (".github/workflows/ci.yml", workflow(f"      - uses: actions/checkout@v4\n      - run: |\n          {GATE}\n" + SKIPS)))
     assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), GATE)
     git(tree, "rm", "-q", ".github/workflows/ci.yml")
     git(tree, "commit", "-m", "drop ci")
     check(tree, answer(report()))()
     assert "CI 워크플로(`.github/workflows/ci.yml`)가 없다" in sent[-1][2]
+
+
+@pytest.mark.parametrize("report, said", [
+    (None, "JUnit 보고서(`artifacts/junit.xml`)가 없어"),
+    ('<testsuite><testcase classname="t" name="test_ok"/></testsuite>', "건너뛴 테스트는 없다"),
+    ('<testsuite><testcase classname="t" name="test_rate"><skipped message="N2 and N1 absent"/></testcase>'
+     '<testcase classname="t" name="test_other"><skipped message="slow"/></testcase></testsuite>',
+     "| t test_rate | N1, N2 |"),
+])
+def test_the_ci_summary_step_lists_the_tests_skipped_for_a_need(tmp_path, report, said):
+    if report:
+        (tmp_path / "artifacts").mkdir()
+        (tmp_path / "artifacts" / "junit.xml").write_text(report, encoding="utf-8")
+    out = tmp_path / "summary.md"
+    subprocess.run([sys.executable, "-c", oneshot_pr.SKIP_STEP["run"]], cwd=tmp_path, check=True,
+                   env={**os.environ, "GITHUB_STEP_SUMMARY": str(out)})
+    text = out.read_text(encoding="utf-8")
+    assert said in text and "test_other" not in text
+
+
+def test_the_readme_turn_of_a_public_repository_carries_the_summary_step(finished):
+    oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
+    assert oneshot_pr.SKIPS in oneshot_pr.readme_text(spec())
 
 
 # -- The pull request -----------------------------------------------------------------------------

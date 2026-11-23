@@ -277,7 +277,14 @@ memory measurement runs after the file is removed.
 
 In CI the variables are absent. Each test that needs one skips with the need's
 id in its reason, and the run's CI summary lists those skips as owed to the
-local gate (11b2c). A public repository never receives a secret.
+local gate. A public repository never receives a secret.
+
+The summary is a step the README turn writes as given (`oneshot_pr.SKIPS`).
+It goes after the gate's step in the same job, with `if: always()` and
+`shell: python`. It reads the gate's JUnit report and writes a table to the
+run's summary: each skipped test whose reason names a need id, with those
+ids. A missing report says so. The server's CI check (`ci_file`) requires
+that step's `if`, `shell` and `run` exactly as given.
 
 ### The review reads fakes as weakened contracts
 
@@ -316,9 +323,20 @@ in a commit is removed only by rewriting those commits.
 A transcript the agent's own tools write may still hold a value, and so may
 a committed binary file. That is the cost of the agent running real tests.
 
-The card counts, per run, the gate runs that reached each outside call (the
-tests that name a need), shown beside the run's spending. Nothing is limited
-until the owner has seen those numbers.
+The card counts, per run, the gate runs that reached each outside call,
+shown beside the run's spending. Nothing is limited until the owner has seen
+those numbers (`oneshot_calls`):
+
+- A planned test reaches a call when its `depends_on` names the call, the
+  endpoint the call names, or a module whose `calls` lead to it through
+  other modules.
+- Every JUnit report a server run reads counts once toward each call one of
+  those tests ran in, passing or failing. A skip does not count. That covers
+  the tests stage, the build's check of the pinned cases and every gate
+  (`oneshot_build.junit`, `judged`).
+- The stage's record shows `X1 3번` per call. The finished run's summary
+  shows a table: each call, its count, and, for a call that needs a secret,
+  the planned tests CI skips and the local gate runs.
 
 ### A credential the build commits anyway
 
@@ -344,7 +362,7 @@ knows the values, at commit time, rather than in the reviewer's reading.
 | 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | Done — #417 |
 | 11b1 | Tests and build prompts without fakes, told every need; every gate the server runs carries the given secrets | Done — #418 |
 | 11b2a | The build agent's own turns carry the secrets under the server's leak check | Done — #424 |
-| 11b2b | The PC app's screen check and the Android device stages get the secrets | In progress |
-| 11b2c | The CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Not started |
+| 11b2b | The PC app's screen check and the Android device stages get the secrets | Done — #427 |
+| 11b2c | The CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | In progress |
 | 11c | The review refuses a fake inside a test file | Not started |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |

@@ -47,7 +47,12 @@ export type RunSummary = {
   spend: { usd?: number; seconds?: number; calls?: number; unknown?: number }
   /** An Android app's debug APK on a draft prerelease (`oneshot_pr.released`), or why it is not there. */
   apk?: { url?: string; name?: string; error?: string } | null
+  /** Each outside call, the gate runs that reached it, and the planned tests CI skips for its secret. */
+  calls?: Call[]
 }
+
+/** One outside call on the card (`oneshot_calls.summary`). */
+export type Call = { id: string; target: string; runs: number; tests: string[] }
 /** One backend review verdict on a HEAD (`oneshot_review.decided`). */
 /** One backend review; `added` is the reviewed diff's added lines, `focus` `narrow` when the round read what
  * changed since the last one because the repairs did not converge (`oneshot_review.ruled`). */
@@ -113,6 +118,8 @@ export type SpecView = SpecSummary & {
     critique_bases?: Record<string, number>
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
     spend?: { usd?: number; seconds?: number; calls?: number }
+    /** The gate runs that reached each outside call (`oneshot_calls.reached`), by call id. */
+    calls?: Record<string, number>; design?: { outside?: { id: string; target: string }[] }
     stack?: { part: string; choice: string; why: string; status: string; tools?: Tool[] }[]
     r1?: Gate; r2?: Gate; r3?: Gate; front?: { tokens: { palettes: Palette[] } }; phone?: PhoneRound; pc?: PcRound
     owed?: { id: string; kind: string; source?: string; requirement: string; check: string }[]
