@@ -410,8 +410,9 @@ def earlier(repo: str, o: dict) -> None:
 
     from . import oneshot_critique, oneshot_pc   # they import this module
     stop = o.get("stopped") or {}
-    if "android" not in kinds_of(o) or o.get("stage") != "r3" or stop.get("reason") != "kind" or oneshot_spec.held(o):
-        return   # a run this version still holds before R3 (with `desktop`) stays as it is
+    if "android" not in kinds_of(o) or "desktop" in kinds_of(o) or o.get("stage") != "r3" \
+            or stop.get("reason") != "kind" or oneshot_spec.held(o):
+        return   # with `desktop`, the owner's desktop round's hook goes on by the whole guard (`oneshot_pc.earlier`)
     # The guard's own test, on the worktree as it is: a pass of another HEAD, APKs or build, or a worktree moved off
     # its HEAD, waits for the phone, whose round sends a moved tree back to the build.
     if oneshot_pc.phoned(o) and oneshot_pc.at_head(repo, o.get("front_built_head")):

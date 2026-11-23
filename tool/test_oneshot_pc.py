@@ -194,10 +194,11 @@ def test_the_guarded_entry_holds_r3_until_every_due_device_round_passed(held):
     assert not callable(oneshot_phone.settled("budget", passed))   # the phone passed first: the owner's round is next
     assert o()["stage"] == "pc" and o()["phone"]["status"] == "passed" and not o()["stopped"]
     assert not o().get("r3")
-    # The owner's round passed on this build: the phone's pass on this HEAD still stands, and R3 opens (held here).
+    # The owner's round passed on this build: the phone's pass on this HEAD still stands, and R3 opens.
     oneshot_spec.saved("budget", oneshot={"pc": {"status": "passed", "head": BUILD["head"], "freeze": "f1",
                                                  "front_build": "b1", "passed": ["O2", "O3"]}})
-    assert pc.onward("budget", {}) is None and o()["stage"] == "r3" and o()["stopped"]["reason"] == "kind"
+    assert callable(pc.onward("budget", {})) and o()["stage"] == "r3" and o()["r3"]["round"] == 1
+    assert not o()["stopped"] and o()["working"] == "brief"   # its brief, written once the tree is let go
     # A rebuild of the same HEAD and the same APK digests clears both passes: the phone is due again first.
     oneshot_spec.saved("budget", oneshot={"stage": "critique", "front_build": "b2",
                                           "desktop_build": {**BUILD, "freeze": "f2"}})
@@ -598,9 +599,9 @@ def ran(monkeypatch, results=None, error: Exception | None = None, during=None, 
     return o()
 
 
-def test_a_round_that_passes_every_owner_check_opens_r3_held_at_this_versions_stop(held, monkeypatch):
+def test_a_round_that_passes_every_owner_check_opens_r3(held, monkeypatch):
     after = ran(monkeypatch, {"O2": {"status": "passed"}, "O3": {"status": "passed"}})
-    assert after["stage"] == "r3" and after["stopped"]["reason"] == "kind" and not after["working"]
+    assert after["stage"] == "r3" and not after.get("stopped") and after["r3"]["round"] == 1
     assert after["pc"]["status"] == "passed" and after["pc"]["passed"] == ["O2", "O3"] and pc.passed(after)
     assert pc.due(after) is None
 

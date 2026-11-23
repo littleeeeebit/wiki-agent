@@ -25,9 +25,9 @@ HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # several kinds without `desktop` since 9c4b. `desktop`, alone or among other kinds, runs its core path, S6, R2
 # and the frontend build with every kind's look, its PC app's included (9e4a), and the critique with its `look`
 # owed checks and the phone round of an Android app among them (9e4b), and the owner's desktop round once the
-# owner approved it (9e5); it waits at R3 until its sheet lands (`docs/plans/oneshot/9-kinds.md`, "Steps and
-# their stops").
-KIND_STOPS: dict[str, str] = {"desktop": "r3"}
+# owner approved it (9e5), and R3 with its `PC 앱` section (9e6a); it waits before the pull request until S8's
+# README, installer and CI job land (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
+KIND_STOPS: dict[str, str] = {"desktop": "pr"}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
 STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "review", "split", "board", "frontend", "r2", "build-front",
                "critique", "phone", "pc", "r3", "pr", "done")
