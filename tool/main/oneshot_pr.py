@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import shutil
 import subprocess
@@ -24,7 +25,7 @@ from pathlib import Path
 import yaml
 
 import android_owned
-from common import masked, shell
+from common import errorlog, masked, shell
 from wiki import slots_for
 
 from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, \
@@ -303,22 +304,25 @@ def version_file(path: Path, head: str, name: str) -> bool:
 def scope(o: dict) -> str:
     """What the README turn may change, as `unapproved` checks it, told before it starts."""
 
+    paths = " Each `build` names only relative paths inside the repository: it runs in a fresh checkout.\n"
     if "android" in kinds_of(o):
         return ("\nThe PC app's installer is built from the commit R3 approved, so nothing this turn changes "
-                "reaches it but its `[release.desktop]` table.\n")
+                "reaches it but its `[release.desktop]` table." + paths)
     return ("\nR3 approved the PC app's build, so this turn changes nothing else of the app: only the README, "
             "`.wiki/`, the CI workflow and a version file it adds holding the version alone. Any other change is "
-            "refused.\n")
+            "refused." + paths)
 
 
 def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
-    """What changed since the PC app's build R3 approved that S8 may not change, for a PC app alone: anything but
-    the README, `.wiki/`, the CI workflows and a version file the turn added holding the version alone
-    (`version_source`), so the pull request's app is the installer's. With an Android app among the kinds, S8
+    """What changed since the PC app's build R3 approved that S8 may not change, for a PC app with no Android app
+    (alone, or with a web app): anything but the README, `.wiki/`, the CI workflows and a version file the turn
+    added holding the version alone (`version_source`), so the pull request's app is the installer's. With an
+    Android app among the kinds, S8
     wires its version as an Android app alone does (`RELEASE_PROMPT`), and the installer is built from the
     approved commit regardless (`release_checked`). Empty without that build."""
 
-    if not (approved := (o.get("desktop_build") or {}).get("head")) or kinds_of(o) != ["desktop"]:
+    if not (approved := (o.get("desktop_build") or {}).get("head")) or "desktop" not in kinds_of(o) \
+            or "android" in kinds_of(o):
         return []
     source = str((adapter.get("release") or {}).get("version_source") or "")
     added = set(release.git(path, "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames",
@@ -326,6 +330,19 @@ def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
     return [n for n in oneshot_build.changed(path, approved)
             if not (n == "README.md" or n.startswith((".wiki/", WORKFLOWS))
                     or n == source and n in added and version_file(path, head, n))]
+
+
+# An absolute path (a drive, a share, a home, a POSIX root with a folder in it; a switch such as `/p:x` is not one),
+# or a `..` step.
+FAR = re.compile(r"(?<![\w$%./])(?:[A-Za-z]:[\\/]|\\\\|~[\\/]|/[^\s/:\"']+/)|(?:^|[\\/\s\"'=])\.\.(?:[\\/]|$|[\s\"'])")
+
+
+def outside(command: str) -> str:
+    """A path in a release `build` that leads out of its checkout, an absolute one or one climbing with `..`, or
+    empty: a command that names the live worktree would build bytes R3 never saw. A variable (`$env:X`) is not a
+    path; what the committed config names is the approved commit's own."""
+
+    return (m := FAR.search(command)) and command[max(m.start() - 10, 0):m.end() + 20].strip() or ""
 
 
 def tauri(o: dict) -> bool:
@@ -381,6 +398,8 @@ def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, fr
                 # plain commands joined by `&&` (`chained`), then each program resolved (`run_as`).
                 if oneshot_build.tools(spec["oneshot"]) is not None and not oneshot_build.chained(cfg[kind]["build"]):
                     raise ValueError(f"`build` 는 {oneshot_build.CHAIN}")
+                if far := outside(cfg[kind]["build"]):   # the checkout is all it reads: no worktree file after R3
+                    raise ValueError(f"`build` 가 체크아웃 밖의 경로를 가리킨다 — {far}: 저장소 안의 상대 경로만 쓴다")
                 table = {**cfg[kind], "build": oneshot_build.run_as(cfg[kind]["build"], spec["oneshot"], src)}
                 if kind == "android":
                     apk = release.build(src, table, later, kit, halt, drop=drop)
@@ -403,14 +422,21 @@ def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, fr
                         shutil.rmtree(staging(spec, "installer"), ignore_errors=True)
                         copy = {"head": head, "error": "검사한 설치 파일과 복사한 설치 파일이 다르다"}
                     frozen["installer"] = {**copy, "version": later, "built": at}
-                release.discard(path, made.pop())   # this kind's checkout goes before the next one is made
+                try:   # this kind's checkout goes before the next one is made, forgotten only once gone
+                    release.discard(path, made[-1])
+                    made.pop()
+                except OSError:   # a file Windows holds for a moment: tried again below
+                    pass
     except (ValueError, release.Stopped) as exc:   # `BuildFailed` among them
         return f"`[release.{kind}]` 의 정식 빌드 — {exc}"
     finally:
         with release.stoppable(None):   # the cleanup runs even after the stop
             for name in made:
-                if release.place(path, name).exists():
-                    release.discard(path, name)
+                try:
+                    if release.place(path, name).exists():
+                        release.discard(path, name)
+                except OSError as exc:   # recorded, never the check's answer: a leftover folder holds no result
+                    errorlog.record("oneshot-release-checkout", exc, path=str(release.place(path, name)))
     return ""
 
 

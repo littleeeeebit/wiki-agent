@@ -767,7 +767,8 @@ stack writes none and gets no installer; the body says why. The owner chose
 this on 2026-11-23. Each kind builds in its own checkout, Android's from the
 gate's HEAD. Each release build is plain commands joined by `&&` that start
 only the confirmed tools or the checkout's own files, as the gate's commands
-do. It runs without any variable a secret need names, and without any
+do, and names no path outside its checkout, so it never reads the live
+worktree. It runs without any variable a secret need names, and without any
 variable holding a secret's value, so a mistake can put a secret into what
 ships only through the source, which the commit scan reads. A build that
 reads the owner's credentials on purpose is an app deceiving its own run,
@@ -783,7 +784,8 @@ again. A release of that tag that is not a draft prerelease, read before
 each file goes up, gets nothing more. A failed copy or upload never blocks
 the pull request; the stop and the body say why. A copy the freeze's scan
 flags is removed at once, and its record keeps why, and an earlier upload of
-the same bytes no longer counts. For a PC app alone, S8 may change only the
+the same bytes no longer counts. For a PC app with no Android app, alone or
+with a web app, S8 may change only the
 README, `.wiki/`, the CI workflows and a version file it adds holding the
 version alone, since the build R3 approved, so the pull request's app is the
 installer's. With an Android app among the kinds, S8 wires its version as an

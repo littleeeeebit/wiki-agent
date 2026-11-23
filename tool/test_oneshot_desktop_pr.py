@@ -176,13 +176,15 @@ def test_a_pc_app_with_no_installer_table_still_finishes_its_gate_and_says_why(p
     ("tauri", "`[release.desktop]` 가 없다 — 확정한 PC 앱 스택이 Tauri 다"),
     ("tool", "`cargo` 는 확정한 도구도 작업트리 안의 파일도 아니거나"),
     ("chain", "`build` 는 평범한 명령을 ` && ` 로만 잇는다"),
+    ("far", "`build` 가 체크아웃 밖의 경로를 가리킨다"),
     ("source", "빌드가 체크아웃의 커밋된 파일을 바꿨다")])
 def test_a_release_table_whose_build_fails_its_checks_sends_the_readme_turn_back(pc, monkeypatch, wrong, said):
     tree, sent, github, _ = pc
     if wrong == "tauri":   # the confirmed stack is Tauri, and the README turn left its table out
         readme(tree)
     else:
-        tabled(tree, DESKTOP.replace('"python tauri.py"', {"tool": '"cargo tauri build"', "chain": '"python a.py; cargo b"'}
+        tabled(tree, DESKTOP.replace('"python tauri.py"', {"tool": '"cargo tauri build"', "chain": '"python a.py; cargo b"',
+                                                                 "far": "'python tauri.py --dist ../tree/dist'"}
                                      .get(wrong, '"python tauri.py"')))
     real = release.build
     if wrong == "source":   # a build that rewrites a committed file
@@ -267,6 +269,31 @@ def test_a_pc_apps_file_changed_after_the_approved_build_is_refused(pc, name, te
     assert "R3 가 승인한 PC 앱 빌드 뒤에 앱 파일이 바뀌었다" in sent[-1][2] and f": {name}" in sent[-1][2]
     assert "final_head" not in o() and not built
     assert "a version file it adds holding the version alone." in oneshot_pr.readme_text(spec())
+
+
+def test_with_a_web_app_the_pc_apps_files_are_held_as_alone(pc):
+    tree, _, _, _ = pc
+    write(tree, "app.py", "a change R3 never saw\n")
+    tabled(tree, DESKTOP)
+    both = {**o(), "intent": {"kind": "webapp", "kinds": ["webapp", "desktop"]}}
+    assert oneshot_pr.unapproved(tree, both, git(tree, "rev-parse", "HEAD"), {"release": {}}) == ["app.py"]
+    assert "Any other change is refused." in oneshot_pr.scope(both)
+
+
+def test_a_checkout_whose_removal_fails_once_is_removed_on_the_second_try(pc, monkeypatch):
+    tree, _, _, built = pc
+    tabled(tree, DESKTOP)
+    real, tries = release.discard, []
+
+    def held(repo, attempt):   # Windows holds a file for a moment the first time
+        tries.append(attempt)
+        if len(tries) == 1:
+            raise PermissionError("in use")
+        return real(repo, attempt)
+
+    monkeypatch.setattr(release, "discard", held)
+    assert oneshot_pr.release_checked(tree, spec(), git(tree, "rev-parse", "HEAD"), threading.Event(), {}, {}) == ""
+    assert len(tries) == 2 and tries[0] == tries[1] and not list((release.WORK / tree.name).glob("*"))
 
 
 def test_with_an_android_app_a_change_after_the_approved_build_never_reaches_the_installer(pc, monkeypatch):
