@@ -735,3 +735,14 @@ def test_a_plan_that_no_longer_holds_goes_back_to_the_build_agent(at_measure):
     assert oneshot_spec.view(spec())["measure"]["plan"] is None
     measure.start("budget", measure.Start(head=o()["built_head"]))
     assert o()["stage"] == "build" and sent[-1][1] == "build" and "no longer holds" in sent[-1][2]
+
+
+def test_a_committed_plan_that_is_not_utf_8_goes_back_to_the_build_agent(at_measure):
+    tree, sent = at_measure   # a code-page byte in a step: never repaired into a plan the worker cannot read
+    plan = tree / ".wiki/measure.json"
+    plan.write_bytes(plan.read_bytes().replace(b'"what": "', b'"what": "\x97', 1))
+    git(tree, "commit", "-am", "plan in a code page")
+    oneshot_spec.saved("budget", oneshot={"built_head": git(tree, "rev-parse", "HEAD")})
+    assert oneshot_spec.view(spec())["measure"]["plan"] is None
+    measure.start("budget", measure.Start(head=o()["built_head"]))
+    assert o()["stage"] == "build" and sent[-1][1] == "build" and "no longer holds" in sent[-1][2]

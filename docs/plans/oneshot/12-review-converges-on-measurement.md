@@ -280,7 +280,9 @@ an input taken back at that moment leaves none. A link, junction or hard
 link the script or the backend plants, and a file swapped between a check
 and its read, are outside what the keeping promises (owner decision above). The plan and the report are
 read strictly: `NaN`, `Infinity`, an overflowing float or a lone surrogate
-escape is refused. A metric equal to a secret's value, in any numeric
+escape is refused, and so is a byte that is not UTF-8. The committed plan is
+read as git's bytes, so the screen, [실측 시작] and the worker refuse the same
+plan, and [실측 시작] sends it back to the builder. A metric equal to a secret's value, in any numeric
 spelling, never counts as a measurement. An integer is compared exactly; a
 float, already rounded by the reader, is compared with the secret rounded the
 same way. A refused report's error never quotes its token, and is masked. The inputs are checked again under

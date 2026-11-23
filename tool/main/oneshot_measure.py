@@ -175,15 +175,15 @@ def checked(value, spec: dict, path: Path) -> dict:
 
 
 def planned(path: Path, spec: dict, rev: str | None = None) -> dict:
-    """The worktree's plan, checked; at commit `rev` when given, so what the owner is shown and gives inputs to
-    is the plan of the HEAD the build passed, whatever the tree holds now."""
+    """The worktree's plan, checked; at commit `rev` when given: the built HEAD's, whatever the tree holds now."""
 
     try:
-        if rev:
-            shown = specs.sh(["git", "show", f"{rev}:{PLAN}"], path)
+        if rev:   # the committed bytes, decoded as strictly as the worker reads the file: never a repaired text
+            shown = subprocess.run(["git", "show", f"{rev}:{PLAN}"], cwd=path, capture_output=True, timeout=120,
+                                   stdin=subprocess.DEVNULL, **process.background_options())
             if shown.returncode:
                 raise FileNotFoundError
-        value = strict(shown.stdout if rev else (path / PLAN).read_text(encoding="utf-8"))
+        value = strict(shown.stdout.decode("utf-8") if rev else (path / PLAN).read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ValueError(f"`{PLAN}` 가 없다 — 실측 계획(serve, measure, inputs, metrics)을 커밋한다") from None
     except (OSError, ValueError, RecursionError) as exc:
