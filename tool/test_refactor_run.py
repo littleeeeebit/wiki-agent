@@ -28,7 +28,7 @@ from main import loop, query, refactor, refactor_run, refactor_survey, specs, wo
 from test_main import client, no_machine_settings, parse, until  # noqa: F401 — the fixture is autouse
 from test_main import settled as settled_task
 from test_task_workflow import until
-from test_refactor_survey import ROLES, Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
+from test_refactor_survey import ROLES, Host, _git, frozen_read, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
 from test_specs import Remote, Worker, _adapter, fresh_workers, report, repo, started  # noqa: F401
 
 KICK = loop.kick
@@ -445,8 +445,7 @@ def commented(remote):
 
 
 def approve(first: str):
-    api = client()
-    change = api.get(f"/api/refactors/specs/{first}/frozen").json()
+    api, change = client(), frozen_read(first)
     return change, api.post(f"/api/refactors/specs/{first}/refreeze", json={k: change[k] for k in ("head", "digest")})
 
 
@@ -467,7 +466,7 @@ def test_a_person_refreezes_a_changed_characterization(running):
     branch = _git(path, "branch", "--show-current")
     sh, said = commented(remote)
     with patch.object(specs, "sh", sh):
-        change = client().get(f"/api/refactors/specs/{first}/frozen").json()
+        change = frozen_read(first)
         assert change["files"] == ["tests/test_orders.py"] and "# marked" in change["diff"]
         stale = client().post(f"/api/refactors/specs/{first}/refreeze", json={"head": change["head"], "digest": "0" * 64})
         assert stale.status_code == 409 and "다시 열어" in stale.json()["detail"]
@@ -479,7 +478,7 @@ def test_a_person_refreezes_a_changed_characterization(running):
     assert json.loads(Path(frozen["file"]).read_text(encoding="utf-8"))["head"] == change["head"]
     assert _git(path, "branch", "--show-current") == branch and not specs.dirty(path)
     assert said and "다시 고정했다" in said[0] and "tests/test_orders.py" in said[0]
-    assert client().get(f"/api/refactors/specs/{first}/frozen").json()["files"] == []
+    assert frozen_read(first)["files"] == []
 
 
 def test_the_card_keeps_its_worktree_while_the_old_code_runs(running):
@@ -533,7 +532,7 @@ def test_a_review_resumed_before_the_record_wins_over_the_refreeze(running):
         raise AssertionError("the old-code run started on a card the review had taken")
     sh, _ = commented(remote)
     with patch.object(specs, "sh", sh):
-        change = client().get(f"/api/refactors/specs/{first}/frozen").json()
+        change = frozen_read(first)
     with patch.object(specs, "sh", sh), patch.object(loop, "_loops", {}), \
             patch.object(refactor_run, "frozen_change", resumed), patch.object(refactor_profile, "sh", run):
         done = client().post(f"/api/refactors/specs/{first}/refreeze", json={k: change[k] for k in ("head", "digest")})
