@@ -406,6 +406,14 @@ source, and the server assigns it:
   - `composition`: the round's surface capture of the fixture's region, which
     must show what `shows` says over the fixture.
 
+  The same limit, accepted by the owner, holds for `window` and
+  `composition`. They read the picture after the steps, with no picture
+  before them, so they prove only that the app showed a result of this
+  check's fixture during this run. They do not prove that the declared step
+  started that capture. An app that captured the fixture at start and leaves
+  that result on screen while the step does nothing passes them. Only a
+  report check compares against the state before the step.
+
   The fixture is the server's own, never the build's: a window the round
   starts in its own job, showing a page of English words the server draws at
   random for that round, so neither the builder nor the app knows them
