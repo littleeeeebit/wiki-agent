@@ -335,11 +335,11 @@ def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
 
 
 # A value that leads out of the checkout: drive-qualified anywhere (`C:\x`, and `C:..\x`, relative to that drive's own
-# folder), or, itself or past its switch (`/out:`, `-o:`, `--dist=`), a share, rooted at the current drive, a home or a root with
+# folder), or, itself or past any `=` or `:` in it (`TAIL`), a share, rooted at the current drive, a home or a root with
 # a folder in it. A word that is a lone `/name` is a switch (`/p:x`, `cmd /c`); an option's value never is.
 DRIVE = re.compile(r"(?<![\w$%/\\.-])[A-Za-z]:")
 ROOTED = re.compile(r"\\|~[\\/]|/[^/\\:]*[/\\]")
-SWITCH = re.compile(r"^[-/]+[\w.-]*[:=]")   # `/out:`, `-o:`, and `--dist=` a quote kept in one value
+TAIL = re.compile(r"=|:(?!//)")   # where a value inside a value starts: `/out:`, `--dist=`, `/p:Name=`; not `https://`
 
 
 def values(command: str) -> list[tuple[str, bool]]:
@@ -369,11 +369,11 @@ def outside(command: str) -> str:
     the live worktree would build bytes R3 never saw. A variable (`$env:X`) is not a path. What the approved
     commit's own files name, its Tauri config among them, is the app R3 built and approved (an accepted limit)."""
 
-    for value, lead in values(command):
-        bare = SWITCH.sub("", value)
-        if (DRIVE.search(value) or ROOTED.match(value) or ROOTED.match(bare)
-                or (lead or bare != value) and bare[:1] in ("/", "\\")
-                or any(posixpath.normpath(s.replace("\\", "/")).split("/")[0] == ".." for s in {value, bare} if s)):
+    for value, lead in values(command):   # the value, and each value inside it past a `=` or a `:`
+        if DRIVE.search(value) or any(
+                ROOTED.match(s) or inner and s[:1] in ("/", "\\")
+                or posixpath.normpath(s.replace("\\", "/")).split("/")[0] == ".."
+                for s, inner in [(value, lead), *((value[m.end():], True) for m in TAIL.finditer(value))] if s):
             return value
     return ""
 
