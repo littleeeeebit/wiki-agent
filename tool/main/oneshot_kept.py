@@ -81,6 +81,23 @@ def cleaned(value, hide: dict[str, str]):
     return (label_of(value, hide) or value) if isinstance(value, (int, float)) else value
 
 
+# What the launcher, not the owner, sets in the script's and the backend's environment: the server's own launch
+# (`common.python_environment`, `specs.gate`, `runtime.gate`), PowerShell 7, which prefixes `PSModulePath`, and
+# a POSIX shell's start (`sh -c` is dash or bash), which sets or resets these as it reads its environment.
+LAUNCHER = frozenset({
+    "PATH", "TMP", "TEMP", "TMPDIR", "PYTHONUNBUFFERED", "PSMODULEPATH",
+    "PWD", "OLDPWD", "IFS", "OPTIND", "OPTARG", "PPID", "SHLVL", "PS1", "PS2", "PS3", "PS4", "LINENO", "RANDOM",
+    "SECONDS", "SRANDOM", "EPOCHSECONDS", "EPOCHREALTIME", "HOSTNAME", "HOSTTYPE", "MACHTYPE", "OSTYPE", "UID",
+    "EUID", "GROUPS", "SHELLOPTS", "BASHOPTS", "BASH", "HISTCMD", "HISTFILE", "HISTSIZE", "MAILCHECK", "DIRSTACK",
+    "FUNCNAME", "PIPESTATUS", "COLUMNS", "LINES"})
+
+
+def launched(name: str) -> bool:
+    """Whether the launcher would decide `name`'s value instead of the owner (`LAUNCHER`, or any `BASH_` name)."""
+
+    return name.upper() in LAUNCHER or name.upper().startswith("BASH_")
+
+
 def committed(path: Path, rev: str, name: str) -> bytes | None:
     """`name` as commit `rev` holds it, byte for byte, or `None` when it does not. Git writes into a file, not a
     pipe, as `specs.sh` does on Windows: a timeout never waits for a pipe a child of git still holds open."""

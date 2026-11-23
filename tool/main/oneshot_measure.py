@@ -40,17 +40,14 @@ from pydantic import BaseModel
 from common import masked, process, shell
 
 from . import oneshot, oneshot_build, oneshot_needs, oneshot_publish, oneshot_spec, release, runtime, specs, work
-from .oneshot_kept import (CLIPS, MAX_CLIPS, clips_of, committed, fresh, kept_from, label_of, plain,  # noqa: F401
-                           spelled, strict, tail)
+from .oneshot_kept import (CLIPS, LAUNCHER, MAX_CLIPS, clips_of, committed, fresh, kept_from, label_of,  # noqa: F401
+                           launched, plain, spelled, strict, tail)
 from .oneshot_publish import commented
 from .query import _lock as work_lock, hold
 
 router = APIRouter()
 PLAN = ".wiki/measure.json"
 IID = re.compile(r"M[1-9]\d*")
-# What the script's launcher sets over the inputs (`common.python_environment`, `specs.gate`, `runtime.gate`, and
-# PowerShell 7, which puts its own module folders in front of `PSModulePath` as it starts).
-LAUNCHER = frozenset({"PATH", "TMP", "TEMP", "TMPDIR", "PYTHONUNBUFFERED", "PSMODULEPATH"})
 MID = re.compile(r"[a-z][a-z0-9_]{0,40}")
 OPS = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge, "==": operator.eq}
 MAX_MINUTES, MAX_SERVE_SECONDS = 60, 600
@@ -126,7 +123,7 @@ def checked(value, spec: dict, path: Path) -> dict:
             raise ValueError(f"{where} {x['id']}: `kind` 는 secret(비밀 값) 이나 text(주소 같은 보통 글) 다")
         if not isinstance(x.get("env"), str) or not oneshot_needs.ENV.fullmatch(x["env"]) or x["env"] in envs:
             raise ValueError(f"{where} {x['id']}: `env` 는 서로 다른 대문자 환경 변수 이름이다")
-        if x["env"] in LAUNCHER:
+        if launched(x["env"]):
             raise ValueError(f"{where} {x['id']}: `{x['env']}` 는 실측 스크립트를 띄우는 쪽이 정하는 이름이다 — 다른 이름을 쓴다")
         if x["kind"] == "text" and x["env"].upper() in secret:
             raise ValueError(f"{where} {x['id']}: `{x['env']}` 는 설계의 비밀 값이다 — kind 를 secret 으로 적는다")
