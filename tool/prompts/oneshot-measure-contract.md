@@ -32,11 +32,14 @@ with these five parts, and the code each part names.
    `env` is one of the design's needs shares that need's stored value.
 4. `during`: the steps the owner takes while the script runs, such as
    choosing a Google account in the browser window it opens. Use the same
-   step shape. What the script prints reaches the owner as it runs, with
-   any secret masked, in the `측정 로그` box of the wiki-agent window: a
-   step that has them read something printed, such as a device code,
-   names the window `wiki-agent — 측정 로그`. Nothing else the script
-   writes is in view before it ends.
+   step shape. To show the owner something while it runs, such as a
+   device code, the script writes `{out}/owner.json` as
+   `{"text": "<Korean>"}`, replacing it whole each time (write a temporary
+   file, then rename it over). The wiki-agent window shows that text,
+   masked, in its `실측이 보여 주는 것` box while the script runs; a step
+   that has the owner read it names the window
+   `wiki-agent — 실측이 보여 주는 것`. Nothing the script prints, and no
+   other file it writes, is in view before it ends.
 5. `metrics`: each
    `{"id": "live_delay_s", "what": "<Korean>", "unit": "초",
    "requirements": ["R8"], "calls": ["X2"], "pass": {"op": "<=",

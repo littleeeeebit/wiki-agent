@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
@@ -93,22 +93,34 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   const [view, setView] = useState<SpecView | null>(null)
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
+  // Each read is numbered when asked, an action's answer when it lands: a view lands only if newer than the one
+  // shown, so a poll asked while the stage ran never puts a finished stage back on screen.
+  const asked = useRef(0)
+  const shown = useRef(0)
+  const land = useCallback((n: number, next: SpecView) => {
+    if (n > shown.current) { shown.current = n; setView(next) }
+  }, [])
+  const read = useCallback(() => {
+    const n = ++asked.current
+    api.view(repo).then((next) => land(n, next)).catch((err) => setFault(error(err)))
+  }, [repo, land])
 
-  useEffect(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, [repo])
+  useEffect(() => { read() }, [read])
   useEffect(() => { if (view) onView?.(view) }, [view, onView])
   const working = !!view?.working
   useEffect(() => {
     if (!working) return
-    const timer = window.setInterval(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, 1500)
+    const timer = window.setInterval(read, 1500)
     return () => window.clearInterval(timer)
-  }, [repo, working])
+  }, [read, working])
 
   /** Whether the server took it: a refused answer stays in its box to be sent again. */
   async function act(fn: () => Promise<SpecView>) {
     setFault('')
     setBusy(true)
     try {
-      setView(await fn())
+      const next = await fn()
+      land(++asked.current, next)
       return true
     } catch (err) {
       setFault(error(err))

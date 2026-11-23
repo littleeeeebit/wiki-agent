@@ -430,7 +430,7 @@ def measure(repo: str) -> None:
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}, None
         try:
             with served(oneshot_build.run_as(plan["serve"]["command"], o, tree), tree, env, plan["serve"]["health"],
-                        plan["serve"]["seconds"], halt, raw / "serve.log", hide), watched(repo, hide):
+                        plan["serve"]["seconds"], halt, raw / "serve.log", hide), watched(repo, raw, hide):
                 limit = plan["measure"]["minutes"] * 60 + 300
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
                     "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
@@ -778,28 +778,41 @@ def shown(spec: dict) -> dict:
     inputs = [{**x, "given": has(spec, x)} for x in (plan or {}).get("inputs") or []]
     runs = [{k: v for k, v in m.items() if k != "folder"} for m in o.get("measures") or []]
     return {"measure": {"plan": plan and {**plan, "inputs": inputs}, "error": error, "runs": runs,
-                        "pr": o.get("pr1"), "head": o["built_head"], "log": LOGS.get(spec["repo"], "")}}
+                        "pr": o.get("pr1"), "head": o["built_head"], "told": told(spec["repo"])}}
 
 
-LOGS: dict[str, str] = {}   # each running measurement's output so far, masked, for the screen
+SHOWN = "owner.json"   # what a running script shows the owner: `{"text": "<Korean>"}`, written whole each time
+LIVE: dict[str, tuple[Path, dict | None]] = {}   # each running measurement's script folder and mask
 
 
 @contextmanager
-def watched(repo: str, hide: dict | None):
-    """The measuring script's output as it comes, masked, for the owner's screen (`shown`): a `during` step may
-    ask them to read what it prints, such as a sign-in code. Only the last 4 KB arrive: a first line cut short
-    is left out, since a value it ends on could not be masked. Gone when the run ends; its record keeps the end."""
+def watched(repo: str, raw: Path, hide: dict | None):
+    """The measuring command's run, during which `told` reads what the script shows the owner."""
 
-    def seen(tail: bytes) -> None:
-        text = tail.decode("utf-8", "replace")
-        LOGS[repo] = masked(text.partition("\n")[2] if len(tail) >= 4096 else text, hide)
-
-    token = runtime.gate_output.set(seen)
+    LIVE[repo] = (raw, hide)
     try:
         yield
     finally:
-        runtime.gate_output.reset(token)
-        LOGS.pop(repo, None)
+        LIVE.pop(repo, None)
+
+
+def told(repo: str) -> str:
+    """What the running script shows the owner (`{out}/owner.json`), such as a sign-in code a `during` step has
+    them read: read whole, so a write still under way is no JSON and shows nothing, then masked like the record.
+    Nothing else the script writes or prints is in view before it ends; an unreadable file shows nothing."""
+
+    if not (at := LIVE.get(repo)):
+        return ""
+    try:
+        with open(at[0] / SHOWN, "rb") as f:
+            data = f.read(MAX_TEXT * 4 + 1)
+        value = json.loads(data.decode("utf-8")) if len(data) <= MAX_TEXT * 4 else None
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(text := value.get("text") if isinstance(value, dict) else None, str):
+        return ""
+    # As written, then with its line endings as a text-mode read gives them (`spelled` holds both): then cut.
+    return masked(masked(text, at[1]).replace("\r\n", "\n").replace("\r", "\n"), at[1])[:MAX_TEXT]
 
 
 oneshot_spec.VIEWS.append(shown)

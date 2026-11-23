@@ -128,8 +128,8 @@
     },
     "tool/main/oneshot_measure.py": {
       "dup": 0,
-      "lines": 818,
-      "reason": "Oneshot plan 12, after the first live run: `watched` hands the measuring script's output, masked, to the running measurement's screen as it comes, since a `during` step had the owner read a device code the screen never showed and the sign-in timed out (eighteen lines past the 800-line cap for a file without an entry)."
+      "lines": 831,
+      "reason": "Oneshot plan 12, after the first live run: `watched` and `told` show the owner, while the measuring script runs, what it writes whole to `{out}/owner.json`, masked, since a `during` step had the owner read a device code the screen never showed and the sign-in timed out; the file, read whole, replaces the command's streamed output, which a 4 KB cut could not mask (thirty-one lines past the 800-line cap for a file without an entry)."
     },
     "tool/main/oneshot_spec.py": {
       "dup": 0,
