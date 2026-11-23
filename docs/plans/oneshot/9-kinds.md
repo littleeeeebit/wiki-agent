@@ -734,7 +734,11 @@ gets its id at start-up, before any device round's recovery, so no earlier
 pass counts for it, its device rounds run again in the guard's order, phone
 first, and their passes name it. Before recovery reopens a held
 R3, and before the owner's approval is recorded, the worktree must be read
-at the build's HEAD. A HEAD that cannot be read confirms nothing.
+at the build's HEAD. A HEAD that cannot be read confirms nothing. A held
+R3 whose HEAD cannot be read at recovery opens no sheet: like the phone
+round for an Android app, a PC app's run waits at the owner's desktop round,
+whose approval reads HEAD again, even when no `owner` check is pending
+(owner, 2026-11-23).
 
 R3 has one guarded entry for every device round. When a run has both a phone
 round and an owner's desktop round due, R3 opens only when both passed on the

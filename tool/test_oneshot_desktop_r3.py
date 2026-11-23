@@ -7,6 +7,7 @@ See `docs/plans/oneshot/9-kinds.md` ("R3 and S8", "Steps and their stops").
 
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -98,11 +99,19 @@ def test_the_approval_waits_before_the_pull_request_with_the_kind_stop(passed_ro
         oneshot_spec.resume("budget")
 
 
-def test_a_run_an_earlier_version_held_before_r3_opens_it_on_recovery(passed_round):
+@pytest.mark.parametrize("read", [True, False])   # the worktree's HEAD read at recovery, or a read that timed out
+def test_a_run_an_earlier_version_held_before_r3_opens_it_on_recovery(passed_round, read):
     # 9e5b's stop: the round passed, R3 held with no opening written.
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "r3": None, "stopped": {
         "reason": "kind", "state": "r3", "detail": "화면 비평과 기기 회차를 마쳤다 — R3 는 다음 버전에서 이어진다"}})
-    oneshot_spec.recover()
+    real = pc.specs.sh
+    unread = lambda args, *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(args, 30)) \
+        if args[:3] == ["git", "rev-parse", "HEAD"] else real(args, *a, **k)   # noqa: E731
+    with patch.object(pc.specs, "sh", real if read else unread):
+        oneshot_spec.recover()
+    if not read:   # an unread HEAD opens nothing: the owner's round waits, and its approval reads HEAD again
+        assert o()["stage"] == "pc" and o()["pc"]["status"] == "waiting" and not o().get("r3") and not o()["stopped"]
+        return
     after = o()
     assert after["stage"] == "r3" and not after.get("stopped") and after["r3"]["round"] == 1
     assert "## PC에서 확인한 지적" in critique.extra(oneshot_spec.spec_of("budget"))["r3_sheet"]

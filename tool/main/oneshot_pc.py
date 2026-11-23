@@ -219,9 +219,13 @@ def earlier(repo: str, o: dict) -> None:
     elif "desktop" in kinds_of(o) and o.get("stage") == "r3" and not o.get("working") and not o.get("r3"):
         if due(o):
             onward(repo, {"stopped": None})   # the guard's own order: a phone round still due comes first
-        elif not oneshot_spec.held(o):   # a pass on the current build stands: R3's sheet, without a brief
+        elif oneshot_spec.held(o):
+            pass
+        elif at_head(repo, o.get("front_built_head")):   # a pass on the current build stands: R3's sheet, no brief
             from . import oneshot_critique   # it imports this module
             oneshot_spec.saved(repo, oneshot={"stopped": None, "r3": oneshot_critique.opening(o)})
+        else:   # a HEAD that cannot be read confirms nothing: the owner's round waits, its approval reads HEAD again
+            waits(repo, {})
 
 
 def base(repo: str) -> Path:
