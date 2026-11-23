@@ -272,6 +272,19 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
     $script:lists += , @($element, $node)
     $script:under = @($outer) + ($script:lists.Count - 1)   # its children are walked inside it
   }
+  if ($patterns -contains "Scroll" -and $patterns -notcontains "ItemContainer") {
+    # No enumeration of what lies past its view, which a virtualized list never realizes: the driver does not
+    # scroll, so a container that scrolls has an unverified end and its read is not whole. Only both directions
+    # supplied, without defaults, as not scrollable prove its view holds it all.
+    $more = $true
+    try {
+      $P = [System.Windows.Automation.ScrollPattern]
+      $v = $element.GetCurrentPropertyValue($P::VerticallyScrollableProperty, $true)
+      $h = $element.GetCurrentPropertyValue($P::HorizontallyScrollableProperty, $true)
+      $more = -not ($v -is [bool] -and $h -is [bool] -and -not $v -and -not $h)
+    } catch { }
+    if ($more) { $node.items, $node.unread = $null, $null }
+  }
   $script:nodes += $node
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $inner = $scrolled -or $patterns -contains "Scroll"

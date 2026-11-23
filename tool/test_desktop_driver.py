@@ -250,6 +250,38 @@ def test_a_wpf_list_counts_the_items_its_read_did_not_reach(tmp_path, kind, virt
     assert not [f for f in desktop_driver.findings(report) if "outside its window" in f]   # scrolled rows reachable
 
 
+WPF_SCROLLER = """param([int]$rows)
+Add-Type -AssemblyName PresentationFramework
+$w = New-Object System.Windows.Window
+$w.Title = "scroller"; $w.Width = 400; $w.Height = 300
+$v = New-Object System.Windows.Controls.ScrollViewer
+$v.VerticalScrollBarVisibility = "Auto"; $v.HorizontalScrollBarVisibility = "Disabled"
+$p = New-Object System.Windows.Controls.StackPanel
+foreach ($i in 1..$rows) { $t = New-Object System.Windows.Controls.Button; $t.Content = "row $i"; $t.Height = 30; [void]$p.Children.Add($t) }
+$v.Content = $p; $w.Content = $v
+[void]$w.ShowDialog()
+"""
+
+
+@pytest.mark.parametrize("rows", [2, 40])
+def test_a_container_that_only_scrolls_leaves_its_read_not_whole_while_it_scrolls(tmp_path, rows):
+    # A scroll viewer offers no enumeration of what lies past its view, and the driver does not scroll: 40 rows
+    # scroll, so its end is unverified; 2 rows fit, so its view holds them all
+    from main import oneshot_desktop_look
+
+    script = tmp_path / "scroller.ps1"
+    script.write_text(WPF_SCROLLER, encoding="utf-8")
+    with desktop_session.look(tmp_path, f"scroller-{rows}") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script), str(rows)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [], wait=30, settle_ms=1000)
+    assert report["states"], {k: report.get(k) for k in ("phase", "ended", "refusal", "error")}
+    start = report["states"][0]
+    [viewer] = [n for n in start["nodes"] if "Scroll" in (n.get("patterns") or []) and n.get("depth", 0) > 0]
+    assert ("unread" in viewer) == (rows == 40), viewer
+    assert oneshot_desktop_look.partial(start, {w["hwnd"] for w in start["windows"]}) == (rows == 40)
+
+
 WPF_OWNED = """Add-Type -AssemblyName PresentationFramework
 $A = [System.Windows.Automation.AutomationProperties]
 $w = New-Object System.Windows.Window
@@ -447,8 +479,8 @@ def test_an_item_is_read_only_as_an_element_walked_inside_its_own_container():
                             "foreach ($i in 0, 1, 2, 3) { if ($seen[$i]) { \"$i=\" + (@($seen[$i]) -join ',') } "
                             "else { \"$i=none\" } }"], capture_output=True, text=True, timeout=60)
     assert probe.stdout.split() == ["0=5", "1=none", "2=6", "3=6"], probe   # list 1's item 5 is not list 0's
-    # The whole audit, `Items` itself, over two sibling lists that each walked one element: the left walked and
-    # holds 5; the right walked 7 and 8 and holds them and an unwalked 5, its own counter's, the left row's id.
+    # The whole audit, `Items` itself, over two sibling lists: the left walked and holds 5; the right walked 7
+    # and 8 and holds them and an unwalked 5, its own counter's, the left row's id.
     items = "function Items(" + script.split("function Items(", 1)[1].split("\nfunction ", 1)[0]
     audit = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
                             "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes\n" + rid + "\n" + items + "\n"

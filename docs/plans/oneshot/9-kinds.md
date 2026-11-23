@@ -354,7 +354,11 @@ source, and the server assigns it:
     the elements the walk read inside that same container, never to one of
     a sibling's. An item with no runtime id counts as unread, never as one
     already read. So does any item whose runtime id an earlier item of the
-    same container already had. An element's id or name that is not
+    same container already had. A container that scrolls but offers no
+    item enumeration leaves its window's read not whole, because the driver
+    does not scroll and its end is unverified. Its view counts as holding
+    everything only when both directions are supplied as not scrollable.
+    An element's id or name that is not
     whole UTF-16 leaves its window's read not whole. The driver reads every element's automation id again
     after its value and compares the two ordinally. One that changed (a
     control rebound meanwhile) leaves that window's read not whole. Such a
