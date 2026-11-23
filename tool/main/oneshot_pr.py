@@ -62,8 +62,9 @@ SKIPS = r"""- name: Tests owed to the local gate
         why = "" if skip is None else (skip.get("message") or "") + " " + (skip.text or "")
         if ids := sorted(set(re.findall(r"(?<![A-Za-z0-9_])N[1-9][0-9]*(?![A-Za-z0-9_])", why))):
             name = f"{case.get('classname') or ''} {case.get('name') or ''}"
-            name = " ".join(name.replace("\\", "\\\\").replace("|", "\\|").split())
-            rows.append(f"| {name} | {', '.join(ids)} |")
+            name = " ".join(name.split())   # literal in a code span, whose fence outruns any backtick run in it
+            ticks = "`" * (max((len(run) for run in re.findall("`+", name)), default=0) + 1)
+            rows.append(f"| {ticks} {name.replace('|', chr(92) + '|')} {ticks} | {', '.join(ids)} |")
     lines = ["## 로컬 게이트가 맡은 테스트", ""]
     if len(found) > 1:
         lines.append("게이트 보고서로 보이는 파일이 여럿이라 어느 것이 이 게이트의 것인지 정할 수 없다: "
@@ -89,9 +90,12 @@ def readme_text(spec: dict) -> str:
     public = profile.get("visibility") == "public" and profile.get("ci") == "github-actions"
     kinds = kinds_of(spec["oneshot"])
     android = "android" in kinds   # alone, or among several kinds, whose gate builds it on the core
-    job = ("a job on `ubuntu-latest` that sets up a JDK (`actions/setup-java`) and the Android SDK "
+    # The gate was proven in this machine's shell (`shell.launch`): PowerShell on Windows, bash elsewhere, and its
+    # commands may be the platform's own (`gradlew.bat`). The runner is of the same system, its default shell alike.
+    runner = "windows-latest" if os.name == "nt" else "ubuntu-latest"
+    job = (f"a job on `{runner}` that sets up a JDK (`actions/setup-java`) and the Android SDK "
            "(`android-actions/setup-android`), then a step that `run`s the gate command above, as written"
-           if android else "a job whose step `run`s the gate command above, as written")
+           if android else f"a job on `{runner}` whose step `run`s the gate command above, as written")
     several = f"""
 This repository holds {len(kinds)} kinds of the application, sharing one core:
 {', '.join(KIND_PROMPT_NAMES[k] for k in kinds)}. Give each its own section, in that

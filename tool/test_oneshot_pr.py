@@ -213,12 +213,15 @@ SKIPPED = '<testsuite><testcase classname="t" name="{name}"><skipped message="{w
     ({"": '<testsuite><testcase classname="t" name="test_ok"/></testsuite>'}, "건너뛴 테스트는 없다"),
     ({"": '<testsuite><testcase classname="t" name="test_rate"><skipped message="N2 and N1 absent"/></testcase>'
           '<testcase classname="t" name="test_other"><skipped message="slow"/></testcase></testsuite>'},
-     "| t test_rate | N1, N2 |"),
-    # A gate that changed into a folder wrote its report there; the cell keeps a pipe and a backslash inside it.
-    ({"app": SKIPPED.format(name="test_values[a|b]", why="N1")}, r"| t test_values[a\|b] | N1 |"),
-    ({"": SKIPPED.format(name="test_values[a\\|b]", why="N1")}, r"| t test_values[a\\\|b] | N1 |"),
+     "| ` t test_rate ` | N1, N2 |"),
+    # A gate that changed into a folder wrote its report there. The cell shows the name as it is: a code span
+    # whose fence outruns its backticks, a pipe escaped for the table alone.
+    ({"app": SKIPPED.format(name="test_values[a|b]", why="N1")}, r"| ` t test_values[a\|b] ` | N1 |"),
+    ({"": SKIPPED.format(name="test_values[a\\|b]", why="N1")}, r"| ` t test_values[a\\|b] ` | N1 |"),
+    ({"": SKIPPED.format(name="test_values[**fast**]", why="N1")}, "| ` t test_values[**fast**] ` | N1 |"),
+    ({"": SKIPPED.format(name="test_values[a`b]", why="N1")}, "| `` t test_values[a`b] `` | N1 |"),
     # A need id before a Korean particle is still the id; a longer one is another.
-    ({"": SKIPPED.format(name="test_rate", why="N1이 없다, N12 도, N2cache N3_fixture")}, "| t test_rate | N1, N12 |"),
+    ({"": SKIPPED.format(name="test_rate", why="N1이 없다, N12 도, N2cache N3_fixture")}, "| ` t test_rate ` | N1, N12 |"),
     # Two reports: which is the gate's is not known, so none is listed.
     ({"": SKIPPED.format(name="test_rate", why="N1"), "fixture": SKIPPED.format(name="test_old", why="N2")},
      "어느 것이 이 게이트의 것인지 정할 수 없다: `artifacts/junit.xml`, `fixture/artifacts/junit.xml`"),
@@ -237,7 +240,9 @@ def test_the_ci_summary_step_lists_the_tests_skipped_for_a_need(tmp_path, report
 
 def test_the_readme_turn_of_a_public_repository_carries_the_summary_step(finished):
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
-    assert oneshot_pr.SKIPS in oneshot_pr.readme_text(spec())
+    text = oneshot_pr.readme_text(spec())
+    # The gate runs on a runner of the system it was proven on, in that system's shell.
+    assert oneshot_pr.SKIPS in text and f"a job on `{'windows' if os.name == 'nt' else 'ubuntu'}-latest`" in text
 
 
 # -- The pull request -----------------------------------------------------------------------------

@@ -286,15 +286,23 @@ checkout (`GITHUB_WORKSPACE`, whatever folder the step runs in), since the
 gate's command may change into a folder before writing it. With exactly one
 such file it writes a table to the run's summary: each skipped test whose
 reason names a need id, with those ids. An id counts before a Korean
-particle (`N1이`) but not inside an ASCII name (`N2cache`), and the test's cell escapes `\` and `|`. No file says the
-report is missing; several say which they are and list nothing, since which
+particle (`N1이`) but not inside an ASCII name (`N2cache`). The test's
+cell is a code span, so the name shows as it is, with only `|` escaped for
+the table. No file says the report is missing; several say which they are and list nothing, since which
 is the gate's is not known. A single file the gate did not write, when the
 gate failed before writing its own, reads as the gate's: the checkout
 ignores `artifacts/`, so only the job itself could have put it there. The server's CI check (`ci_file`) requires
 that step's `if`, `shell` and `run` exactly as given. The gate's job has
 no `if` and no `needs`, since either can skip it on one of the events, and
 the gate's step no `if` and no `background`, so it has finished when the
-summary reads its report.
+summary reads its report. The job runs on a runner of the system the gate
+was proven on (`windows-latest` here), whose default shell is the one the
+server ran it in.
+
+The check covers the shape the README turn is given. A workflow written
+otherwise on purpose so that the gate does not run, through a default
+shell, a matrix, a concurrency group or the like, is out of scope: the
+owner's decision of 2026-11-23.
 
 ### The review reads fakes as weakened contracts
 
