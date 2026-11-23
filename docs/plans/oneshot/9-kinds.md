@@ -340,8 +340,9 @@ source, and the server assigns it:
     The report holds the page when its words appear in order, case and
     punctuation aside. A word is a run of letters, digits and combining
     marks of any script, read after canonical (NFC) normalization. Format
-    characters such as a zero-width joiner part no word; a zero-width space
-    does. A misread word such as `appleé`, in either encoding, or words
+    characters such as a zero-width joiner or a direction mark are passed
+    over: they neither part a word nor count in it. A zero-width space does
+    part words. A misread word such as `appleé`, in either encoding, or words
     joined into one token, is no match. The driver reads a control's value
     without UI Automation's defaults, so a provider that does not supply it
     leaves the value unknown, never empty. So does a value that is not

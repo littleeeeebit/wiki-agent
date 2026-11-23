@@ -284,6 +284,7 @@ def test_the_fixtures_page_is_drawn_afresh_and_must_appear_whole():
     assert not owner_round.contains(" ".join(w + "́" for w in page), page)   # a combining accent, decomposed
     assert not owner_round.contains("‍".join(page), page)   # joined by a zero-width joiner
     assert owner_round.contains("​".join(page), page)   # a zero-width space does part words
+    assert owner_round.contains("⁦‎" + " ".join(page) + "⁩", page)   # direction marks are layout only
     assert owner_round.contains("캡처: " + " ".join(page) + ".", page)   # other text beside it is no matter
     assert not owner_round.contains(" ".join(page).replace(page[0], page[0] + "s"), page)   # whole words only
     assert not owner_round.contains("", []) and not owner_round.contains(None, page)
