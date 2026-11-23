@@ -303,6 +303,18 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
             pytest.raises(HTTPException, match="읽지 못해") as e:   # whether it would change is unknown: retry
         oneshot_needs.forget("budget", "NEVER_GIVEN_KEY")
     assert e.value.status_code == 409 and o()["measures"][-1]["status"] == "owner"
+    with patch.object(measure, "retire", lambda *a, **k: (_ for _ in ()).throw(AssertionError("set aside"))), \
+            pytest.raises(HTTPException, match="너무 길다") as e:   # too long for the store: refused before anything
+        measure.give("budget", "M2", measure.Value(value="k" * 1281, head=head, env=ENV, kind="secret"))
+    assert e.value.status_code == 400 and o()["measures"][-1]["status"] == "owner"
+    for refused_by_store in (lambda: measure.give("budget", "M2", measure.Value(value="sk-new", head=head, env=ENV,
+                                                                                 kind="secret")),
+                             lambda: oneshot_needs.forget("budget", ENV)):   # set aside, then put back
+        with patch.object(measure.release, "secret_write", lambda *a: (_ for _ in ()).throw(OSError("denied"))), \
+                patch.object(measure.release, "secret_delete", lambda *a: (_ for _ in ()).throw(OSError("denied"))), \
+                pytest.raises(HTTPException, match="고치지 못했다"):
+            refused_by_store()
+        assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "owner"
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
     measure.measure("budget")

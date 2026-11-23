@@ -586,9 +586,8 @@ def shown_input(spec: dict, plan: dict, iid: str, body: Value) -> dict:
 
 
 def plain_input(spec: dict, given: dict) -> dict:   # the same values again change nothing, a waiting result included
-    if given == kept(spec):
-        return spec
-    return retire(spec, "입력이 바뀌었다 — 이 결과는 판정하지 않고 바뀐 입력으로 다시 잰다", measure_given=given)
+    return spec if given == kept(spec) else retire(
+        spec, "입력이 바뀌었다 — 이 결과는 판정하지 않고 바뀐 입력으로 다시 잰다", measure_given=given)
 
 
 def retire(spec: dict, why: str, **fields) -> dict:
@@ -788,11 +787,12 @@ def shown(spec: dict) -> dict:
 oneshot_spec.VIEWS.append(shown)
 
 
-def secret_changed(repo: str, env: str) -> None:
+def secret_changed(repo: str, env: str):   # how to put a set-aside result back if the store refuses, or `None`
     """A secret about to change by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran
     with it. A running one is set aside when it ends, by `oneshot_needs.CHANGES`, counted once the store changed."""
-
-    retire(oneshot_spec.spec_of(repo), "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다")
+    spec = oneshot_spec.spec_of(repo)
+    if retire(spec, "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다") is not spec:
+        return lambda: oneshot_spec.saved(repo, oneshot={"measures": spec["oneshot"]["measures"]})
 
 
 oneshot_needs.CHANGED.append(secret_changed)

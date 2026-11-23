@@ -14,6 +14,7 @@ the gate's output shows `[N1]` where it would stand (`hidden`).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -243,9 +244,13 @@ def stored(repo: str, env: str, value: str | None) -> None:
     changes a secret writes through here, so `CHANGED` hears each change, before the store changes: a waiting
     result is set aside first, and when that fails the store is left as it was. A request that would change
     nothing (the value held already, or a removal of one already gone) changes nothing, a waiting result
-    included. Every caller read the spec before this, so a 404 here is a reread that failed (`specs.load` turns
-    a refused read into `None`)."""
+    included, and so does one the store refuses: a value too long for it is refused before anything, and a
+    write or removal that fails puts back what `CHANGED` set aside (each callback returns how, or `None`).
+    Every caller read the spec before this, so a 404 here is a reread that failed (`specs.load` turns a refused
+    read into `None`)."""
 
+    if value is not None and len(value.encode("utf-16-le")) > MAX_SECRET:
+        raise HTTPException(400, f"값이 너무 길다 — 자격 증명 관리자는 {MAX_SECRET}바이트까지 담는다")
     try:
         if same(name(repo, env), value):
             return
@@ -253,9 +258,10 @@ def stored(repo: str, env: str, value: str | None) -> None:
         raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
     except OSError as e:   # whether anything would change is unknown: nothing is set aside or changed
         raise HTTPException(409, f"자격 증명 관리자를 읽지 못해 비밀 값을 바꾸지 않았다 — {e} — 다시 시도한다") from None
+    undo = []
     try:
         for f in CHANGED:
-            f(repo, env)
+            undo.append(f(repo, env))
     except (OSError, HTTPException) as e:
         if isinstance(e, HTTPException) and e.status_code != 404:
             raise
@@ -267,9 +273,12 @@ def stored(repo: str, env: str, value: str | None) -> None:
         else:
             release.secret_write(name(repo, env), value)
             changed = True
-    except ValueError:
-        raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
-    except OSError as e:
+    except (ValueError, OSError) as e:
+        for put_back in filter(None, undo):   # the store kept its value: so does the result; a failed undo leaves
+            with contextlib.suppress(OSError, HTTPException):   # it set aside, the safe side
+                put_back()
+        if isinstance(e, ValueError):
+            raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
         raise HTTPException(409, f"자격 증명 관리자를 고치지 못했다 — {e}") from None
     if changed:   # only a change made: a refused or empty one leaves a running result alone
         CHANGES[repo] = CHANGES.get(repo, 0) + 1
