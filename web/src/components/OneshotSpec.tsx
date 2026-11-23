@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn, Zoom } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
-import { Leaked, Needs } from '@/components/OneshotNeeds'
+import { Calls, Leaked, Needs } from '@/components/OneshotNeeds'
 import { PcApprove, PcResults } from '@/components/OneshotPc'
 import { Track } from '@/components/OneshotTrack'
 import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
@@ -713,6 +713,7 @@ function Finished({ summary }: { summary: RunSummary }) {
             </div>
           ))}
         </dl>
+        <Calls calls={summary.calls ?? []} ci={!!summary.ci} />
         {summary.apk && (summary.apk.url
           ? <p>디버그 APK: <a href={summary.apk.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">{summary.apk.name}</a> — 초안 프리릴리스</p>
           : <p className="text-faint">디버그 APK 를 Release 에 올리지 못했다 — {summary.apk.error}</p>)}

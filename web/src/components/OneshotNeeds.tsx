@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Btn } from '@/components/Modal'
-import type { Need } from '@/lib/oneshot'
+import type { Call, Need } from '@/lib/oneshot'
 
 const KIND: Record<Need['kind'], string> = { secret: '비밀 값', account: '계정', tool: '프로그램', file: '파일' }
 const HINT: Partial<Record<Need['kind'], string>> = { secret: '값', tool: '프로그램 이름 또는 경로', file: '파일의 절대 경로' }
@@ -8,6 +8,26 @@ const HINT: Partial<Record<Need['kind'], string>> = { secret: '값', tool: '프�
 /** The needs whose value a build turn left in its answer, commits or files (`oneshot_needs.marked`), and apart from
  *  them those a scan that could not finish carried (`unsure`), shown at any stage, running or stopped: a refusal
  *  names each by its `[id]`, its variable or its row, and here it is found. */
+/** The finished run's outside calls: how many gate runs reached each, and the tests CI left to the local gate. */
+export function Calls({ calls, ci }: { calls: Call[]; ci: boolean }) {
+  if (!calls.length) return null
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left [&_td]:border-t [&_td]:border-border [&_td]:py-2.5 [&_td]:pr-6 [&_th]:pb-2 [&_th]:pr-6">
+        <thead><tr className="text-[12.5px] text-faint"><th>바깥 호출</th><th>닿은 게이트 실행</th><th>{ci ? 'CI 가 건너뛰고 로컬 게이트가 돌린 테스트' : '비밀 값이 필요한 테스트 (로컬 게이트가 돌렸다)'}</th></tr></thead>
+        <tbody>
+          {calls.map((c) => (
+            <tr key={c.id}>
+              <td><span className="font-mono">{c.id}</span> {c.target}</td><td className="tabular-nums">{c.runs}번</td>
+              <td className="font-mono">{c.tests.join(', ') || '없음'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export function Leaked({ needs }: { needs: Need[] }) {
   const rows = needs.map((n, i) => ({ n, row: i + 1 }))
   const lists = [['값이 결과에 들어 있는 항목:', rows.filter(({ n }) => n.leaked)],
