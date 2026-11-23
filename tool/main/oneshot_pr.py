@@ -11,17 +11,15 @@ From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summa
 
 from __future__ import annotations
 
-import difflib
 import json
 import os
-import re
 import sys
 import shutil
 import subprocess
 import threading
 import time
 import tomllib
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import yaml
 
@@ -232,10 +230,8 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
             checked = release.git(path, "rev-parse", "HEAD").strip()
             adapter = kept_adapter(path, o, checked, tree=True)
             if moved := unapproved(path, o, checked, adapter):
-                scripts = " 또는 ".join(f"`{s}`" for s in sorted(module_scripts(o)))
                 return ("R3 가 승인한 PC 앱 빌드 뒤에 앱 파일이 바뀌었다 — S8 은 README, `.wiki/`, CI 워크플로, 버전만 "
-                        "담은 새 버전 파일" + (f", 바꾼 줄마다 버전을 다루는 안드로이드 앱의 {scripts}" if scripts else "")
-                        + "만 바꾼다: " + ", ".join(moved[:5]))
+                        "담은 새 버전 파일만 바꾼다: " + ", ".join(moved[:5]))
     except (ValueError, release.Stopped) as exc:
         return str(exc)
     gate, backend = str((adapter.get("slots") or {}).get("gate_cmd", "")).strip(), o["gate"]
@@ -292,45 +288,13 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     return ""
 
 
-VERSIONED = re.compile(r"version", re.IGNORECASE)   # a line of version wiring names the version
-
-
-def module_scripts(o: dict) -> set[str]:
-    """The Android app's module build scripts, the folder its debug APK is built under (`app/build/outputs/...`
-    → `app/build.gradle.kts`): where its version is wired (`RELEASE_PROMPT`). None without an Android app."""
-
-    if "android" not in kinds_of(o):
-        return set()
-    parts = PurePosixPath(o["device"]["apk"]).parts
-    folder = PurePosixPath(*parts[:parts.index("build")]) if "build" in parts else PurePosixPath(*parts[:-1])
-    return {(folder / name).as_posix() for name in ("build.gradle", "build.gradle.kts")}
-
-
-def _shown(path: Path, at: str, name: str) -> str | None:
-    try:
-        return release.git(path, "show", f"{at}:{name}")
-    except ValueError:   # not in that commit
-        return None
-
-
-def wiring(path: Path, approved: str, head: str, name: str) -> bool:
-    """`name` existed in the approved build, and every line S8 changed in it names the version."""
-
-    if (was := _shown(path, approved, name)) is None or (now := _shown(path, head, name)) is None:
-        return False
-    a, b = was.splitlines(), now.splitlines()
-    return all(not line.strip() or VERSIONED.search(line)
-               for tag, i, j, k, m in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
-               if tag != "equal" for line in a[i:j] + b[k:m])
-
-
 def version_file(path: Path, head: str, name: str) -> bool:
     """`name` at `head` holds the version alone: `{"version": ...}`, or TOML's `version` or `[package] version`."""
 
     try:
-        text = _shown(path, head, name) or ""
+        text = release.git(path, "show", f"{head}:{name}")
         data = json.loads(text) if name.endswith(".json") else tomllib.loads(text)
-    except ValueError:   # a JSON or TOML error is one
+    except ValueError:   # not in that commit, or a JSON or TOML error
         return False
     return isinstance(data, dict) and (set(data) == {"version"} or set(data) == {"package"}
                                        and isinstance(data["package"], dict) and set(data["package"]) == {"version"})
@@ -339,51 +303,53 @@ def version_file(path: Path, head: str, name: str) -> bool:
 def scope(o: dict) -> str:
     """What the README turn may change, as `unapproved` checks it, told before it starts."""
 
-    scripts = " or ".join(f"`{s}`" for s in sorted(module_scripts(o)))
+    if "android" in kinds_of(o):
+        return ("\nThe PC app's installer is built from the commit R3 approved, so nothing this turn changes "
+                "reaches it but its `[release.desktop]` table.\n")
     return ("\nR3 approved the PC app's build, so this turn changes nothing else of the app: only the README, "
-            "`.wiki/`, the CI workflow, a version file it adds holding the version alone"
-            + (f", and the Android app's version wiring in {scripts}, where every line it changes names the version"
-               if scripts else "") + ". Any other change is refused.\n")
+            "`.wiki/`, the CI workflow and a version file it adds holding the version alone. Any other change is "
+            "refused.\n")
 
 
 def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
-    """What changed since the PC app's build R3 approved that S8 may not change: anything but the README,
-    `.wiki/`, the CI workflows, a version file the turn added holding the version alone (`version_source`), and
-    with an Android app among the kinds, its module build script where each changed line names the version
-    (`RELEASE_PROMPT`). Empty without that build."""
+    """What changed since the PC app's build R3 approved that S8 may not change, for a PC app alone: anything but
+    the README, `.wiki/`, the CI workflows and a version file the turn added holding the version alone
+    (`version_source`), so the pull request's app is the installer's. With an Android app among the kinds, S8
+    wires its version as an Android app alone does (`RELEASE_PROMPT`), and the installer is built from the
+    approved commit regardless (`release_checked`). Empty without that build."""
 
-    if not (approved := (o.get("desktop_build") or {}).get("head")) or "desktop" not in kinds_of(o):
+    if not (approved := (o.get("desktop_build") or {}).get("head")) or kinds_of(o) != ["desktop"]:
         return []
     source = str((adapter.get("release") or {}).get("version_source") or "")
     added = set(release.git(path, "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames",
                             "--diff-filter=A", "-z", approved, head).split("\0"))
-    scripts = module_scripts(o)
     return [n for n in oneshot_build.changed(path, approved)
             if not (n == "README.md" or n.startswith((".wiki/", WORKFLOWS))
-                    or n == source and n in added and version_file(path, head, n)
-                    or n in scripts and wiring(path, approved, head, n))]
+                    or n == source and n in added and version_file(path, head, n))]
 
 
 def tauri(o: dict) -> bool:
-    """The PC app is a Tauri app: the stack choice the owner confirmed for its build names Tauri. An Android
-    app's Tauri project is its own part's choice, not the PC app's."""
+    """The PC app is a Tauri app: a choice the owner confirmed for one of its stack's parts (`ui`, `build` and
+    the rest; `desktop.*` among several kinds) names Tauri. Another kind's parts are their own app's."""
 
-    kinds = kinds_of(o)
-    return any(oneshot_build.tooled(s["part"], kinds) and "tauri" in str(s.get("choice", "")).lower()
-               for s in o.get("stack") or [])
+    several = len(kinds_of(o)) > 1
+    return any("tauri" in str(s.get("choice", "")).lower() for s in o.get("stack") or []
+               if not several or str(s.get("part", "")).startswith("desktop."))
 
 
 def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, frozen: dict | None = None,
                     hide: dict | None = None) -> str:
     """The `[release]` table the README turn committed, read as a press reads it at `head`, and each kind it
-    declares built once from one clean checkout of `head` with the version a press would publish after the seed,
-    so the build is shown to take the version it is given, then checked as a release checks what a build made
-    (`release.built_wrong`, `release_desktop.built_wrong`). Unsigned: no key exists before the first press, and
-    none is made. The installer so built and checked is the one S8 attaches: frozen into `frozen["installer"]`
-    under `hide` before the checkout goes; a PC app with no `[release.desktop]` gets a record saying why it has
-    none. Every command ends within a second of a stop, the checkout's own included."""
+    declares built once from its own clean checkout with the version a press would publish after the seed, so
+    the build is shown to take the version it is given, then checked as a release checks what a build made
+    (`release.built_wrong`, `release_desktop.built_wrong`). Android's is `head`'s; the PC app's is the commit R3
+    approved (`desktop_build.head`), so nothing S8 committed after it reaches the installer but the table's own
+    command. Unsigned: no key exists before the first press, and none is made. The installer so built and checked
+    is the one S8 attaches: frozen into `frozen["installer"]` under `hide` before the checkout goes; a PC app with
+    no `[release.desktop]` gets a record saying why it has none. Every command ends within a second of a stop,
+    the checkouts' own included."""
 
-    attempt, kind = f"oneshot-{time.time_ns()}", "android"
+    attempt, kind, made = f"oneshot-{time.time_ns()}", "android", []
     try:
         with release.stoppable(halt):
             try:
@@ -396,10 +362,10 @@ def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, fr
                             "`[release]` 에 쓴다")
                 if frozen is not None:
                     frozen["installer"] = {"head": head, "error": NO_INSTALLER}
-            src = release.checkout(path, head, attempt) if {"android", "desktop"} & set(cfg) else None
+            approved = (spec["oneshot"].get("desktop_build") or {}).get("head") or head
 
-            def pristine() -> None:   # one build's changes never reach the next build or the bytes checked
-                if release.git(src, "rev-parse", "HEAD").strip() != head or release.git(
+            def pristine(src: Path, at: str) -> None:   # the bytes checked are of the commit as it is
+                if release.git(src, "rev-parse", "HEAD").strip() != at or release.git(
                         src, "status", "--porcelain", "--untracked-files=no").strip():
                     raise release.BuildFailed("빌드가 체크아웃의 커밋된 파일을 바꿨다 — 정식 빌드는 소스를 고치지 않는다")
 
@@ -408,20 +374,22 @@ def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, fr
             drop = frozenset({n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)} | {
                 k.upper() for k, v in os.environ.items() if any(s and s in v for s in hide or {})})
             for kind in [k for k in ("android", "desktop") if k in cfg]:
+                at = approved if kind == "desktop" else head
+                made.append(f"{attempt}-{kind}")
+                src = release.checkout(path, at, made[-1])
                 # A PC app's commands start only its confirmed tools or the checkout's own files, as its gate's do:
                 # plain commands joined by `&&` (`chained`), then each program resolved (`run_as`).
                 if oneshot_build.tools(spec["oneshot"]) is not None and not oneshot_build.chained(cfg[kind]["build"]):
                     raise ValueError(f"`build` 는 {oneshot_build.CHAIN}")
                 table = {**cfg[kind], "build": oneshot_build.run_as(cfg[kind]["build"], spec["oneshot"], src)}
-                pristine()
                 if kind == "android":
                     apk = release.build(src, table, later, kit, halt, drop=drop)
-                    pristine()
+                    pristine(src, at)
                     seen = release.badging(release.run([kit["aapt2"], "dump", "badging", apk], release.environment(kit)))
                     wrong = release.built_wrong(seen, later, cfg[kind])
                 else:
                     installer = release.build(src, table, later, kit, halt, read=release_desktop.readable, drop=drop)
-                    pristine()
+                    pristine(src, at)
                     try:   # the installer and the app EXE the build made: one it does not hold is the build's
                         seen = release_desktop.facts(installer, release.output(src, cfg[kind], later, "exe"))
                     except ValueError as exc:
@@ -434,13 +402,15 @@ def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, fr
                     if copy.get("sha256") not in (None, seen["sha256"]):   # the copy must be the bytes checked
                         shutil.rmtree(staging(spec, "installer"), ignore_errors=True)
                         copy = {"head": head, "error": "검사한 설치 파일과 복사한 설치 파일이 다르다"}
-                    frozen["installer"] = {**copy, "version": later}
+                    frozen["installer"] = {**copy, "version": later, "built": at}
+                release.discard(path, made.pop())   # this kind's checkout goes before the next one is made
     except (ValueError, release.Stopped) as exc:   # `BuildFailed` among them
         return f"`[release.{kind}]` 의 정식 빌드 — {exc}"
     finally:
         with release.stoppable(None):   # the cleanup runs even after the stop
-            if release.place(path, attempt).exists():
-                release.discard(path, attempt)
+            for name in made:
+                if release.place(path, name).exists():
+                    release.discard(path, name)
     return ""
 
 
@@ -606,12 +576,13 @@ def _released(spec: dict, key: str, prerelease, tag: str) -> dict:
     head, frozen, old = o["final_head"], o.get(f"{key}_frozen") or {}, o.get(key) or {}
     if frozen.get("head") != head or frozen.get("error"):
         return {"head": head, "error": frozen.get("error") or f"최종 게이트가 고정한 {subject} 없다"}
+    # Flagged at the freeze, whose copy went then: refused before anything, an earlier upload of it included.
+    if why := ("scan" not in frozen and f"최종 게이트가 고정한 {scanned} 검사한 기록이 없다") or frozen["scan"]:
+        return {"head": head, "error": why}
     # A resumed S8 asks for the text again: the same file is not uploaded twice, a rebuilt one replaces it.
     if old.get("url") and (old.get("head"), old.get("sha256")) == (head, frozen["sha256"]):
         shutil.rmtree(Path(frozen["path"]).parent, ignore_errors=True)
         return old
-    if why := ("scan" not in frozen and f"최종 게이트가 고정한 {scanned} 검사한 기록이 없다") or frozen["scan"]:
-        return {"head": head, "error": why}   # flagged at the freeze, whose copy went then
     file = Path(frozen["path"])
     try:
         if not file.is_file() or android_owned.sha256(file) != frozen["sha256"]:
@@ -641,7 +612,7 @@ def _released(spec: dict, key: str, prerelease, tag: str) -> dict:
                     raise
                 failed = exc
         return {"head": head, "name": frozen["name"], "sha256": frozen["sha256"], "url": held["html_url"], "tag": tag,
-                **({"version": frozen["version"]} if frozen.get("version") else {})}
+                **{f: frozen[f] for f in ("version", "built") if frozen.get(f)}}
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return {"head": head, "error": str(exc) or type(exc).__name__}
     finally:

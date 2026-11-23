@@ -210,7 +210,7 @@ def apk_section(spec: dict) -> list[str]:
             lines += [f"## {title}", "", f"{object} Release 에 올리지 못했다 — {asset['error']}", ""]
             continue
         lines += [f"## {title}", "", f"- {name}: [{asset['name']}]({asset['url']}) — 초안 프리릴리스에 올렸다",
-                  f"  - 빌드 커밋 `{asset['head'][:12]}` · SHA-256 `{asset['sha256']}`",
+                  f"  - 빌드 커밋 `{(asset.get('built') or asset['head'])[:12]}` · SHA-256 `{asset['sha256']}`",
                   *([f"  - 정식 빌드 표로 버전 {asset['version']} 을 넣어 만들었다. 서명하지 않아 Windows 가 실행 전에 경고한다"]
                     if asset.get("version") else []), ""]
     return lines

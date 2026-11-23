@@ -125,18 +125,19 @@ def test_the_release_tables_installer_goes_alone_to_the_prerelease_and_the_run_w
     asked = len(sent)
     with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
         check(tree, answer(report()))()
-    head = o()["final_head"]
-    # Built once, from a clean checkout of the gate's HEAD, with the version a press would publish next, its
-    # program the confirmed tool's checked path.
+    head, approved = o()["final_head"], o()["desktop_build"]["head"]
+    # Built once, from a clean checkout of the commit R3 approved, with the version a press would publish next,
+    # its program the confirmed tool's checked path.
     [(at, status, version, artifact, command, _)] = built
-    assert (at, status, version, artifact) == (head, "", "0.1.1", "nsis/r_{version}_x64-setup.exe")
+    assert (at, status, version, artifact) == (approved, "", "0.1.1", "nsis/r_{version}_x64-setup.exe")
+    assert approved != head and o()["installer"]["built"] == approved
     assert command != "python tauri.py" and Path(shutil.which("python")).name.lower() in command.lower()
     assert list((release.WORK / tree.name).iterdir()) == []   # the checkout went with the check
     rel, digests = on_prerelease(github, head)
     name = f"budget-{head[:12]}-x64-setup.exe"
     assert rel["draft"] and rel["prerelease"] and list(digests) == [name]
     assert o()["installer"] == {"head": head, "name": name, "sha256": digests[name], "url": rel["html_url"],
-                                "tag": f"oneshot-{head[:12]}", "version": "0.1.1"} and "apk" not in o()
+                                "tag": f"oneshot-{head[:12]}", "version": "0.1.1", "built": approved} and "apk" not in o()
     assert not staged()   # the copy it uploaded is gone
     stop = o()["stopped"]
     assert stop["reason"] == "kind" and "풀 리퀘스트는 다음 버전에서" in stop["detail"]
@@ -144,6 +145,7 @@ def test_the_release_tables_installer_goes_alone_to_the_prerelease_and_the_run_w
     assert len(sent) == asked and not spec().get("writing")
     body = "\n".join(pr_text.apk_section(spec()))
     assert f"- PC 앱 설치 파일: [{name}]({rel['html_url']})" in body and "버전 0.1.1" in body and "## APK" not in body
+    assert f"빌드 커밋 `{approved[:12]}`" in body
     # Held there through a restart, though the README turn's commit left the frozen build's HEAD: `[재개]` is refused.
     oneshot_spec.recover()
     assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "kind" and o()["desktop_build"]
@@ -236,8 +238,11 @@ def test_with_an_android_app_both_files_go_to_one_prerelease_and_a_resumed_uploa
     with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
         check(tree, answer(report()))()
     head = o()["final_head"]
-    assert [b[3] for b in built] == ["app/release.apk", "nsis/r_{version}_x64-setup.exe"]   # one checkout, both kinds
+    # Each kind from its own checkout: the APK of the gate's HEAD, the installer of the commit R3 approved.
+    assert [(b[0], b[3]) for b in built] == [(head, "app/release.apk"),
+                                             (o()["desktop_build"]["head"], "nsis/r_{version}_x64-setup.exe")]
     assert "gradlew.bat" in built[0][4] and built[0][4] != "gradlew.bat assembleRelease"   # the checkout's own file
+    assert not list((release.WORK / tree.name).glob("*"))   # both checkouts gone
     rel, digests = on_prerelease(github, head)
     assert sorted(digests) == [f"budget-{head[:12]}-debug.apk", f"budget-{head[:12]}-x64-setup.exe"]
     assert o()["apk"]["url"] == o()["installer"]["url"] == rel["html_url"]
@@ -250,24 +255,43 @@ def test_with_an_android_app_both_files_go_to_one_prerelease_and_a_resumed_uploa
     assert "## APK" in body and "## 설치 파일" in body
 
 
-@pytest.mark.parametrize("android, name, text", [
-    (False, "app.py", "a change R3 never saw\n"),
-    (True, "app.py", "a change R3 never saw\n"),
-    # With an Android app among the kinds, only its module script's version lines are added to what S8 may change.
-    (True, "app/build.gradle.kts", 'android {}\ndependencies { implementation("x:y:1") }\n'),
-    (True, "build.gradle.kts", "// versionName, in a script outside the Android module\n"),
-    (False, "app-version.json", '{"version": "0.1.0", "server": "https://example.invalid"}')])   # more than the version
-def test_an_app_file_changed_after_the_approved_build_is_refused(pc, monkeypatch, android, name, text):
+@pytest.mark.parametrize("name, text", [
+    ("app.py", "a change R3 never saw\n"),
+    ("app-version.json", '{"version": "0.1.0", "server": "https://example.invalid"}')])   # more than the version
+def test_a_pc_apps_file_changed_after_the_approved_build_is_refused(pc, name, text):
+    # A PC app alone: the pull request's app is then the installer's.
     tree, sent, _, built = pc
-    if android:
-        mixed(tree, monkeypatch)
     write(tree, name, text)
-    tabled(tree, DESKTOP.replace('"version.json"', '"app-version.json"'), *([ANDROID] if android else []))
+    tabled(tree, DESKTOP.replace('"version.json"', '"app-version.json"'))
     check(tree, answer(report()))()
     assert "R3 가 승인한 PC 앱 빌드 뒤에 앱 파일이 바뀌었다" in sent[-1][2] and f": {name}" in sent[-1][2]
-    assert ("`app/build.gradle.kts`" in sent[-1][2]) is android and "final_head" not in o() and not built
-    assert "`app/build.gradle.kts`, where every line it changes names the version" in oneshot_pr.readme_text(spec()) \
-        if android else "a version file it adds holding the version alone." in oneshot_pr.readme_text(spec())
+    assert "final_head" not in o() and not built
+    assert "a version file it adds holding the version alone." in oneshot_pr.readme_text(spec())
+
+
+def test_with_an_android_app_a_change_after_the_approved_build_never_reaches_the_installer(pc, monkeypatch):
+    # The Android app wires its version as it does alone; the installer is the approved commit's all the same.
+    tree, _, github, built = pc
+    mixed(tree, monkeypatch)
+    write(tree, "app/build.gradle.kts", 'android {}\ndependencies { implementation("x:y:1") }\n')
+    write(tree, "shared.py", "a change R3 never saw\n")
+    tabled(tree, DESKTOP, ANDROID)
+    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+        check(tree, answer(report()))()
+    approved = o()["desktop_build"]["head"]
+    assert built[1][0] == approved and o()["installer"]["url"] and o()["installer"]["built"] == approved
+    assert "built from the commit R3 approved" in oneshot_pr.readme_text(spec())
+
+
+def test_tauri_is_read_off_the_pc_apps_own_stack_parts():
+    one = {"intent": {"kind": "desktop"}, "stack": [{"part": "ui", "choice": "Tauri 2 (web view)"},
+                                                    {"part": "build", "choice": "npm run build"}]}
+    assert oneshot_pr.tauri(one)
+    several = {"intent": {"kind": "android", "kinds": ["android", "desktop"]},
+               "stack": [{"part": "android.ui", "choice": "Tauri 2 mobile"}, {"part": "desktop.ui", "choice": "WinUI 3"}]}
+    assert not oneshot_pr.tauri(several)
+    several["stack"][1]["choice"] = "TAURI 2"
+    assert oneshot_pr.tauri(several)
 
 
 def test_a_version_file_the_readme_turn_adds_is_s8s_own(pc):
@@ -354,6 +378,9 @@ def test_a_copy_the_freezes_scan_flags_is_not_kept(pc, tmp_path):
     assert copy["scan"].startswith("비밀 값 [N1]") and "path" not in copy
     assert not list(oneshot_pr.staging(spec(), "installer").rglob("*.exe"))
     oneshot_spec.saved("budget", oneshot={"final_head": "h" * 40, "installer_frozen": copy})
+    assert oneshot_pr._released(spec(), "installer", lambda: pytest.fail("nothing goes up"), "t")["error"] == copy["scan"]
+    # The same bytes went up before, under values that did not flag them: refused now all the same.
+    oneshot_spec.saved("budget", oneshot={"installer": {"head": "h" * 40, "sha256": copy["sha256"], "url": "u"}})
     assert oneshot_pr._released(spec(), "installer", lambda: pytest.fail("nothing goes up"), "t")["error"] == copy["scan"]
 
 
