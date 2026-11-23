@@ -349,7 +349,12 @@ source, and the server assigns it:
     whole UTF-16. The driver reads every element's automation id again
     after its value and compares the two ordinally. One that changed (a
     control rebound meanwhile) leaves that window's read not whole. Such a
-    read proves no value, no absence and no single holder of an id. A report file is read through one open that shares
+    read proves no value, no absence and no single holder of an id.
+    A known limit, accepted by the owner: UI Automation offers no snapshot
+    of a tree, so the driver reads the tree live. The checks above catch a
+    change that is still there when it is read again. They cannot catch an
+    element rebound and restored between two reads of it, or one moved
+    within the tree into a part the walk already passed. A report file is read through one open that shares
     reading only, so it is one version of the file. A file the app still
     holds open for writing is no report.
     A known limit, accepted by the owner: the approval decides what the
