@@ -339,6 +339,9 @@ nor dispatches (`kick`, `rereview`) the pull request of a oneshot run that has
 not finished (`oneshot_profile.in_run`). The ownership check needs `psutil`,
 declared in `requirements-chat.txt`.
 S8 makes the draft ready; when GitHub refuses, S8 stops instead of finishing.
+It does so only for the publication of this hand-over: a pull request record
+left by an earlier one, after a push that failed since or a text turn that
+moved HEAD, stops S8 with that fault instead.
 
 ## Steps
 

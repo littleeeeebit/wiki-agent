@@ -288,6 +288,17 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
         assert check(tree, SUMMARIZED) is None
     assert any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls)
     assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "pr" and "초안을 풀지 못했다" in o()["stopped"]["detail"]
+    # Resumed, a new README commit's push fails: the record of the earlier publication never finishes the run.
+    oneshot_spec.resume("budget")
+    readme(tree, ("NOTES.md", "다시\n"))
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    remote = Remote()
+    with patch.object(specs, "sh", lambda args, cwd, timeout=60: remote(args, cwd, timeout) if args[:2] != ["git", "push"]
+                      else subprocess.CompletedProcess(args, 1, "", "rejected")):
+        assert check(tree, SUMMARIZED) is None
+    assert not any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls)
+    assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "pr" and "push 실패" in o()["stopped"]["detail"]
 
 
 @pytest.mark.parametrize("change, said", [

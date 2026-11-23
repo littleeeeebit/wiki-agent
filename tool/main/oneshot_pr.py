@@ -459,7 +459,9 @@ def handed(path: Path, run, spec: dict, final: str):
                                                     getattr(run.chat, "hide", None)))
         raise
     fresh = specs.load(repo, spec["id"])
-    if fresh.get("pr"):
+    # Published by this hand-over only when no fault and no text asked again stands: an earlier publication's
+    # record, left by a push that failed since or a text turn that moved HEAD, never finishes the run.
+    if fresh.get("pr") and not fresh.get("fault") and not fresh.get("writing"):
         if (spec["oneshot"].get("pr1") or {}).get("number") == fresh["pr"]["number"]:
             # The draft the backend opened (`oneshot_publish.published`) is this one: the final text is in, so it
             # leaves draft. A draft left is no finished run: it stops, and `[재개]` asks again.
