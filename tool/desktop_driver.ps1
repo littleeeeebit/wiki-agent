@@ -64,6 +64,7 @@ $out = $ask.out
 $report = [ordered]@{ phase = "starting"; main = $null; size = $null; states = @(); steps = @(); refusal = $null; error = $null }
 $UTILITY = @("UAC_InputIndicatorOverlayWnd", "UAC Input Indicator", "IME", "MSCTFIME UI")
 $MAX_ITEMS = 2000   # a list's items counted at most: more is an unknown count, so its tree is not taken as whole
+$MAX_REPORT = 1048576   # a report file's bytes read before a step at most: the server's own MAX_REPORT
 $MAX_VALUE = 1000   # a control's value recorded at most, in characters: a check's expected value is no longer
 $script:seq = 0
 
@@ -125,7 +126,36 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
   [ordered]@{ hwnd = $window.hwnd; drawn = $true; file = $file; size = @($frame[2], $frame[3]) }
 }
 
-function Rid($element) { ($element.GetRuntimeId()) -join "." }   # the element's identity while it lives
+function Rid($element) {   # the element's identity while it lives; none at all is no identity, never ""
+  $id = $element.GetRuntimeId()
+  if ($null -eq $id -or @($id).Count -eq 0) { throw "the element has no runtime id" }
+  @($id) -join "."
+}
+
+function Baseline([string]$path) {   # a report file just before a step acts: its text, proven absent, or why unknown
+  try {
+    $s = [System.IO.File]::OpenRead($path)
+    try {
+      if ($s.Length -gt $MAX_REPORT) { return [ordered]@{ error = "larger than $MAX_REPORT bytes" } }
+      $bytes = New-Object byte[] $s.Length
+      $got = 0
+      while ($got -lt $bytes.Length) {
+        $n = $s.Read($bytes, $got, $bytes.Length - $got)
+        if ($n -le 0) { return [ordered]@{ error = "the file shrank while it was read" } }
+        $got += $n
+      }
+    } finally { $s.Dispose() }
+    # Strict: bytes that are not UTF-8 throw, and an unread text is unknown, never a text with replacements.
+    return [ordered]@{ text = (New-Object System.Text.UTF8Encoding($false, $true)).GetString($bytes) }
+  } catch {
+    $x = $_.Exception
+    if ($x -is [System.Management.Automation.MethodInvocationException]) { $x = $x.InnerException }
+    if ($x -is [System.IO.FileNotFoundException] -or $x -is [System.IO.DirectoryNotFoundException]) {
+      return [ordered]@{ absent = $true }
+    }
+    return [ordered]@{ error = "$($x.Message)" }
+  }
+}
 
 function Items([string]$at) {   # each open item container's items, realized or not, against the nodes the walk read
   # `items`: how many its provider holds; `unread`: how many of them the walk did not read, null when the
@@ -133,26 +163,61 @@ function Items([string]$at) {   # each open item container's items, realized or 
   # The walk's identities, then each container, are operations of their own: none grows with the whole tree.
   if (-not $script:lists.Count) { return }
   Enter "identify $at"
-  $seen = New-Object 'System.Collections.Generic.HashSet[string]'
-  foreach ($e in $script:walked) { try { [void]$seen.Add((Rid $e)) } catch { } }   # unread: its items stay unread
-  $n = 0
-  foreach ($pair in $script:lists) {
-    $element, $node = $pair
-    Enter "items $at $(($n++))"
+  # Each container's walked elements, by runtime id: an item is read only as an element walked inside that very
+  # container, never one of a sibling's that a provider gave the same id. One without an id stays unread.
+  $seen = @{}
+  foreach ($w in $script:walked) {
+    $e, $within = $w
+    if (-not @($within).Count) { continue }
+    try { $r = Rid $e } catch { continue }
+    foreach ($i in @($within)) {
+      if (-not $seen.ContainsKey($i)) { $seen[$i] = New-Object 'System.Collections.Generic.HashSet[string]' }
+      [void]$seen[$i].Add($r)
+    }
+  }
+  for ($n = 0; $n -lt $script:lists.Count; $n++) {
+    $element, $node, $clipped = $script:lists[$n]
+    Enter "items $at $n"
+    $set = $seen[$n]
     $node.items, $node.unread = $null, $null
     try {
       $container = $element.GetCurrentPattern([System.Windows.Automation.ItemContainerPattern]::Pattern)
       $count, $unread, $item = 0, 0, $null
+      $mine = New-Object 'System.Collections.Generic.HashSet[string]'   # this container's items, by runtime id
       do {   # one call past the bound: a container of exactly $MAX_ITEMS is seen to end
         $item = $container.FindItemByProperty($item, $null, $null)
         if ($item) {
           $count++
-          try { if (-not $seen.Contains((Rid $item))) { $unread++ } } catch { $unread++ }
+          # An id met twice here names two items one walked element cannot both be: the second is unread.
+          try { $r = Rid $item; if (-not $mine.Add($r) -or -not ($set -and $set.Contains($r))) { $unread++ } } catch { $unread++ }
         }
       } while ($item -and $count -le $MAX_ITEMS)
-      if (-not $item) { $node.items, $node.unread = $count, $unread }
+      # Its items all counted, unless what they hold across its view is unverified: then how many is unknown.
+      if (-not $item) { $node.items, $node.unread = $count, $(if ($clipped) { $null } else { $unread }) }
     } catch { }
   }
+}
+
+$STRICT = New-Object System.Text.UTF8Encoding($false, $true)
+function Whole($text) {   # whole UTF-16, so the report's UTF-8 carries it as read, never with a replacement
+  if ($null -eq $text) { return $true }
+  try { [void]$STRICT.GetByteCount([string]$text); return $true } catch { return $false }
+}
+
+function Full($element, [string[]]$ways) {   # each direction named proven to hold its whole view
+  # Supplied, without defaults, as not scrollable, with a view of 100 percent and at the position `NoScroll`: any
+  # of them contradicting the others, or unread, leaves that direction's end unverified.
+  $P = [System.Windows.Automation.ScrollPattern]
+  try {
+    foreach ($w in $ways) {
+      $can = $element.GetCurrentPropertyValue($P::("${w}lyScrollableProperty"), $true)
+      $size = $element.GetCurrentPropertyValue($P::("${w}ViewSizeProperty"), $true)
+      $at = $element.GetCurrentPropertyValue($P::("${w}ScrollPercentProperty"), $true)
+      if (-not ($can -is [bool] -and -not $can -and $size -is [double] -and $size -eq 100 -and
+                $at -is [double] -and $at -eq $P::NoScroll)) { return $false }
+    }
+    $true
+  } catch { $false }
 }
 
 function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hwnd, [int]$depth = 0, [bool]$scrolled = $false) {
@@ -176,28 +241,73 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
   # one never matches; and the toggle state.
   if ($patterns -contains "Value") {
     try {
-      $v = [string]$element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
-      $node.value = if ($v.Length -gt $MAX_VALUE) { $null } else { $v }
-    } catch { $node.value = $null }
+      # Without defaults: a provider that does not supply the value answers NotSupported, never an empty string.
+      $raw = $element.GetCurrentPropertyValue([System.Windows.Automation.ValuePattern]::ValueProperty, $true)
+      if ([object]::ReferenceEquals($raw, [System.Windows.Automation.AutomationElement]::NotSupported) -or $null -eq $raw) {
+        $node.value = $null; $node.unvalued = $true
+      } else {
+        $v = [string]$raw
+        $whole = Whole $v   # a lone surrogate would reach the report as U+FFFD: unknown
+        $node.value = if ($v.Length -gt $MAX_VALUE -or -not $whole) { $null } else { $v }
+        if ($v.Length -gt $MAX_VALUE -or -not $whole) { $node.unvalued = $true }
+      }
+    } catch { $node.value = $null; $node.unvalued = $true }   # unread or cut: what it held is unknown, not empty
   }
-  if ($patterns -contains "Toggle") {
-    try { $node.toggle = [string]$element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
-    catch { $node.toggle = $null }
+  if ($patterns -contains "Text") {   # a document's text, which neither its name nor a value need carry
+    try {   # one past the bound: a longer text is known to be cut, so unknown, never taken for the whole
+      $t = $element.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText($MAX_VALUE + 1)
+      if ($t -is [string] -and $t.Length -le $MAX_VALUE -and (Whole $t)) { $node.text = $t }
+      else { $node.text = $null; $node.untexted = $true }
+    } catch { $node.text = $null; $node.untexted = $true }
   }
-  $script:walked.Add($element)   # its identity is read by `Items`, under that operation's own deadline
+  # Every element's id again, after its value: one rebound meanwhile leaves unknown which id held what, so this
+  # window's read is not whole, and proves neither a value, nor an id absent, nor an id held once. Compared
+  # ordinally, as the server matches ids. Read as `Current.AutomationId` reads it, defaults alike.
+  try { $again = $element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::AutomationIdProperty) }
+  catch { $again = $null }
+  if (-not ($again -is [string]) -or -not [string]::Equals($again, [string]$node.id, [System.StringComparison]::Ordinal)) {
+    $node.value = $null; $node.unvalued = $true
+    $script:rebound = "an element's automation id changed while it was read: '$($node.id)' then '$again'"
+  }
+  if ($patterns -contains "Toggle") {   # without defaults: an unsupplied state is unknown, never `Indeterminate`
+    try {
+      $t = $element.GetCurrentPropertyValue([System.Windows.Automation.TogglePattern]::ToggleStateProperty, $true)
+      $node.toggle = if ($t -is [System.Windows.Automation.ToggleState]) { [string]$t } else { $null }
+    } catch { $node.toggle = $null }
+  }
+  # An id or a name that is not whole UTF-16 would reach the report as another string: this window's read is not
+  # whole, and the string is carried empty, as an element without one.
+  foreach ($k in @("id", "name")) {
+    if (-not (Whole $node[$k])) { $node[$k] = ""; $script:rebound = "an element's $k is not whole UTF-16" }
+  }
+  # Its identity is read by `Items`, under that operation's own deadline, with the containers it was walked inside.
+  $script:walked.Add(@($element, $script:under))
   $open = $patterns -notcontains "ExpandCollapse"   # a container that expands holds its items only while expanded
   if (-not $open) {
-    try {
-      $open = $element.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -in
-        @([System.Windows.Automation.ExpandCollapseState]::Expanded, [System.Windows.Automation.ExpandCollapseState]::PartiallyExpanded)
+    try {   # without defaults: an unsupplied state is unknown, never the client's `LeafNode`
+      $e = $element.GetCurrentPropertyValue([System.Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty, $true)
+      # Closed only as one of the two closed states named: any other value, out of range included, is audited.
+      $open = -not ($e -is [System.Windows.Automation.ExpandCollapseState] -and $e -in
+        @([System.Windows.Automation.ExpandCollapseState]::Collapsed, [System.Windows.Automation.ExpandCollapseState]::LeafNode))
     } catch { $open = $true }   # its state unread: its items are owed
   }
-  if ($open -and ($patterns -contains "ItemContainer" -or $node.type -eq "TreeItem")) { $script:lists += , @($element, $node) }
+  # The driver does not scroll, so what lies past a container's view in a direction is read only where that
+  # direction is proven to hold it all. An item container's items enumerate the direction they run in, never
+  # what each holds past the view across it: so it owes the horizontal direction, a container without one both.
+  $ways = if ($patterns -notcontains "Scroll") { @() } elseif ($patterns -contains "ItemContainer") { @("Horizontal") } else { @("Vertical", "Horizontal") }
+  $clipped = $ways.Count -gt 0 -and -not (Full $element $ways)
+  $outer = $script:under
+  if ($open -and ($patterns -contains "ItemContainer" -or $node.type -eq "TreeItem")) {
+    $script:lists += , @($element, $node, $clipped)
+    $script:under = @($outer) + ($script:lists.Count - 1)   # its children are walked inside it
+  }
+  if ($clipped) { $node.items, $node.unread = $null, $null }   # an item container's audit keeps it so
   $script:nodes += $node
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $inner = $scrolled -or $patterns -contains "Scroll"
   $child = $walker.GetFirstChild($element)
   while ($child) { Nodes $child $hwnd ($depth + 1) $inner; $child = $walker.GetNextSibling($child) }
+  $script:under = $outer
 }
 
 function State([string]$name) {   # every window of the app in this state, shot and read
@@ -207,12 +317,16 @@ function State([string]$name) {   # every window of the app in this state, shot 
   $script:tops = @($windows | ForEach-Object { [int64]$_.hwnd })
   $state = [ordered]@{ id = $id; name = $name; windows = $windows; shots = @(); reads = @(); nodes = @() }
   foreach ($w in $windows) {
-    Enter "shoot $id $($w.hwnd)"
-    $shot = Shoot $w $id
+    if ($ask.shoot -eq $false) {   # the owner's desktop: no PrintWindow, whose handle may name another app's window
+      $shot = [ordered]@{ hwnd = $w.hwnd; drawn = $false; unshot = $true }
+    } else {
+      Enter "shoot $id $($w.hwnd)"
+      $shot = Shoot $w $id
+    }
     $state.shots += $shot
-    if (-not $shot.drawn) { continue }
+    if (-not $shot.drawn -and -not $shot.unshot) { continue }
     Enter "read $id $($w.hwnd)"
-    $script:nodes, $script:lists = @(), @()
+    $script:nodes, $script:lists, $script:rebound, $script:under = @(), @(), $null, @()
     $script:walked = New-Object 'System.Collections.Generic.List[object]'
     $read = [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
     if (Current $w) {
@@ -220,6 +334,7 @@ function State([string]$name) {   # every window of the app in this state, shot 
         Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd
         Items "$id $($w.hwnd)"
         if (-not $script:nodes.Count -or $script:nodes[0].foreign) { $read.error = "the tree's root is not the app's" }
+        elseif ($script:rebound) { $read.error = $script:rebound }
         else { $read = [ordered]@{ hwnd = $w.hwnd; read = $true } }
       } catch { $read.error = "the tree could not be read: $($_.Exception.Message)" }
     }
@@ -245,17 +360,24 @@ function Nested($element, [int64]$root, $others) {   # another top-level window 
 function Target($step) {
   # By AutomationId, or by a name only one element carries, within one window and none it shows nested: the main
   # window, or with `in: owned` the one window the main window owns.
-  $root = [int64](Main)
+  $root, $window = [int64](Main), $report.main
   if ($step.in -eq "owned") {
     $owned = @(Windows | Where-Object { $_.owner -eq $root })
     if ($owned.Count -ne 1) { return [ordered]@{ error = "the main window owns $($owned.Count) windows, not one" } }
-    $root = [int64]$owned[0].hwnd
+    $root, $window = [int64]$owned[0].hwnd, $owned[0]
   }
   $others = @(Windows | ForEach-Object { [int64]$_.hwnd } | Where-Object { $_ -ne $root })
   $A = [System.Windows.Automation.AutomationElement]
   $property, $value = if ($step.id) { $A::AutomationIdProperty, $step.id } else { $A::NameProperty, $step.control }
-  $all = $A::FromHandle([IntPtr]$root).FindAll([System.Windows.Automation.TreeScope]::Descendants,
-                       (New-Object System.Windows.Automation.PropertyCondition $property, $value))
+  # The root resolved first, then proven the window chosen, so a handle that names another app's window by now has
+  # its tree never queried.
+  $element = $A::FromHandle([IntPtr]$root)
+  if (-not (Current $window) -or [int64]$element.Current.NativeWindowHandle -ne $root `
+      -or -not [Desk]::InApp([uint32]$element.Current.ProcessId)) {
+    return [ordered]@{ error = "the window is gone or no longer the app's" }
+  }
+  $all = $element.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                          (New-Object System.Windows.Automation.PropertyCondition $property, $value))
   $mine = @($all | Where-Object { -not (Nested $_ $root $others) })
   if ($mine.Count -ne 1) { return [ordered]@{ error = "$($mine.Count) elements match $value" } }
   if (-not [Desk]::InApp([uint32]$mine[0].Current.ProcessId)) { return [ordered]@{ error = "the element is not the app's" } }
@@ -317,6 +439,14 @@ try {
     Enter "find $($step.name)"
     $found = Target $step
     if ($found.error) { $done.error = $found.error; Save; continue }
+    # What the step's report is weighed against, read with its target found, just before it acts.
+    if ($step.before) { $done.before = (State "before-$($step.name)").id }
+    if ($step.baseline) { Enter "baseline $($step.name)"; $done.baseline = Baseline ([string]$step.baseline) }
+    if ($step.before -or $step.baseline) {
+      Enter "find $($step.name) again"   # what the reads found may have moved meanwhile: the target as it is now
+      $found = Target $step
+      if ($found.error) { $done.error = $found.error; Save; continue }
+    }
     Enter "act $($step.name)"
     try { Act $found.element $step; $done.acted = $true } catch { $done.error = "$($_.Exception.Message)"; Save; continue }
     Save

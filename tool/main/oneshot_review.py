@@ -453,15 +453,15 @@ def review(repo: str) -> None:
     holding(repo, "백엔드 리뷰", body)
 
 
-def holding(repo: str, what: str, body, passed: str = "built_head", build: str = "build") -> None:
+def holding(repo: str, what: str, body, passed: str = "built_head", build: str = "build", again=None) -> None:
     """A stage that reads the worktree holds it, as a work turn does, so no other turn writes the tree it
     reads. `body(store, spec, tree)` runs on the HEAD the build passed (`passed` names it; a moved tree
     goes back to the `build` stage), on a clean tree, and returns the
     callable that saves its result, or `None` after stopping; the tree is checked again before that is
-    called. A moved tree goes back to the build's checks. A callable the save returns runs once the tree
+    called. A moved tree goes back to the build's checks, through `again(repo, store, why, build)` when
+    the stage decides that against a stop itself. A callable the save returns runs once the tree
     is let go: the refusal's build turn, or the next stage's worker, which then holds the tree itself
-    (it returns true). Otherwise
-    the instruction the person queued for this worktree meanwhile goes, as after any turn."""
+    (it returns true). Otherwise the instruction the person queued for this worktree meanwhile goes, as after any turn."""
 
     store = oneshot_spec.store(repo)
     spec = oneshot_spec.spec_of(repo)
@@ -476,13 +476,13 @@ def holding(repo: str, what: str, body, passed: str = "built_head", build: str =
         following = None
         try:
             if why := moved(spec, tree, passed):
-                rebuild(repo, store, why, build)
+                (again or rebuild)(repo, store, why, build)
                 return
             save = body(store, spec, tree)
             if save is None:
                 return
             if why := moved(spec, tree, passed):
-                rebuild(repo, store, f"{what} 동안 작업트리가 바뀌었다 — {why}", build)
+                (again or rebuild)(repo, store, f"{what} 동안 작업트리가 바뀌었다 — {why}", build)
                 return
             following = save()
         finally:

@@ -2,6 +2,7 @@
 patterns only, a deadline per phase, and the mechanical findings (docs/research/oneshot-desktop-session.md)."""
 
 import json
+import subprocess
 import sys
 import time
 import types
@@ -40,6 +41,18 @@ def test_the_main_window_is_sized_to_the_card_shot_and_read(tmp_path):
     assert start["shots"][0]["file"] == f"s00-{start['shots'][0]['hwnd']}.png"   # the id names it, not the label
     assert (tmp_path / "tk" / "evidence" / "driver" / start["shots"][0]["file"]).stat().st_size > 0
     assert start["nodes"][0]["type"] == "Window" and start["nodes"][0]["name"] == "fixture"
+
+
+def test_without_shots_each_state_is_read_and_no_window_is_shot(tmp_path):
+    # The owner's desktop round's mode (plan 9e5b): PrintWindow is never called there, so nothing is shot.
+    with desktop_session.look(tmp_path, "tk") as look:
+        look.start("app", python(WINDOW), tmp_path)
+        report = desktop_driver.drive(look, "app", (640, 480), [], settle_ms=500, shoot=False)
+    start = report["states"][0]
+    assert report["phase"] == "done" and start["shots"] == [{"hwnd": start["windows"][0]["hwnd"], "drawn": False,
+                                                              "unshot": True}], report
+    assert start["reads"][0]["read"] and start["nodes"][0]["name"] == "fixture"
+    assert not list((tmp_path / "tk" / "evidence" / "driver").glob("*.png"))
 
 
 LATER = ("import pathlib, subprocess, sys, time; marker = pathlib.Path(sys.argv[1]) / 'evidence' / 'driver' / "
@@ -111,8 +124,8 @@ def test_a_window_the_main_window_owns_at_startup_is_no_candidate_and_is_shot_wi
 
 
 def test_a_halt_while_the_driver_runs_ends_it_at_once(tmp_path):
-    reads = []   # the driver's start reads it once; its watch then finds it set
-    halt = types.SimpleNamespace(is_set=lambda: reads.append(1) or len(reads) > 1)
+    reads = []   # the driver's start reads it twice, as it is recorded and just before it runs; its watch then finds it set
+    halt = types.SimpleNamespace(is_set=lambda: reads.append(1) or len(reads) > 2)
     with desktop_session.look(tmp_path, "halt") as look:
         look.start("app", python(NONE), tmp_path)   # no window: the driver would wait out its first-window wait
         started = time.monotonic()
@@ -237,6 +250,110 @@ def test_a_wpf_list_counts_the_items_its_read_did_not_reach(tmp_path, kind, virt
     assert not [f for f in desktop_driver.findings(report) if "outside its window" in f]   # scrolled rows reachable
 
 
+WPF_SCROLLER = """param([int]$rows)
+Add-Type -AssemblyName PresentationFramework
+$w = New-Object System.Windows.Window
+$w.Title = "scroller"; $w.Width = 400; $w.Height = 300
+$v = New-Object System.Windows.Controls.ScrollViewer
+$v.VerticalScrollBarVisibility = "Auto"; $v.HorizontalScrollBarVisibility = "Disabled"
+$p = New-Object System.Windows.Controls.StackPanel
+foreach ($i in 1..$rows) { $t = New-Object System.Windows.Controls.Button; $t.Content = "row $i"; $t.Height = 30; [void]$p.Children.Add($t) }
+$v.Content = $p; $w.Content = $v
+[void]$w.ShowDialog()
+"""
+
+
+@pytest.mark.parametrize("rows", [2, 40])
+def test_a_container_that_only_scrolls_leaves_its_read_not_whole_while_it_scrolls(tmp_path, rows):
+    # A scroll viewer offers no enumeration of what lies past its view, and the driver does not scroll: 40 rows
+    # scroll, so its end is unverified; 2 rows fit, so its view holds them all
+    from main import oneshot_desktop_look
+
+    script = tmp_path / "scroller.ps1"
+    script.write_text(WPF_SCROLLER, encoding="utf-8")
+    with desktop_session.look(tmp_path, f"scroller-{rows}") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script), str(rows)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [], wait=30, settle_ms=1000)
+    assert report["states"], {k: report.get(k) for k in ("phase", "ended", "refusal", "error")}
+    start = report["states"][0]
+    [viewer] = [n for n in start["nodes"] if "Scroll" in (n.get("patterns") or []) and n.get("depth", 0) > 0]
+    assert ("unread" in viewer) == (rows == 40), viewer
+    assert oneshot_desktop_look.partial(start, {w["hwnd"] for w in start["windows"]}) == (rows == 40)
+
+
+def audited(script: str) -> str:
+    """`Rid` and `Items` of the driver's own text, with stand-ins: `El <id>`, an element of that runtime id, and
+    `List <elements>`, a container whose ItemContainer enumerates them in order."""
+
+    rid = "function Rid(" + script.split("function Rid(", 1)[1].split("\nfunction ", 1)[0]
+    items = "function Items(" + script.split("function Items(", 1)[1].split("\nfunction ", 1)[0]
+    return ("Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes\n" + rid + "\n" + items + "\n"
+            "function Enter($what) { }\n$MAX_ITEMS = 100\n"
+            "function El($id) { $p = [pscustomobject]@{}; $p | Add-Member NoteProperty k $id; "
+            "$p | Add-Member ScriptMethod GetRuntimeId { ,@($this.k) }; $p }\n"
+            "function List([object[]]$held) { $c = [pscustomobject]@{ held = $held }; "
+            "$c | Add-Member ScriptMethod FindItemByProperty { param($after, $p, $v) "
+            "$i = if ($null -eq $after) { 0 } else { [array]::IndexOf($this.held, $after) + 1 }; "
+            "if ($i -lt $this.held.Count) { $this.held[$i] } else { $null } }; "
+            "$e = [pscustomobject]@{ c = $c }; $e | Add-Member ScriptMethod GetCurrentPattern "
+            "{ param($x) $this.c }; $e }\n")
+
+
+def test_a_view_counts_as_whole_only_not_scrollable_both_ways_at_a_full_size():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    rule = "function Full(" + script.split("function Full(", 1)[1].split("\nfunction ", 1)[0]
+    # The rule's own text over stand-ins answering the six scroll properties: (vertically scrollable, its view
+    # size, its position, then the same horizontally), `none` unsupplied. Each later case breaks one property of
+    # the first, the only one whose view holds it all. `(-1)`: a bare -1 in argument mode is the string "-1".
+    full = "$false 100 (-1)"
+    cases = [f"{full} {full}", f"$true 100 (-1) {full}", f"$false 25 (-1) {full}", f"$false 99.5 (-1) {full}",
+             f"$false 100 50 {full}", f"{full} $false 100 50", f"{full} $true 100 (-1)", f"{full} $false 25 (-1)",
+             f"none 100 (-1) {full}", f"$false none (-1) {full}", f"$false 100 none {full}",
+             f"'no' 100 (-1) {full}", f"0 100 (-1) {full}", f"$false '100' (-1) {full}", f"$false 100 '-1' {full}"]
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
+                            "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes\n"
+                            "$P = [System.Windows.Automation.ScrollPattern]\n"
+                            "$patterns = @('Scroll')\n"
+                            "function Case($vc, $vs, $vp, $hc, $hs, $hp) {\n"
+                            "  $element = [pscustomobject]@{ k = @{ $P::VerticallyScrollableProperty.Id = $vc; "
+                            "$P::VerticalViewSizeProperty.Id = $vs; $P::VerticalScrollPercentProperty.Id = $vp; "
+                            "$P::HorizontallyScrollableProperty.Id = $hc; $P::HorizontalViewSizeProperty.Id = $hs; "
+                            "$P::HorizontalScrollPercentProperty.Id = $hp } }\n"
+                            "  $element | Add-Member ScriptMethod GetCurrentPropertyValue { param($p, $d) "
+                            "$x = $this.k[$p.Id]; if ($x -is [string] -and $x -eq 'none') "
+                            "{ [System.Windows.Automation.AutomationElement]::NotSupported } "
+                            "elseif ($x -is [int]) { [double]$x } else { $x } }\n"
+                            "  if (Full $element @('Vertical', 'Horizontal')) { 'whole' } else { 'partial' }\n}\n"
+                            + rule + "\n"
+                            + "\n".join(f"Case {c}" for c in cases)], capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["whole"] + ["partial"] * (len(cases) - 1), probe
+
+
+def test_an_item_container_owes_the_view_across_its_items_and_a_plain_scroller_both():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    nodes = script.split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
+    ways = "$ways = " + nodes.split("$ways = ", 1)[1].split("\n", 1)[0]
+    # Which directions each kind owes, by the rule's own line.
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
+                            "foreach ($patterns in @(@('Invoke'), @('Scroll'), @('Scroll', 'ItemContainer'), "
+                            "@('ItemContainer'))) { " + ways + "; ($ways -join '+') + '.' }"],
+                           capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == [".", "Vertical+Horizontal.", "Horizontal.", "."], probe
+    assert "$clipped = $ways.Count -gt 0 -and -not (Full $element $ways)" in nodes
+    assert nodes.index("$clipped = ") < nodes.index("$script:lists += , @($element, $node, $clipped)")
+    # `Items` itself over a grid whose rows are all walked but whose columns run past its view: rows counted,
+    # how many it holds unread unknown; the same grid with its view across proven full reads whole.
+    audit = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", audited(script) +
+                            "foreach ($clipped in $true, $false) {\n"
+                            "  $grid = @{}; $script:lists = @(, @((List @((El 5))), $grid, $clipped))\n"
+                            "  $script:walked = New-Object 'System.Collections.Generic.List[object]'\n"
+                            "  $script:walked.Add(@((El 5), @(0))); Items 's00'\n"
+                            "  \"$($grid.items)/$(if ($null -eq $grid.unread) { 'unknown' } else { $grid.unread })\"\n}"],
+                           capture_output=True, text=True, timeout=60)
+    assert audit.stdout.split() == ["1/unknown", "1/0"], audit
+
+
 WPF_OWNED = """Add-Type -AssemblyName PresentationFramework
 $A = [System.Windows.Automation.AutomationProperties]
 $w = New-Object System.Windows.Window
@@ -289,6 +406,203 @@ def test_a_check_reads_a_controls_value_and_toggle_state_after_its_steps(tmp_pat
     assert [desktop_driver.holds(states[s["state"]], s["expect"]) for s in report["steps"]] == [True, holds], report
     assert [n.get("toggle") for n in states["s00"]["nodes"] if n.get("id") == "translate-on"] == ["Off"]
     assert ("step on: its postcondition was not read" in desktop_driver.findings(report)) is not holds
+
+
+def test_a_steps_baseline_and_before_state_are_read_with_its_target_found_just_before_it_acts(tmp_path):
+    script, there = tmp_path / "form.ps1", tmp_path / "there.txt"
+    script.write_text(WPF_FORM, encoding="utf-8")
+    there.write_text("old 보고", encoding="utf-8")
+    steps = [{"name": "one", "action": "set_value", "id": "source", "value": "a", "baseline": str(there)},
+             {"name": "two", "action": "set_value", "id": "source", "value": "b", "before": True,
+              "baseline": str(tmp_path / "none.txt")}]
+    with desktop_session.look(tmp_path, "baseline") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), steps, wait=30, settle_ms=300)
+    assert [s.get("baseline") for s in report["steps"]] == [{"text": "old 보고"}, {"absent": True}], report
+    states = {s["id"]: s for s in report["states"]}
+    before = states[report["steps"][1]["before"]]   # read after step one acted, before step two did
+    assert before["name"] == "before-two" and [n.get("value") for n in before["nodes"] if n.get("id") == "source"] == ["a"]
+    after = states[report["steps"][1]["state"]]   # the target found again after that read is the one acted on
+    assert report["steps"][1]["acted"] and [n.get("value") for n in after["nodes"] if n.get("id") == "source"] == ["b"]
+
+
+def test_a_step_with_either_read_finds_its_target_again_after_both_and_before_it_acts():
+    loop = desktop_driver.SCRIPT.read_text(encoding="utf-8").split("foreach ($step in $ask.steps) {", 1)[1]
+    loop = loop.split('Enter "done"', 1)[0]
+    at = [loop.index(s) for s in ('$done.before = (State', '$done.baseline = Baseline',
+                                  'if ($step.before -or $step.baseline) {', '$found = Target $step', 'Act $found.element')]
+    again = loop.index("$found = Target $step", loop.index("if ($step.before -or $step.baseline) {"))
+    assert at[0] < at[1] < at[2] < again < at[4], at
+
+
+def test_a_report_file_that_is_not_utf8_has_no_baseline_text(tmp_path):
+    script, bad = tmp_path / "form.ps1", tmp_path / "bad.txt"
+    script.write_text(WPF_FORM, encoding="utf-8")
+    bad.write_bytes(b"\xffapple river garden")
+    with desktop_session.look(tmp_path, "badtext") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [
+            {"name": "one", "action": "set_value", "id": "source", "value": "a", "baseline": str(bad)}],
+            wait=30, settle_ms=300)
+    assert set(report["steps"][0]["baseline"]) == {"error"}, report
+
+
+def test_an_element_whose_id_changes_while_it_is_read_leaves_its_window_read_not_whole():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    nodes = script.split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
+    at = [nodes.index(s) for s in ("id = $c.AutomationId", "ValuePattern]::ValueProperty, $true)",
+                                   "AutomationElement]::AutomationIdProperty)",
+                                   "[System.StringComparison]::Ordinal", "$script:rebound = ")]
+    assert at == sorted(at), at
+    assert nodes.index("$script:rebound = ") < nodes.index("$script:walked.Add")   # every element, not only valued
+    state = script.split("function State(", 1)[1].split("\nfunction ", 1)[0]
+    assert "$script:rebound, $script:under = @(), @(), $null, @()" in state and "elseif ($script:rebound) { $read.error = $script:rebound }" in state
+    # Ordinal, never PowerShell's culture-aware -eq/-ceq, which takes a soft hyphen for nothing.
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
+                            "[string]::Equals('se' + [char]0xAD + 'en', 'seen', [System.StringComparison]::Ordinal)"],
+                           capture_output=True, text=True, timeout=60)
+    assert probe.stdout.strip() == "False", probe
+
+
+def test_an_id_that_is_not_whole_utf16_leaves_its_window_read_not_whole(tmp_path):
+    script = tmp_path / "form.ps1"   # the app names its control `seen` + U+D800, which UTF-8 would carry as U+FFFD
+    script.write_text(WPF_FORM.replace('$A::SetAutomationId($box, "source")',
+                                       '$A::SetAutomationId($box, "seen" + [char]0xD800)'), encoding="utf-8")
+    with desktop_session.look(tmp_path, "badid") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [
+            {"name": "one", "action": "toggle", "id": "translate-on"}], wait=30, settle_ms=300)
+    last = report["states"][-1]
+    assert not any("�" in (n.get("id") or "") for n in last["nodes"]), last["nodes"]
+    assert [r["read"] for r in last["reads"]] == [False] and "not whole UTF-16" in last["reads"][0]["error"]
+
+
+def test_a_toggle_state_is_read_without_defaults_so_an_unsupplied_one_is_unknown():
+    nodes = desktop_driver.SCRIPT.read_text(encoding="utf-8").split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
+    assert "TogglePattern]::ToggleStateProperty, $true)" in nodes and ".Current.ToggleState" not in nodes
+    assert "if ($t -is [System.Windows.Automation.ToggleState]) { [string]$t } else { $null }" in nodes
+
+
+def test_an_unsupplied_expansion_state_has_its_items_audited_never_taken_for_a_leaf():
+    nodes = desktop_driver.SCRIPT.read_text(encoding="utf-8").split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
+    assert "ExpandCollapsePattern]::ExpandCollapseStateProperty, $true)" in nodes and \
+        ".Current.ExpandCollapseState" not in nodes
+    assert "$open = -not ($e -is [System.Windows.Automation.ExpandCollapseState] -and $e -in" in nodes
+    # The rule itself, run: only Collapsed and LeafNode close a container; unsupplied and out of range are audited.
+    rule = nodes.split("$open = ", 2)[2].split("\n    } catch", 1)[0]
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
+                            "Add-Type -AssemblyName UIAutomationTypes, UIAutomationClient; "
+                            "$S = [System.Windows.Automation.ExpandCollapseState]; "
+                            "foreach ($e in @($S::Collapsed, $S::LeafNode, $S::Expanded, $S::PartiallyExpanded, "
+                            "[Enum]::ToObject($S, 42), [System.Windows.Automation.AutomationElement]::NotSupported, $null)) "
+                            "{ $open = " + rule + "; [string]$open }"], capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["False", "False", "True", "True", "True", "True", "True"], probe
+
+
+def test_an_element_without_a_runtime_id_is_never_taken_for_one_already_read():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    rid = "function Rid(" + script.split("function Rid(", 1)[1].split("\nfunction ", 1)[0]
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", rid + "\n"
+                            "$none = [pscustomobject]@{}; $none | Add-Member ScriptMethod GetRuntimeId { $null }\n"
+                            "$empty = [pscustomobject]@{}; $empty | Add-Member ScriptMethod GetRuntimeId { ,@() }\n"
+                            "$some = [pscustomobject]@{}; $some | Add-Member ScriptMethod GetRuntimeId { ,@(42, 7) }\n"
+                            "foreach ($e in @($none, $empty, $some)) { try { Rid $e } catch { 'refused' } }"],
+                           capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["refused", "refused", "42.7"], probe
+    items = script.split("function Items(", 1)[1].split("\nfunction ", 1)[0]
+    assert "try { $r = Rid $item; if (-not $mine.Add($r) -or -not ($set -and $set.Contains($r))) { $unread++ } } " \
+        "catch { $unread++ }" in items
+
+
+def test_two_items_of_one_container_sharing_a_runtime_id_leave_one_of_them_unread():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    rid = "function Rid(" + script.split("function Rid(", 1)[1].split("\nfunction ", 1)[0]
+    audit = script.split("function Items(", 1)[1].split("$mine = ", 1)[1].split("} while", 1)[0]
+    # The audit's own text over a stand-in container of two items, both `42.7`, with one element by that id walked.
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", rid + "\n"
+                            "function Peer($n) { $p = [pscustomobject]@{ n = $n }; "
+                            "$p | Add-Member ScriptMethod GetRuntimeId { ,@(42, 7) }; $p }\n"
+                            "$peers = @((Peer 1), (Peer 2))\n"
+                            "$container = [pscustomobject]@{}; $container | Add-Member ScriptMethod FindItemByProperty "
+                            "{ param($after, $p, $v) if ($null -eq $after) { $peers[0] } elseif ($after.n -eq 1) "
+                            "{ $peers[1] } else { $null } }\n"
+                            "$set = New-Object 'System.Collections.Generic.HashSet[string]'; [void]$set.Add('42.7')\n"
+                            "$count, $unread, $item = 0, 0, $null\n$mine = " + audit + "} while ($item)\n"
+                            "\"$count $unread\""], capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["2", "1"], probe
+
+
+def test_an_item_is_read_only_as_an_element_walked_inside_its_own_container():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    rid = "function Rid(" + script.split("function Rid(", 1)[1].split("\nfunction ", 1)[0]
+    # How `Items` sorts the walk: two sibling lists (0 and 1), each walking one element; the second list's element
+    # has the id the first's has too, as list-local counters give. Then a tree, 2, whose item 3 holds an element.
+    identify = script.split("function Items(", 1)[1].split("$seen = @{}", 1)[1].split("  for ($n = 0;", 1)[0]
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", rid + "\n"
+                            "function El($id) { $p = [pscustomobject]@{}; $p | Add-Member NoteProperty k $id; "
+                            "$p | Add-Member ScriptMethod GetRuntimeId { ,@($this.k) }; $p }\n"
+                            "$script:walked = New-Object 'System.Collections.Generic.List[object]'\n"
+                            "$script:walked.Add(@((El 5), @(0))); $script:walked.Add(@((El 9), @()))\n"
+                            "$script:walked.Add(@((El 6), @(2, 3)))\n"
+                            "$seen = @{}" + identify +
+                            "foreach ($i in 0, 1, 2, 3) { if ($seen[$i]) { \"$i=\" + (@($seen[$i]) -join ',') } "
+                            "else { \"$i=none\" } }"], capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["0=5", "1=none", "2=6", "3=6"], probe   # list 1's item 5 is not list 0's
+    # The whole audit, `Items` itself, over two sibling lists: the left walked and holds 5; the right walked 7
+    # and 8 and holds them and an unwalked 5, its own counter's, the left row's id.
+    audit = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", audited(script) +
+                            "$left, $right = @{}, @{}\n"
+                            "$script:lists = @(, @((List @((El 5))), $left)) + , @((List @((El 7), (El 5), (El 8))), $right)\n"
+                            "$script:walked = New-Object 'System.Collections.Generic.List[object]'\n"
+                            "$script:walked.Add(@((El 5), @(0))); $script:walked.Add(@((El 7), @(1)))\n"
+                            "$script:walked.Add(@((El 8), @(1)))\n"
+                            "Items 's00'\n\"left=$($left.items)/$($left.unread) right=$($right.items)/$($right.unread)\""],
+                           capture_output=True, text=True, timeout=60)
+    assert audit.stdout.split() == ["left=1/0", "right=3/1"], audit
+    nodes = script.split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
+    assert nodes.index("$script:walked.Add(@($element, $script:under))") < nodes.index("$script:under = @($outer) +")
+    assert nodes.rstrip().endswith("$script:under = $outer\n}") or nodes.rstrip().endswith("$script:under = $outer")
+
+
+def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
+    script = tmp_path / "form.ps1"
+    # The app holds a lone surrogate itself: a request's JSON would carry one only as U+FFFD.
+    script.write_text(WPF_FORM.replace('$A::SetName($box, "원문")',
+                                       '$A::SetName($box, "원문"); $box.Text = "apple " + [char]0xD800 + "river"'),
+                      encoding="utf-8")
+    with desktop_session.look(tmp_path, "surrogate") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [
+            {"name": "one", "action": "toggle", "id": "translate-on"}], wait=30, settle_ms=300)
+    box = [n for n in report["states"][-1]["nodes"] if n.get("id") == "source"]
+    assert [(n.get("value"), n.get("unvalued")) for n in box] == [(None, True)], report
+
+
+@pytest.mark.parametrize("length", [12, 1500])
+def test_a_documents_text_is_read_whole_or_marked_unknown_past_the_bound(tmp_path, length):
+    # A rich text box: its name a label, no value, its document text only through the Text pattern.
+    script = tmp_path / "rich.ps1"
+    script.write_text(WPF_FORM.replace(
+        "[void]$panel.Children.Add($box)",
+        "$rich = New-Object System.Windows.Controls.RichTextBox; $rich.Height = 60; $A::SetAutomationId($rich, 'log'); "
+        "$A::SetName($rich, 'log'); $rich.Document.Blocks.Clear(); "
+        f"$rich.Document.Blocks.Add((New-Object System.Windows.Documents.Paragraph((New-Object System.Windows.Documents.Run(('x' * {length - 12}) + 'token s3cr3t'))))); "
+        "[void]$panel.Children.Add($rich); [void]$panel.Children.Add($box)"), encoding="utf-8")
+    with desktop_session.look(tmp_path, f"rich-{length}") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [], wait=30, settle_ms=800)
+    assert report["states"], {k: report.get(k) for k in ("phase", "ended", "refusal", "error")}
+    [log] = [n for n in report["states"][0]["nodes"] if n.get("id") == "log"]
+    assert "Text" in log["patterns"], log
+    if length <= desktop_driver.MAX_VALUE:
+        assert "token s3cr3t" in log["text"] and not log.get("untexted"), log
+    else:
+        assert log["text"] is None and log["untexted"] is True, log
 
 
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():

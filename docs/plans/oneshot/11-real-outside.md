@@ -237,7 +237,9 @@ comes from:
 - The PC app gets each secret's variable at every start, over any spelling of
   that name its own launch settings carry. A secret the design names but the
   store does not hold is dropped from the start's environment, so the
-  server's variable of that name never stands in for it.
+  server's variable of that name never stands in for it. The round on the
+  owner's desktop (plan 9, 9e5b) starts its apps the same way, with the same
+  checks and masks.
 - The Android app has no environment to receive one. On the emulator and on
   the owner's phone, the debug build gets `oneshot-secrets.json` in its own
   storage (`Context.getFilesDir()`): a JSON object keyed by each secret's

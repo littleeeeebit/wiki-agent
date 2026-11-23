@@ -583,13 +583,13 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    # A PC app runs through its critique and the phone round, alone or among other kinds (9e4b), and is held at the
-    # owner's desktop round (9e5a).
-    assert oneshot_profile.waits_at(o()) == "pc" and not oneshot_profile.held({**o(), "stage": "phone"})
+    # A PC app runs through its critique, the phone round and the owner's desktop round, alone or among other kinds
+    # (9e5b), and is held at R3.
+    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held({**o(), "stage": "pc"})
     oneshot_spec.saved("budget", oneshot={"stage": "critique",
                                           "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
-    assert oneshot_profile.waits_at(o()) == "pc" and not oneshot_profile.held(o())
-    for stage in ("pc", "r3"):
+    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held(o())
+    for stage in ("r3", "pr"):
         with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
                 pytest.raises(HTTPException, match="다음 버전"):
             START("budget", "design", stage=stage)
@@ -614,7 +614,7 @@ def frozen_in(tree, tmp_path) -> dict:
 def test_a_resume_or_a_shutdown_after_two_clean_rounds_never_opens_r3(desktop, tmp_path):
     # An earlier version held the run before R3 with an owner check pending, then the stop was lost (a restart that
     # replaced it): the run is held, never resumable into R3, and recovery moves it to the owner's desktop round,
-    # held there with its build, its stop naming the pending check.
+    # waiting there with its build for the owner's approval.
     frozen = frozen_in(desktop, tmp_path)
     owner = {"id": "O2", "kind": "desktop", "source": "owner", "requirement": "R1", "check": "캡처에 글이 있다"}
     oneshot_spec.saved("budget", oneshot={"stage": "r3", "working": None, "features": [], "owed": [owner],
@@ -628,9 +628,9 @@ def test_a_resume_or_a_shutdown_after_two_clean_rounds_never_opens_r3(desktop, t
     oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "restart", "state": "r3", "detail": "x"}})
     oneshot_spec.recover()
     assert o()["stage"] == "pc" and o()["pc"]["status"] == "waiting" and o()["desktop_build"] == frozen
-    assert o()["stopped"]["reason"] == "kind" and "O2" in o()["stopped"]["detail"] and not o().get("r3")
-    oneshot_spec.recover()   # held at the round: a second restart leaves it there
-    assert o()["stage"] == "pc" and o()["stopped"]["reason"] == "kind"
+    assert not o()["stopped"] and not o().get("r3")
+    oneshot_spec.recover()   # waiting at the round: a second restart leaves it there
+    assert o()["stage"] == "pc" and not o()["stopped"] and o()["pc"]["status"] == "waiting"
 
 
 def test_a_mixed_run_whose_phone_round_passed_waits_before_r3_instead_of_opening_it(desktop):
@@ -653,7 +653,7 @@ def test_several_kinds_an_earlier_versions_run_held_at_the_critique_is_resumable
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "critique", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "critique"}})
-    assert oneshot_profile.waits_at(o()) == "pc" and not oneshot_profile.held(o())
+    assert oneshot_profile.waits_at(o()) == "r3" and not oneshot_profile.held(o())
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "restart" and o()["stage"] == "critique"   # `[재개]` starts the critique
 

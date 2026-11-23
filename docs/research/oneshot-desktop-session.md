@@ -192,8 +192,9 @@ closes, and a failed enumeration or close holds the look.
 
 The driver is a process on the owned desktop, in a job of its own. It reads
 the UI Automation control view and acts only through patterns: `Invoke`,
-`Value.SetValue`, `Toggle`, `SelectionItem.Select`, `ExpandCollapse`,
-`Scroll` and `ScrollItem`. It sends no synthetic input (`SendInput`,
+`Value.SetValue`, `Toggle`, `SelectionItem.Select`, `ExpandCollapse` and
+`ScrollItem.ScrollIntoView`. It reads `Scroll` properties but never
+scrolls through that pattern. It sends no synthetic input (`SendInput`,
 `SetCursorPos`, window messages for keys or clicks) and uses no clipboard.
 A step names its control by `AutomationId`, scoped to its screen. A name is
 used only when no id exists, and it must match exactly one element, of a
@@ -266,11 +267,16 @@ The checks read the tree as the Android loop reads its hierarchy:
   S6's blocks. Absence counts only after every screen and state in that set
   was reached and read; one the look could not reach holds the check rather
   than passing it.
-- A virtualized container is read to its verified end before an absence in it
-  counts: through `ItemContainer.FindItemByProperty` and
-  `VirtualizedItem.Realize` where the container supports them, otherwise by its
-  `Scroll` pattern until the scroll position reports the end, reading each
-  viewport. A container whose end cannot be verified holds the check.
+- An absence in a container counts only once the read has verifiably reached
+  the container's end. The read neither realizes nor scrolls. Where the
+  container supports `ItemContainer`, `FindItemByProperty` counts its items,
+  realized or not, against the elements the walk read. Its horizontal view
+  must also hold everything, because its items enumerate only the direction
+  they run in. A container that only scrolls counts as read whole only when
+  its view holds everything in both directions. A view holds everything in a
+  direction that is not scrollable, with a view size of 100 percent and the
+  position `NoScroll`. Any other container whose end cannot be verified
+  holds the check.
 
 ### Cleanup and its proof
 
