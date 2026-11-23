@@ -4,10 +4,11 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn, Zoom } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
+import { Owner } from '@/components/OneshotMeasure'
 import { Calls, Leaked, Needs } from '@/components/OneshotNeeds'
 import { PcApprove, PcResults } from '@/components/OneshotPc'
 import { Track } from '@/components/OneshotTrack'
-import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
+import { api, owns, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName,
   ownedNotice, toolText,
 } from '@/lib/oneshot'
@@ -67,9 +68,8 @@ export function Decide({ children }: { children: ReactNode }) {
   return <div className="sticky bottom-0 -mx-7 mt-auto flex flex-col gap-2 border-t border-border bg-card px-7 py-4 max-[560px]:-mx-4 max-[560px]:px-4">{children}</div>
 }
 
-export function Fault({ text }: { text: string }) {
-  return text ? <p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{text}</p> : null
-}
+export const Fault = ({ text }: { text: string }) =>
+  text ? <p role="alert" className="whitespace-pre-wrap rounded-md bg-destructive/10 px-3 py-2 text-destructive">{text}</p> : null
 
 /** A run that stopped: the reason first, and `[재개]`. */
 export function Halt({ title, detail, children }: { title: string; detail: string; children: ReactNode }) {
@@ -125,10 +125,11 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
   const resume = !['kind', 'rekind'].includes(view.stopped?.reason ?? '') && (
     <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
+  const unposted = view.stage !== 'measure' && view.measure?.runs.at(-1)?.comment_error   // told past the measure screen
   const leaked = view.needs?.some((n) => n.leaked || n.unsure)
-  const faulted = (fault || !!view.phone_owned?.length || leaked) && (
+  const faulted = (fault || !!view.phone_owned?.length || !!unposted || leaked) && (
     <div className="flex flex-col gap-2 px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
-      <Fault text={fault} />
+      <Fault text={[fault, unposted && `${unposted} — 실측 기록은 원샷 화면에 남아 있다`].filter(Boolean).join('\n')} />
       <Leaked needs={view.needs ?? []} />
       {/* Shown on the run, whatever its stage, until the phone is listed again and the cleanup finishes. */}
       {view.phone_owned?.map((r) => (
@@ -164,28 +165,31 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       </>
     )
   }
+  const source = view.brief?.source ?? ''   // the R1 sheet the owner sees: a need is given on it
+  // Kept secrets can be removed at any stage, the measurement's screen included.
+  const needs = (view.needs?.length || view.secrets_kept?.length) ? (
+    <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
+      <Needs key={source} needs={view.needs ?? []} kept={view.secrets_kept ?? []} editable={idle && view.stage === 'r1'} busy={busy}
+        give={(id, body) => act(() => api.give(repo, id, body, source))}
+        takeBack={(id) => act(() => api.takeBack(repo, id, source))}
+        forget={(env) => act(() => api.forget(repo, env))} />
+    </div>
+  ) : null
+  if (owns(view)) return <>{faulted}{needs}<Owner repo={repo} view={view} busy={busy} act={act} /></>
   if (view.stopped) {
     return (
       <Track view={view} halt={<>
-        <Fault text={fault} />
-        {view.phone_owned?.length || leaked ? faulted : null}
+        {view.phone_owned?.length || unposted || leaked ? faulted : <Fault text={fault} />}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
         {view.stage === 'r3' && o.pc?.results ? <PcResults title="주인 화면 회차 — 통과" results={o.pc.results} /> : null}
+        {needs}
       </>} />
     )
   }
-  const source = view.brief?.source ?? ''   // the R1 sheet the owner sees: a need is given on it
   return (
     <>
       {faulted}
-      {(view.needs?.length || view.secrets_kept?.length) ? (
-        <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
-          <Needs key={source} needs={view.needs ?? []} kept={view.secrets_kept ?? []} editable={idle && view.stage === 'r1'} busy={busy}
-            give={(id, body) => act(() => api.give(repo, id, body, source))}
-            takeBack={(id) => act(() => api.takeBack(repo, id, source))}
-            forget={(env) => act(() => api.forget(repo, env))} />
-        </div>
-      ) : null}
+      {needs}
       {idle && view.stage === 'r1' && view.sheet && o.r1 && (
         <Sheet key={`r1-${o.r1.round}-${view.brief?.source}`} gate="r1" text={view.sheet} items={view.items ?? []}
           state={o.r1} busy={busy} brief={view.brief}

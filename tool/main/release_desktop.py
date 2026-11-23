@@ -156,6 +156,20 @@ def _solid(data: bytes) -> tuple[int, int, int, lzma.LZMADecompressor]:
         {"id": lzma.FILTER_LZMA1, "lc": lc, "lp": lp, "pb": pb, "dict_size": dictionary}])
 
 
+WIDEST = 24   # bytes one matched character can take: an `i` and its dot above, each a `\uXXXX` escape in UTF-16
+
+
+def windows(data: bytes, longest: int):
+    """The installer's whole NSIS solid stream unpacked, the script and every file it installs (`unpacked`), each
+    chunk with the bytes before it that the widest spelling of a `longest`-character value takes: a value split
+    across two chunks is whole in the window carrying the second."""
+
+    reach, tail = WIDEST * longest + 16, b""
+    for chunk in unpacked(data):
+        yield tail + chunk
+        tail = (tail + chunk)[-reach:]
+
+
 def unpacked(data: bytes):
     """Every byte the installer's solid stream holds, the script and every file it installs, as chunks of at most
     `CHUNK`: what a scan reads, since the raw installer shows none of it. The stream is NSIS's run of blocks,

@@ -91,6 +91,13 @@ def designed(o: dict, palette: dict) -> dict:
 
 
 def build_front_text(spec: dict) -> str:
+    """The frontend build's turn, then what the backend review left to the kinds' own builds (`later`)."""
+
+    from . import oneshot_review   # it imports this module's neighbours
+    return front_text(spec) + oneshot_review.later_text(spec["oneshot"], kinds_of(spec["oneshot"]))
+
+
+def front_text(spec: dict) -> str:
     o = spec["oneshot"]
     palette = next(p for p in o["front"]["tokens"]["palettes"] if p["id"] == o["r2"]["palette"])
     text = SHARED.sub(lambda m: m.group(2), oneshot.prompt(STAGE, shape(o)))

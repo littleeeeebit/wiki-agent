@@ -30,7 +30,7 @@ from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_calls, oneshot_needs, oneshot_spec, refactor_run, runtime, specs, work
 from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled
-from .query import _lock as work_lock, hold
+from .query import ROOT, _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
 # A stage whose turn may write the worktree's adapter, only while it runs, by whether its spec's turn may.
@@ -174,8 +174,7 @@ def resolve_tools(repo: str, stage: str) -> bool:
     o = oneshot_spec.spec_of(repo)["oneshot"]
     if (declared_tools := tools(o)) is None:
         return True
-    # The name as S2 declared it, found from the server's folder and saved absolute: a relative `PATH` entry
-    # would otherwise point at another file once the gate runs in the worktree.
+    # As S2 declared it, found from the server's folder, saved absolute: a relative one misses in the worktree.
     found = {t["name"]: (at := shutil.which(t["name"])) and os.path.abspath(at) for t in declared_tools}
     if missing := [name for name, at in found.items() if not at]:
         oneshot_spec.store(repo).stop("toolchain", f"PC 앱을 만드는 데 쓰기로 한 도구를 이 PC 에서 찾지 못했다: "
@@ -233,7 +232,7 @@ def send(repo: str, stage: str, text: str) -> None:
         cfg = oneshot.role_config("build", store)
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
-        store.put(working=stage, stopped=None,
+        store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
                   inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token})
         if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
             oneshot_spec.saved(repo, adapter=True)
@@ -307,13 +306,17 @@ def tests_text(spec: dict) -> str:
     return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
 
 
+# Every build turn ends on the real measurement it must be ready for (`oneshot_measure`).
+MEASURE_CONTRACT = (ROOT / "tool/prompts/oneshot-measure-contract.md").read_text(encoding="utf-8")
+
+
 def build_text(spec: dict) -> str:
     o = spec["oneshot"]
     kind = shape(o)
     text = oneshot.prompt("build", kind).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o)) \
         .replace("{needs}", oneshot_needs.told(spec))
-    return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
+    return (text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text) + "\n" + MEASURE_CONTRACT
 
 
 def begin(repo: str) -> None:
@@ -585,8 +588,7 @@ def pinned(path: Path, o: dict) -> str:
             new = (path / name).read_bytes()
         except OSError:
             return f"계약 테스트 `{name}` 가 없다 — 새 테스트는 새 파일에 쓴다"
-        # The blob as `git add` would write it now, filters and line endings included, then the same file in
-        # another form; the committed bytes, never text decoded on the way.
+        # The blob `git add` would write now (filters, line endings) against the committed bytes: never decoded text.
         blob = specs.sh(["git", "rev-parse", f"{o['tests_head']}:{name}"], path).stdout.strip()
         now = specs.sh(["git", "hash-object", "--", name], path).stdout.strip()
         old = subprocess.run(["git", "cat-file", "blob", blob], cwd=path, capture_output=True).stdout if blob else None
@@ -611,9 +613,8 @@ def owns(spec: dict) -> bool:
 
 
 def checked(path: Path, run, spec: dict, final: str):
-    """`specs._check`'s hand-over: the stage's check, then the next turn to send, as `specs` returns it.
-    A person's turn, or a turn in a stage S4 does not own, changes nothing."""
-
+    """`specs._check`'s hand-over: the stage's check, then the next turn to send; a person's turn, or one in a
+    stage S4 does not own, changes nothing."""
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
     if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
@@ -632,24 +633,21 @@ def checked(path: Path, run, spec: dict, final: str):
         if hide:   # the caller logs and notes what it catches: it gets the masked reason, never the values
             raise RuntimeError(why) from None
         raise
-    why = masked(why, hide)   # a check's reason can quote what the turn wrote: shown, kept and sent as each need
+    why = why and type(why)(masked(why, hide))   # a check's reason can quote what the turn wrote; an `Again` stays one
     if not why:
         run.passed = True   # what follows moves the run on: the turn's end scan (`oneshot_needs.settle`) gates it
-        if kind_held(oneshot_spec.spec_of(repo)["oneshot"]):   # the pass left the run at its kind's stop: no next
-            return None
-        return unless_stopped(run, repo, lambda: after(repo))
+        held = kind_held(oneshot_spec.spec_of(repo)["oneshot"])   # the pass left the run at its kind's stop: no next
+        return None if held else unless_stopped(run, repo, lambda: after(repo))
     specs.note(run, why)
-    attempts = int(spec["oneshot"].get("attempts") or 0) + 1
-    store = oneshot_spec.store(repo)
+    was, store = spec["oneshot"], oneshot_spec.store(repo)   # a backend build turn without a commit is not counted
+    attempts = int(was.get("attempts") or 0) + (type(why) is str and (stage != "build" or was.get("turn_head") != head(path)))
+    store.put(attempts=attempts)   # `working` stays until the turn goes: a restart in between is recovered
     if attempts >= MAX_ATTEMPTS or run.halt.is_set():
-        store.put(attempts=attempts)
         store.stop(stop, why)
         return None
-    store.put(attempts=attempts)   # `working` stays until the turn goes: a restart in between is recovered
-    # Masked as composed, as the model gets it: a value can run across the reason and the words around it.
-    return unless_stopped(run, repo, lambda: send(repo, stage, masked(
-        f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again "
-        f"(attempt {attempts + 1} of {MAX_ATTEMPTS}).", hide)))
+    return unless_stopped(run, repo, lambda: send(repo, stage, masked(   # as composed: a value can span the words
+        f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
+        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else "."), hide)))
 
 
 def unless_stopped(run, repo: str, then):
@@ -676,8 +674,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
         return f"HEAD 가 승인된 설계 커밋 {o['design_head'][:12]} 위에 있지 않다"
     runner = declared(path, final, shape(o), tools(o))   # several kinds: the core's tests alone, each kind's build is 9c's
     names = changed(path, o["design_head"])
-    # A case is pinned by its class and name, its file only when named: a planned test outside the named files
-    # could be weakened later with nothing to show for it.
+    # Pinned by class and name, by file only when named: a planned test outside them could be weakened unseen.
     tests = [t["test_name"].lower() for t in planned(spec)]
     mentions = lambda f: (path / f).is_file() and any(   # noqa: E731
         t in (path / f).read_bytes().decode("utf-8", "ignore").lower() for t in tests)
@@ -715,7 +712,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     oneshot_spec.saved(spec["repo"], done=[gate, *scenarios],
                        # the record is version 2's now, whatever version the run started at
                        oneshot={"version": max(o.get("version", 1), 2), "stage": "build", "tests_head": tests_head, "contract": runner["contract"] + runner["config"],
-                                "runner": runner["command"], "gate": gate, "cases": pins, "attempts": 0, "working": None})
+                                "runner": runner["command"], "runner_root": runner["root"], "gate": gate, "cases": pins, "attempts": 0, "working": None})
     specs.note(run, f"계약 테스트 커밋 {tests_head[:12]} · 파일 {len(runner['contract'])}개 · 테스트 {len(pins)}개 고정")
     return ""
 
@@ -729,21 +726,25 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     every node id pinned at the tests commit passing: then the run moves to the backend review."""
 
     o = spec["oneshot"]
-    if why := reported(spec, final) or pinned(path, o):
+    from . import oneshot_answers as sent, oneshot_measure   # they import this module
+    if why := sent.unchanged(path, o) or reported(spec, final) or pinned(path, o):
         return why
     try:
+        answers = sent.answered(path, spec, final)
         gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
+        oneshot_measure.planned(path, spec, "HEAD")   # committed, as the screen reads it: never an ignored file
     except ValueError as e:
         return str(e)
     verdict = judged(path, run, spec, [gate], toolchain(spec))
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
-    if why := held(path, run, spec, verdict):
+    if why := held(path, run, spec, verdict, lambda found: sent.ran(found, answers, o, path)) \
+            or oneshot_measure.serve_check(path, run, spec):
         return why
-    # `working` names the review before its worker starts: a server that dies in between leaves it for `recover`.
-    oneshot_spec.saved(spec["repo"], oneshot={"stage": "review", "built_head": verdict["head"], "attempts": 0,
-                                              "working": "review"})
-    specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}")
+    # `working` names PR #1's push before its worker starts: a server that dies in between leaves it for `recover`.
+    oneshot_spec.saved(spec["repo"], oneshot={"stage": "measure", "built_head": verdict["head"], "attempts": 0,
+                                              "working": "publish", "fix": None, **sent.passed(path, o, answers)})
+    specs.note(run, f"백엔드 빌드 통과 · {verdict['head'][:12]}" + (f" · 답한 발견 {len(answers)}개" if answers else ""))
     return ""
 
 
@@ -759,16 +760,15 @@ def judged(path: Path, run, spec: dict, commands: list[str], env: dict | None, *
         oneshot_calls.ran(spec, reports)
         return verdict
     finally:
-        for r in reports:
-            r.unlink(missing_ok=True)
+        for r in reports: r.unlink(missing_ok=True)  # noqa: E701
 
 
-def held(path: Path, run, spec: dict, verdict: dict) -> str:
-    """Empty when every case pinned at the tests commit passes in a run of the pinned command, and the run left
-    HEAD and the worktree as the green gate saw them, or why not."""
+def held(path: Path, run, spec: dict, verdict: dict, also=lambda found: "") -> str:
+    """Empty when every case pinned at the tests commit passes in a run of the pinned command, and `also` finds
+    nothing wrong with that run's cases, and the run left HEAD and the worktree as the green gate saw them."""
 
     o = spec["oneshot"]
-    if why := green(o["cases"], junit(path, run, spec, o["runner"])):
+    if why := green(o["cases"], found := junit(path, run, spec, o["runner"])) or also(found):
         return why
     if head(path) != verdict["head"] or specs.dirty(path):
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
@@ -791,10 +791,10 @@ def review_module():
 
 
 def reviewed(repo: str) -> None:
-    review_module().begin(repo)
+    from . import oneshot_publish   # PR #1, the real measurement, then the review; it imports this module
+    oneshot_publish.begin(repo)
 
 
-# A stage's turn: `(check, stop reason after the last refusal, the turn's text, what follows a pass)`.
-# A later stage's module adds its own.
+# A stage's turn: `(check, stop after the last refusal, its text, what follows a pass)`; later stages add theirs.
 STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, "build", build_text(oneshot_spec.spec_of(repo)))),
           "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}

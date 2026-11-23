@@ -14,6 +14,7 @@ the gate's output shows `[N1]` where it would stand (`hidden`).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import itertools
 import json
@@ -29,7 +30,7 @@ from pydantic import BaseModel
 
 from common import errorlog, folded, masked, overlaps, unescaped
 
-from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
+from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release, specs
 from .oneshot_spec import VIEWS, idle, saved, spec_of, view
 
 router = APIRouter()
@@ -159,36 +160,42 @@ def secret_needs(spec: dict) -> list[tuple[str, dict]]:
     return [(nid, n) for nid, (n, _) in owed(spec["oneshot"].get("design") or {}).items() if n["kind"] == "secret"]
 
 
-def _given(spec: dict) -> list[tuple[str, str, str]]:
-    """`(id, env, value)` for each given secret, read from the store for one use; a need not given is absent."""
+def _given(spec: dict, strict: bool = False) -> list[tuple[str, str, str]]:
+    """`(id, env, value)` for each given secret, read from the store for one use; a need not given is absent.
+    `strict`: a store that cannot be read raises `ValueError`, never taken for a secret not given."""
 
     out = []
     for nid, n in secret_needs(spec):
         try:
             value = release.secret_read(name(spec["repo"], n["env"]))
         except (OSError, ValueError):   # no store on this host, or one that cannot be read: it is not given
+            if strict:
+                raise ValueError(f"`{n['env']}` 의 비밀값을 지금 읽지 못했다 — 다시 시도한다") from None
             value = None
         if value:
             out.append((nid, n["env"], value))
     return out
 
 
-def secrets(spec: dict) -> dict[str, str]:
-    """Each given secret's value by its `env`."""
+def secrets(spec: dict, strict: bool = False) -> dict[str, str]:
+    """Each given secret's value by its `env` (`strict` as `_given`)."""
 
-    return {env: value for _, env, value in _given(spec)}
+    return {env: value for _, env, value in _given(spec, strict)}
 
 
-def hidden(spec: dict, env: dict | None) -> dict[str, str]:
+def hidden(spec: dict, env: dict | None, more: dict[str, str] | None = None) -> dict[str, str]:
     """What a gate's output shows instead of each secret `env`, a `gate_env` result, carries: `[N1]` for its value
     and its URL-quoted form. Read off the environment the child gets, never the store again, so a secret changed or
-    removed in between can never be the one launched and left unmasked."""
+    removed in between can never be the one launched and left unmasked. `more` adds a measurement's secrets by
+    their `env`, labelled against every value alike, so no label spells another's."""
 
     have = {k.upper(): v for k, v in (env or {}).items()}
     # ponytail: the raw and URL-quoted forms only; another encoding of a value (base64, JSON-escaped) still shows
-    forms = {nid: {value, quote(value, safe="")} for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))}
-    every = [form for kept in forms.values() for form in kept]
-    return {form: label(nid, every, i) for i, (nid, kept) in enumerate(forms.items()) for form in kept}
+    # Pairs, never a dict: a measurement input's `env` may spell a need's id, and neither secret may drop out.
+    forms = [(nid, {value, quote(value, safe="")}) for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))]
+    forms += [(k, {v, quote(v, safe="")}) for k, v in (more or {}).items()]
+    every = [form for _, kept in forms for form in kept]
+    return {form: label(nid, every, i) for i, (nid, kept) in enumerate(forms) for form in kept}
 
 
 class Label(str):
@@ -225,14 +232,15 @@ def launchable(spec: dict) -> str:
     return ""
 
 
-def gate_env(spec: dict, env: dict | None) -> dict | None:
+def gate_env(spec: dict, env: dict | None, strict: bool = False) -> dict | None:
     """`env`, the server's own when `None`, with every given secret set. A secret the design names but the store
-    does not hold is removed, so a variable of that name the server happens to have never stands in for it."""
+    does not hold is removed, so a variable of that name the server happens to have never stands in for it.
+    `strict`: a store that cannot be read raises `ValueError` (`_given`)."""
 
     if not (declared := {n["env"].upper() for _, n in secret_needs(spec)}):
         return env
     base = {k: v for k, v in (os.environ if env is None else env).items() if k.upper() not in declared}
-    return {**base, **secrets(spec)}
+    return {**base, **secrets(spec, strict)}
 
 
 def agent(spec: dict | None) -> tuple[dict, dict]:
@@ -454,16 +462,10 @@ def settle(path: Path, run, final: str, moving: bool = False) -> bool:
 ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be")
 
 
-WIDEST = 24   # bytes one matched character can take: an `i` and its dot above, each a `\uXXXX` escape in UTF-16
-
-
 def asset(file: Path, spec: dict, hide: dict | None = None, packed: bool = False) -> str:
-    """Why an asset about to be uploaded (the frozen APK or installer) is not sent: a value of `hide` (the store's
-    now, by default) anywhere in it, as UTF-8 or either UTF-16, in any casing: the raw file, every byte the upload
-    sends; each zip entry decompressed with its name, an APK being a zip; and with `packed`, an installer, its
-    whole NSIS solid stream unpacked, the script and every file it installs (`release_desktop.unpacked`), read in
-    windows overlapping by the widest spelling of the longest value, whatever else the file also is. A file that
-    cannot be read, an installer whose stream cannot be, is refused too."""
+    """Why an asset about to be uploaded (the APK, the installer) is not sent: a value of `hide` (the store's now, by
+    default) in it, as UTF-8 or either UTF-16, in any casing: every byte sent, each zip entry with its name, and with
+    `packed` an installer's NSIS stream (`release_desktop.windows`), read whole even unmasked. Unreadable: refused."""
 
     import zipfile
     import zlib
@@ -471,26 +473,19 @@ def asset(file: Path, spec: dict, hide: dict | None = None, packed: bool = False
     from . import release_desktop
 
     hide = agent(spec)[1] if hide is None else hide
-    if not hide and not packed:   # an installer's stream is read whole even with nothing to look for
+    if not hide and not packed:
         return ""
-
-    def held(b: bytes) -> set[str]:   # UTF-16 pairs may start at an odd byte: read from the first and the second
-        return {n for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)} if hide else set()
-
     try:
         parts = [file.read_bytes()]   # every byte that goes up, signing blocks and gaps included
         if zipfile.is_zipfile(file):
             with zipfile.ZipFile(file) as z:   # and what the entries hold compressed
                 parts += [b for i in z.infolist() for b in (i.filename.encode(), z.read(i))]
-        found = set().union(*map(held, parts))
-        if packed:   # a value split across two chunks is whole in the window that carries the last one's tail
-            reach, tail = WIDEST * max((len(s) for v in hide for s in (v, folded(v))), default=0) + 16, b""
-            for chunk in release_desktop.unpacked(parts[0]):
-                found |= held(tail + chunk)
-                tail = (tail + chunk)[-reach:]
+        longest = max((len(s) for v in hide for s in (v, folded(v))), default=0)
+        # UTF-16 pairs may start at an odd byte: each buffer is read from its first and its second byte.
+        found = sorted({n for b in itertools.chain(parts, release_desktop.windows(parts[0], longest) if packed else ())
+                        for enc in ENCODINGS for s in (b, b[1:]) for n in (held_in(s.decode(enc, "ignore"), hide) if hide else ())})
     except (OSError, zipfile.BadZipFile, RuntimeError, ValueError, zlib.error, EOFError) as exc:
         return masked(f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})", hide)
-    found = sorted(found)
     return masked(f"비밀 값 {', '.join(f'[{n}]' for n in found)} 이(가) 올릴 파일에 들어 있다 — 올리지 않는다", hide) \
         if found else ""
 
@@ -643,15 +638,110 @@ def need_of(repo: str, nid: str, source: str) -> tuple[dict, dict]:
     return o, found[0]
 
 
-def stored(repo: str, env: str, value: str | None) -> None:
-    """A secret written, or removed with `None`; a failure names the store, never the value."""
+CHANGED: list = []   # `f(repo, env)` before any secret changes, by any route; returns what `settled` puts back
+                     # if the store then refuses, the `oneshot` fields, or `None`: `oneshot_measure` registers one
+CHANGES: dict[str, int] = {}   # changes made per repository, so a measurement sees one made while it ran
 
+
+def stored(repo: str, env: str, value: str | None) -> None:
+    """A secret written, or removed with `None`; a failure names the store, never the value. Every route that
+    changes a secret writes through here, so `CHANGED` hears each change, before the store changes: a waiting
+    result is set aside first, and when that fails the store is left as it was. A request that would change
+    nothing (the value held already, or a removal of one already gone) changes nothing, a waiting result
+    included, and so does one the store refuses: a value too long for it is refused before anything, and a
+    write or removal that fails puts back what `CHANGED` set aside (`settled`). Every caller read the spec
+    before this, so a 404 here is a reread that failed (`specs.load` turns a refused read into `None`)."""
+
+    if value is not None and len(value.encode("utf-16-le")) > MAX_SECRET:
+        raise HTTPException(400, f"값이 너무 길다 — 자격 증명 관리자는 {MAX_SECRET}바이트까지 담는다")
+    settled(repo)   # one a refused change could not put back is put back first, or this request stops
     try:
-        release.secret_write(name(repo, env), value) if value is not None else release.secret_delete(name(repo, env))
+        if same(name(repo, env), value):
+            return
     except ValueError:
         raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
-    except OSError as e:
+    except OSError as e:   # whether anything would change is unknown: nothing is set aside or changed
+        raise HTTPException(409, f"자격 증명 관리자를 읽지 못해 비밀 값을 바꾸지 않았다 — {e} — 다시 시도한다") from None
+    undo = []
+    try:
+        with specs._files:   # the file the set-aside wrote, read before a save by any other route can come
+            for f in CHANGED:
+                undo.append(f(repo, env))
+            try:
+                at = written(repo)
+            except OSError as e:   # which file the set-aside wrote is unknown: undone before the store is touched
+                for fields in filter(None, undo):   # nothing saved since: this lock and `oneshot._lock` are held
+                    with contextlib.suppress(OSError, HTTPException):   # one not undone stays set aside: measured again
+                        saved(repo, oneshot=fields)
+                raise HTTPException(409, f"명세 파일을 확인하지 못해 비밀 값을 바꾸지 않았다 ({type(e).__name__}) — "
+                                         "다시 시도한다") from None
+    except (OSError, HTTPException) as e:
+        if isinstance(e, HTTPException) and e.status_code != 404:
+            raise
+        raise HTTPException(409, f"기다리는 결과를 먼저 내려놓지 못해 비밀 값을 바꾸지 않았다 ({type(e).__name__}) — "
+                                 "다시 시도한다") from None
+    try:
+        if value is None:
+            changed = release.secret_delete(name(repo, env))   # one already gone changes nothing
+        else:
+            release.secret_write(name(repo, env), value)
+            changed = True
+    except (ValueError, OSError) as e:
+        if at:   # the store kept its value, so does the result; an unknown file leaves it set aside
+            BACK.setdefault(repo, []).extend((at, fields) for fields in undo if fields)
+        settled(repo)
+        if isinstance(e, ValueError):
+            raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
         raise HTTPException(409, f"자격 증명 관리자를 고치지 못했다 — {e}") from None
+    if changed:   # only a change made: a refused or empty one leaves a running result alone
+        CHANGES[repo] = CHANGES.get(repo, 0) + 1
+
+
+BACK: dict[str, list] = {}   # per repository, what a refused change set aside and has yet to put back
+
+
+def written(repo: str) -> tuple | None:
+    """Which write the spec file is: `specs.save` writes a new file and swaps it in, so each save gets a new file
+    id, and the write time is kept beside it. `None` when it is gone, which matches no write; a failed read of it
+    raises `OSError`, since then which write it is stays unknown."""
+
+    try:
+        st = specs.file_of(repo, oneshot.BRANCH).stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    return st.st_ino, st.st_mtime_ns
+
+
+def settled(repo: str) -> None:
+    """Each `(written, fields)` a refused change left in `BACK`, put back: only while the spec file is still the
+    one that change's set-aside wrote. Any save since, by any route (an input, a new run, the task editor), swaps
+    in a new file, even one that leaves the record as it was, and leaves the result set aside: the owner measures
+    again. The check and the put-back hold the spec file lock every save takes. While a put-back fails, or the
+    file cannot be read to tell which write it is, the result stays set aside (no verdict on it), the entry stays
+    and the request answers 409; the next secret request tries again. A file gone, or another write, drops it.
+    `BACK` is memory: after a restart the result stays set aside."""
+
+    while BACK.get(repo):
+        try:
+            at, back = BACK[repo][0]
+            with specs._files:   # taken after `oneshot._lock`, as every Oneshot save takes them
+                if written(repo) == at:
+                    saved(repo, oneshot=back)
+        except (OSError, HTTPException) as e:
+            raise HTTPException(409, f"비밀 값은 그대로인데 내려놓았던 결과를 되돌리지 못했다 ({type(e).__name__}) — "
+                                     "다시 시도하면 되돌린다") from None
+        BACK[repo].pop(0)
+
+
+def same(key: str, value: str | None) -> bool:
+    """Whether Credential Manager holds `value` under `key` already, `None` for none. One it returns but cannot
+    decode counts as different, so a damaged value can be replaced. A failed read raises `OSError`, and no
+    Credential Manager raises `ValueError`."""
+
+    try:
+        return release.secret_read(key) == value
+    except UnicodeDecodeError:   # a `ValueError` too: caught before it
+        return False
 
 
 @router.post("/api/oneshot/spec/{repo}/needs/{nid}")
@@ -707,4 +797,4 @@ def forget(repo: str, env: str) -> dict:
     with oneshot._lock:
         spec = spec_of(repo)   # a repository with no oneshot spec here is refused before the store is touched
         stored(spec["repo"], env, None)
-    return view(spec)
+    return view(spec_of(repo))   # as saved now: a result the removal set aside shows so

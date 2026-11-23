@@ -411,9 +411,8 @@ def output(path: Path, kind: dict, release: str, key: str = "artifact") -> Path:
 def build(path: Path, android: dict, release: str, kit: dict, halt: threading.Event, read=None, drop=frozenset()):
     """The adapter's build command of one kind (`android`, or `desktop` with `read`) in the attempt's checkout,
     given `RELEASE_VERSION`, Android's `RELEASE_VERSION_CODE` and `RELEASE_TAURI_CONFIG`, an overlay beside the
-    checkout a Tauri build passes as one more `-c` (`TAURI_CONFIG` cannot: the CLI replaces it with its own `-c`
-    values), and without the variables `drop` names in upper case. No source file is edited. `read(file)` refuses
-    an artifact its kind does not make; else it is an APK. Gives the artifact's path."""
+    checkout a Tauri build passes as one more `-c` (`TAURI_CONFIG` cannot: the CLI replaces it with its own), without
+    the variables `drop` names. No source file is edited. `read(file)` refuses what its kind does not make."""
 
     made = [k for k in ("artifact", "exe") if k in android]
     for k in made:   # a file the commit carries is not this build's output
@@ -637,10 +636,11 @@ def secret_write(name: str, value: str) -> None:
         raise OSError(f"자격 증명을 쓰지 못했다: {ctypes.get_last_error()}")
 
 
-def secret_delete(name: str) -> None:
+def secret_delete(name: str) -> bool:   # whether one was there: one already gone is no error
     ctypes, a = _advapi()
-    if not a.CredDeleteW(target(name), GENERIC, 0) and ctypes.get_last_error() != NOT_FOUND:
+    if not (done := a.CredDeleteW(target(name), GENERIC, 0)) and ctypes.get_last_error() != NOT_FOUND:
         raise OSError(f"자격 증명을 지우지 못했다: {ctypes.get_last_error()}")
+    return bool(done)
 
 
 LOCK_SECONDS = 60

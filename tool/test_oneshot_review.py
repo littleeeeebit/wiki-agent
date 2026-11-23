@@ -4,14 +4,15 @@ See `docs/plans/oneshot/3-spec-backend.md` ("Backend review"). The review turn
 (`oneshot.ask`) is a stand-in; Git runs in a temporary worktree.
 """
 
+import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 
-from agent import read_tools
 from main import (loop, oneshot, oneshot_build, oneshot_critique, oneshot_review, oneshot_sheet as sheet, oneshot_spec,
                   query, specs, work)
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -32,10 +33,17 @@ def reviewed(world):  # noqa: F811 — the imported fixture, requested by name
     oneshot_spec.saved("budget", start_head=base, requirements=REQS, oneshot={
         "glossary": GLOSSARY, "stage": "review", "design": sheet.parsed(DESIGN), "tests_head": base,
         "contract": ["test_budget.py"], "gate": "uv run pytest", "built_head": head, "working": "review",
-        "profile": PROFILE})
+        "profile": PROFILE, "measures": [approved(head)]})
     sent = []
     with patch.object(oneshot_build, "send", lambda *a: sent.append(a)):
         yield world, head, sent
+
+
+def approved(head: str, n: int = 1) -> dict:
+    """The owner's approval of `head`'s real measurement, without which no review runs (`oneshot_measure`)."""
+
+    return {"n": n, "head": head, "status": "owner", "metrics": [], "notes": "",
+            "owner": {"approve": True, "note": "들어 봤다", "ts": 0}}
 
 
 def o() -> dict:
@@ -71,9 +79,10 @@ def test_an_approval_of_the_head_read_moves_to_split_with_the_input_frozen(revie
     assert args == ("budget", "split") and not fields
     assert o()["stage"] == "split" and o()["working"] == "split" and o()["reviews"][-1]["findings"] == [P2]
     role, text, where = heard[0]
-    assert role == "review" and where == tree and head in text and "test_spending_adds_to_the_total" in text
+    assert role == "review" and where != tree and not where.exists()   # its own checkout, removed after
+    assert head in text and "test_spending_adds_to_the_total" in text
     assert "지출을 적으면" in text   # the requirements travel in the prompt; the reviewer reads no record
-    assert "budget_app.py" in read_tools.diff_file(tree).read_text(encoding="utf-8")
+    assert "budget_app.py" in next(oneshot_spec.store("budget").folder.glob("review-*.diff")).read_text(encoding="utf-8")
     assert (oneshot_spec.store("budget").folder / f"review-{head[:12]}.diff").exists()
 
 
@@ -360,7 +369,7 @@ def test_a_round_after_two_that_did_not_converge_reads_the_changed_lines_and_rec
                                         "    return amount\n", encoding="utf-8")
     git(tree, "commit", "-am", "fix")
     later = git(tree, "rev-parse", "HEAD")
-    oneshot_spec.saved("budget", oneshot={"built_head": later})
+    oneshot_spec.saved("budget", oneshot={"built_head": later, "measures": [approved(head), approved(later, 2)]})
     said, asking = answers(verdict(later, "refuse", {**P1, "location": "budget_app.py:3"}))
     with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
         oneshot_review.review("budget")
@@ -413,7 +422,9 @@ def test_the_added_lines_count_a_line_that_starts_with_two_plus_signs(reviewed):
     git(tree, "add", "count.js")
     git(tree, "commit", "-m", "count")
     oneshot_spec.saved("budget", oneshot={"built_head": git(tree, "rev-parse", "HEAD")})
-    assert oneshot_review.frozen(specs.load("budget", oneshot.BRANCH))[2] == 3   # budget_app.py's two lines and this
+    s = specs.load("budget", oneshot.BRANCH)
+    with oneshot_review.seen_at(s, oneshot_spec.store("budget")) as seen:
+        assert oneshot_review.frozen(s, seen)[2] == 3   # budget_app.py's two lines and this
 
 
 def test_a_quoted_path_keeps_its_escapes_and_its_literal_hangul():
@@ -460,3 +471,279 @@ def test_a_line_count_git_cannot_make_is_left_unknown(reviewed):
              patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
             oneshot_review.review("budget")
         assert "added" not in o()["reviews"][-1] and o()["stage"] == "build"   # read, refused, never stopped
+
+
+ANSWER = {"area": "amount validation", "location": "budget_app.py:2", "evidence": "음수는 환불이다 — R1",
+          "test": "test_budget.py::test_a_refund_is_negative", "breaks": ["R1"]}
+
+
+def test_an_answered_area_is_rebutted_or_left_out_and_two_answered_rounds_go_to_the_owner(reviewed):
+    _, head, sent = reviewed
+    past = [{"verdict": "refuse", "head": f"old{n}", "findings": [P1]} for n in (1, 2)]
+    oneshot_spec.saved("budget", oneshot={"reviews": past, "answers": [
+        {**ANSWER, "round": n, "head": f"old{n}"} for n in (1, 2)]})
+    rebutted = {**P1, "rebuttal": "환불 경로는 R1 의 지출이 아니다 — budget_app.py:2 가 둘을 섞는다"}
+    heard, asking = answers(verdict(head, "refuse", P1), verdict(head, "refuse", rebutted))
+    with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        oneshot_review.review("budget")
+    assert "음수는 환불이다" in heard[0][1] and "rebuttal" in heard[1][1]   # read, and asked again without one
+    assert o()["stage"] == "conflict" and not sent and not o().get("stopped")
+    assert not o().get("refused")   # a refusal sent to the owner uses up no round of the cap
+    (c,) = o()["conflicts"]
+    assert c["why"] == "answered" and len(c["answers"]) == 2
+    with pytest.raises(HTTPException, match="직접 정하려면"):
+        oneshot_review.rule("budget", oneshot_review.Rulings(head=head, rulings={c["key"]: {"keep": "owner"}}))
+    begun = []
+    with patch.object(oneshot_review, "begin", begun.append):
+        oneshot_review.rule("budget", oneshot_review.Rulings(head=head, rulings={c["key"]: {"keep": "build"}}))
+    assert begun == ["budget"] and o()["stage"] == "review" and o()["rulings"][c["key"]]["keep"] == "build"
+    heard, asking = answers(verdict(head, "refuse", rebutted), verdict(head, "approve", {**P1, "severity": "P2"}))
+    with asking:
+        oneshot_review.review("budget")
+    assert "빌더 쪽" in heard[0][1] and "P2" in heard[1][1] and o()["stage"] == "split"
+
+
+def test_a_build_resumed_at_the_cap_replaces_a_stuck_mechanism_once_and_remembers_it(reviewed):
+    tree, head, _ = reviewed
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "reviews": [
+        {"verdict": "refuse", "head": h, "findings": [P1]} for h in ("old1", "old2", head)]})
+    assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
+    assert o()["replacing"] == ["amount validation"] and not o().get("replaced")
+    # A turn that never ran (a crash, a refused turn) is told again: nothing counts as replaced before a pass.
+    assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
+    from main import oneshot_answers
+    (tree / "budget_app.py").write_text("def add(amount):\n    return max(amount, 0)\n", encoding="utf-8")
+    git(tree, "commit", "-am", "the mechanism replaced")   # the build that passes changed the refused line
+    oneshot_spec.saved("budget", oneshot=oneshot_answers.passed(tree, o(), []))
+    assert o()["replaced"] == ["amount validation"] and not o().get("replacing")
+    assert "replace the mechanism" not in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
+
+
+def test_no_review_runs_without_the_owner_approving_this_heads_measurement(reviewed):
+    _, head, _ = reviewed
+    oneshot_spec.saved("budget", oneshot={"measures": [{**approved(head), "owner": {"approve": False, "note": "끊긴다"}}]})
+    heard, asking = answers(verdict(head, "approve"))
+    with asking:
+        oneshot_review.review("budget")
+    assert not heard and o()["stage"] == "measure" and o()["stopped"]["reason"] == "measure"
+    s = specs.load("budget", oneshot.BRANCH)
+    assert "원샷" in loop.oneshot_profile.in_run(s)   # nor through Review Loop, which would read PR #1 unmeasured
+
+
+def test_the_reviewer_reads_only_the_approved_head_never_a_commit_made_since(reviewed):
+    tree, head, _ = reviewed
+    (tree / "later.py").write_text("x = 1\n", encoding="utf-8")
+    git(tree, "add", "later.py")
+    git(tree, "commit", "-m", "after the approval")
+    heard, asking = answers(verdict(head, "approve"))
+    with asking:   # past the hold's first look, as if the commit landed in between
+        with patch.object(oneshot_review, "moved", side_effect=["", oneshot_review.moved(
+                specs.load("budget", oneshot.BRANCH), tree)]):
+            oneshot_review.review("budget")
+    assert not heard and o()["stage"] == "build" and o()["stopped"]["reason"] == "gate"
+
+
+def test_the_reviewer_reads_the_committed_head_while_the_worktree_changes(reviewed):
+    tree, head, _ = reviewed
+    committed, read = (tree / "budget_app.py").read_text(encoding="utf-8"), []
+
+    def ask(store, role, system, text, where=None, images=()):
+        (tree / "budget_app.py").write_text("changed = True\n", encoding="utf-8")   # restored before the turn ends
+        try:
+            read.append((git(where, "rev-parse", "HEAD"), (where / "budget_app.py").read_text(encoding="utf-8")))
+            return verdict(head, "approve"), {"cost_usd": 0.1}, False
+        finally:
+            (tree / "budget_app.py").write_text(committed, encoding="utf-8")
+
+    with patch.object(oneshot, "ask", ask), patch.object(oneshot_spec, "start", lambda *a, **k: None):
+        oneshot_review.review("budget")
+    assert read == [(head, committed)] and o()["stage"] == "split"
+
+
+def test_a_finding_handed_to_a_later_build_names_its_area_so_a_ruling_matches_it(reviewed):
+    _, head, _ = reviewed
+    nameless = {k: v for k, v in P1.items() if k != "area"} | {"later": {"kind": "webapp", "what": "x"}}
+    with pytest.raises(ValueError, match="area"):
+        oneshot_review.verdict_of({"verdict": "approve", "head": head, "findings": [nameless]}, head,
+                                  rules={"ruled": {"amount validation"}, "kinds": {"webapp"}})
+
+
+def test_review_loops_own_paths_leave_an_unfinished_oneshot_alone(reviewed):
+    oneshot_spec.saved("budget", pr={"number": 1, "url": "u"}, state="PR #1", oneshot={"stage": "pr", "measures": []})
+    s = specs.load("budget", oneshot.BRANCH)
+    kicked = []
+    with patch.object(loop, "mine", lambda sid: (SimpleNamespace(name="budget"), s)), \
+            patch.object(loop, "_loops", {}), patch.object(loop.threading, "Thread", lambda *a, **k: kicked.append(a)):
+        with pytest.raises(HTTPException, match="원샷"):
+            loop.review_again(s["id"])
+        loop.rereview("budget", s)
+        loop.kick("budget", s["id"])
+    assert not kicked and not specs.load("budget", oneshot.BRANCH).get("review_again")
+    listed = json.dumps([{"number": 1, "title": "원샷", "headRefName": oneshot.BRANCH, "headRefOid": "a" * 40,
+                          "url": "u", "isCrossRepository": False}])
+    with patch.object(loop, "project", lambda: "budget"), patch.object(loop, "current_repo", lambda: Path(".")), \
+            patch.object(loop.specs, "sh", lambda *a, **k: subprocess.CompletedProcess(a, 0, listed, "")), \
+            patch.object(loop, "by_pr", lambda name: {1: s}):
+        assert loop.prs()["rows"] == []   # the picker never shows an unfinished Oneshot's PR
+    fork = json.dumps([{"number": 2, "title": "포크", "headRefName": oneshot.BRANCH, "headRefOid": "b" * 40,
+                        "url": "u2", "isCrossRepository": True, "headRepositoryOwner": {"login": "x"}}])
+    with patch.object(loop, "project", lambda: "budget"), patch.object(loop, "current_repo", lambda: Path(".")), \
+            patch.object(loop.specs, "sh", lambda *a, **k: subprocess.CompletedProcess(a, 0, fork, "")), \
+            patch.object(loop, "by_pr", lambda name: {}), patch.object(loop, "unlinked", lambda *a: s):
+        rows = loop.prs()["rows"]   # a fork's branch of the same name is listed, and refused as a fork
+    assert [r["number"] for r in rows] == [2] and not rows[0]["pickable"] and rows[0]["why"].startswith("포크")
+
+
+def test_a_ruling_for_the_builder_never_drops_a_p0_and_later_work_survives_every_verdict(reviewed):
+    _, head, sent = reviewed
+    p0 = {**P1, "severity": "P0", "reason": "합계가 깨진다"}
+    o_ = {"rulings": {"amount validation": {"keep": "build"}}}
+    assert oneshot_review.ruled_out(o_, P1) and not oneshot_review.ruled_out(o_, p0)
+    handed = {**P1, "later": {"kind": "webapp", "what": "x"}}   # a ruled P1 is not passed on to a later build either
+    with pytest.raises(ValueError, match="빌더 쪽"):
+        oneshot_review.verdict_of({"verdict": "approve", "head": head, "findings": [handed]}, head,
+                                  rules={"ruled": {"amount validation"}, "kinds": {"webapp"}})
+    kept = {"kind": "webapp", "what": "자막 창", "location": "x", "reason": "y"}
+    oneshot_spec.saved("budget", oneshot={"later": [kept]})
+    _, asking = answers(verdict(head, "approve", P2))
+    with asking, patch.object(oneshot_spec, "start", lambda *a, **f: None):
+        oneshot_review.review("budget")
+    assert o()["stage"] == "split" and o()["later"] == [kept]
+
+
+def test_a_head_refused_in_an_earlier_round_is_never_built_on_again(reviewed):
+    tree, head, _ = reviewed
+    from main import oneshot_answers
+    rounds = {"reviews": [{"verdict": "refuse", "head": head, "findings": [P1]},
+                          {"verdict": "refuse", "head": "newer", "findings": [P1]}]}
+    assert "커밋이 하나도 늘지 않았다" in oneshot_answers.unchanged(tree, rounds)   # reset back to the older one
+    failed = {"measures": [{**approved(head), "status": "failed", "owner": None}]}
+    assert "실측이 실패했거나" in oneshot_answers.unchanged(tree, failed)
+    pin = [{"test": "test_budget.py::test_pin"}]
+    assert oneshot_answers.ran([("test_budget", "test_pin", "test_budget.py", "passed")], pin, {}) == ""
+    assert "돌지 않음" in oneshot_answers.ran([], pin, {})
+    assert "failed" in oneshot_answers.ran([("test_budget", "test_pin", "test_budget.py", "failed")], pin, {})
+    two = [("test_budget.TestA", "test_pin", "test_budget.py", "failed"), ("test_budget.TestB", "test_pin", "test_budget.py", "passed")]
+    assert oneshot_answers.ran(two, [{"test": "test_budget.py::TestB::test_pin"}], {}) == ""   # the class it names
+    assert "failed" in oneshot_answers.ran(two, [{"test": "test_budget.py::TestA::test_pin"}], {})
+
+
+def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
+    tree, head, _ = reviewed
+    from main import oneshot_answers
+    for name in ("test_pin.py", "test_other.py"):
+        (tree / name).write_text("def test_old():\n    assert True\n", encoding="utf-8")
+        git(tree, "add", name)
+    git(tree, "commit", "-m", "pins")
+    refused = git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={"fix": "review", "reviews": [{"verdict": "refuse", "head": refused,
+                                                                         "findings": [P1]}]})
+    (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\ndef test_refund():\n    pass\n", encoding="utf-8")
+    git(tree, "commit", "-am", "a new pin")
+    (tree / "test_other.py").write_text("def test_late():\n    pass\n", encoding="utf-8")   # never committed
+
+    def answer(test):
+        return "```oneshot-answers\n" + json.dumps([{
+            "area": "amount validation", "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
+            "test": test}]) + "\n```\n"
+    s = specs.load("budget", oneshot.BRANCH)
+    with pytest.raises(ValueError, match="새로 더한"):
+        oneshot_answers.answered(tree, s, answer("test_other.py::test_late"))
+    git(tree, "rm", "-q", "--cached", "test_other.py")
+    git(tree, "commit", "-m", "the other file deleted")
+    with pytest.raises(ValueError, match="HEAD 에 없다"):   # in the diff, but not in the commit the review reads
+        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
+    (tree / "test_other.py").unlink()
+    (tree / "test_other.py").mkdir()
+    (tree / "test_other.py" / "test_in.py").write_text("def test_old():\n    pass\n", encoding="utf-8")
+    git(tree, "add", "test_other.py/test_in.py")
+    git(tree, "commit", "-m", "a folder where the file was")
+    with pytest.raises(ValueError, match="HEAD 에 없다"):   # a folder at that path is no test file
+        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
+    assert oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
+
+
+def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_did_not_answer(reviewed):
+    tree, head, _ = reviewed
+    from main import oneshot_answers
+    o_ = {"replacing": ["amount validation"], "reviews": [{"verdict": "refuse", "head": head, "findings": [P1]}]}
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []   # nothing changed at budget_app.py:2
+    (tree / "budget_app.py").write_text("def add(amount):\n    return max(amount, 0)\n", encoding="utf-8")
+    git(tree, "commit", "-am", "new mechanism")
+    assert oneshot_answers.passed(tree, o_, [{"area": "Amount validation"}])["replaced"] == []   # answered instead
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == ["amount validation"]
+
+
+def test_a_pin_is_a_case_the_refused_run_did_not_report_in_the_answers_file(reviewed):
+    tree, _, _ = reviewed
+    from main.oneshot_answers import ran, runner_root
+    pin = [{"test": "test_pin.py::test_new"}]
+    old = ("suite.test_pin", "test_new", "test_pin.py")
+    o_ = {"run_cases": [list(old)]}   # the refused build's run reported this case already
+    assert "이전 실행에도" in ran([(*old, "passed")], pin, o_, tree)   # an old test is not new
+    for spelt in ("./test_pin.py", str(tree / "test_pin.py")):   # another spelling of the same file is the same case
+        assert "이전 실행에도" in ran([(old[0], old[1], spelt, "passed")], pin, {"run_cases": [list(old)]}, tree)
+    assert "이전 실행에도" in ran([(old[0], old[1], "", "passed")], pin, {"run_cases": [list(old)]}, tree)   # no file now
+    assert "이전 실행에도" in ran([(*old, "passed")], pin, {"run_cases": [[old[0], old[1], ""]]}, tree)   # none before
+    assert o_["run_cases"] == [list(old)] or o_["run_cases"] == [old]   # this run's cases, for the next round
+    o_ = {"run_cases": []}
+    for case in [("suite.refund.test", "test_new", "test_pin.py"), ("x", "test_new", ""),   # any naming, or no file
+                 ("t", "test_new", str(tree / "test_pin.py"))]:   # an absolute path, read as the gate reads it
+        assert ran([(*case, "passed")], pin, o_, tree) == ""
+    assert "돌지 않음" in ran([("pkg.test_pin", "test_new", "pkg/test_pin.py", "passed")], pin, o_, tree)   # elsewhere
+    case = [("test_budget", "test_x", "test_budget.py", "passed")]   # the runner reports from `web`
+    assert ran(case, [{"test": "web/test_budget.py::test_x"}], {"runner_root": "web"}) == ""
+    assert "돌지 않음" in ran(case, [{"test": "web/test_budget.py::test_x"}], {})
+    old_run = {"contract": ["web/test_budget.py"], "cases": [["test_budget", "test_y", "test_budget.py"]]}
+    assert runner_root(old_run) == "web" and runner_root({**old_run, "runner_root": ""}) == ""
+    both = {"contract": ["test_budget.py", "web/test_budget.py"], "cases": [["test_budget", "test_y", "test_budget.py"]]}
+    assert runner_root(both) == ""   # an exact path is the root itself, not the other folder
+    parent = {"contract": ["web/tests/test_budget.py", "shared/test_support.py"],
+              "cases": [["a", "x", "tests/test_budget.py"], ["b", "y", "../shared/test_support.py"]]}
+    assert runner_root(parent) == "web"   # `../` read from the root, as `oneshot_build.source` reads it
+    (tree / "tools" / "web").mkdir(parents=True)
+    (tree / "tools" / "web" / "run.py").write_text("", encoding="utf-8")
+    git(tree, "add", "tools/web/run.py")
+    git(tree, "commit", "-m", "a runner folder that holds no contract file")
+    deep = {"contract": ["test_budget.py", "tools/test_support.py"],
+            "cases": [["a", "x", "../../test_budget.py"], ["b", "y", "../test_support.py"]]}
+    assert runner_root(deep, tree) == "tools/web" and runner_root(deep) == ""   # any folder HEAD tracks a file in
+
+
+def test_a_replacement_counts_once_the_findings_file_is_not_what_the_refusal_read(reviewed):
+    tree, head, _ = reviewed
+    from main import oneshot_answers
+    o_ = {"replacing": ["amount validation"], "reviews": [{"verdict": "refuse", "head": head, "findings": [P1]}]}
+    (tree / "other.py").write_text("X = 1\n", encoding="utf-8")
+    git(tree, "add", "other.py")
+    git(tree, "commit", "-m", "another file only")
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == []   # budget_app.py as the refusal read it
+    text = (tree / "budget_app.py").read_text(encoding="utf-8")
+    (tree / "budget_app.py").write_text(text.replace("return", "return  "), encoding="utf-8")   # whitespace only
+    git(tree, "commit", "-am", "spacing")
+    assert oneshot_answers.passed(tree, o_, [])["replaced"] == ["amount validation"]   # each byte counts
+
+
+def test_an_owner_ruling_for_the_review_goes_to_the_build_with_their_words(reviewed):
+    _, head, sent = reviewed
+    oneshot_spec.saved("budget", oneshot={"stage": "conflict", "working": None, "reviews": [
+        {"verdict": "refuse", "head": head, "findings": [P1]}], "conflicts": [
+        {"key": "amount validation", "area": "amount validation", "why": "replaced", "findings": [P1], "answers": []}]})
+    oneshot_review.rule("budget", oneshot_review.Rulings(head=head, rulings={
+        "amount validation": {"keep": "owner", "note": "음수는 따로 환불 버튼으로 받는다"}}))
+    assert o()["stage"] == "build" and o()["fix"] == "review"
+    assert "음수는 따로 환불 버튼으로 받는다" in sent[-1][2] and "음수 금액을 받는다" in sent[-1][2]
+
+
+def test_a_finding_for_a_later_kind_build_does_not_block_and_reaches_that_build(reviewed):
+    _, head, sent = reviewed
+    later = {**P1, "area": "overlay", "reason": "자막 창이 없다", "later": {"kind": "desktop", "what": "자막 창을 만든다"}}
+    with pytest.raises(ValueError, match="later"):   # a kind this run never builds
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [P1, {**later, "later": {
+            "kind": "android", "what": "x"}}]}, head, rules={"kinds": {"webapp"}})
+    _, asking = answers(verdict(head, "refuse", P1, {**later, "later": {"kind": "webapp", "what": "자막 창을 만든다"}}))
+    with asking, patch.object(loop, "settings", lambda: {"rounds": 10, "review_effort": "high"}):
+        oneshot_review.review("budget")
+    assert "자막 창이 없다" not in sent[-1][2].split("```json")[1].split("```")[0]
+    assert o()["later"][0]["kind"] == "webapp"
+    assert "자막 창을 만든다" in oneshot_review.later_text(o(), ["webapp"]) and not oneshot_review.later_text(o(), ["android"])

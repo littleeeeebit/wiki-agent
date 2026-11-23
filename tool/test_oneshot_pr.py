@@ -5,6 +5,7 @@ gate run for real in a temporary worktree, and GitHub is `test_specs.Remote`, so
 is pushed and no pull request is made.
 """
 
+import contextlib
 import json
 import os
 import subprocess
@@ -18,7 +19,8 @@ import pytest
 
 import android_owned
 from main import github_release as gh
-from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_device, oneshot_pr, oneshot_spec, pr_text
+from main import oneshot, oneshot_build, oneshot_critique as critique, oneshot_device, oneshot_pr, oneshot_publish
+from main import oneshot_spec, pr_text
 from main import release, specs
 from test_github_release import FakeGitHub
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -277,6 +279,76 @@ def test_the_gate_green_asks_for_the_text_then_opens_the_pull_request_attached_b
     assert shown["gates"][0]["edited"] == ["P1"] and shown["gates"][0]["reading"][0]["seconds"] == 80.0
 
 
+def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finished):
+    tree, sent = finished
+    readme(tree)
+    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    remote = Remote()   # answers `gh pr ready` as a logged-out gh does
+    with patch.object(specs, "sh", listing(remote, 7)):   # the draft, open: its text is edited, then ready asked
+        assert check(tree, SUMMARIZED) is None
+    assert any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls) and not remote.created()
+    assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "pr" and "초안을 풀지 못했다" in o()["stopped"]["detail"]
+    # Resumed, a new README commit's push fails: the record of the earlier publication never finishes the run.
+    oneshot_spec.resume("budget")
+    readme(tree, ("NOTES.md", "다시\n"))
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    remote = Remote()
+    open7 = listing(remote, 7)
+    with patch.object(specs, "sh", lambda args, cwd, timeout=60: open7(args, cwd, timeout) if args[:2] != ["git", "push"]
+                      else subprocess.CompletedProcess(args, 1, "", "rejected")):
+        assert check(tree, SUMMARIZED) is None
+    assert not any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls)
+    assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "pr" and "push 실패" in o()["stopped"]["detail"]
+
+
+def listing(remote, *numbers):
+    """`remote`, with `gh pr list` answering these open pull requests from the task's branch into `main`."""
+
+    rows = [{"number": n, "url": f"https://github.com/o/proj/pull/{n}", "headRefName": specs.branch_of(spec()),
+             "baseRefName": "main", "isCrossRepository": False} for n in numbers]
+    return lambda args, cwd, timeout=60: (subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
+                                          if args[:3] == ["gh", "pr", "list"] else remote(args, cwd, timeout))
+
+
+@pytest.mark.parametrize("open_now", [(), (9,)])   # the draft closed, or another pull request open on the branch
+def test_s8_publishes_only_to_the_draft_it_measured_never_a_replacement(finished, open_now):
+    tree, sent = finished
+    readme(tree)
+    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    remote = Remote()
+    with patch.object(specs, "sh", listing(remote, *open_now)):
+        assert check(tree, SUMMARIZED) is None
+    # Nothing is pushed either: a push to the branch would move the pull request open on it.
+    assert not remote.pushes() and not remote.created()
+    assert not any(c[:3] in (["gh", "pr", "ready"], ["gh", "pr", "edit"]) for c in remote.calls)
+    assert o()["stage"] == "pr" and "초안 PR #7 이 열려 있지 않다" in o()["stopped"]["detail"] and not spec().get("pr")
+
+
+@pytest.mark.parametrize("open_now", [(), (9,)])
+def test_a_repairs_publication_stacks_on_the_measured_draft_never_a_replacement(finished, open_now):
+    tree, _ = finished
+    pr1 = {"number": 7, "url": "https://github.com/o/proj/pull/7", "head": "old"}
+    oneshot_spec.saved("budget", oneshot={"pr1": pr1, "built_head": git(tree, "rev-parse", "HEAD")})
+    remote = Remote()
+    with patch.object(specs, "sh", listing(remote, *open_now)), pytest.raises(ValueError, match="초안 PR #7 이 열려"):
+        oneshot_publish.published("budget")
+    assert not remote.pushes() and not remote.created() and o()["pr1"] == pr1
+    with patch.object(specs, "sh", listing(remote, 7)):   # reopened: the repair goes up on it
+        assert oneshot_publish.published("budget")["number"] == 7
+    assert not remote.created() and o()["pr1"]["head"] == git(tree, "rev-parse", "HEAD")
+    # The repository's default branch moved since: the draft keeps the base it was opened into.
+    moved = listing(remote, 7)
+    with patch.object(specs, "sh", lambda args, cwd, timeout=60: subprocess.CompletedProcess(args, 0, "dev\n", "")
+                      if args[:3] == ["gh", "repo", "view"] else moved(args, cwd, timeout)):
+        assert oneshot_publish.published("budget")["base"] == "main"
+    assert not remote.created()
+
+
 @pytest.mark.parametrize("change, said", [
     # an adapter gate that dropped the contract's command: refused as any change outside `[release]`, unrun
     (lambda tree: write(tree, ".wiki/adapter.toml", adapter(gate=f'"{sys.executable}" -c "pass"')), "`[release]` 밖이"),
@@ -308,22 +380,26 @@ def test_a_push_github_refuses_stops_the_run_with_its_reason(finished):
     assert o()["stopped"]["reason"] == "pr" and "push 실패" in o()["stopped"]["detail"] and not remote.created()
 
 
-def test_a_push_that_times_out_stops_the_run_so_it_can_be_resumed(finished):
+@pytest.mark.parametrize("slow", [["git", "push"], ["gh", "repo", "view"]])   # the push, or the draft check before it
+def test_a_push_that_times_out_stops_the_run_so_it_can_be_resumed(finished, slow):
     tree, sent = finished
     readme(tree)
+    if slow[0] == "gh":   # with PR #1, the draft's base is looked up before anything is pushed
+        oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     remote = Remote()
 
     def timed_out(args, cwd, timeout=60):
-        if args[:2] == ["git", "push"]:
+        if args[:len(slow)] == slow:
             raise subprocess.TimeoutExpired(args, timeout)
         return remote(args, cwd, timeout)
 
-    with patch.object(specs, "sh", timed_out), pytest.raises(subprocess.TimeoutExpired):
+    with patch.object(specs, "sh", timed_out), \
+            (pytest.raises(subprocess.TimeoutExpired) if slow[0] == "git" else contextlib.nullcontext()):
         check(tree, SUMMARIZED)
     assert o()["working"] is None and o()["stopped"]["reason"] == "pr" and "TimeoutExpired" in o()["stopped"]["detail"]
-    assert not remote.created()
+    assert not remote.pushes() and not remote.created()
 
 
 def test_a_pull_request_text_asked_again_is_the_runs_own_turn(finished):
