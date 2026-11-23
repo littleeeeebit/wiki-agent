@@ -334,22 +334,29 @@ def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
                     or n == source and n in added and version_file(path, head, n))]
 
 
-# A path that is not relative to the checkout: any drive-qualified one (`C:\x`, and `C:..\x`, relative to that drive's
-# own folder), a share or a path rooted at the current drive, a home, a POSIX root with a folder in it. A switch such
-# as `/p:x` or `-p:x` is not one.
-FAR = re.compile(r"(?<![\w$%./\\-])(?:[A-Za-z]:|\\|~[\\/]|/[^\s/:\"']+/)")
-# A command's words, a quoted part kept whole with its spaces.
+# A command's words, a quoted part kept whole with its spaces, and a word's values: split at `=`, `,` and `;` outside
+# quotes. A value that leads out of the checkout: drive-qualified anywhere (`C:\x`, and `C:..\x`, relative to that
+# drive's own folder), or, itself or past its switch (`/out:`, `-o:`), a share, rooted at the current drive, a home or
+# a root with a folder in it. A switch such as `/p:x` or `-p:x` is not one.
 WORD = re.compile(r"""(?:"[^"]*"|'[^']*'|[^\s"'])+""")
+VALUES = re.compile(r"""[=,;](?=(?:[^"']*["'][^"']*["'])*[^"']*$)""")
+DRIVE = re.compile(r"(?<![\w$%/\\.-])[A-Za-z]:")
+ROOTED = re.compile(r"\\|~[\\/]|/[^/\\:]*[/\\]")
+SWITCH = re.compile(r"^[-/]+[\w.-]*:")
+
+
 def outside(command: str) -> str:
     """A path in a release `build`, S8's own words, that leads out of its checkout, or empty: an absolute one, or
     one whose `..` steps climb above the repository root it runs from (`a/../b` stays inside). A command that names
     the live worktree would build bytes R3 never saw. A variable (`$env:X`) is not a path. What the approved
     commit's own files name, its Tauri config among them, is the app R3 built and approved (an accepted limit)."""
 
-    if m := FAR.search(command):
-        return command[max(m.start() - 10, 0):m.end() + 20].strip()
-    parts = [p for w in WORD.findall(command) for p in re.split(r"[=,;]", re.sub(r"[\"']", "", w))]
-    return next((p for p in parts if p and posixpath.normpath(p.replace("\\", "/")).split("/")[0] == ".."), "")
+    for value in (re.sub(r"[\"']", "", v) for w in WORD.findall(command) for v in VALUES.split(w)):
+        bare = SWITCH.sub("", value)
+        if DRIVE.search(value) or any(ROOTED.match(s) or posixpath.normpath(s.replace("\\", "/")).split("/")[0] == ".."
+                                      for s in {value, bare} if s):
+            return value
+    return ""
 
 
 def tauri(o: dict) -> bool:
