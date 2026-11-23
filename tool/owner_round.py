@@ -126,6 +126,26 @@ def fixtures() -> list[int]:
     return found
 
 
+def shown(members: list[dict]) -> set[int]:
+    """Every visible top-level window on this desktop whose process is one of `members`: what a composition of the
+    screen can show of theirs. Only each window's process and visibility are read, never another window's title."""
+
+    u, pids, found = _user32(), {m["pid"] for m in members}, set()
+    proc = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+
+    def each(hwnd, _):
+        pid = w.DWORD()
+        u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in pids and u.IsWindowVisible(hwnd):
+            found.add(int(hwnd))
+        return True
+
+    u.IsWindowVisible.argtypes = [w.HWND]
+    if not u.EnumWindows(proc(each), 0):
+        raise OSError(ctypes.get_last_error(), "cannot list the desktop's windows")
+    return found
+
+
 def window(hwnd: int) -> dict | None:
     """What a live top-level window is now: its handle, the process that owns it, its class and title."""
 

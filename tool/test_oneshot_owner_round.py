@@ -322,8 +322,9 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
                                    "--rect", "40", "40", "640", "360", "--out", str(folder / "window.json")], folder)
         named = owner_round._waited(folder / "window.json", owner_round.FIXTURE_SECONDS, threading.Event())
         # A handle is read only from its own desktop: the round's server shares the owner's, so a probe there reads it.
-        probe = (f"import json, owner_round; print(json.dumps({{**owner_round.window({named['hwnd']}), "
-                 f"'titled': owner_round.fixtures()}}))")
+        probe = (f"import json, owner_round; seen = owner_round.window({named['hwnd']}); print(json.dumps({{**seen, "
+                 f"'titled': owner_round.fixtures(), 'none': sorted(owner_round.shown([])), "
+                 f"'shown': sorted(owner_round.shown([{{'pid': seen['pid']}}]))}}))")
         code, out, why = session.run("probe", [sys.executable, "-c", probe], Path(owner_round.__file__).parent, 60,
                                      threading.Event(), {"PYTHONPATH": str(Path(owner_round.__file__).parent)})
         seen = json.loads(out.strip().splitlines()[-1])
@@ -331,6 +332,7 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
         members = session.record["jobs"]["fixture1"]["members"]
         assert code == 0 and seen["title"] == owner_round.FIXTURE and seen["pid"] in {m["pid"] for m in members}
         assert seen["titled"] == [named["hwnd"]]   # found by its title, the only window by it on that desktop
+        assert named["hwnd"] in seen["shown"] and seen["none"] == []   # its process's visible windows, no other's
         # Its frame is placed at the rect's corner; what it reports is its client area, inside that frame.
         (fx, fy, fw, fh), (cx, cy, cw, ch) = seen["rect"], named["rect"]
         assert [fx, fy] == [40, 40] and [cw, ch] == [640, 360]

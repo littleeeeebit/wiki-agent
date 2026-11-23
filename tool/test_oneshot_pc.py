@@ -314,6 +314,7 @@ def desk(monkeypatch, tmp_path):
         {"read": True, "file": str(capture)}))
     monkeypatch.setattr(owner_round, "surface_read", lambda *a: reads["surface"].append(a) or {"read": True, "file": str(capture)})
     monkeypatch.setattr(owner_round, "ended", lambda session, key, what="": reads["ended"].append(key))
+    monkeypatch.setattr(owner_round, "shown", lambda members: {101})   # the app shows only the window the driver read
     (tmp_path / "keep").mkdir()
     (tmp_path / "data").mkdir()
     return reads, tmp_path
@@ -563,11 +564,14 @@ def test_no_capture_helper_leaves_a_capture_check_pending(held, desk):
 def test_the_critic_judges_a_capture_against_its_sentence_and_the_page(held, desk, monkeypatch):
     asked = []
     monkeypatch.setattr(oneshot, "turned", lambda store, role, system, text, name, check, tree, images, hide:
-                        asked.append((role, text, images)) or check({"shows": False, "why": "검게 비었다"}))
+                        asked.append((role, text, images, hide)) or check({"shows": False, "why": "검게 비었다"}))
     result = {"status": "judge", "file": str(desk[1] / "capture.png"), "shows": "번역문이 겹친다", "page": PAGE}
     got = pc.judged(oneshot_spec.store("budget"), held, "O3", result)
-    assert got == {"status": "failed", "why": "비평가: 검게 비었다"}
-    role, text, images = asked[0]
+    assert got == {"status": "failed", "why": "비평가: 검게 비었다"} and asked[0][3] == {}
+    # The round's masks reach the turn, so a failed turn's saved reason shows no secret.
+    pc.judged(oneshot_spec.store("budget"), held, "O3", result, {"s3cr3t": "[N1]"})
+    assert asked[1][3] == {"s3cr3t": "[N1]"}
+    role, text, images, _ = asked[0]
     assert role == "critic" and "apple river garden" in text and "번역문이 겹친다" in text and images[0].name == "capture.png"
     # A verdict without its reason is refused, so `turned` asks again instead of taking it.
     monkeypatch.setattr(oneshot, "turned", lambda *a: a[5]({"shows": True}))
@@ -674,6 +678,23 @@ def test_with_secrets_only_windows_read_whole_are_captured_for_the_critic(held, 
     assert run(None)["status"] == "judge"   # without a secret to hide, the same capture goes on as before
     last["reads"][-1]["read"] = True
     assert run({"s3cr3t": "[N1]"})["status"] == "judge"
+
+
+@pytest.mark.parametrize("late, surfaced", [([{202}], 0), ([set(), {202}], 1)])
+def test_with_secrets_a_window_the_app_opens_after_its_read_holds_back_the_composition(held, desk, monkeypatch,
+                                                                                         late, surfaced):
+    # The read was whole and clean; a dialog the app opens after it, before the helper samples or before the frame
+    # is kept, may show on the surface with text the secret check never saw: nothing is kept.
+    reads, root = desk
+    x = {**REPORT, "observe": {"composition": {"shows": "번역문", "from": "fixture"}}}
+    opened = list(late)
+    monkeypatch.setattr(owner_round, "shown", lambda members: {101, *(opened.pop(0) if opened else ())})
+    got = pc.one(Session(), Runs(driven(), root / "data"), 1, x, SCENARIO, "helper.exe", "", root / "keep",
+                 lambda: None, {"s3cr3t": "[N1]"})
+    assert got == {"status": "failed", "why": pc.LATE} and len(reads["surface"]) == surfaced
+    assert not list((root / "keep").iterdir())
+    opened[:] = late
+    assert checked(desk, x, driven())["status"] == "judge"   # without a secret, as before
 
 
 @pytest.mark.parametrize("unread", [{"value": None, "unvalued": True}, {"text": None, "untexted": True}])

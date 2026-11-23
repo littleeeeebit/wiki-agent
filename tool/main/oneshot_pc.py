@@ -39,6 +39,7 @@ STAGE = "pc"
 FIXTURE = "oneshot-fixture"   # the server's own window of random English words, one for each check
 RECT = [80, 80, 960, 540]   # where the fixture is placed on the primary monitor, its client area's size, physical pixels
 JUDGE = "oneshot-owner-judge"
+LATE = "캡처하는 동안 앱이 글자를 읽지 않은 창을 띄워 비밀 값이 없다는 것을 확인할 수 없다"
 JUDGE_PROMPT = (ROOT / "tool/prompts/oneshot-owner-judge.md").read_text(encoding="utf-8")
 MAX_REPORT = 1 << 20   # bytes of an app's report file the round reads
 _halts: dict[str, threading.Event] = {}
@@ -363,6 +364,13 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
         why = running(report, key)
         return f"앱이 살아 있지 않았다 — {why}" if why else fixture_up()
 
+    def unscanned(report: dict, key: str) -> bool:
+        """With secrets, a composition: whether the app shows a window now that its last read state did not hold,
+        one opened since, whose text the secret check never saw."""
+
+        read = {w.get("hwnd") for w in report["states"][-1].get("windows") or []}
+        return bool(owner_round.shown(members(key)) - read)
+
     def then(report: dict, key: str) -> dict:
         if why := ran(report, steps):
             return {"status": "failed", "why": why}
@@ -406,12 +414,16 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
                                               oneshot._lock,   # as `stop` takes it: a stop accepted first is a `stop`
                                               also=fixture_up)   # the fixture too, before the helper may sample
             else:
+                if hide and unscanned(report, key):   # before the helper samples, and again before the frame is kept
+                    return {"status": "failed", "why": LATE}
                 got = owner_round.surface_read(session, f"capture{n}", exe, fixture, rect,
                                                lambda: members(fixture_key), runs.halt, oneshot._lock)
         except owner_round.Unavailable as exc:
             return {"status": "pending", "why": str(exc)}
         if not got.get("read"):
             return {"status": "failed", "why": f"캡처를 읽지 못했다 — {got.get('why')}"}
+        if what != "window" and hide and unscanned(report, key):
+            return {"status": "failed", "why": LATE}
         if why := both_up(report, key):   # and after it: the frame counts only while both still stand
             return {"status": "failed", "why": f"캡처 뒤에 {why}"}
         file = keep / f"c{n}-{what}.png"
@@ -477,8 +489,9 @@ def observe(repo: str, o: dict, stopped, carry: dict | None = None, hide: dict[s
     return results
 
 
-def judged(store, tree: Path, cid: str, result: dict) -> dict | None:
-    """The critic's verdict on a capture: `passed`, or `failed` with what it saw; None after stopping."""
+def judged(store, tree: Path, cid: str, result: dict, hide: dict[str, str] | None = None) -> dict | None:
+    """The critic's verdict on a capture: `passed`, or `failed` with what it saw; None after stopping, its reason
+    showing no `hide` value."""
 
     def verdict(value) -> dict:
         if not isinstance(value, dict) or not isinstance(value.get("shows"), bool) \
@@ -488,7 +501,7 @@ def judged(store, tree: Path, cid: str, result: dict) -> dict | None:
 
     text = (f"The check `{cid}`. The fixture showed exactly these words: {' '.join(result['page'])}\n\n"
             f"What the capture must show: {result['shows']}\n\nThe capture, attached: `{Path(result['file']).name}`\n")
-    found = oneshot.turned(store, "critic", JUDGE_PROMPT, text, JUDGE, verdict, tree, (Path(result["file"]),), {})
+    found = oneshot.turned(store, "critic", JUDGE_PROMPT, text, JUDGE, verdict, tree, (Path(result["file"]),), hide or {})
     if found is None:
         return None
     return {"status": "passed"} if found["shows"] else {"status": "failed", "why": f"비평가: {found['why']}"}
@@ -545,7 +558,7 @@ def owner_round(repo: str) -> None:
             return lambda: settled(repo, cut)
         for cid, result in results.items():   # the critic judges each capture once the round's windows are gone
             if result["status"] == "judge" and not stopped():
-                if (verdict := judged(store, tree, cid, result)) is None:
+                if (verdict := judged(store, tree, cid, result, hide)) is None:
                     return None
                 results[cid] = {**result, **verdict}
         if stopped():   # a stop accepted before the round ended: never its outcome

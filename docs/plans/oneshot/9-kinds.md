@@ -676,8 +676,12 @@ never sees it. With any secret given, a capture is taken only of windows
 whose every string was read. A window capture needs a whole read of its
 window, and a composition a whole read of every window of the app's. In
 those windows, every value and every document's text (the `Text` pattern's
-range, which the driver reads within the value's bound) must be read. Any
-other capture fails the check. With any secret given, the round's look also
+range, which the driver reads within the value's bound) must be read. For
+a composition, the app's visible top-level windows are listed again before
+the helper samples and before the frame is kept, and any window the last
+read did not hold fails the check. Any other capture fails the check too.
+The critic's turn gets the same masks, so a failed turn's kept reason shows
+no secret. With any secret given, the round's look also
 removes its raw evidence with its cleanup. Every result, finding and error
 the round keeps is masked. A folder the cleanup could not remove is named in
 the kept record by its own name and the error's kind and code, never by a
