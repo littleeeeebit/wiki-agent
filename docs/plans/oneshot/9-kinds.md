@@ -350,7 +350,8 @@ source, and the server assigns it:
     is unknown, never `Indeterminate`. So is an expansion state. Only a
     supplied `Collapsed` or `LeafNode` skips a container's item audit. Any
     other state is audited, including one that is unsupplied or out of
-    range. An element's id or name that is not
+    range. The audit matches items to the elements read by runtime id. An
+    item with no runtime id counts as unread, never as one already read. An element's id or name that is not
     whole UTF-16 leaves its window's read not whole. The driver reads every element's automation id again
     after its value and compares the two ordinally. One that changed (a
     control rebound meanwhile) leaves that window's read not whole. Such a

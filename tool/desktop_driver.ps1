@@ -126,7 +126,11 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
   [ordered]@{ hwnd = $window.hwnd; drawn = $true; file = $file; size = @($frame[2], $frame[3]) }
 }
 
-function Rid($element) { ($element.GetRuntimeId()) -join "." }   # the element's identity while it lives
+function Rid($element) {   # the element's identity while it lives; none at all is no identity, never ""
+  $id = $element.GetRuntimeId()
+  if ($null -eq $id -or @($id).Count -eq 0) { throw "the element has no runtime id" }
+  @($id) -join "."
+}
 
 function Baseline([string]$path) {   # a report file just before a step acts: its text, proven absent, or why unknown
   try {

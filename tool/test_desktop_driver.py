@@ -398,6 +398,20 @@ def test_an_unsupplied_expansion_state_has_its_items_audited_never_taken_for_a_l
     assert probe.stdout.split() == ["False", "False", "True", "True", "True", "True", "True"], probe
 
 
+def test_an_element_without_a_runtime_id_is_never_taken_for_one_already_read():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    rid = "function Rid(" + script.split("function Rid(", 1)[1].split("\nfunction ", 1)[0]
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command", rid + "\n"
+                            "$none = [pscustomobject]@{}; $none | Add-Member ScriptMethod GetRuntimeId { $null }\n"
+                            "$empty = [pscustomobject]@{}; $empty | Add-Member ScriptMethod GetRuntimeId { ,@() }\n"
+                            "$some = [pscustomobject]@{}; $some | Add-Member ScriptMethod GetRuntimeId { ,@(42, 7) }\n"
+                            "foreach ($e in @($none, $empty, $some)) { try { Rid $e } catch { 'refused' } }"],
+                           capture_output=True, text=True, timeout=60)
+    assert probe.stdout.split() == ["refused", "refused", "42.7"], probe
+    items = script.split("function Items(", 1)[1].split("\nfunction ", 1)[0]
+    assert "try { if (-not $seen.Contains((Rid $item))) { $unread++ } } catch { $unread++ }" in items
+
+
 def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
     script = tmp_path / "form.ps1"
     # The app holds a lone surrogate itself: a request's JSON would carry one only as U+FFFD.
