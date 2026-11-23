@@ -253,6 +253,13 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
       }
     } catch { $node.value = $null; $node.unvalued = $true }   # unread or cut: what it held is unknown, not empty
   }
+  if ($patterns -contains "Text") {   # a document's text, which neither its name nor a value need carry
+    try {   # one past the bound: a longer text is known to be cut, so unknown, never taken for the whole
+      $t = $element.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText($MAX_VALUE + 1)
+      if ($t -is [string] -and $t.Length -le $MAX_VALUE -and (Whole $t)) { $node.text = $t }
+      else { $node.text = $null; $node.untexted = $true }
+    } catch { $node.text = $null; $node.untexted = $true }
+  }
   # Every element's id again, after its value: one rebound meanwhile leaves unknown which id held what, so this
   # window's read is not whole, and proves neither a value, nor an id absent, nor an id held once. Compared
   # ordinally, as the server matches ids. Read as `Current.AutomationId` reads it, defaults alike.

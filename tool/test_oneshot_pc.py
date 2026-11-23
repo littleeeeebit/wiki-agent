@@ -676,6 +676,19 @@ def test_with_secrets_only_windows_read_whole_are_captured_for_the_critic(held, 
     assert run({"s3cr3t": "[N1]"})["status"] == "judge"
 
 
+@pytest.mark.parametrize("unread", [{"value": None, "unvalued": True}, {"text": None, "untexted": True}])
+def test_with_secrets_a_window_holding_a_value_or_text_never_read_is_never_captured(held, desk, unread):
+    # A log whose value or document text was past the bound or unreadable: text the secret check never saw.
+    reads, root = desk
+    report = driven()
+    report["states"][-1]["nodes"].append({"window": 101, "id": "log", "type": "Document", "depth": 1, **unread})
+    x = {**REPORT, "observe": {"window": {"shows": "번역문", "from": "fixture"}}}
+    got = pc.one(Session(), Runs(report, root / "data"), 1, x, SCENARIO, "helper.exe", "", root / "keep",
+                 lambda: None, {"s3cr3t": "[N1]"})
+    assert got["status"] == "failed" and "비밀 값" in got["why"] and not reads["window"]
+    assert checked(desk, x, report)["status"] == "judge"   # the scenario's own check is not about that text
+
+
 def test_a_failed_check_goes_to_the_build_as_a_finding(held, monkeypatch):
     sent = []
     monkeypatch.setattr(oneshot_build, "send", lambda *a: sent.append(a))

@@ -582,6 +582,29 @@ def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replace
     assert [(n.get("value"), n.get("unvalued")) for n in box] == [(None, True)], report
 
 
+@pytest.mark.parametrize("length", [12, 1500])
+def test_a_documents_text_is_read_whole_or_marked_unknown_past_the_bound(tmp_path, length):
+    # A rich text box: its name a label, no value, its document text only through the Text pattern.
+    script = tmp_path / "rich.ps1"
+    script.write_text(WPF_FORM.replace(
+        "[void]$panel.Children.Add($box)",
+        "$rich = New-Object System.Windows.Controls.RichTextBox; $rich.Height = 60; $A::SetAutomationId($rich, 'log'); "
+        "$A::SetName($rich, 'log'); $rich.Document.Blocks.Clear(); "
+        f"$rich.Document.Blocks.Add((New-Object System.Windows.Documents.Paragraph((New-Object System.Windows.Documents.Run(('x' * {length - 12}) + 'token s3cr3t'))))); "
+        "[void]$panel.Children.Add($rich); [void]$panel.Children.Add($box)"), encoding="utf-8")
+    with desktop_session.look(tmp_path, f"rich-{length}") as look:
+        look.start("app", [str(desktop_driver.POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                           str(script)], tmp_path)
+        report = desktop_driver.drive(look, "app", (400, 300), [], wait=30, settle_ms=800)
+    assert report["states"], {k: report.get(k) for k in ("phase", "ended", "refusal", "error")}
+    [log] = [n for n in report["states"][0]["nodes"] if n.get("id") == "log"]
+    assert "Text" in log["patterns"], log
+    if length <= desktop_driver.MAX_VALUE:
+        assert "token s3cr3t" in log["text"] and not log.get("untexted"), log
+    else:
+        assert log["text"] is None and log["untexted"] is True, log
+
+
 def test_a_postcondition_holds_on_one_element_with_every_property_it_names():
     state = {"nodes": [{"id": "a", "name": "번역", "value": "", "toggle": "On"}, {"id": "b", "value": "x"},
                        {"id": "c", "toggle": "On", "foreign": True}]}

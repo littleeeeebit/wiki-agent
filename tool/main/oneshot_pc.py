@@ -385,7 +385,10 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
             last = report["states"][-1]
             shown = {desktop_driver.scope(report, last, seen.get("in", "main"))} if what == "window" else \
                 {w.get("hwnd") for w in last.get("windows") or []}   # a composition can show any of the app's
-            if None in shown or not whole(last, shown):
+            # A value or a document's text unread or past the bound is text the secret check never saw.
+            unread = [n for n in last.get("nodes") or [] if n.get("window") in shown
+                      and (n.get("unvalued") or n.get("untexted"))]
+            if None in shown or not whole(last, shown) or unread:
                 return {"status": "failed", "why": "캡처할 창의 글자를 다 읽지 못해 비밀 값이 없다는 것을 확인할 수 없다"}
         if exe is None:
             return {"status": "pending", "why": missing}
