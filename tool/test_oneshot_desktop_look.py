@@ -244,9 +244,11 @@ class Desk:
         (self.folder / name).mkdir(exist_ok=True)
         return self.folder / name
 
-    def start(self, key, argv, cwd, extra=None, halt=None):
+    def start(self, key, argv, cwd, extra=None, halt=None, ready=None, gate=None):
         if self.refuse:
             raise self.refuse
+        if ready is not None:   # the process made, not yet run
+            ready()
         self.started.append(extra)
         self.jobs[key] = type("Job", (), {"end": lambda job, s: {"clean": self.clean, "reasons": ["pid 9 runs"]}})()
 
@@ -259,9 +261,21 @@ def launches(tmp_path, desk, env=None, altered="", given=None):
 
     build = {"folder": str(tmp_path), "launch": {"program": "app.exe", "args": ["{data}"], "cwd": ".",
                                                  "env": env or {}}}
-    runs = pc_look.Launches(desk, build, (1280, 800), pc_look.never, given)
+    runs = pc_look.Launches(desk, build, (1280, 800), pc_look.never, given=given)
     return runs, patch.object(desktop_driver, "drive", lambda *a, **k: shown("S1", "full", [])), \
         patch.object(pc_look.oneshot_desktop, "altered", lambda b: altered)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_a_steps_baseline_is_handed_to_the_driver_under_this_starts_data(tmp_path):
+    import desktop_driver
+
+    desk, sent = Desk(tmp_path), []
+    runs, _, kept = launches(tmp_path, desk)
+    with patch.object(desktop_driver, "drive", lambda look, app, window, steps, **k: sent.append(steps) or
+                      shown("S1", "full", [])), kept:
+        runs.drive("S1", "full", [{"name": "a"}, {"name": "go", "baseline": "out/seen.txt"}])
+    assert sent == [[{"name": "a"}, {"name": "go", "baseline": str(Path(runs.data) / "out/seen.txt")}]]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
@@ -289,6 +303,22 @@ def test_a_start_the_deadline_halts_says_so_and_any_other_halt_is_a_stop(tmp_pat
         monkeypatch.setattr(pc_look, "LOOK_SECONDS", 0)
         with pytest.raises(ValueError, match="0분 안에 끝나지 않았다"):   # the deadline's, after the end is read
             runs.drive("S1", "full", [])
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_a_start_whose_ready_check_refuses_never_runs_and_raises_what_it_raised(tmp_path):
+    class Moved(Exception):
+        pass
+
+    def ready():
+        raise Moved("HEAD moved")
+
+    desk = Desk(tmp_path)
+    runs, driving, kept = launches(tmp_path, desk)
+    runs.ready = ready
+    with driving, kept, pytest.raises(Moved, match="HEAD moved"):
+        runs.drive("S1", "full", [])
+    assert desk.started == []
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
@@ -594,6 +624,55 @@ def test_a_control_scrolled_past_its_window_is_reachable_not_outside_it():
     assert desktop_driver.findings(got) == []
     state["nodes"][1]["scrolled"] = False
     assert desktop_driver.findings(got) == ["start: ListItem 'row' lies outside its window"]
+
+
+def test_a_folder_in_the_copy_that_cannot_be_listed_is_never_taken_for_an_unchanged_copy(tmp_path, monkeypatch):
+    app, build = copy(tmp_path)
+    (app / "extra").mkdir()
+    (app / "extra" / "added.dll").write_bytes(b"x")
+    walk = pc_look.oneshot_desktop.os.walk
+
+    def denied(top, onerror=None):   # `extra` cannot be listed: what is in it is unknown
+        for folder, dirs, names in walk(top, onerror=onerror):
+            if Path(folder).name == "extra":
+                onerror(PermissionError(13, "denied", folder))
+                continue
+            yield folder, dirs, names
+
+    monkeypatch.setattr(pc_look.oneshot_desktop.os, "walk", denied)
+    with pytest.raises(PermissionError):
+        pc_look.oneshot_desktop.altered(build)
+
+
+def test_while_the_copy_is_held_neither_a_file_nor_the_manifest_can_be_changed_and_after_both_can(tmp_path):
+    app, build = copy(tmp_path)
+    with pc_look.oneshot_desktop.held(build) as why:
+        assert why == ""
+        for path in (app / "app.exe", tmp_path / "manifest.json"):
+            with pytest.raises(PermissionError):
+                path.write_bytes(b"other")
+            with pytest.raises(PermissionError):
+                path.rename(path.with_name("moved"))
+            with pytest.raises(PermissionError):
+                path.unlink()
+    (app / "app.exe").write_bytes(b"other")   # let go: the next read sees it
+    assert "`app.exe`" in pc_look.oneshot_desktop.altered(build)
+
+
+def test_a_handle_whose_wrapping_fails_is_closed(tmp_path, monkeypatch):
+    app, build = copy(tmp_path)
+    import msvcrt
+
+    monkeypatch.setattr(msvcrt, "open_osfhandle", lambda *a: (_ for _ in ()).throw(OSError(24, "no descriptor")))
+    with pytest.raises(OSError, match="no descriptor"):
+        pc_look.oneshot_desktop.altered(build)
+    (tmp_path / "manifest.json").write_bytes(b"{}")   # let go: nothing still holds it
+
+
+def test_a_copy_another_holds_open_for_writing_is_never_read_as_unchanged(tmp_path):
+    app, build = copy(tmp_path)
+    with open(app / "app.exe", "r+b"), pytest.raises(PermissionError):
+        pc_look.oneshot_desktop.altered(build)
 
 
 def test_a_manifest_that_no_longer_digests_to_the_saved_identity_is_altered(tmp_path):

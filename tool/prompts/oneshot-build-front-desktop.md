@@ -142,7 +142,10 @@ End the turn with exactly one fenced block whose info string is
   toggle as any last step's does; the round runs it on the owner's
   desktop beside the server's fixture, a window titled `oneshot-fixture`
   showing a page of English words no one knows beforehand, and reads what
-  its `observe` names.
+  its `observe` names. A `report` passes only when it holds that page as
+  it reads, its words in the order shown. The fixture carries colour
+  marks along its edges, 8 pixels deep; an overlay that covers them leaves
+  a `composition` check pending.
 
 `run.folder` and `installer` are relative to the repository root;
 `run.program` and `run.cwd` are relative to `run.folder`. Every path uses

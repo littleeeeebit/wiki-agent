@@ -5,9 +5,10 @@ import { Choices } from '@/components/Blocks'
 import { Btn, Zoom } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
 import { Calls, Leaked, Needs } from '@/components/OneshotNeeds'
+import { PcApprove, PcResults } from '@/components/OneshotPc'
 import { Track } from '@/components/OneshotTrack'
 import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
-  type Models, type PcPlan, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName,
+  type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName,
   ownedNotice, toolText,
 } from '@/lib/oneshot'
 import { InLink } from '@/lib/picture'
@@ -169,6 +170,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
         <Fault text={fault} />
         {view.phone_owned?.length || leaked ? faulted : null}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
+        {view.stage === 'r3' && o.pc?.results ? <PcResults title="주인 화면 회차 — 통과" results={o.pc.results} /> : null}
       </>} />
     )
   }
@@ -202,9 +204,8 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       {idle && view.stage === 'phone' && (
         <PhonePick repo={repo} round={o.phone} busy={busy} act={act} />
       )}
-      {/* Held at its `kind` stop in this version: the approval is recorded, and the round runs in the next. Keyed by
-          the plan, so another plan starts with nothing allowed. */}
-      {!view.working && view.stage === 'pc' && view.pc_plan && (
+      {/* The approval starts the round. Keyed by the plan, so another plan starts with nothing allowed. */}
+      {idle && view.stage === 'pc' && view.pc_plan && (
         <PcApprove key={JSON.stringify(view.pc_plan)} repo={repo} view={view} plan={view.pc_plan} busy={busy} act={act} />
       )}
       {idle && view.stage === 'r3' && view.r3_sheet && o.r3 && (
@@ -218,72 +219,13 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
           <p>휴대폰 <span className="font-mono">{o.phone?.serial}</span> 에서 화면과 시나리오를 검사하는 중이다. 끝나면 설치한 앱을 지운다.</p>
           <Btn disabled={busy} onClick={() => void act(() => api.stopPhone(repo))}>멈춤</Btn>
         </section>
+      ) || view.working === 'pc' && (
+        <section aria-label="주인 화면 회차" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-5 py-4">
+          <p>내 화면에서 고정 창과 앱을 띄워 {(o.pc?.ran ?? o.pc?.approval)?.checks.join(', ')} 을 검사하는 중이다. 끝나면 띄운 것을 모두 닫는다.</p>
+          <Btn disabled={busy} onClick={() => void act(() => api.stopPc(repo))}>멈춤</Btn>
+        </section>
       )} />}
     </>
-  )
-}
-
-// -- The owner's desktop round before R3 ---------------------------------------------------
-
-/** What the owner's desktop round will start and read, for the owner's one-time approval: the checks, the app and
- *  each fixture, and each capture with what it reads. A screen-region capture runs only when the owner allows it;
- *  its check otherwise stays pending. The server checks the approval against the run again. */
-function PcApprove({ repo, view, plan, busy, act }: {
-  repo: string; view: SpecView; plan: PcPlan; busy: boolean; act: (fn: () => Promise<SpecView>) => Promise<boolean>
-}) {
-  const [surface, setSurface] = useState(false)
-  const given = view.pc_approved
-  const owed = new Map((view.oneshot.owed ?? []).map((x) => [x.id, x]))
-  const surfaced = plan.captures.some((c) => c.kind === 'surface')
-  return (
-    <Split label="주인 화면 회차" sideLabel="승인" side={<>
-      <Title><span>{given ? '승인했다' : '이 회차를 승인한다'}</span><span className="font-mono">{plan.checks.length}</span></Title>
-      {surfaced && (
-        <label className="flex items-baseline gap-2.5">
-          <input type="checkbox" checked={given ? given.surface : surface} disabled={!!given}
-            onChange={(e) => setSurface(e.target.checked)} />
-          <span>고정 창이 덮은 화면 영역을 읽어도 된다 (회차와 앱 모두)</span>
-        </label>
-      )}
-      <Decide>
-        <Btn tone="wait" className={GO} disabled={busy || !!given || !plan.checks.length}
-          onClick={() => void act(() => api.approvePc(repo, plan, surface))}>{given ? '승인됨' : '승인'}</Btn>
-      </Decide>
-    </>}>
-      <div className="flex max-w-[44rem] flex-col gap-4 px-10 py-6 max-[1500px]:px-7 max-[560px]:px-4">
-        <p>소유 데스크톱에서는 볼 수 없는 캡처 검사를 내 화면에서 한 번 돌린다. 아래에 적힌 것만 띄우고 읽으며, 승인은 이 빌드의 한
-          회차에만 쓴다. 서버가 다시 켜지거나 빌드가 바뀌면 다시 승인한다.</p>
-        <section aria-label="돌릴 검사" className="flex flex-col gap-2">
-          <Title><span>돌릴 검사</span><span className="font-mono">{plan.checks.length}</span></Title>
-          <ul className="flex flex-col gap-1.5">
-            {plan.checks.map((id) => (
-              <li key={id}><span className="font-mono text-[12px] text-faint">{id} {owed.get(id)?.requirement}</span> {owed.get(id)?.check}</li>
-            ))}
-          </ul>
-        </section>
-        <section aria-label="띄울 것" className="flex flex-col gap-2">
-          <Title><span>띄울 것</span></Title>
-          <ul className="flex flex-col gap-1.5 font-mono text-[12.5px]">{plan.starts.map((s) => <li key={s}>{s}</li>)}</ul>
-        </section>
-        {plan.captures.length > 0 && (
-          <section aria-label="읽을 것" className="flex flex-col gap-2">
-            <Title><span>찍고 읽을 것</span></Title>
-            <ul className="flex flex-col gap-1.5">
-              {plan.captures.map((c) => (
-                <li key={`${c.check}-${c.by}`}><span className="font-mono text-[12px] text-faint">{c.check}</span>{' '}
-                  {c.by === 'app' ? '앱이 읽는 ' : '회차가 찍는 '}{c.reads}
-                  {c.kind === 'surface' && <span className="text-muted-foreground"> — 그 영역에 뜬 알림도 함께 찍힌다</span>}</li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {!!view.pc_unrun?.length && (
-          <p className="text-muted-foreground">{view.pc_unrun.join(', ')} 는 이 회차에서 돌리지 않아 남는다. 남은 검사가 있으면 R3 는 열리지
-            않는다.</p>
-        )}
-        {view.oneshot.pc?.detail && <p role="alert" className="rounded-md bg-wait/10 px-3 py-2">{view.oneshot.pc.detail}</p>}
-      </div>
-    </Split>
   )
 }
 

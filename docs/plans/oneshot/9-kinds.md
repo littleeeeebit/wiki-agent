@@ -337,15 +337,115 @@ source, and the server assigns it:
   - `report`: the app's own report of what it captured, the value of an
     element (`id`, with `in: owned` in the window the main window owns) or a
     UTF-8 file under `{data}` (`file`), which must contain the fixture's text.
+    The report holds the page when its words appear in order, case and
+    punctuation aside. A word is a run of letters, digits and combining
+    marks of any script, read after canonical (NFC) normalization. Format
+    characters such as a zero-width joiner or a direction mark are passed
+    over: they neither part a word nor count in it. A zero-width space does
+    part words. A misread word such as `appleé`, in either encoding, or words
+    joined into one token, is no match. The driver reads a control's value
+    without UI Automation's defaults, so a provider that does not supply it
+    leaves the value unknown, never empty. So does a value that is not
+    whole UTF-16. A toggle state is read the same way, so an unsupplied one
+    is unknown, never `Indeterminate`. So is an expansion state. Only a
+    supplied `Collapsed` or `LeafNode` skips a container's item audit. Any
+    other state is audited, including one that is unsupplied or out of
+    range. The audit matches a container's items, by runtime id, only to
+    the elements the walk read inside that same container, never to one of
+    a sibling's. An item with no runtime id counts as unread, never as one
+    already read. So does any item whose runtime id an earlier item of the
+    same container already had. A container that scrolls but offers no
+    item enumeration leaves its window's read not whole, because the driver
+    does not scroll and its end is unverified. Its view counts as holding
+    everything only when both directions are supplied as not scrollable,
+    each with a view size of 100 percent and the position `NoScroll`. An
+    item container's items enumerate only the direction they run in, so one
+    that scrolls owes the horizontal direction proven the same way. Until
+    then its unread count is unknown and the read is not whole.
+    An element's id or name that is not
+    whole UTF-16 leaves its window's read not whole. The driver reads every element's automation id again
+    after its value and compares the two ordinally. One that changed (a
+    control rebound meanwhile) leaves that window's read not whole. Such a
+    read proves no value, no absence and no single holder of an id.
+    A known limit, accepted by the owner: the audit takes a runtime id as
+    the element's identity, as UI Automation promises it is unique within
+    its fragment. A provider that gives an unread item the id of another
+    element walked inside the same container, such as a grid header, has
+    that item counted as read.
+    A known limit, accepted by the owner: UI Automation has an element that
+    realizes its children late offer `ItemContainer` for them. An item
+    container's items are counted. The children of a realized item are
+    taken as the walk found them, beyond the horizontal view check above. A
+    provider that realizes an item, such as a row or a card, but leaves part
+    of its content unrealized without an enumeration can have that part
+    missed.
+    A known limit, accepted by the owner: UI Automation offers no snapshot
+    of a tree, so the driver reads the tree live. The checks above catch a
+    change that is still there when it is read again. They cannot catch an
+    element rebound and restored between two reads of it, or one moved
+    within the tree into a part the walk already passed. A report file is read through one open that shares
+    reading only, so it is one version of the file. A file the app still
+    holds open for writing is no report.
+    A known limit, accepted by the owner: the approval decides what the
+    round itself captures and which checks run. A report check cannot tell
+    whether the app read the fixture's window or the screen region it
+    covers, since the fixture is visible either way. With the owner's
+    approval, the app runs on the owner's desktop as built.
+    The report must be the capture step's own, measured against what was
+    proven just before that step. The driver reads it with the step's target
+    found, just before the step acts: a whole state for an element, and the
+    file's text for a file. After both reads it finds the target again, so
+    the step acts on the control as it is then. A file read as text must be
+    valid UTF-8, before the step and after it. Bytes that are not UTF-8
+    leave the text unknown, and the report counts for nothing.
+    - An element counts only when its window was read whole, without any
+      unread items, both in the state after the step and in the one read
+      just before it. There must be exactly one element by its id, offering
+      a value that was neither unread nor cut.
+    - Before the step, the element must be proven absent, or proven to hold
+      a value without the page. An owned window counts as absent only when
+      the main window owned none. An ambiguous window, two elements by the
+      id, or a value unread, cut or not offered is unknown, and the report
+      counts for nothing.
+    - A file counts only when the driver proved it absent then, or read
+      text without the page. Rewriting the page an earlier capture left is
+      no capture of the step's.
+
+    A known limit, accepted by the owner. What a report proves is that the
+    app captured this check's fixture during this run. Each check draws its
+    own random words and starts the app after the fixture is up, so no other
+    run's capture can hold them. That the capture step itself made the
+    capture is checked as far as the outside can see, and no further.
+    Outside checks cannot tell a capture of the app's own earlier in the
+    run from the step's, if the app shows or publishes it only when the step
+    acts. That includes a capture finished in the milliseconds after the
+    read, one kept in a window not shown before the step, and one cached
+    and written out by the step. Proving the link would need the app to
+    report a mark of the step's own.
   - `window`: the round's window-bound capture of the app's main window, or
-    with `in: owned` the one it owns, which must show what `shows` says.
+    with `in: owned` the one it owns, which must show what `shows` says. A
+    frame whose content size differs from the surface the capture was set
+    up with is not read. A window resized meanwhile would be cut off or
+    padded with pixels nobody drew.
   - `composition`: the round's surface capture of the fixture's region, which
     must show what `shows` says over the fixture.
+
+  The same limit, accepted by the owner, holds for `window` and
+  `composition`. They read the picture after the steps, with no picture
+  before them, so they prove only that the app showed a result of this
+  check's fixture during this run. They do not prove that the declared step
+  started that capture. An app that captured the fixture at start and leaves
+  that result on screen while the step does nothing passes them. Only a
+  report check compares against the state before the step.
 
   The fixture is the server's own, never the build's: a window the round
   starts in its own job, showing a page of English words the server draws at
   random for that round, so neither the builder nor the app knows them
-  beforehand. The independent critic judges a `window` or `composition`
+  beforehand. The fixture reads its page from a file the server writes. The
+  server deletes that file once the fixture's window is up, before the app
+  starts, so no file the app can read holds the words. A report file is read
+  through one open, at most its bound and a byte past it, so a file that
+  grows past the bound is rejected. The independent critic judges a `window` or `composition`
   capture against its `shows` sentence and the fixture's words, as it judges
   a screenshot. The frontend build scripts each `owner` check as it scripts a
   `look` one, its last step the review's `act`.
@@ -448,6 +548,167 @@ operation is one of two kinds:
 
 A check whose evidence needs a surface the approval does not name is not run.
 It stays pending, and R3 stays closed.
+
+The approval starts the round at once. For each check it runs, in this
+order:
+
+1. The fixture (`tool/oneshot_fixture.py`) in a job of its own, opaque and
+   topmost, placed at a fixed corner of the primary monitor. Windows shows
+   it without activation (`SetWindowPos` with `SWP_NOACTIVATE`), never
+   through Tk, whose `deiconify` asks for focus. It reports its handle and
+   its client area on screen. Its binding holds its title, its window
+   rectangle and its process. It says it is ready only once it is shown,
+   it has read where it is, its window region is set and its guard is
+   installed on that same frame, all read again once the guard holds it.
+   A show, read, region or guard that fails, or a state that changed
+   before the guard held it, ends it first, so the round stops on its own
+   setup and fails no app. Once the fixture is up and bound, the check
+   ends its job, its exit proven, before the next check starts. One round
+   runs on the owner's desktop at a time, whichever repository it is for,
+   from its look's start through its cleanup. A look whose cleanup was not
+   proven leaves its record held on disk. Before any round starts, every
+   repository's look records are read through the looks' own recovery,
+   whichever run of the server wrote them, under the lock a stage
+   folder's move takes, so no record moves past the read. A held one, or
+   a folder or record that cannot be listed or read, keeps every round off the desktop
+   until that recovery settles it, which takes a completed proof, a new
+   boot or the end of its logon session. Before each fixture
+   starts, no top-level window on the desktop may have the fixture's
+   title. Once it is bound, its own must be the only one. The round
+   confirms the approved HEAD and the frozen build once it has the
+   desktop, before each fixture starts, and with each app's process made
+   but not yet run. That last check reads HEAD again after the frozen
+   files. The last stop check and the resume run under the lock a stop is
+   accepted under, so a stop accepted first keeps the process from
+   running. A moved HEAD goes back to the build. A changed freeze with the
+   worktree unchanged goes back to approval. A known limit, accepted by
+   the owner: a change to the frozen copy or HEAD in the instant between
+   that last check and the resume is not seen before the app runs. The
+   check after the app's run finds a changed freeze and sends it back to
+   the build, and the worktree check finds a moved HEAD, so such a round
+   never passes. The frozen copy is read once more as a pass is taken,
+   after the critic's verdicts, and HEAD after it; a copy changed since,
+   or a moved HEAD, sends it back to the build. Each read of the copy
+   lists it without passing over a folder it cannot list, and opens the
+   manifest and every file for reading only. Windows then refuses anyone
+   a write, a rename or a delete of them until the read ends. A file
+   added meanwhile is found by listing again once all are read. At a pass
+   they stay held through the HEAD read and until the pass is saved. A
+   file another process holds open for writing cannot be opened so, and
+   that read sends the round back to the build, after the app's run as at
+   the pass. A second known limit, accepted by the owner: an app that changes
+   its own frozen files while it runs and puts them back before the check
+   after its run is not seen. Out of scope, by the owner's decision: another
+   process of the owner's that races the server's own files during these
+   checks, such as replacing the copy's folder, adding a file to a folder
+   already listed, or moving HEAD while a pass is saved. Such a process
+   runs as the same user and could as well write the server's records
+   directly, so closing those instants would protect nothing. The checks
+   are there for an app or a build that changed its copy, not for a local
+   process working against the server. For the same reason, also by the
+   owner's decision, an app under test that deliberately deceives the round
+   is out of scope. Examples are reading the fixture process's memory, or
+   swapping its report path for a link while the server opens it. The app
+   runs as the same user too. The round finds an honest app that is broken
+   or unfinished, not one built to cheat it.
+2. The frozen app from a fresh start of the check's scenario, driven without
+   a shot (`shoot: false`), so the driver reads and acts but never calls
+   `PrintWindow`. Every step's declared postcondition must hold on the one
+   element it names, in the whole read of the state that step left. Until
+   it does, the app is not in the state the scenario sets up, and nothing
+   observed counts.
+3. While both still run, the fixture's binding is proven, then what the
+   check observes is read: the app's report, or a capture by the helper
+   (`tool/owner_capture.cs`). The app's main window as the driver last read
+   it must still be bound to a live process of the app's job. That process
+   is whichever member owns the window. It is checked after a report is
+   read, and before and after a window or composition capture. The
+   fixture's binding is proven again with it: after a report is read,
+   before the helper's `go` for a window capture, as it already is for a
+   composition, and after any capture is read. An app that
+   crashed meanwhile is no pass, even if a child of it still draws.
+
+The server builds the helper with the .NET Framework's `csc` against the
+system's WinMetadata, which every Windows 10 and 11 carries, and starts it in
+a job of its own. Each read has two phases. The helper says it is ready, the
+server proves the binding again, and only a `go` written after that proof,
+with no stop asked meanwhile, lets it sample.
+
+- A window capture hands the helper only a handle, bound against the window
+  exactly as the driver read it. The helper keeps a frame only while the
+  item stays open through the copy.
+- A composition hands it the fixture's client area on screen, which the
+  fixture paints whole and opaque (never its frame, whose borders DWM
+  draws partly invisible), with its handle and process, and the fixture's
+  marks. The marks are cells of random colours the server draws for the
+  check, which the fixture paints along its client area's edges, 8 pixels
+  deep. No two colours, and no colour and the page's white or black, lie
+  within twice the helper's tolerance of each other. The fixture gives
+  itself a window region of exactly its client area. To keep the page
+  steady for the reading, its own window procedure turns requests to
+  move, resize, restack, hide, retitle, restyle or close it into none. It
+  puts back at once a minimize, and a move, hide or lost topmost flag that
+  came without that request. It does not keep its order among other
+  topmost windows; the marks cover that. The helper checks the fixture
+  right before and after the blit: the same window, visible, not
+  minimized, its client area exactly that region, and its window region
+  one rectangle of exactly that client area (`GetWindowRgnBox` answering
+  `SIMPLEREGION` with those bounds; `ERROR`, which a failed query also
+  gives, never passes). It keeps the frame only when every pixel of every
+  mark is in it. A fixture displaced by even a pixel shows a neighbour's
+  colour or the page at some mark's edge, so this proves from the sampled
+  pixels themselves that the fixture covered the region in that frame. A
+  frame without them leaves the check pending. A failed check of the
+  window fails it. A window region replaced after the first check, still
+  in place during the blit, and put back exactly before the second check
+  would escape both. That needs an app that sets regions on the server's
+  own window with that timing.
+- A report passes only when it holds the fixture's page as it reads: its
+  words in order, one after another. A fixed text naming every word the
+  server draws from is no capture of this round's page.
+
+Each app the round starts gets the owner's secrets as the PC look's starts
+do (11b2b), from one read of the environment at the round's start. That read
+also supplies the masks. Every string of every state the driver read gets
+the PC look's check. An app whose read text holds a secret fails its check
+with a high finding, before any capture is taken, so the critic's model
+never sees it. With any secret given, a capture is taken only of windows
+whose every string was read. A window capture needs a whole read of its
+window, and a composition a whole read of every window of the app's. In
+those windows, every value and every document's text (the `Text` pattern's
+range, which the driver reads within the value's bound) must be read. For
+a composition, the app's visible top-level windows are listed again before
+the helper samples and before the frame is kept, and any window the last
+read did not hold fails the check. Any other capture fails the check too.
+The critic's turn gets the same masks, so a failed turn's kept reason shows
+no secret.
+
+The secret check reads the text the driver read; the capture comes after it.
+Text an app shows between that read and the capture is a limit the owner
+accepted, as it is for the PC look (11b2b). That covers a label in a window
+already read that changes, and a window that opens and closes between the
+two listings of a composition. The window listings, the whole reads and the
+masks stand. No re-read binds the capture's pixels to the text that was
+checked. With any secret given, the round's look also
+removes its raw evidence with its cleanup. Every result, finding and error
+the round keeps is masked. A folder the cleanup could not remove is named in
+the kept record by its own name and the error's kind and code, never by a
+file inside it.
+
+Each capture is copied out before the round's look is cleaned, and the critic
+judges it against `shows` and the fixture's words only after every window the
+round started is gone. A check stays pending when its helper cannot be built,
+or when the helper cannot read there: Windows refuses or empties the item,
+the desktop gives the blit no pixels, the fixture's marks are not in the
+sampled frame, or the helper says nothing in time.
+
+A failed check sends its high finding to the build, as the phone round's do.
+Pending checks send the run back to waiting with a new attempt, naming them.
+A stop, an unproven cleanup, a helper that could not let go of what it made,
+or a fixture that never showed passes nothing. A stop is accepted under the
+lock each `go` and each outcome is decided under, the server's shutdown
+included. A stop accepted first reaches the helper as `stop` and turns any
+outcome into a stop, a tree moved meanwhile included.
 
 A restart, a cancellation, a new HEAD or a new build identity sends the run
 back to waiting for approval. An earlier approval is never applied to
@@ -558,5 +819,5 @@ step 7's did.
 | 9b | One core for several kinds | The union card with its prefill and write-back, S2's shared and per-kind parts and per-kind requirements, the core design and R1 across kinds, S4 and the backend review once; the `device` deferral and `owed` list, closed in Android's S7 loop | Done — 9b1 (#367): the union card and S2 across kinds. 9b2 (#368): the core design and R1 across kinds. 9b3 (#369): S4 and the backend review once, with the core's tests as the gate; several kinds wait at the split (9c). 9b4: the `device` deferral and `owed` list, each an `owed_<id>_…` instrumented test in Android's S7 look, listed in R3 |
 | 9c | Screens for each kind | Each feature's kinds, the split and the board once, S6 and R2 across kinds, the build's per-kind gate, each kind's S7 loop in turn with its owed checks, R3 across kinds, S8 with every kind's artifacts | Done — 9c1 (#371): each feature's kinds at the split, the board once with a first screen for each kind. 9c2 (#373): S6 designs and shoots each kind's screens its own way, each kind checked on its own features, and R2 groups them by kind. 9c3a (#374): one build turn for every kind, one gate with the core's tests and each kind's build, then each kind's look in the owner's order, each reading only what applies to it; a kind that fails sends the build back and the next HEAD looks at every kind again. 9c3b (#376): the critic judges one kind a round in the owner's order, on that kind's shots alone, each kind needing two clean rounds on the HEAD its look passed, so a fix judges every kind again; the phone round then runs on the Android app alone. 9c4a (#377): R3 as one sheet with a section for each kind in the owner's order, each read off that kind alone; the brief's lines name each finding's kind and screen, and an edit reaches the builder with its kind. 9c4b: S8's README turn asks for a section for each kind, the final gate runs on the Android toolchain, and an Android app among the kinds gets its CI job's SDK and its APK on a draft prerelease; several kinds without `desktop` run to their first pull request |
 | 9d | Desktop session | The run-owned Windows session for S7: the research note, starting the app apart from the owner's windows, reading its UI tree, refusals and cleanup proof | Done — 9d1 (#381): the research note, with a measured run of a tkinter and an Edge fixture on an owned desktop; 9d2a (#382): the owned job (`tool/owned_job.py`), created before its process and followed to every member's proven exit; 9d2b1 (#385): the look's session (`tool/desktop_session.py`): its record before anything starts, apps in owned jobs with disposable data folders, the cleanup proof, and recovery of an earlier record; 9d2b2 (#386): the main window's choice, the pattern-only driver with its deadlines and shots (`tool/desktop_driver.py`), and one real Edge fixture run with its cleanup proof (`docs/research/oneshot-desktop-edge-run/`); 9d2b3: measurements on the owned desktop (`docs/research/oneshot-desktop-capture/`): Windows Graphics Capture gave an empty item for both fixture windows there, and an overlay over a viewer is read and its constant-alpha composition reconstructed from PrintWindow shots |
-| 9e | Desktop | `desktop` alone and with other kinds: its card, S2 parts and prompts, the core path (S3, R1, S4, the backend review, the split off modules), S6, S7 with its owed checks, R3 and S8 | In progress — 9e1: `PC 앱` on the start screen (disabled off Windows), the intake's definition, the `window` field and `desktop.json`, S2's six parts with its own prompt and the `build` part's confirmed `tools`. 9e2, in three PRs: 9e2a (#394), a PC app's core design (modules, outside calls, assumptions and tests, with its own prompt) and its R1 sheet and brief. 9e2b: S4's tests and core build with their own prompts; each send resolves the declared tools on `PATH` before the stage's turn, stops with `toolchain` naming a missing one and installs nothing, and the gates run each tool from the path found; a command whose program is neither a declared tool nor a worktree file goes back to its turn and runs nothing; 9e2c: the backend review with its own prompt, whose `desktop` deferral names its check's `source`, `look` or `owner`, kept on the `owed` item, and a finding with neither stays a blocker; the split off the core's modules with its own prompt; a `desktop` run, alone or among other kinds, stops at the board, before S6, and stays held there on `[재개]` and in recovery. 9e3, in two PRs: 9e3a, S6 with a PC app's own prompt: its screens' surfaces (`window`, `dialog`, `floating`, `tray`), its preview run in a look on a desktop the run owns with only its declared tools, each picture no larger than the card's `window` and at least 90% of each side, and each native kind's preview kept by kind (`previews`), unpacked in its own folder and approved into `docs/design/mock/<kind>/`; R2 shows the PC app's window shots beside every other kind's, and its approval leaves a `desktop` run stopped at the frontend build. 9e3b, in two PRs: 9e3b1, a PC app alone: the frontend build with its own prompt, whose `oneshot-desktop` block names `run` (a build folder, the debug `.exe` in it, its arguments, working directory and environment, with `{data}` named and nothing naming the worktree) apart from the `installer` S8 attaches; the gate runs with only the declared tools, then refuses a missing, linked or packaged `run`, a working directory outside its folder and a manifest asking for elevation, and freezes the folder into staging the run owns with a manifest of digests and the launch settings, one identity over both; the run waits there with reason `kind`, before the look. The debug build opens a screen in a state from `ONESHOT_SCREEN` and `ONESHOT_STATE`. 9e3b2: several kinds with `desktop` run that build in one turn, whose prompt keeps only the picked kinds' sections and takes the PC app's conventions, block and freeze from its own prompt; a hostname read as a number must be a valid IP address, and only `RUST_LOG` may name a module with `::`. 9e4, in two PRs: 9e4a, the look (`tool/main/oneshot_desktop_look.py`): once the gate passed and the PC app is frozen, every kind is looked at in the owner's order in the same check, the PC app by starting the frozen copy once for each screen and state on a look's owned desktop, `{data}` a fresh folder the look reserved and `ONESHOT_SCREEN`/`ONESHOT_STATE` naming what to open; the driver chooses the main window as the one no other window owns, so a dialog, floating window or flyout the main window owns is shot with the state, and its findings, the owner's map read off the first screen's `full` state (a `sometimes` feature one invocation away) and the coverage over every state are high; placement reads only the screen's own window, a `sometimes` feature counts only when the invocation showed it from a fresh start on a complete read, and absence counts only off reads that completed, a virtualized list making it unproven; a start that changes the frozen copy or that Windows refuses goes back to the build, and one whose end, or a look whose cleanup, is not proven stops the stage; one whose frozen build is gone goes back to the build, resumable. 9e4b: the critic judges a PC app's window shots as it does each kind's; the backend review gives each `look` deferral the step that must bring it about (`act`: a driver action on a control's `AutomationId`) and its postcondition as the driver reads it (`expect`: an element's `AutomationId` with its name, value or toggle state), each in the main window or the one it owns, and an earlier version's `look` check without them goes to the owner; the build's block scripts each as a driver scenario (`checks`: a screen and state, then the driver's steps by `AutomationId`, the last the review's `act` with its `expect`), and the look runs each from a fresh start, ending on the review's step, passing only when the state before that step proves its postcondition false (the one element its id names in that window reading another value, or a complete read holding none) and the state after it holds it, each step's state read after the one before; a result the app brings about by itself after the step before (a debounce, a startup load) is not told apart from the step's own: a control run that repeats the lead-in without the step is a follow-up, its runs diverging on background work and on state no element id carries; a failed or unread one is a high finding; a look that did not pass the PC app, ran none of them as an earlier version's, or is not of the run's current freeze proves none, and the critic or the phone round sends it back to the build; two clean rounds count only on the PC app's current freeze, for every kind, and a clean round at the cap earns its confirming round on that freeze, and the run then waits before R3, its `owner` checks pending, with an Android app's phone round first among several kinds; a whole look has its own deadline over its operations'. 9e5a: the review's `owner` deferral names its `act` and what it `observe`s (the app's `report`, the round's `window` or `composition` capture with its `shows`), and the frontend build scripts it, its last step the review's `act`; after two clean rounds a run with a pending `owner` check waits at `pc` for the owner's one-time approval of its HEAD, build, checks, what it starts and each capture with its surface, checked again before it is recorded, refused when stale or a second time, and cleared by a restart or a new build; a surface the owner does not allow leaves its check pending; R3 opens through one guarded entry, the phone round and this one each due until it passed on the current HEAD and build; the run stops after the approval |
+| 9e | Desktop | `desktop` alone and with other kinds: its card, S2 parts and prompts, the core path (S3, R1, S4, the backend review, the split off modules), S6, S7 with its owed checks, R3 and S8 | In progress — 9e1: `PC 앱` on the start screen (disabled off Windows), the intake's definition, the `window` field and `desktop.json`, S2's six parts with its own prompt and the `build` part's confirmed `tools`. 9e2, in three PRs: 9e2a (#394), a PC app's core design (modules, outside calls, assumptions and tests, with its own prompt) and its R1 sheet and brief. 9e2b: S4's tests and core build with their own prompts; each send resolves the declared tools on `PATH` before the stage's turn, stops with `toolchain` naming a missing one and installs nothing, and the gates run each tool from the path found; a command whose program is neither a declared tool nor a worktree file goes back to its turn and runs nothing; 9e2c: the backend review with its own prompt, whose `desktop` deferral names its check's `source`, `look` or `owner`, kept on the `owed` item, and a finding with neither stays a blocker; the split off the core's modules with its own prompt; a `desktop` run, alone or among other kinds, stops at the board, before S6, and stays held there on `[재개]` and in recovery. 9e3, in two PRs: 9e3a, S6 with a PC app's own prompt: its screens' surfaces (`window`, `dialog`, `floating`, `tray`), its preview run in a look on a desktop the run owns with only its declared tools, each picture no larger than the card's `window` and at least 90% of each side, and each native kind's preview kept by kind (`previews`), unpacked in its own folder and approved into `docs/design/mock/<kind>/`; R2 shows the PC app's window shots beside every other kind's, and its approval leaves a `desktop` run stopped at the frontend build. 9e3b, in two PRs: 9e3b1, a PC app alone: the frontend build with its own prompt, whose `oneshot-desktop` block names `run` (a build folder, the debug `.exe` in it, its arguments, working directory and environment, with `{data}` named and nothing naming the worktree) apart from the `installer` S8 attaches; the gate runs with only the declared tools, then refuses a missing, linked or packaged `run`, a working directory outside its folder and a manifest asking for elevation, and freezes the folder into staging the run owns with a manifest of digests and the launch settings, one identity over both; the run waits there with reason `kind`, before the look. The debug build opens a screen in a state from `ONESHOT_SCREEN` and `ONESHOT_STATE`. 9e3b2: several kinds with `desktop` run that build in one turn, whose prompt keeps only the picked kinds' sections and takes the PC app's conventions, block and freeze from its own prompt; a hostname read as a number must be a valid IP address, and only `RUST_LOG` may name a module with `::`. 9e4, in two PRs: 9e4a, the look (`tool/main/oneshot_desktop_look.py`): once the gate passed and the PC app is frozen, every kind is looked at in the owner's order in the same check, the PC app by starting the frozen copy once for each screen and state on a look's owned desktop, `{data}` a fresh folder the look reserved and `ONESHOT_SCREEN`/`ONESHOT_STATE` naming what to open; the driver chooses the main window as the one no other window owns, so a dialog, floating window or flyout the main window owns is shot with the state, and its findings, the owner's map read off the first screen's `full` state (a `sometimes` feature one invocation away) and the coverage over every state are high; placement reads only the screen's own window, a `sometimes` feature counts only when the invocation showed it from a fresh start on a complete read, and absence counts only off reads that completed, a virtualized list making it unproven; a start that changes the frozen copy or that Windows refuses goes back to the build, and one whose end, or a look whose cleanup, is not proven stops the stage; one whose frozen build is gone goes back to the build, resumable. 9e4b: the critic judges a PC app's window shots as it does each kind's; the backend review gives each `look` deferral the step that must bring it about (`act`: a driver action on a control's `AutomationId`) and its postcondition as the driver reads it (`expect`: an element's `AutomationId` with its name, value or toggle state), each in the main window or the one it owns, and an earlier version's `look` check without them goes to the owner; the build's block scripts each as a driver scenario (`checks`: a screen and state, then the driver's steps by `AutomationId`, the last the review's `act` with its `expect`), and the look runs each from a fresh start, ending on the review's step, passing only when the state before that step proves its postcondition false (the one element its id names in that window reading another value, or a complete read holding none) and the state after it holds it, each step's state read after the one before; a result the app brings about by itself after the step before (a debounce, a startup load) is not told apart from the step's own: a control run that repeats the lead-in without the step is a follow-up, its runs diverging on background work and on state no element id carries; a failed or unread one is a high finding; a look that did not pass the PC app, ran none of them as an earlier version's, or is not of the run's current freeze proves none, and the critic or the phone round sends it back to the build; two clean rounds count only on the PC app's current freeze, for every kind, and a clean round at the cap earns its confirming round on that freeze, and the run then waits before R3, its `owner` checks pending, with an Android app's phone round first among several kinds; a whole look has its own deadline over its operations'. 9e5a: the review's `owner` deferral names its `act` and what it `observe`s (the app's `report`, the round's `window` or `composition` capture with its `shows`), and the frontend build scripts it, its last step the review's `act`; after two clean rounds a run with a pending `owner` check waits at `pc` for the owner's one-time approval of its HEAD, build, checks, what it starts and each capture with its surface, checked again before it is recorded, refused when stale or a second time, and cleared by a restart or a new build; a surface the owner does not allow leaves its check pending; R3 opens through one guarded entry, the phone round and this one each due until it passed on the current HEAD and build. 9e5b: the approval starts the round on the owner's desktop, in a look with no desktop of its own: for each check the server's fixture with a fresh page of words, the frozen app from a fresh start driven without a shot, then the app's report or a window-bound or surface capture by a helper the server builds from the system's metadata, each source proven again before it is read; the critic judges each capture once the round's windows are gone; a pass goes on to R3, where the run waits with reason `kind`, a failure goes to the build as findings, a check that cannot be read here stays pending, and a stop or an unproven cleanup passes nothing |
 | 9f | Real run | The screen translator as `android` and `desktop`, from the start screen to the first pull request | Planned |

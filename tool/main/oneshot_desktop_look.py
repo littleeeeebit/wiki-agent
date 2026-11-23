@@ -136,8 +136,12 @@ def mine(report: dict, state: dict) -> set[int]:
 class Launches:
     """The frozen build's starts inside one look: each a job of its own, ended before the next starts."""
 
-    def __init__(self, look, build: dict, window: tuple[int, int], stopped, given: dict | None = None):
+    def __init__(self, look, build: dict, window: tuple[int, int], stopped, shoot: bool = True, ready=None,
+                 gate=None, given: dict | None = None):
         self.look, self.build, self.window, self.stopped, self.n = look, build, window, stopped, 0
+        self.shoot = shoot   # false on the owner's desktop: no PrintWindow there
+        self.ready = ready   # called with each start's process made but not yet run: raising never runs it
+        self.gate = gate   # held over each start's last stop check and its resume
         self.given = given or {}   # each secret by its `env`, `None` for one not given (`oneshot_needs.given_in`)
         self.began = time.monotonic()
         # The start and the driver end at once on the owner's stop, and once the whole look is past its deadline:
@@ -155,10 +159,11 @@ class Launches:
             raise ValueError(f"PC 앱 화면 검사가 {LOOK_SECONDS // 60}분 안에 끝나지 않았다 — 화면과 상태마다 띄우고 "
                              "읽는 데 너무 오래 걸린다")
 
-    def drive(self, sid: str, state: str, steps: list[dict]) -> dict:
+    def drive(self, sid: str, state: str, steps: list[dict], then=None) -> dict:
         """One start of the program opening `sid` in `state`, driven through `steps`: the driver's report. No
         start follows one whose end is not proven (RuntimeError, which stops the stage), or one that changed the
-        frozen copy (ValueError, back to the build). A start Windows refuses goes back to the build too."""
+        frozen copy (ValueError, back to the build). A start Windows refuses goes back to the build too. `then`,
+        called with the report and the app's job key while the app still runs, puts its answer in `observed`."""
 
         import desktop_driver   # Windows only, as a PC app is
         import desktop_session
@@ -167,18 +172,23 @@ class Launches:
         self.n += 1
         key = f"app{self.n}"
         launch, folder = self.build["launch"], Path(self.build["folder"])
-        data = str(self.look.reserve(f"data{self.n}"))
+        self.data = data = str(self.look.reserve(f"data{self.n}"))   # this start's `{data}`, for `then` to read
         argv = [str(folder / launch["program"]), *(a.replace("{data}", data) for a in launch["args"])]
         # The owner's secrets over any spelling of their names the build's launch settings carry.
         secret = {k.upper() for k in self.given}
         extra = {**{k: v.replace("{data}", data) for k, v in launch["env"].items()
                     if k.upper() not in oneshot_desktop.LOOK_ENV and k.upper() not in secret},
                  **self.given, "ONESHOT_SCREEN": sid, "ONESHOT_STATE": state}
+        # A step's `baseline`, a report file under `{data}`, is read by the driver just before that step acts.
+        steps = [{**s, "baseline": str(Path(data) / s["baseline"])} if s.get("baseline") else s for s in steps]
         report, failed = {}, None
         try:
-            self.look.start(key, argv, folder / launch["cwd"], extra, halt=self.halt)
+            self.look.start(key, argv, folder / launch["cwd"], extra, halt=self.halt, ready=self.ready,
+                            gate=self.gate)
             report = desktop_driver.drive(self.look, key, self.window, steps, settle_ms=SETTLE_MS,
-                                          key=f"driver{self.n}", halt=self.halt)
+                                          key=f"driver{self.n}", halt=self.halt, shoot=self.shoot)
+            if then is not None:
+                report["observed"] = then(report, key)
         except desktop_session.Refused as exc:
             failed = ValueError(f"PC 앱을 띄우지 못했다 — {exc}")
             failed.__cause__ = exc
@@ -196,7 +206,11 @@ class Launches:
             halted(lambda: True)
         if failed is not None:
             raise failed
-        if why := oneshot_desktop.altered(self.build):
+        try:
+            why = oneshot_desktop.altered(self.build)
+        except OSError as exc:   # unreadable as settlement finds it: the build's to fix, never a new approval
+            raise ValueError(f"얼린 PC 앱 빌드를 다시 읽지 못했다 — {exc}") from exc
+        if why:
             raise ValueError(why)
         return report
 
@@ -231,7 +245,7 @@ def _look(spec: dict, build: dict, folder: Path, stopped, given: dict, hide: dic
         # A look whose app carried secrets keeps only the checked shots it copied: its raw evidence goes with it.
         with desktop_session.look(looks, f"look-{build['identity'][:12]}-{uuid.uuid4().hex[:8]}",
                                   disposable=bool(hide)) as session:
-            runs = Launches(session, build, size(spec["oneshot"]["profile"]), stopped, given)
+            runs = Launches(session, build, size(spec["oneshot"]["profile"]), stopped, given=given)
             found = inspect(runs, spec, folder, session.folder / "evidence", hide) + checks(runs, spec, build)
     except desktop_session.Refused as exc:
         raise RuntimeError(f"PC 앱 화면 검사의 데스크톱을 정리하지 못했다 — {exc}") from exc

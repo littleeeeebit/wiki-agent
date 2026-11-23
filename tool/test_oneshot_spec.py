@@ -639,6 +639,23 @@ def test_a_model_answer_of_the_wrong_type_is_refused_and_an_unforeseen_failure_s
     assert o()["working"] is None and "RuntimeError: boom" in o()["stopped"]["detail"]
 
 
+def test_a_worker_whose_thread_cannot_start_leaves_the_run_stopped_and_startable(world, monkeypatch):
+    oneshot_spec.saved("budget", requirements=REQS, oneshot={"glossary": GLOSSARY, "stage": "design"})
+    store = oneshot_spec.store("budget")
+
+    def refused(self):
+        raise RuntimeError("can't start new thread")
+
+    with monkeypatch.context() as m:
+        m.setattr(oneshot.threading.Thread, "start", refused)
+        with pytest.raises(HTTPException) as cut:
+            oneshot.start_worker(store, "design", lambda repo: None, ("budget",), {})
+    assert cut.value.status_code == 503 and store.key not in oneshot._workers
+    assert o()["working"] is None and "can't start new thread" in o()["stopped"]["detail"]
+    oneshot.start_worker(store, "design", lambda repo: None, ("budget",), {})   # no stale worker holds it
+    oneshot._workers[store.key].join()
+
+
 def test_a_first_turn_the_hand_over_never_started_is_left_resumable(world, tmp_path):
     oneshot.RUNS.mkdir(parents=True, exist_ok=True)
     oneshot_spec.recover()

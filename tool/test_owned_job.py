@@ -42,6 +42,37 @@ def settled(job, count):
     return job.members()
 
 
+@pytest.mark.parametrize("refuse", [False, True])
+def test_the_last_check_and_the_resume_run_under_the_gate_and_a_refusal_there_never_runs_the_root(
+        job, tmp_path, refuse):
+    order, marker = [], tmp_path / "ran"
+
+    class Gate:
+        def __enter__(self):
+            order.append("taken")
+
+        def __exit__(self, *exc):
+            order.append("let go")
+
+    def last():
+        order.append("last")
+        if refuse:
+            raise owned_job.Refused("stopped")
+
+    code = f"open({str(marker)!r}, 'w').close()"
+    if refuse:
+        with pytest.raises(owned_job.Refused, match="stopped"):
+            started(job, tmp_path, code, before_resume=lambda root: order.append("recorded"), last=last, gate=Gate())
+    else:
+        started(job, tmp_path, code, before_resume=lambda root: order.append("recorded"), last=last, gate=Gate())
+    assert order == ["recorded", "taken", "last", "let go"]
+    deadline = time.monotonic() + 20   # a root that resumed writes its marker; give it the time to
+    while not refuse and not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert job.end()["clean"]
+    assert marker.exists() is not refuse
+
+
 def test_the_root_is_in_its_job_before_it_runs_and_every_member_is_proven_gone(job, tmp_path):
     early = []
     root = started(job, tmp_path, TREE, before_resume=lambda identity: early.append(job.members()))
