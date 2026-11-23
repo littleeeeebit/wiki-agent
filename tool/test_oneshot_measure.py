@@ -85,6 +85,9 @@ def test_the_plan_names_each_step_its_copied_value_and_every_outside_call(at_mea
         measure.checked(blind, s, tree)
     with pytest.raises(ValueError, match="health"):
         measure.checked({**plan, "serve": {**plan["serve"], "health": "http://example.com/health"}}, s, tree)
+    for name in measure.LAUNCHER:   # the script's launcher would set its own value over the owner's
+        with pytest.raises(ValueError, match="띄우는 쪽이 정하는"):
+            measure.checked({**plan, "inputs": [{**plan["inputs"][1], "env": name}]}, s, tree)
     s["oneshot"]["design"]["outside"] = [{"id": "X1"}]
     with pytest.raises(ValueError, match="X1"):   # a real call the measurement never reaches
         measure.checked(plan, s, tree)
@@ -605,6 +608,9 @@ def test_a_kept_report_masks_numbers_and_punctuation_and_stays_json(tmp_path):
     raw = wrote(tmp_path, {"report.json": json.dumps({"metrics": {"rate": 424242}, "notes": 'a"}b'})})
     assert measure.report_of(raw, plan, hide)["metrics"][0]["value"] is None   # never shown as a measurement
     assert masked_report(raw) == {"metrics": {"rate": "[PIN]"}, "notes": "a[P]b"}
+    dot = measure.spelled({"·": "[D]", "%C2%B7": "[D]"})   # two keys that mask alike, the mark itself a secret
+    raw = wrote(tmp_path, {"report.json": json.dumps({"metrics": {}, "extra": {"·": 1, "%C2%B7": 2}})})
+    assert sorted(masked_report(raw, dot)["extra"]) == ["[D]", "[D][D]"]
     raw = wrote(tmp_path, {"report.json": json.dumps({"metrics": {"rate": 424242.0}})})
     assert measure.report_of(raw, plan, hide)["metrics"][0]["value"] is None   # the same number, spelled as a float
     assert masked_report(raw) == {"metrics": {"rate": "[PIN]"}}

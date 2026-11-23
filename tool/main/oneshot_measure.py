@@ -48,6 +48,8 @@ from .query import _lock as work_lock, hold
 router = APIRouter()
 PLAN = ".wiki/measure.json"
 IID = re.compile(r"M[1-9]\d*")
+# What the script's launcher sets over the inputs (`common.python_environment`, `specs.gate`, `runtime.gate`).
+LAUNCHER = frozenset({"PATH", "TMP", "TEMP", "TMPDIR", "PYTHONUNBUFFERED"})
 MID = re.compile(r"[a-z][a-z0-9_]{0,40}")
 OPS = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge, "==": operator.eq}
 MAX_MINUTES, MAX_SERVE_SECONDS = 60, 600
@@ -123,6 +125,8 @@ def checked(value, spec: dict, path: Path) -> dict:
             raise ValueError(f"{where} {x['id']}: `kind` 는 secret(비밀 값) 이나 text(주소 같은 보통 글) 다")
         if not isinstance(x.get("env"), str) or not oneshot_needs.ENV.fullmatch(x["env"]) or x["env"] in envs:
             raise ValueError(f"{where} {x['id']}: `env` 는 서로 다른 대문자 환경 변수 이름이다")
+        if x["env"] in LAUNCHER:
+            raise ValueError(f"{where} {x['id']}: `{x['env']}` 는 실측 스크립트를 띄우는 쪽이 정하는 이름이다 — 다른 이름을 쓴다")
         if x["kind"] == "text" and x["env"].upper() in secret:
             raise ValueError(f"{where} {x['id']}: `{x['env']}` 는 설계의 비밀 값이다 — kind 를 secret 으로 적는다")
         if not isinstance(x.get("what"), str) or not x["what"].strip():

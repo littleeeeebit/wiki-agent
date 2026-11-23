@@ -247,6 +247,8 @@ def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     hide = needs.hidden(needs.spec_of("budget"), {ENV: "7319"}, {"SERVICE_7319_TOKEN": "tok-abc"})
     shown = masked("pin 7319 token tok-abc", hide)
     assert "7319" not in shown and "tok-abc" not in shown and masked(shown, hide) == shown
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: "design-key"}, {"N1": "measured-key"})   # `env` = a need id
+    assert "-key" not in masked("design-key measured-key", hide)
     wrapped = masked(f"The server refused this build turn: {why}\n\nFix it", hide)   # as `checked` sends it
     assert "비밀 값 [N1] 이(가) 답 에" in wrapped and "N1 이(가)" not in wrapped.replace("[N1] 이(가)", "")
     hide = needs.hidden(needs.spec_of("budget"), {ENV: f"{ENV}[n1"})   # meets both `[N1]` and the variable

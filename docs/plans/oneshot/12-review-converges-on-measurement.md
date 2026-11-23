@@ -219,7 +219,9 @@ be put back is held in memory: after a restart the result stays set aside,
 and the owner measures again. A value Credential Manager returns but cannot be decoded counts
 as different, so it can be replaced. [실측 시작] holds the worktree,
 starts `serve`, runs the script with the inputs in its environment and every
-secret masked from its output, and keeps only the clips it accepts, the
+secret masked from its output. A plan cannot name an input after a variable
+the launcher sets (`PATH`, `TMP`, `TEMP`, `TMPDIR`, `PYTHONUNBUFFERED`), so
+the script gets the owner's value as given. It keeps only the clips it accepts, the
 report and the backend's log, masked (`oneshot_kept`). The script and the
 backend write into a folder of their own (`m<n>-<head>.raw`). `kept_from`
 copies out of it into the kept folder only those three:

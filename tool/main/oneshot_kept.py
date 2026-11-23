@@ -63,7 +63,8 @@ def label_of(v, hide: dict[str, str]) -> str | None:
 
 def cleaned(value, hide: dict[str, str]):
     """`value` decoded from JSON with every string masked and every number that is a secret replaced by its mask.
-    A key that shows a secret is masked too, numbered where two would collide."""
+    A key that shows a secret is masked too, marked where two would collide: the mark masked as well, since `·`
+    can be a secret."""
 
     if isinstance(value, str):
         return masked(value, hide)
@@ -71,8 +72,8 @@ def cleaned(value, hide: dict[str, str]):
         out = {}
         for k, v in value.items():
             key = masked(k, hide)
-            while key in out:
-                key += "·"
+            while key in out:   # ends: no value runs into a label, so past a label's end the key only grows
+                key = masked(key + "·", hide)
             out[key] = cleaned(v, hide)
         return out
     if isinstance(value, list):

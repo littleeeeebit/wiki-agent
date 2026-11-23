@@ -191,10 +191,11 @@ def hidden(spec: dict, env: dict | None, more: dict[str, str] | None = None) -> 
 
     have = {k.upper(): v for k, v in (env or {}).items()}
     # ponytail: the raw and URL-quoted forms only; another encoding of a value (base64, JSON-escaped) still shows
-    forms = {nid: {value, quote(value, safe="")} for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))}
-    forms |= {k: {v, quote(v, safe="")} for k, v in (more or {}).items()}
-    every = [form for kept in forms.values() for form in kept]
-    return {form: label(nid, every, i) for i, (nid, kept) in enumerate(forms.items()) for form in kept}
+    # Pairs, never a dict: a measurement input's `env` may spell a need's id, and neither secret may drop out.
+    forms = [(nid, {value, quote(value, safe="")}) for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))]
+    forms += [(k, {v, quote(v, safe="")}) for k, v in (more or {}).items()]
+    every = [form for _, kept in forms for form in kept]
+    return {form: label(nid, every, i) for i, (nid, kept) in enumerate(forms) for form in kept}
 
 
 class Label(str):
