@@ -585,7 +585,9 @@ def shown_input(spec: dict, plan: dict, iid: str, body: Value) -> dict:
     return x
 
 
-def plain_input(spec: dict, given: dict) -> dict:
+def plain_input(spec: dict, given: dict) -> dict:   # the same values again change nothing, a waiting result included
+    if given == kept(spec):
+        return spec
     return retire(spec, "입력이 바뀌었다 — 이 결과는 판정하지 않고 바뀐 입력으로 다시 잰다", measure_given=given)
 
 

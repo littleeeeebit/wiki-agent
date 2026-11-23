@@ -251,6 +251,8 @@ def stored(repo: str, env: str, value: str | None) -> None:
             return
     except ValueError:
         raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
+    except OSError as e:   # whether anything would change is unknown: nothing is set aside or changed
+        raise HTTPException(409, f"자격 증명 관리자를 읽지 못해 비밀 값을 바꾸지 않았다 — {e} — 다시 시도한다") from None
     try:
         for f in CHANGED:
             f(repo, env)
@@ -274,12 +276,13 @@ def stored(repo: str, env: str, value: str | None) -> None:
 
 
 def same(key: str, value: str | None) -> bool:
-    """Whether Credential Manager holds `value` under `key` already, `None` for none. One it cannot read or
-    decode counts as different, so a damaged value can be replaced; no Credential Manager raises `ValueError`."""
+    """Whether Credential Manager holds `value` under `key` already, `None` for none. One it returns but cannot
+    decode counts as different, so a damaged value can be replaced. A failed read raises `OSError`, and no
+    Credential Manager raises `ValueError`."""
 
     try:
         return release.secret_read(key) == value
-    except (OSError, UnicodeDecodeError):   # a decoding failure is a `ValueError` too: caught before it
+    except UnicodeDecodeError:   # a `ValueError` too: caught before it
         return False
 
 

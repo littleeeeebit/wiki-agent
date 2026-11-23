@@ -290,11 +290,19 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
         with patch.object(measure.specs, "load", refused), pytest.raises(HTTPException, match="바꾸지 않았다"):
             change()
         assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "owner"
+    url = o()["measure_given"]["BUDGET_URL"]["value"]
     for nothing in (lambda: measure.give("budget", "M2", measure.Value(value=KEY, head=head, env=ENV, kind="secret")),
-                    lambda: oneshot_needs.forget("budget", "NEVER_GIVEN_KEY")):   # changes nothing: never set aside
+                    lambda: oneshot_needs.forget("budget", "NEVER_GIVEN_KEY"),   # changes nothing: never set aside
+                    lambda: measure.give("budget", "M1", measure.Value(value=f" {url} ", head=head, env="BUDGET_URL",
+                                                                        kind="text"))):
         with patch.object(measure, "retire", lambda *a, **k: (_ for _ in ()).throw(AssertionError("set aside"))):
             nothing()
         assert o()["measures"][-1]["status"] == "owner"
+    with patch.object(measure.release, "secret_read", lambda name: (_ for _ in ()).throw(OSError("locked"))), \
+            patch.object(measure, "retire", lambda *a, **k: (_ for _ in ()).throw(AssertionError("set aside"))), \
+            pytest.raises(HTTPException, match="읽지 못해") as e:   # whether it would change is unknown: retry
+        oneshot_needs.forget("budget", "NEVER_GIVEN_KEY")
+    assert e.value.status_code == 409 and o()["measures"][-1]["status"] == "owner"
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
     measure.measure("budget")
