@@ -295,7 +295,8 @@ def test_a_build_names_paths_only_as_plain_relative_paths():
                  "x a.b..c --x=a..b"):
         assert oneshot_pr.outside(kept) == "", kept
     for far in ("x src-tauri/../frontend", "x a\\..\\b", "x ..", "x ~", "x /out://host/s", "x --dist=//host/s",
-                "x --x=https://h/p --y=C:\\w", "x ../wt", "x a/../../wt", "x --dist=..\\wt", "x C:/wt", "x \\wt\\dist", "x \\\\host\\s", "x ~/wt",
+                "x --x=https://h/p --y=C:\\w", "x file://host/share/dist", "x --dist=file:///C:/wt",
+                "x ftp://host/x", "x ../wt", "x a/../../wt", "x --dist=..\\wt", "x C:/wt", "x \\wt\\dist", "x \\\\host\\s", "x ~/wt",
                 "x /home/wt", """x --config '{"build":{"frontendDist":"C:/wt/dist"}}'""", "x C:..\\shared\\dist",
                 "x --dist=D:dist", 'x "Desktop App/../../wt"', 'x "/Desktop App/wt"', 'x "\\Desktop App\\wt"',
                 "x /out:C:\\wt", "x -o:C:\\wt", "x /out:\\wt", "x /out:../wt", "x a,../wt", "x --dist=/wt",

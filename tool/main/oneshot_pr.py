@@ -333,8 +333,9 @@ def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
                     or n == source and n in added and version_file(path, head, n))]
 
 
-# A URL's scheme, where a value starts: what follows is a host, not a path.
-URL = re.compile(r"(?:^|(?<=[\s\"'=,;]))[A-Za-z][\w+.-]+://")
+# A web URL's scheme, where a value starts: what follows is a host, not a path. Only `http` and `https`: a `file:`
+# URL names a path, a share among them.
+URL = re.compile(r"(?:^|(?<=[\s\"'=,;]))https?://", re.IGNORECASE)
 # What is no plain relative path, wherever a value starts (the start, whitespace, a quote, `=`, `:`, `,`, `;`), a quote
 # allowed before it: a share or a root (`//`, `\`), a home (`~`), a drive (`C:`, `C:..`); a value rooted at `/`; a word
 # rooted at `/` unless shaped as a switch (`/p:x`, `cmd /c`, `"/p:x=y"`); and any `..` step.
