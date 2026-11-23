@@ -12,6 +12,7 @@ From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summa
 from __future__ import annotations
 
 import os
+import sys
 import shutil
 import subprocess
 import threading
@@ -22,7 +23,7 @@ from pathlib import Path
 import yaml
 
 import android_owned
-from common import masked
+from common import masked, shell
 from wiki import slots_for
 
 from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_spec, pr_text, release, specs
@@ -64,7 +65,7 @@ SKIPS = r"""- name: Tests owed to the local gate
             name = f"{case.get('classname') or ''} {case.get('name') or ''}"
             name = " ".join(name.split())   # literal in a code span, whose fence outruns any backtick run in it
             ticks = "`" * (max((len(run) for run in re.findall("`+", name)), default=0) + 1)
-            rows.append(f"| {ticks} {name.replace('|', chr(92) + '|')} {ticks} | {', '.join(ids)} |")
+            rows.append(f"- {ticks} {name} {ticks}: {', '.join(ids)}")
     lines = ["## 로컬 게이트가 맡은 테스트", ""]
     if len(found) > 1:
         lines.append("게이트 보고서로 보이는 파일이 여럿이라 어느 것이 이 게이트의 것인지 정할 수 없다: "
@@ -75,7 +76,7 @@ SKIPS = r"""- name: Tests owed to the local gate
         lines.append("비밀 값이 없어 건너뛴 테스트는 없다.")
     else:
         lines += ["CI 에는 비밀 값이 없어 아래 테스트를 건너뛰었다. 주인의 PC 에서 도는 게이트가 실제 호출로 돌린다.",
-                  "", "| 테스트 | 필요한 것 |", "| --- | --- |", *rows]
+                  "", *rows]
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
         out.write("\n".join(lines) + "\n")
 """.replace("{report}", oneshot_build.REPORT)
@@ -90,12 +91,10 @@ def readme_text(spec: dict) -> str:
     public = profile.get("visibility") == "public" and profile.get("ci") == "github-actions"
     kinds = kinds_of(spec["oneshot"])
     android = "android" in kinds   # alone, or among several kinds, whose gate builds it on the core
-    # The gate was proven in this machine's shell (`shell.launch`): PowerShell on Windows, bash elsewhere, and its
-    # commands may be the platform's own (`gradlew.bat`). The runner is of the same system, its default shell alike.
-    runner = "windows-latest" if os.name == "nt" else "ubuntu-latest"
-    job = (f"a job on `{runner}` that sets up a JDK (`actions/setup-java`) and the Android SDK "
-           "(`android-actions/setup-android`), then a step that `run`s the gate command above, as written"
-           if android else f"a job on `{runner}` whose step `run`s the gate command above, as written")
+    gate = slots_for(None, Path(spec["worktree"])).get("gate_cmd", "").strip()
+    run = f"a step that `run`s exactly these lines, as the server's gate ran them:\n\n```\n{ci_gate(gate)}\n```\n\n"
+    job = (f"a job on `{RUNNER}` that sets up a JDK (`actions/setup-java`) and the Android SDK "
+           f"(`android-actions/setup-android`), then {run}" if android else f"a job on `{RUNNER}` with {run}")
     several = f"""
 This repository holds {len(kinds)} kinds of the application, sharing one core:
 {', '.join(KIND_PROMPT_NAMES[k] for k in kinds)}. Give each its own section, in that
@@ -104,14 +103,14 @@ tests and every kind's build. For the web app, Run is the command that starts
 it and where it is then served.
 """ if len(kinds) > 1 else ""
     return (README_PROMPT.replace("{os}", " and ".join(both))
-            .replace("{gate}", slots_for(None, Path(spec["worktree"])).get("gate_cmd", "").strip())
+            .replace("{gate}", gate)
             .replace("{android}", several + (f"""
 {"In the Android app's section," if several else 'This is an Android app.'} Setup names the JDK and the Android SDK the build
 needs. Run is instead the command that builds the debug APK,
 `{spec['oneshot']['device']['apk']}`, and the one that installs it on a phone
 connected with USB debugging on: adb's install command with that APK's path.
 """ + RELEASE_PROMPT.replace("{package}", spec["oneshot"]["device"]["package"]) if android else ""))
-            .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}. "
+            .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}"
                      "That job has no `if` or `needs`, and that step no `if` or `background`. "
                      "After that step, in the same job, add this step exactly as written; it lists in the run's "
                      f"summary the tests CI skipped for want of a secret:\n\n```yaml\n{SKIPS}```"
@@ -140,6 +139,17 @@ def workflows(path: Path) -> dict[str, str]:
     return {name: meta.split()[0] for meta, _, name in (e.partition("\t") for e in done.stdout.split("\0") if e)}
 
 
+# The gate was proven in this machine's shell (`shell.launch`): PowerShell on Windows, bash elsewhere, and its commands
+# may be the platform's own (`gradlew.bat`, `xcrun`). The runner is of the same system, its default shell alike.
+RUNNER = {"win32": "windows-latest", "darwin": "macos-latest"}.get(sys.platform, "ubuntu-latest")
+
+
+def ci_gate(gate: str) -> str:
+    """The gate as the server's shell ran it: PowerShell's call operator before a quoted program (`shell.invoked`)."""
+
+    return shell.invoked(gate) if os.name == "nt" else gate
+
+
 def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     """`ci.yml` committed as a plain file (a link points anywhere) whose workflow has a trigger and a
     job step that runs the gate, followed in that job by `SKIPS`: a comment or an empty job is no CI."""
@@ -160,7 +170,7 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
     # The gate's lines run as a block of `run`, each exactly: named in a comment or an `echo` it never runs,
     # and an argument added (`--collect-only`, a narrower selection) runs something else. Arguments live in
     # `gate_cmd`, which may span lines (the front build extends the backend's).
-    want = [line.strip() for line in gate.splitlines() if line.strip()]
+    want = [line.strip() for line in ci_gate(gate).splitlines() if line.strip()]
     for job in flow["jobs"].values():
         # A condition, or a job it waits on that a condition skips, can skip it on a push or a pull request.
         if not isinstance(job, dict) or job.get("if") is not None or job.get("needs") is not None:

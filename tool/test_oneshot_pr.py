@@ -197,7 +197,7 @@ def test_a_gate_over_several_lines_runs_as_one_block(finished, run, runs):
 def test_a_workflow_deleted_in_the_run_is_no_ci_and_a_committed_one_passes(finished):
     tree, sent = finished
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
-    readme(tree, (".github/workflows/ci.yml", workflow(f"      - uses: actions/checkout@v4\n      - run: |\n          {GATE}\n" + SKIPS)))
+    readme(tree, (".github/workflows/ci.yml", workflow(f"      - uses: actions/checkout@v4\n      - run: |\n          {oneshot_pr.ci_gate(GATE)}\n" + SKIPS)))
     assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), GATE)
     git(tree, "rm", "-q", ".github/workflows/ci.yml")
     git(tree, "commit", "-m", "drop ci")
@@ -213,15 +213,15 @@ SKIPPED = '<testsuite><testcase classname="t" name="{name}"><skipped message="{w
     ({"": '<testsuite><testcase classname="t" name="test_ok"/></testsuite>'}, "건너뛴 테스트는 없다"),
     ({"": '<testsuite><testcase classname="t" name="test_rate"><skipped message="N2 and N1 absent"/></testcase>'
           '<testcase classname="t" name="test_other"><skipped message="slow"/></testcase></testsuite>'},
-     "| ` t test_rate ` | N1, N2 |"),
-    # A gate that changed into a folder wrote its report there. The cell shows the name as it is: a code span
-    # whose fence outruns its backticks, a pipe escaped for the table alone.
-    ({"app": SKIPPED.format(name="test_values[a|b]", why="N1")}, r"| ` t test_values[a\|b] ` | N1 |"),
-    ({"": SKIPPED.format(name="test_values[a\\|b]", why="N1")}, r"| ` t test_values[a\\|b] ` | N1 |"),
-    ({"": SKIPPED.format(name="test_values[**fast**]", why="N1")}, "| ` t test_values[**fast**] ` | N1 |"),
-    ({"": SKIPPED.format(name="test_values[a`b]", why="N1")}, "| `` t test_values[a`b] `` | N1 |"),
+     "- ` t test_rate `: N1, N2"),
+    # A gate that changed into a folder wrote its report there. The list shows the name as it is: a code span
+    # whose fence outruns its backticks, in a list item with no cell to split.
+    ({"app": SKIPPED.format(name="test_values[a|b]", why="N1")}, "- ` t test_values[a|b] `: N1"),
+    ({"": SKIPPED.format(name="test_values[a\\|b]", why="N1")}, r"- ` t test_values[a\|b] `: N1"),
+    ({"": SKIPPED.format(name="test_values[**fast**]", why="N1")}, "- ` t test_values[**fast**] `: N1"),
+    ({"": SKIPPED.format(name="test_values[a`b]", why="N1")}, "- `` t test_values[a`b] ``: N1"),
     # A need id before a Korean particle is still the id; a longer one is another.
-    ({"": SKIPPED.format(name="test_rate", why="N1이 없다, N12 도, N2cache N3_fixture")}, "| ` t test_rate ` | N1, N12 |"),
+    ({"": SKIPPED.format(name="test_rate", why="N1이 없다, N12 도, N2cache N3_fixture")}, "- ` t test_rate `: N1, N12"),
     # Two reports: which is the gate's is not known, so none is listed.
     ({"": SKIPPED.format(name="test_rate", why="N1"), "fixture": SKIPPED.format(name="test_old", why="N2")},
      "어느 것이 이 게이트의 것인지 정할 수 없다: `artifacts/junit.xml`, `fixture/artifacts/junit.xml`"),
@@ -235,14 +235,24 @@ def test_the_ci_summary_step_lists_the_tests_skipped_for_a_need(tmp_path, report
     subprocess.run([sys.executable, "-c", oneshot_pr.SKIP_STEP["run"]], cwd=step, check=True,
                    env={**os.environ, "GITHUB_STEP_SUMMARY": str(out), "GITHUB_WORKSPACE": str(tmp_path)})
     text = out.read_text(encoding="utf-8")
-    assert said in text and "test_other" not in text and ("| t test_old" not in text)
+    assert said in text and "test_other" not in text and "test_old" not in text
 
 
 def test_the_readme_turn_of_a_public_repository_carries_the_summary_step(finished):
     oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"}})
     text = oneshot_pr.readme_text(spec())
-    # The gate runs on a runner of the system it was proven on, in that system's shell.
-    assert oneshot_pr.SKIPS in text and f"a job on `{'windows' if os.name == 'nt' else 'ubuntu'}-latest`" in text
+    # The gate runs on a runner of the system it was proven on, in that system's shell, as the server ran it.
+    runner = {"win32": "windows-latest", "darwin": "macos-latest"}.get(sys.platform, "ubuntu-latest")
+    assert oneshot_pr.SKIPS in text and f"a job on `{runner}`" in text and oneshot_pr.ci_gate(GATE) in text
+
+
+@pytest.mark.skipif(os.name != "nt", reason="PowerShell's call operator is the Windows shell's")
+def test_the_ci_gate_is_the_command_as_the_server_rendered_it(finished):
+    tree, _ = finished
+    gate = '"tools/run me.bat" --fast'
+    readme(tree, (oneshot_pr.CI, workflow(f"      - run: |\n          & {gate}\n" + SKIPS)))
+    assert oneshot_pr.ci_gate(gate) == f"& {gate}"
+    assert oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), gate)
 
 
 # -- The pull request -----------------------------------------------------------------------------
