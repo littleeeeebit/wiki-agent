@@ -240,12 +240,15 @@ CHANGED: list = []   # `f(repo, env)` after any secret changes, by whichever rou
 def stored(repo: str, env: str, value: str | None) -> None:
     """A secret written, or removed with `None`; a failure names the store, never the value. Every route that
     changes a secret writes through here, so `CHANGED` hears each change, before the store changes: a waiting
-    result is set aside first, and when that fails the store is left as it was."""
+    result is set aside first, and when that fails the store is left as it was. Every caller read the spec
+    before this, so a 404 here is a reread that failed (`specs.load` turns a refused read into `None`)."""
 
     try:
         for f in CHANGED:
             f(repo, env)
-    except OSError as e:
+    except (OSError, HTTPException) as e:
+        if isinstance(e, HTTPException) and e.status_code != 404:
+            raise
         raise HTTPException(409, f"기다리는 결과를 먼저 내려놓지 못해 비밀 값을 바꾸지 않았다 ({type(e).__name__}) — "
                                  "다시 시도한다") from None
     try:

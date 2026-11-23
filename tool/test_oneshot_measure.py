@@ -283,6 +283,13 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
                 pytest.raises(HTTPException, match="바꾸지 않았다"):   # the result set aside first, or the store kept
             change()
         assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "owner"
+        load, reads = measure.specs.load, iter(range(99))
+
+        def refused(*a, **k):   # the caller's read passes, the set-aside's reread is refused as `specs.load` does
+            return None if next(reads) else load(*a, **k)
+        with patch.object(measure.specs, "load", refused), pytest.raises(HTTPException, match="바꾸지 않았다"):
+            change()
+        assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "owner"
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
     measure.measure("budget")
