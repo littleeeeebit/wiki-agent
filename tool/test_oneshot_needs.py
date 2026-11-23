@@ -243,6 +243,10 @@ def test_the_longest_secret_credential_manager_holds_is_kept_whole(at_r1):
     hide = needs.hidden(needs.spec_of("budget"), {ENV: "N1 이(가)"})   # `N1` is safe alone, not in the sentence
     why = needs.leaked(at_r1, needs.spec_of("budget"), hide, "키는 N1 이(가) 다")
     assert "비밀 값 [N1] 이(가) 답 에" in why and masked(why, hide) == why
+    # A measurement's own secret is labelled against the design's values too: its name never spells one.
+    hide = needs.hidden(needs.spec_of("budget"), {ENV: "7319"}, {"SERVICE_7319_TOKEN": "tok-abc"})
+    shown = masked("pin 7319 token tok-abc", hide)
+    assert "7319" not in shown and "tok-abc" not in shown and masked(shown, hide) == shown
     wrapped = masked(f"The server refused this build turn: {why}\n\nFix it", hide)   # as `checked` sends it
     assert "비밀 값 [N1] 이(가) 답 에" in wrapped and "N1 이(가)" not in wrapped.replace("[N1] 이(가)", "")
     hide = needs.hidden(needs.spec_of("budget"), {ENV: f"{ENV}[n1"})   # meets both `[N1]` and the variable

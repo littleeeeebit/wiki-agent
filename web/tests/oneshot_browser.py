@@ -1022,6 +1022,7 @@ def measurement():
     head = "a" * 40
     view = run("measure-demo", "measure", waits=True)
     view["measure"] = {"plan": PLAN, "error": "", "runs": [], "pr": {"number": 1, "url": "https://github.com/o/r/pull/1"}, "head": head}
+    view["secrets_kept"] = ["OLD_KEY"]   # a secret an earlier design held, the plan does not list
     views = {"measure-demo": view}
     posted: list = []
     fake = FastAPI()
@@ -1066,6 +1067,9 @@ def measurement():
         expect(inputs).to_contain_text("창: 브라우저 — Google Cloud 콘솔")
         expect(inputs).to_contain_text("그러면: 위쪽에 새 프로젝트 이름이 보인다")
         expect(inputs).to_contain_text("이 화면의 「클라이언트 ID」를 복사해 아래 칸에 붙여 넣는다.")
+        with posting(page):   # a kept secret is removable on the measurement's screen too
+            page.get_by_role("button", name="OLD_KEY 지우기").click()
+        assert posted[-1] == ("secrets/OLD_KEY", None), posted
         start = page.get_by_role("button", name="실측 시작")
         expect(start).to_be_disabled()
         box = page.get_by_label("M1 Google 데스크톱 클라이언트 ID 값")
@@ -1081,6 +1085,7 @@ def measurement():
         assert posted[-1] == ("measure/start", {"head": head}), posted
         running = page.get_by_role("region", name="실측 중")
         expect(running).to_contain_text("「허용」")
+        expect(page.get_by_role("button", name="OLD_KEY 지우기")).to_be_visible()   # while it runs as well
         with posting(page):
             running.get_by_role("button", name="멈춤").click()
         result = page.get_by_role("region", name="실측 결과")

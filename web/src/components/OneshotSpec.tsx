@@ -164,27 +164,30 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
       </>
     )
   }
-  if (owns(view)) return <>{faulted}<Owner repo={repo} view={view} busy={busy} act={act} /></>
+  const source = view.brief?.source ?? ''   // the R1 sheet the owner sees: a need is given on it
+  // Kept secrets can be removed at any stage, the measurement's screen included.
+  const needs = (view.needs?.length || view.secrets_kept?.length) ? (
+    <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
+      <Needs key={source} needs={view.needs ?? []} kept={view.secrets_kept ?? []} editable={idle && view.stage === 'r1'} busy={busy}
+        give={(id, body) => act(() => api.give(repo, id, body, source))}
+        takeBack={(id) => act(() => api.takeBack(repo, id, source))}
+        forget={(env) => act(() => api.forget(repo, env))} />
+    </div>
+  ) : null
+  if (owns(view)) return <>{faulted}{needs}<Owner repo={repo} view={view} busy={busy} act={act} /></>
   if (view.stopped) {
     return (
       <Track view={view} halt={<>
         {view.phone_owned?.length || unposted || leaked ? faulted : <Fault text={fault} />}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
+        {needs}
       </>} />
     )
   }
-  const source = view.brief?.source ?? ''   // the R1 sheet the owner sees: a need is given on it
   return (
     <>
       {faulted}
-      {(view.needs?.length || view.secrets_kept?.length) ? (
-        <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
-          <Needs key={source} needs={view.needs ?? []} kept={view.secrets_kept ?? []} editable={idle && view.stage === 'r1'} busy={busy}
-            give={(id, body) => act(() => api.give(repo, id, body, source))}
-            takeBack={(id) => act(() => api.takeBack(repo, id, source))}
-            forget={(env) => act(() => api.forget(repo, env))} />
-        </div>
-      ) : null}
+      {needs}
       {idle && view.stage === 'r1' && view.sheet && o.r1 && (
         <Sheet key={`r1-${o.r1.round}-${view.brief?.source}`} gate="r1" text={view.sheet} items={view.items ?? []}
           state={o.r1} busy={busy} brief={view.brief}

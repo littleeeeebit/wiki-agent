@@ -237,7 +237,9 @@ included, appears only once all of it is written (`staged`). A failed read
 of the report while it is kept, or a failed look at any entry (`plain`
 answers "no" only for a missing one), stops the run like a failed copy, and
 so does any unforeseen error of the keeping; only invalid UTF-8 JSON is left
-out. Every mask of a run comes from `env_of`, which holds each secret in
+out. Every mask of a run comes from `env_of`, which labels the design's
+secrets and the plan's own together (`oneshot_needs.hidden`), so no label
+spells any of their values. It holds each secret in
 its literal, URL-quoted and JSON-escaped spellings (`spelled`), each also
 with its line endings as a text-mode read turns them. So the script's
 output, the report's metrics and notes, the backend's log, the owner's note

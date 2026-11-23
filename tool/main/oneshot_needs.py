@@ -183,14 +183,16 @@ def secrets(spec: dict, strict: bool = False) -> dict[str, str]:
     return {env: value for _, env, value in _given(spec, strict)}
 
 
-def hidden(spec: dict, env: dict | None) -> dict[str, str]:
+def hidden(spec: dict, env: dict | None, more: dict[str, str] | None = None) -> dict[str, str]:
     """What a gate's output shows instead of each secret `env`, a `gate_env` result, carries: `[N1]` for its value
     and its URL-quoted form. Read off the environment the child gets, never the store again, so a secret changed or
-    removed in between can never be the one launched and left unmasked."""
+    removed in between can never be the one launched and left unmasked. `more` adds a measurement's secrets by
+    their `env`, labelled against every value alike, so no label spells another's."""
 
     have = {k.upper(): v for k, v in (env or {}).items()}
     # ponytail: the raw and URL-quoted forms only; another encoding of a value (base64, JSON-escaped) still shows
     forms = {nid: {value, quote(value, safe="")} for nid, n in secret_needs(spec) if (value := have.get(n["env"].upper()))}
+    forms |= {k: {v, quote(v, safe="")} for k, v in (more or {}).items()}
     every = [form for kept in forms.values() for form in kept]
     return {form: label(nid, every, i) for i, (nid, kept) in enumerate(forms.items()) for form in kept}
 

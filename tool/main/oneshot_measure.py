@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -231,9 +231,7 @@ def env_of(spec: dict, plan: dict, base: dict | None = None) -> tuple[dict, dict
                 env[x["env"]] = secrets[x["env"]] = value
         elif value := (kept(spec).get(x["env"]) or {}).get("value"):
             env[x["env"]] = value
-    hide = {**oneshot_needs.hidden(spec, env),
-            **{form: f"[{k}]" for k, v in secrets.items() for form in {v, quote(v, safe="")}}}
-    return env, spelled(hide)   # every reader of the run's text masks the JSON-escaped spellings too
+    return env, spelled(oneshot_needs.hidden(spec, env, secrets))   # every reader of the run's text masks the JSON-escaped spellings too
 
 
 # -- Starting the backend ---------------------------------------------------------------------------------
