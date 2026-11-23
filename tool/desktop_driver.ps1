@@ -215,11 +215,15 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
         if ($v.Length -gt $MAX_VALUE -or -not $whole) { $node.unvalued = $true }
       }
     } catch { $node.value = $null; $node.unvalued = $true }   # unread or cut: what it held is unknown, not empty
-    # The id again, after the value: a control rebound meanwhile held this value under another id, so whose it is
-    # is unknown.
-    try { $again = [string]$element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $true) }
-    catch { $again = $null }
-    if ($again -cne [string]$node.id) { $node.value = $null; $node.unvalued = $true }
+  }
+  # Every element's id again, after its value: one rebound meanwhile leaves unknown which id held what, so this
+  # window's read is not whole, and proves neither a value, nor an id absent, nor an id held once. Compared
+  # ordinally, as the server matches ids. Read as `Current.AutomationId` reads it, defaults alike.
+  try { $again = $element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::AutomationIdProperty) }
+  catch { $again = $null }
+  if (-not ($again -is [string]) -or -not [string]::Equals($again, [string]$node.id, [System.StringComparison]::Ordinal)) {
+    $node.value = $null; $node.unvalued = $true
+    $script:rebound = "an element's automation id changed while it was read: '$($node.id)' then '$again'"
   }
   if ($patterns -contains "Toggle") {
     try { $node.toggle = [string]$element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
@@ -257,7 +261,7 @@ function State([string]$name) {   # every window of the app in this state, shot 
     $state.shots += $shot
     if (-not $shot.drawn -and -not $shot.unshot) { continue }
     Enter "read $id $($w.hwnd)"
-    $script:nodes, $script:lists = @(), @()
+    $script:nodes, $script:lists, $script:rebound = @(), @(), $null
     $script:walked = New-Object 'System.Collections.Generic.List[object]'
     $read = [ordered]@{ hwnd = $w.hwnd; read = $false; error = "the window is gone or no longer the app's" }
     if (Current $w) {
@@ -265,6 +269,7 @@ function State([string]$name) {   # every window of the app in this state, shot 
         Nodes ([System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$w.hwnd)) $w.hwnd
         Items "$id $($w.hwnd)"
         if (-not $script:nodes.Count -or $script:nodes[0].foreign) { $read.error = "the tree's root is not the app's" }
+        elseif ($script:rebound) { $read.error = $script:rebound }
         else { $read = [ordered]@{ hwnd = $w.hwnd; read = $true } }
       } catch { $read.error = "the tree could not be read: $($_.Exception.Message)" }
     }

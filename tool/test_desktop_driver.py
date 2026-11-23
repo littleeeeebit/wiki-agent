@@ -2,6 +2,7 @@
 patterns only, a deadline per phase, and the mechanical findings (docs/research/oneshot-desktop-session.md)."""
 
 import json
+import subprocess
 import sys
 import time
 import types
@@ -344,12 +345,21 @@ def test_a_report_file_that_is_not_utf8_has_no_baseline_text(tmp_path):
     assert set(report["steps"][0]["baseline"]) == {"error"}, report
 
 
-def test_a_value_is_kept_only_when_its_control_has_the_same_id_after_the_value_was_read():
-    nodes = desktop_driver.SCRIPT.read_text(encoding="utf-8").split("function Nodes(", 1)[1].split("function ", 1)[0]
+def test_an_element_whose_id_changes_while_it_is_read_leaves_its_window_read_not_whole():
+    script = desktop_driver.SCRIPT.read_text(encoding="utf-8")
+    nodes = script.split("function Nodes(", 1)[1].split("\nfunction ", 1)[0]
     at = [nodes.index(s) for s in ("id = $c.AutomationId", "ValuePattern]::ValueProperty, $true)",
-                                   "AutomationElement]::AutomationIdProperty, $true)",
-                                   "if ($again -cne [string]$node.id) { $node.value = $null; $node.unvalued = $true }")]
+                                   "AutomationElement]::AutomationIdProperty)",
+                                   "[System.StringComparison]::Ordinal", "$script:rebound = ")]
     assert at == sorted(at), at
+    assert nodes.index("$script:rebound = ") < nodes.index("$script:walked.Add")   # every element, not only valued
+    state = script.split("function State(", 1)[1].split("\nfunction ", 1)[0]
+    assert "$script:rebound = @(), @(), $null" in state and "elseif ($script:rebound) { $read.error = $script:rebound }" in state
+    # Ordinal, never PowerShell's culture-aware -eq/-ceq, which takes a soft hyphen for nothing.
+    probe = subprocess.run([str(desktop_driver.POWERSHELL), "-NoProfile", "-Command",
+                            "[string]::Equals('se' + [char]0xAD + 'en', 'seen', [System.StringComparison]::Ordinal)"],
+                           capture_output=True, text=True, timeout=60)
+    assert probe.stdout.strip() == "False", probe
 
 
 def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
