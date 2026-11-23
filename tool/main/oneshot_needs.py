@@ -331,6 +331,41 @@ def decoded(text: str) -> str:
     return f"{text}\n{unescaped(text)}"
 
 
+def carried(texts: list[str], values: list[str], hide: dict) -> list[str]:
+    """The labels of `hide` whose value a screen's `texts` (its drawn and carried text, each one stream) or `values`
+    (its fields' contents) hold: as spelled, or in any casing a style can draw (`folded`, whose fold of a character
+    can depend on the one before); within one text, a value broken across lines reads as one."""
+
+    def compact(text: str) -> str:
+        return "".join(text.split())
+
+    def flats(form, text: str) -> set[str]:   # whitespace gone before and after the spelling, since a fold can
+        return {form(compact(text)), compact(form(text))}   # depend on the character a line break stood next to
+
+    spellings = [(form, [form(x) for x in texts + values], [f for t in texts for f in flats(form, t)])
+                 for form in (str, folded)]
+
+    def seen(value: str) -> bool:
+        for form, whole, streams in spellings:
+            v = form(value)
+            if v and any(v in t for t in whole):
+                return True
+            if any(f and any(f in s for s in streams) for f in flats(form, value)):
+                return True
+        return False
+
+    return sorted({label for value, label in hide.items() if seen(value)})
+
+
+def given_in(spec: dict, env: dict | None) -> dict[str, str | None]:
+    """What a started product gets over the server's environment: each secret the design names by its `env`, its
+    value in `env` (a `gate_env` result), or `None` (dropped) for one `env` does not hold, so a variable of that name
+    the server happens to have never stands in for it."""
+
+    have = {k.upper(): v for k, v in (env or {}).items()}
+    return {n["env"]: have.get(n["env"].upper()) for _, n in secret_needs(spec)}
+
+
 def held_in(text: str, hide: dict) -> list[str]:
     """The needs whose value `text` holds, in any casing, as spelled or as its JSON decodes (`decoded`), by id."""
     text = decoded(text)

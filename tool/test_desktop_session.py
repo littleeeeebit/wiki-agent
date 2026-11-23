@@ -135,6 +135,17 @@ def test_the_app_keeps_its_data_inside_the_looks_disposable_folder(tmp_path, mon
                     "TEMP": str(data / "Temp"), "TMP": str(data / "Temp"), "EXTRA": "kept"}
 
 
+def test_a_setting_the_start_maps_to_none_reaches_the_app_in_no_spelling(tmp_path, monkeypatch):
+    monkeypatch.setenv("GONE_KEY", "inherited")   # a secret not given: the server's own variable never stands in
+    code = ("import json, os; print(json.dumps([k for k in os.environ if k.upper() == 'GONE_KEY']), flush=True); "
+            "import time; time.sleep(60)")
+    with desktop_session.look(tmp_path, "dropped") as look:
+        look.start("app", python(code), tmp_path, {"gone_key": None})
+        log = tmp_path / "dropped" / "evidence" / "app.log"
+        assert waited(lambda: log.stat().st_size > 0)
+        assert json.loads(log.read_text(encoding="utf-8")) == []
+
+
 def test_the_record_names_each_part_before_it_is_made(tmp_path, monkeypatch):
     seen = {}
     early = tmp_path / "early"

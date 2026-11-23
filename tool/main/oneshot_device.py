@@ -11,6 +11,7 @@ The emulator is `android_owned`'s, cleaned on every exit; a placement or mechani
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import time
@@ -18,9 +19,9 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import android_owned
-from common import is_junction
+from common import is_junction, masked
 
-from . import oneshot, oneshot_android
+from . import oneshot, oneshot_android, oneshot_needs
 from .oneshot_profile import DEVICES
 from .oneshot_screens import MOCK_PATH
 
@@ -34,6 +35,9 @@ MAX_TAPS = 15
 INSTALL_SECONDS = 300
 TESTS_SECONDS = 1800
 DUMP = "/data/local/tmp/oneshot-window.xml"
+# The owner's secrets for the debug build, a JSON object by each need's `env`, inside the app's own storage
+# (`Context.getFilesDir()`): written over standard input before the app starts, removed when the stage ends.
+SECRETS = "files/oneshot-secrets.json"
 SYSTEM_UI = "com.android.systemui"   # draws the shade, so an app's notification views carry its package
 PACKAGE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+")
 ACTIVITY = re.compile(r"\.?[A-Za-z][A-Za-z0-9_$]*(\.[A-Za-z][A-Za-z0-9_$]*)*")
@@ -221,8 +225,27 @@ class Device:
     def __init__(self, folder: Path, device: dict, size: dict, tree: Path):
         self.folder, self.d, self.size, self.tree, self.since = folder, device, size, tree, ""
 
-    def adb(self, *args, timeout: float = android_owned.CALL_SECONDS, binary: bool = False):
-        return android_owned.call(self.folder, list(args), timeout=timeout, binary=binary)
+    def adb(self, *args, timeout: float = android_owned.CALL_SECONDS, binary: bool = False, data: bytes | None = None):
+        return android_owned.call(self.folder, list(args), timeout=timeout, binary=binary,
+                                  **({"data": data} if data is not None else {}))
+
+    def hold(self, given: dict[str, str | None]) -> None:
+        """The app's `SECRETS` file holding each given secret: its values on standard input only, never on a command
+        line, readable by the app's own user alone. `run-as` reaches only a debuggable build."""
+
+        values = {k: v for k, v in given.items() if v is not None}
+        try:
+            # `shell -T`: no terminal, so standard input reaches `cat` as sent, and the exit status comes back.
+            self.adb("shell", "-T", f"run-as {self.d['package']} sh -c 'mkdir -p files && cat > {SECRETS}'",
+                     data=json.dumps(values).encode())
+        except ValueError:   # adb's error can quote what it was given
+            raise ValueError(f"주인이 준 비밀 값을 앱 저장소의 `{SECRETS}` 에 넣지 못했다 — 기기 검사는 디버그 빌드"
+                             "(debuggable)를 설치한다") from None
+
+    def drop(self) -> None:
+        """The app's `SECRETS` file removed; ValueError when that could not be done."""
+
+        self.adb("shell", "run-as", self.d["package"], "rm", "-f", SECRETS)
 
     def install(self, apk: str, package: str, done=lambda: None) -> None:
         """`done` runs once the install command succeeded: with `-R`, the proof the installation is this one."""
@@ -462,9 +485,11 @@ def scenario_findings(output: str, wanted: list[str], first: str, owing: list[di
 
 # -- The look ------------------------------------------------------------------------------------------
 
-def look(tree: Path, device: dict, spec: dict, base: Path, folder: Path, stopped=never) -> list[dict]:
+def look(tree: Path, device: dict, spec: dict, base: Path, folder: Path, stopped=never, *,
+         given: dict | None = None, hide: dict[str, str] | None = None) -> list[dict]:
     """Every screen in every state shot into `folder` as `<screen>-phone-<state>.png` on an emulator the run
-    owns under `base`; the findings, placement and scenarios included. The emulator is cleaned on every exit."""
+    owns under `base`; the findings, placement and scenarios included, the app holding `given` (`inspect`). The
+    emulator is cleaned on every exit."""
 
     size = DEVICES[spec["oneshot"]["profile"]["device"]]
     cleaned(base)
@@ -475,7 +500,7 @@ def look(tree: Path, device: dict, spec: dict, base: Path, folder: Path, stopped
         d = Device(home, device, size, tree)
         for apk, package in apks(device):
             d.install(apk, package)
-        return inspect(d, spec, folder, stopped)
+        return inspect(d, spec, folder, stopped, given=given, hide=hide)
 
 
 def digests(tree: Path, device: dict) -> dict[str, str]:
@@ -501,10 +526,37 @@ def apks(device: dict) -> list[tuple[str, str]]:
             *([(device["fixture"]["apk"], device["fixture"]["package"])] if "fixture" in device else [])]
 
 
-def inspect(d: Device, spec: dict, folder: Path, stopped=never) -> list[dict]:
+def inspect(d: Device, spec: dict, folder: Path, stopped=never, *, given: dict | None = None,
+            hide: dict[str, str] | None = None) -> list[dict]:
     """On a device with the APKs installed: every screen in every state shot into `folder`, the mechanical,
-    placement and coverage findings, and the scenarios. The emulator's look and the phone round share it."""
+    placement and coverage findings, and the scenarios. The emulator's look and the phone round share it.
+    With a secret `given` (`oneshot_needs.given_in`), the app holds it in `SECRETS` while the screens and tests run,
+    and the file is removed on every exit: a removal that fails fails the stage. A screen whose text holds a value
+    of `hide` is a high finding and is never kept, and neither a finding nor a refusal carries one."""
 
+    held = any(v is not None for v in (given or {}).values())
+    try:
+        if held:
+            d.hold(given)
+        found = _inspect(d, spec, folder, stopped, hide or {})
+    except BaseException as exc:
+        if held:
+            try:
+                d.drop()
+            except Exception:   # the run's failure stands; the app with the file comes off with the stage's cleanup
+                pass
+        if isinstance(exc, (ValueError, RuntimeError)) and hide and (said := masked(str(exc), hide)) != str(exc):
+            raise type(exc)(said) from None
+        raise
+    if held:
+        try:
+            d.drop()
+        except ValueError:
+            raise ValueError(f"앱 저장소의 `{SECRETS}` 를 지우지 못했다 — 비밀 값을 담은 채로 통과시키지 않는다") from None
+    return [{**f, "what": masked(f["what"], hide)} for f in found] if hide else found
+
+
+def _inspect(d: Device, spec: dict, folder: Path, stopped, hide: dict[str, str]) -> list[dict]:
     o = spec["oneshot"]
     front, frequency = o["front"], o["frequency"]
     folder.mkdir(parents=True, exist_ok=True)
@@ -517,7 +569,7 @@ def inspect(d: Device, spec: dict, folder: Path, stopped=never) -> list[dict]:
     for s in front["screens"]:
         for state in STATES:
             halted(stopped)
-            findings += shot(d, s, state, folder, seen, anywhere)
+            findings += shot(d, s, state, folder, seen, anywhere, hide)
     halted(stopped)
     findings += placement(d, front, frequency, stopped)
     halted(stopped)
@@ -537,16 +589,34 @@ def inspect(d: Device, spec: dict, folder: Path, stopped=never) -> list[dict]:
     return findings
 
 
-def shot(d: Device, s: dict, state: str, folder: Path, seen: dict, anywhere: set) -> list[dict]:
+def texts(root: ElementTree.Element) -> list[str]:
+    """Every attribute value of every node a hierarchy holds: its text, description and hint among them."""
+
+    return [v for n in root.iter() for v in n.attrib.values()]
+
+
+def shot(d: Device, s: dict, state: str, folder: Path, seen: dict, anywhere: set,
+         hide: dict[str, str] | None = None) -> list[dict]:
+    """One screen shot. With `hide`, the hierarchy is read before and after the picture, and a screen either read
+    holds a value of in its text is a high finding and is never kept, since the critic sends its picture to a model."""
+
     if why := d.open(s, state):
         return [finding(s["id"], state, why)]
+    leaked: list[str] = []
     try:
         root = d.hierarchy()
-        (folder / f"{s['id']}-{VIEW}-{state}.png").write_bytes(d.adb("exec-out", "screencap", "-p", binary=True))
+        picture = d.adb("exec-out", "screencap", "-p", binary=True)
         pixels = raw(d.adb("exec-out", "screencap", binary=True))
+        if hide:   # ponytail: text only, read around the picture; a value drawn as pixels, or shown between, is not seen
+            leaked = oneshot_needs.carried([*texts(root), *texts(d.hierarchy())], [], hide)
+        if not leaked:
+            (folder / f"{s['id']}-{VIEW}-{state}.png").write_bytes(picture)
     finally:
         d.close(s)
     out = [finding(s["id"], state, what) for what in mechanical(root, d.d["package"], d.size, pixels)]
+    if leaked:
+        out.append(finding(s["id"], state, f"화면이 담은 글자에 비밀 값 {', '.join(leaked)} 이 들어 있다 — 비밀은 "
+                                           "앱 안에서만 쓰고 화면에 내보내지 않는다"))
     if why := d.died():
         out.append(finding(s["id"], state, why))
     there = present(root, d.d["package"])

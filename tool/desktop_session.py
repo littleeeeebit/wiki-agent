@@ -273,12 +273,12 @@ class Look:
         owned = {"APPDATA": str(folders["Roaming"]), "LOCALAPPDATA": str(folders["Local"]),
                  "TEMP": str(folders["Temp"]), "TMP": str(folders["Temp"])}
         # Windows reads names without case: a name `extra` sets drops every inherited spelling of it, and no
-        # spelling of an owned name from the server or `extra` survives.
+        # spelling of an owned name from the server or `extra` survives. A name `extra` maps to `None` is dropped.
         extra = extra or {}
         given = {name.upper() for name in extra}
         env = {name: value for name, value in [*((n, v) for n, v in os.environ.items() if n.upper() not in given),
                                                *extra.items()]
-               if name.upper() not in owned} | owned
+               if name.upper() not in owned and value is not None} | owned
 
         def recorded(root: dict) -> None:
             self.record["jobs"][key].update(root=root, members=[root])

@@ -28,7 +28,7 @@ import android_owned
 import android_phone
 
 from . import oneshot, oneshot_android, oneshot_build, oneshot_device as device, oneshot_front_build as front_build, \
-    oneshot_review as review, oneshot_spec, runtime
+    oneshot_needs, oneshot_review as review, oneshot_spec, runtime
 from .oneshot_profile import kinds_of, shape
 
 STAGE = "phone"
@@ -286,7 +286,9 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
             mine(package, instance(home, package))
             if installed_digest(home, package) != digests[package]:
                 raise ValueError(f"휴대폰에 설치된 `{package}` 가 에뮬레이터 검사를 통과한 APK 와 다르다")
-        findings = device.inspect(d, spec, base(repo) / "shots" / f"p{n}", stopped)
+        env = oneshot_needs.gate_env(spec, None)   # read once: the app holds exactly what its findings are masked with
+        findings = device.inspect(d, spec, base(repo) / "shots" / f"p{n}", stopped,
+                                  given=oneshot_needs.given_in(spec, env), hide=oneshot_needs.hidden(spec, env))
         device.halted(stopped)   # a stop during the scenarios: never a pass, and the apps come off
         if locked(home):   # the screen went off mid-round: its shots show the lock, not the app
             return {"status": "locked", "detail": "검사 중에 휴대폰이 잠겼다 — 화면 꺼짐 시간을 늘리고 다시 시작한다"}

@@ -70,7 +70,7 @@ def checked(tree, block=BLOCK, found=(), looked=None):
 
     sent, looked = [], [] if looked is None else looked
 
-    def look(spec, build, shots, stopped):
+    def look(spec, build, shots, stopped, *, env=None, hide=None):
         looked.append(build)
         return list(found)
 
