@@ -28,7 +28,7 @@ import android_owned
 import android_phone
 
 from . import oneshot, oneshot_android, oneshot_build, oneshot_device as device, oneshot_front_build as front_build, \
-    oneshot_review as review, oneshot_spec, runtime
+    oneshot_needs, oneshot_review as review, oneshot_spec, runtime
 from .oneshot_profile import kinds_of, shape
 
 STAGE = "phone"
@@ -155,16 +155,29 @@ def settle(repo: str, home: Path, index: int) -> None:
     the run cannot tell its installation from the owner's of the same APK."""
 
     r = oneshot_spec.spec_of(repo)["oneshot"]["phone_owned"][index]
+    if r.get("dump"):
+        undumped(repo, home, index)
     left, foreign, unsure = uninstalled(home, r["digests"], r.get("installed") or {})
     state = "pending" if left else "unsure" if unsure else "cleaned"
     recorded(repo, index, state=state, left=left, foreign=foreign, unsure=unsure, ts=time.time())
 
 
+def undumped(repo: str, home: Path, index: int) -> None:
+    """The round's hierarchy dump removed from the bound phone, its text possibly holding a secret: the record's
+    `dump` stays owed until a removal succeeds."""
+
+    try:
+        call(home, "shell", "rm", "-f", device.DUMP)
+    except ValueError:
+        return
+    recorded(repo, index, dump=False)
+
+
 def owning(o: dict) -> list[dict]:
     """Records whose packages may still be on a phone: a cleanup that did not finish, a round cut off, or an
-    app the run cannot prove it installed."""
+    app the run cannot prove it installed; and a round whose hierarchy dump is still owed, its app kept or not."""
 
-    return [r for r in o.get("phone_owned") or [] if r["state"] in ("owning", "pending", "unsure")]
+    return [r for r in o.get("phone_owned") or [] if r["state"] in ("owning", "pending", "unsure") or r.get("dump")]
 
 
 def recorded(repo: str, index: int | None = None, **fields) -> int:
@@ -187,9 +200,14 @@ def tidy(repo: str, home: Path, found: list[dict]) -> None:
 
     listed = {x["serial"] for x in found if x["state"] == "device"}
     for index, r in enumerate(oneshot_spec.spec_of(repo)["oneshot"].get("phone_owned") or []):
-        if r["state"] in ("owning", "pending", "unsure") and r["serial"] in listed:
+        if r["serial"] not in listed:
+            continue
+        if r["state"] in ("owning", "pending", "unsure"):
             android_phone.bind(home, r["serial"])
             settle(repo, home, index)
+        elif r.get("dump"):   # a kept app's round: only its dump is owed
+            android_phone.bind(home, r["serial"])
+            undumped(repo, home, index)
     android_phone.bind(home, "")
 
 
@@ -271,7 +289,8 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
     # `instance` read right after. The same APK the owner installed, before or since, is not the run's.
     digests = {package: o["apks"][apk] for apk, package in device.apks(o["device"])}
     index = recorded(repo, serial=serial, model=picked["model"], packages=packages, digests=digests,
-                     installed={}, state="owning", left=[], ts=time.time())
+                     installed={}, state="owning", left=[], ts=time.time(),
+                     dump=True)   # owed from before any read can leave one, until a removal is confirmed
     passed, installed = False, {}
 
     def mine(package: str, which: str | None) -> None:
@@ -286,7 +305,9 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
             mine(package, instance(home, package))
             if installed_digest(home, package) != digests[package]:
                 raise ValueError(f"휴대폰에 설치된 `{package}` 가 에뮬레이터 검사를 통과한 APK 와 다르다")
-        findings = device.inspect(d, spec, base(repo) / "shots" / f"p{n}", stopped)
+        env = oneshot_needs.gate_env(spec, None)   # read once: the app holds exactly what its findings are masked with
+        findings = device.inspect(d, spec, base(repo) / "shots" / f"p{n}", stopped,
+                                  given=oneshot_needs.given_in(spec, env), hide=oneshot_needs.hidden(spec, env))
         device.halted(stopped)   # a stop during the scenarios: never a pass, and the apps come off
         if locked(home):   # the screen went off mid-round: its shots show the lock, not the app
             return {"status": "locked", "detail": "검사 중에 휴대폰이 잠겼다 — 화면 꺼짐 시간을 늘리고 다시 시작한다"}
@@ -297,10 +318,7 @@ def drive(repo: str, home: Path, spec: dict, frozen: Path, stopped) -> dict:
                 "findings": findings, "timing": frames, "memory_kb": used, "head": o["front_built_head"],
                 "apks": o["apks"], "front_build": o.get("front_build"), "detail": ""}
     finally:
-        try:
-            call(home, "shell", "rm", "-f", device.DUMP)
-        except ValueError:
-            pass
+        undumped(repo, home, index)   # whether or not the app stays
         with _ending:   # from here a stop is refused; one accepted before it takes the cleanup
             if final := not stopped():
                 _final.add(repo)

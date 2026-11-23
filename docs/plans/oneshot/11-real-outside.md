@@ -219,7 +219,7 @@ and a high finding sends the build back before the critic runs.
 
 The guard stops at text, decided with the owner on 2026-11-21. A secret
 drawn as pixels, into a canvas, an image or a stylesheet's `content`, can
-reach the critic, the same trust the build agent gets in 11b2. What the
+reach the critic, the same trust the build agent gets in 11b2a. What the
 critic writes, its findings and the reason it stopped, is kept with `[N1]`
 in each secret's place, from the first write on (`oneshot.turned` takes
 `hide`). The mask is the one the look's web app was started with
@@ -229,14 +229,55 @@ stage before the critique, or it drops its frozen PC build. A server started
 since has none, and a run with a secret takes
 those shots again before any critique.
 
-11b1 stops there. The build agent's own shell does not have the secrets yet,
-so a test that needs one skips when the agent runs it and must pass in the
-server's gate. The PC app's screen check and the Android device stages
-start the product without them; they gain them in 11b2.
+The build agent's own turns carry the secrets too (11b2a, below). The PC
+app's screen check and the Android device stages start the product with them
+as well (11b2b), read from the same environment read the web look's mask
+comes from:
+
+- The PC app gets each secret's variable at every start, over any spelling of
+  that name its own launch settings carry. A secret the design names but the
+  store does not hold is dropped from the start's environment, so the
+  server's variable of that name never stands in for it.
+- The Android app has no environment to receive one. On the emulator and on
+  the owner's phone, the debug build gets `oneshot-secrets.json` in its own
+  storage (`Context.getFilesDir()`): a JSON object keyed by each secret's
+  variable. It is written through `run-as` with the values on standard input
+  only, never on a command line or in the APK, before the screens and the
+  instrumented tests run. It is removed when the stage ends, whichever way it
+  ends. A removal that fails fails the stage, so a phone round never passes
+  with the file left on the owner's phone. Decided with the owner on
+  2026-11-23: instrumentation arguments (`am instrument -e`) would show the
+  values on adb's command line and in the device's process list.
+- Each screen's read text gets the web look's check: every UI Automation
+  string of the PC app's start state, and every attribute of the Android
+  hierarchy read before and after its picture. A screen whose text holds a
+  secret is a high finding and its picture is never kept. Every finding and
+  refusal of these stages is masked. A PC look whose app carried secrets
+  keeps only the shots it checked and copied: the desktop session removes its
+  `evidence` folder (the driver's raw shots and reports, the app's output)
+  with its data folders, and recovery does the same. On Android each
+  hierarchy dump is removed from the device as soon as it is read. A phone
+  round's record owes the dump from its first save, before any read can leave
+  one, so a round cut by a failed removal or by a restart keeps it owed, the
+  kept app's included. The card shows it until the phone is listed again and
+  a removal succeeds.
+- A secret cannot take a name a look sets when it starts the app (`PORT`,
+  `APP_DATA_DIR`, `ONESHOT_SCREEN`, `APPDATA`, `TEMP` and the rest of
+  `oneshot_needs.STARTED`): the look's value would reach the app in its
+  place. The design refuses it, and a design saved before the rule stays
+  at R1. One approved before keeps running, as a launch name does: a look that
+  sets the name itself keeps its own value, so the app runs there without the
+  secret, and the need's row and the build prompt say so. A look that does not
+  set it, the PC look for `PORT` or the web look for `TEMP`, gives the owner's
+  value as for any other name, and the Android file carries it.
+
+The check stops at text here too. A value drawn as pixels, or shown on
+Android only between the two reads, is not seen. The phone round's frame and
+memory measurement runs after the file is removed.
 
 In CI the variables are absent. Each test that needs one skips with the need's
 id in its reason, and the run's CI summary lists those skips as owed to the
-local gate (11b2). A public repository never receives a secret.
+local gate (11b2c). A public repository never receives a secret.
 
 ### The review reads fakes as weakened contracts
 
@@ -249,11 +290,31 @@ names the test.
 
 The build agent runs the gate itself while it works, so its turns get the
 secrets in the same environment the server's gate has. The build prompt
-forbids printing them. Before a turn's commit is accepted, and before its
-answer is saved, the server looks for each secret's value in the commit's
-diff and in the answer; one found refuses the turn with the need's id,
-never the value. A transcript the agent's own tools write may still hold a
-value; that is the cost of the agent running real tests.
+forbids printing them.
+
+The worktree's session is started with each given secret set, and a secret
+the design names but the store does not hold is dropped, as in a gate
+(`oneshot_needs.agent`). A session whose secrets changed, given or removed,
+starts again before its next turn and resumes its conversation. The session
+is the worktree's, so a turn the owner types there carries them too.
+
+The screen and the turn's record show `[N1]` in each value's place, in the
+answer, the steps and the tool diffs. The check reads the answer as it was
+given. Before any stage check reads it, and so before the server commits
+anything for the turn, the server looks for each value in three places, in
+any casing:
+
+- the answer;
+- every commit since the design commit, which is the history the pull
+  request pushes;
+- what is not committed, untracked files included.
+
+A file Git ignores is the agent's own and is not read. One value found
+refuses the turn with the need's id and the place, never the value. A value
+in a commit is removed only by rewriting those commits.
+
+A transcript the agent's own tools write may still hold a value, and so may
+a committed binary file. That is the cost of the agent running real tests.
 
 The card counts, per run, the gate runs that reached each outside call (the
 tests that name a need), shown beside the run's spending. Nothing is limited
@@ -281,7 +342,9 @@ knows the values, at commit time, rather than in the reviewer's reading.
 | --- | --- | --- |
 | 11a1 | A design's outside calls may carry `needs`; the owner gives each (secrets to Credential Manager), the sheet lists them, and R1 approval waits for all of them | Done — #416 |
 | 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | Done — #417 |
-| 11b1 | Tests and build prompts without fakes, told every need; every gate the server runs carries the given secrets | In progress |
-| 11b2 | The build agent's own turns carry the secrets under the server's leak check; the PC app's screen check and the Android device stages get them; the CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Not started |
+| 11b1 | Tests and build prompts without fakes, told every need; every gate the server runs carries the given secrets | Done — #418 |
+| 11b2a | The build agent's own turns carry the secrets under the server's leak check | Done — #424 |
+| 11b2b | The PC app's screen check and the Android device stages get the secrets | In progress |
+| 11b2c | The CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Not started |
 | 11c | The review refuses a fake inside a test file | Not started |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |

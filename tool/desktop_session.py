@@ -196,11 +196,12 @@ class Look:
     """One look: an owned desktop, its apps' jobs and their disposable folders, all named in `folder`'s record.
     Use it through `look()`, which runs `close()` on every outcome."""
 
-    def __init__(self, root: Path, name: str, owned: bool = True):
+    def __init__(self, root: Path, name: str, owned: bool = True, disposable: bool = False):
         """`owned` false is the owner's desktop round (plan 9e5): its jobs start on the desktop the server runs on,
         the owner's, and the look creates and closes no desktop of its own; its record and proof are the same."""
 
         self.root = Path(root).absolute()   # a child starts elsewhere: its data paths must not be relative
+        self.disposable = disposable   # `evidence` too is removed with the look: its apps carried secrets
         self.folder = self.root / name
         self.result = None   # the teardown's reasons, kept until its proof is saved
         self.closing = False
@@ -221,6 +222,8 @@ class Look:
                        "listeners": [], "proof": None}
         self.folder.mkdir()
         (self.folder / "evidence").mkdir()
+        if self.disposable:   # its raw shots, reports and app logs go as its data folders go, recovery included
+            self.record["folders"].append({"name": "evidence", "owned": True})
         save(self.folder, self.record)
 
     def _open_for_more(self) -> None:
@@ -281,12 +284,12 @@ class Look:
         owned = {"APPDATA": str(folders["Roaming"]), "LOCALAPPDATA": str(folders["Local"]),
                  "TEMP": str(folders["Temp"]), "TMP": str(folders["Temp"])}
         # Windows reads names without case: a name `extra` sets drops every inherited spelling of it, and no
-        # spelling of an owned name from the server or `extra` survives.
+        # spelling of an owned name from the server or `extra` survives. A name `extra` maps to `None` is dropped.
         extra = extra or {}
         given = {name.upper() for name in extra}
         env = {name: value for name, value in [*((n, v) for n, v in os.environ.items() if n.upper() not in given),
                                                *extra.items()]
-               if name.upper() not in owned} | owned
+               if name.upper() not in owned and value is not None} | owned
 
         def recorded(root: dict) -> None:
             self.record["jobs"][key].update(root=root, members=[root])
@@ -516,11 +519,12 @@ class Look:
 
 
 @contextmanager
-def look(root: Path, name: str, owned: bool = True):
+def look(root: Path, name: str, owned: bool = True, disposable: bool = False):
     """A look in `root/name`, its desktop open (with `owned` false, on the owner's desktop: `Look`); cleaned and
-    proven on every exit. A proof that is not clean raises, naming what it could not prove."""
+    proven on every exit. A proof that is not clean raises, naming what it could not prove. A `disposable` look's
+    `evidence` is removed with it."""
 
-    session_ = Look(root, name, owned)
+    session_ = Look(root, name, owned, disposable)
     failure = None
     try:
         if owned:

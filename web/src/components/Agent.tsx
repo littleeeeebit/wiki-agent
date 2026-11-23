@@ -31,7 +31,8 @@ type Props = {
   progressOn?: boolean
   onChoice: (c: Choice) => void
   onSend: (text: string) => void
-  onAnswer: (turn: Turn, id: string, allow: boolean, scope?: 'once' | 'session', answers?: string[]) => void
+  onAnswer: (turn: Turn, id: string, allow: boolean, scope?: 'once' | 'session', answers?: string[],
+    picks?: (number[] | null)[]) => void
   onStop: (turn: Turn) => void
   onSteer: (turn: Turn, text: string) => void
   /** The next instruction, waiting for this run to end. */
@@ -338,7 +339,7 @@ function Question({ step, turn, korean, onAnswer }: {
       className={cn('rounded-lg border p-4', open ? 'border-wait bg-wait/10' : 'border-border bg-secondary/40')}>
       <p className="mb-4 text-[14px] font-semibold">{open ? '에이전트 질문' : step.answer ? '답함' : '답하지 않음'}</p>
       {open ? <Questions questions={asked} korean={korean} disabled={!turn.pending || !!step.sending || !onAnswer}
-        onSubmit={(answers) => onAnswer?.(turn, step.id, true, 'once', answers)}
+        onSubmit={(answers, picks) => onAnswer?.(turn, step.id, true, 'once', answers, picks)}
         onDecline={() => onAnswer?.(turn, step.id, false)} />
         : <div className="space-y-2 text-[14px] leading-relaxed">
           {asked.map((q, i) => <AnsweredQuestion key={i} question={q.question} answer={step.answers?.[i]} korean={korean} />)}

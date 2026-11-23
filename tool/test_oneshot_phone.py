@@ -151,7 +151,7 @@ def test_a_clean_round_on_the_picked_phone_opens_r3_and_leaves_nothing_on_it(han
                                                     "installed": {PKG: f"/data/app/~~a1==/{PKG}-b2==/base.apk 4001:1794780001",
                                                                   TESTS: f"/data/app/~~a2==/{TESTS}-b2==/base.apk 4002:1794780002"},
                                                     "state": "cleaned", "left": [],
-                                                    "foreign": [], "unsure": [], "ts": 0}
+                                                    "foreign": [], "unsure": [], "dump": False, "ts": 0}
     assert "phone_owned" not in phone_round.extra(spec())
 
 
@@ -201,6 +201,28 @@ def test_a_passing_app_the_owner_keeps_stays_installed_and_its_record_is_release
     after = played(handset, keep=True)
     assert after["phone"]["status"] == "passed" and set(handset.present) == {PKG, TESTS}
     assert after["phone_owned"][-1]["state"] == "released"
+
+
+def test_a_hierarchy_dump_left_on_a_kept_apps_phone_stays_owed_until_it_is_removed(handset):
+    dump = ["shell", "rm", "-f", device.DUMP]
+    late = []
+
+    def unremovable(args):
+        if args[:3] == ["shell", "dumpsys", "meminfo"]:   # the round's last read: only its own cleanup fails
+            late.append(True)
+        if late and args == dump:
+            raise ValueError("adb: device 'R5CR10ABCDE' not found")
+
+    handset.on_call = unremovable
+    after = played(handset, keep=True)
+    assert after["phone"]["status"] == "passed" and set(handset.present) == {PKG, TESTS}
+    record = after["phone_owned"][-1]
+    assert record["state"] == "released" and record["dump"] is True
+    assert phone_round.extra(spec())["phone_owned"] == [record]   # shown on the run until it is removed
+    handset.on_call, handset.sent = None, []
+    listed = phone_round.devices("budget")
+    assert listed["owned"] == [] and o()["phone_owned"][-1]["dump"] is False
+    assert dump in handset.sent and set(handset.present) == {PKG, TESTS}   # the kept app stays
 
 
 def test_a_high_finding_on_the_phone_goes_back_through_the_emulator_loop(handset, monkeypatch):
@@ -268,6 +290,21 @@ def test_a_round_cut_by_a_restart_is_cleaned_on_the_next_listing(handset):
     phone_round.devices("budget")
     assert handset.present == {TESTS: "b" * 64}
     assert {"state": "cleaned", "left": [], "foreign": [TESTS]}.items() <= o()["phone_owned"][-1].items()
+
+
+def test_a_round_cut_by_a_restart_still_owes_its_dump_and_the_next_listing_removes_it(handset):
+    seen = []
+    handset.on_call = lambda args: seen.append(o()["phone_owned"][-1].get("dump")) if args[0] == "install" else None
+    played(handset)
+    assert seen and all(seen)   # owed from the record's first save, before any read can leave one
+    handset.on_call = None
+    mine = o()["apks"][DEVICE["apk"]]
+    phone_round.recorded("budget", serial=SERIAL, model="", packages=[PKG], digests={PKG: mine},
+                         installed={PKG: handset.which(PKG)}, state="owning", left=[], dump=True)   # as the cut round left it
+    handset.sent = []
+    phone_round.devices("budget")
+    assert ["shell", "rm", "-f", device.DUMP] in handset.sent
+    assert {"state": "cleaned", "dump": False}.items() <= o()["phone_owned"][-1].items()
 
 
 def test_the_same_apk_installed_by_the_owner_after_a_crash_is_never_removed(handset):

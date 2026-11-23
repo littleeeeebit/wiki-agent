@@ -4,11 +4,12 @@ import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
 import { Btn, Zoom } from '@/components/Modal'
 import { Board } from '@/components/OneshotBoard'
-import { Needs } from '@/components/OneshotNeeds'
+import { Leaked, Needs } from '@/components/OneshotNeeds'
 import { PcApprove, PcResults } from '@/components/OneshotPc'
 import { Track } from '@/components/OneshotTrack'
 import { api, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
-  type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName, toolText,
+  type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName,
+  ownedNotice, toolText,
 } from '@/lib/oneshot'
 import { InLink } from '@/lib/picture'
 import { cn } from '@/lib/utils'
@@ -124,19 +125,15 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
   const resume = !['kind', 'rekind'].includes(view.stopped?.reason ?? '') && (
     <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
-  const faulted = (fault || !!view.phone_owned?.length) && (
+  const leaked = view.needs?.some((n) => n.leaked || n.unsure)
+  const faulted = (fault || !!view.phone_owned?.length || leaked) && (
     <div className="flex flex-col gap-2 px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
       <Fault text={fault} />
+      <Leaked needs={view.needs ?? []} />
       {/* Shown on the run, whatever its stage, until the phone is listed again and the cleanup finishes. */}
-      {view.phone_owned?.map((r) => r.state === 'unsure' ? (
+      {view.phone_owned?.map((r) => (
         <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
-          휴대폰 <span className="font-mono">{r.serial}</span> 에 이 실행의 앱이 있지만, 이 실행이 설치를 마쳤는지 확인하지 못해 지우지
-          않았다: {(r.unsure ?? []).join(', ')}. 필요 없으면 휴대폰에서 직접 지우고 [휴대폰 찾기] 를 누른다.
-        </p>
-      ) : (
-        <p key={`${r.serial}-${r.packages.join()}`} role="status" className="rounded-md bg-wait/10 px-3 py-2">
-          휴대폰 <span className="font-mono">{r.serial}</span> 에 이 실행이 설치한 앱이 남아 있다: {(r.left.length ? r.left : r.packages).join(', ')}.
-          그 휴대폰을 연결하고 [휴대폰 찾기] 를 누르면 지운다.
+          휴대폰 <span className="font-mono">{r.serial}</span> 에 {ownedNotice(r)}
         </p>
       ))}
       {/* Any stage: a passed round's cleanup can be left pending at R3, where no phone prompt stands. */}
@@ -171,7 +168,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
     return (
       <Track view={view} halt={<>
         <Fault text={fault} />
-        {view.phone_owned?.length ? faulted : null}
+        {view.phone_owned?.length || leaked ? faulted : null}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
         {view.stage === 'r3' && o.pc?.results ? <PcResults title="주인 화면 회차 — 통과" results={o.pc.results} /> : null}
       </>} />

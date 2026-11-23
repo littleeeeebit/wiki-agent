@@ -24,6 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
+from common import masked
 from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
@@ -616,20 +617,26 @@ def checked(path: Path, run, spec: dict, final: str):
     A person's turn, or a turn in a stage S4 does not own, changes nothing."""
 
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
-    if getattr(run, "person", False) or stage not in STAGES:
+    if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
-    if (hand := HANDOVERS.get(stage)) and hand[0](spec):
+    hide = getattr(run.chat, "hide", None)
+    why = oneshot_needs.leaked(path, spec, hide, final)   # before any check reads it; again at the turn's end
+    if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
     run.checked = True
     check, stop, _, after = STAGES[stage]
     try:
-        why = check(path, run, spec, final)
+        why = why or check(path, run, spec, final)
     except (ValueError, OSError) as exc:
         why = str(exc)
     except Exception as exc:   # an unforeseen failure still stops with a reason, never leaves the stage running
-        oneshot_spec.store(repo).stop("block", f"{type(exc).__name__}: {exc}")
+        oneshot_spec.store(repo).stop("block", why := masked(f"{type(exc).__name__}: {exc}", hide))
+        if hide:   # the caller logs and notes what it catches: it gets the masked reason, never the values
+            raise RuntimeError(why) from None
         raise
+    why = masked(why, hide)   # a check's reason can quote what the turn wrote: shown, kept and sent as each need
     if not why:
+        run.passed = True   # what follows moves the run on: the turn's end scan (`oneshot_needs.settle`) gates it
         if kind_held(oneshot_spec.spec_of(repo)["oneshot"]):   # the pass left the run at its kind's stop: no next
             return None
         return unless_stopped(run, repo, lambda: after(repo))
@@ -641,9 +648,10 @@ def checked(path: Path, run, spec: dict, final: str):
         store.stop(stop, why)
         return None
     store.put(attempts=attempts)   # `working` stays until the turn goes: a restart in between is recovered
-    return unless_stopped(run, repo, lambda: send(
-        repo, stage, f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again "
-                     f"(attempt {attempts + 1} of {MAX_ATTEMPTS})."))
+    # Masked as composed, as the model gets it: a value can run across the reason and the words around it.
+    return unless_stopped(run, repo, lambda: send(repo, stage, masked(
+        f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again "
+        f"(attempt {attempts + 1} of {MAX_ATTEMPTS}).", hide)))
 
 
 def unless_stopped(run, repo: str, then):

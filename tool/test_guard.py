@@ -893,6 +893,148 @@ def test_a_branch_upstream_given_as_a_url_is_a_destination(tmp_path, monkeypatch
     assert {"network(read.example)", "network(write.example)"} <= found
 
 
+def test_a_session_carrying_a_oneshots_secrets_never_pushes_itself(tmp_path, monkeypatch, capsys):
+    home_at(monkeypatch, tmp_path / "home")
+    (tmp_path / "config").write_text('[remote "origin"]\n url = https://read.example/o/r.git\n', encoding="utf-8")
+    monkeypatch.setenv(guard_git.SECRETS_HELD, "1")   # the server pushes after its secret check
+    found = effects("git push origin HEAD", ctx=replace(POSIX, remotes=guard_grant.remote_hosts(tmp_path)))
+    assert any("secrets" in e for e in found if e.startswith("top(")), found
+    # Where the guard cannot check, it fails closed for such a session only: no grant, or the hook failing.
+    monkeypatch.setenv("WIKI_AGENT_MANAGED", "1")
+    payload = {"tool_name": "Bash", "tool_input": {"command": "git push origin HEAD"}, "cwd": str(tmp_path)}
+    monkeypatch.setattr(guard_grant, "grant", lambda *a: None)
+    assert guard.verdict(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    monkeypatch.setattr(guard, "checked", lambda *a: 1 / 0)   # the check itself failing, as both hooks call it
+    assert guard.verdict(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    monkeypatch.delenv(guard_git.SECRETS_HELD)
+    with pytest.raises(ZeroDivisionError):
+        guard.verdict(payload)
+    # Each installed hook process, and the guard's own, denies on its own failure in such a session.
+    for hook in ("guard.py", "claude_pretool.py", "codex_pretool.py"):
+        done = subprocess.run([sys.executable, str(Path(guard.__file__).with_name(hook))], input="not json",
+                              capture_output=True, text=True, encoding="utf-8",
+                              env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
+        assert json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny", hook
+    # The user-level dispatcher in front of both: a PreToolUse check it cannot reach denies too.
+    unattached = json.dumps({"cwd": str(tmp_path), "tool_name": "Bash", "tool_input": {"command": "git status"}})
+    for marked, wanted in ((True, "deny"), (False, None)):
+        env = {k: v for k, v in os.environ.items() if k != guard_git.SECRETS_HELD}
+        done = subprocess.run([sys.executable, str(Path(guard.__file__).with_name("hook.py")), "claude",
+                               "claude_pretool.py"], input=unattached, capture_output=True, text=True,
+                              encoding="utf-8", env={**env, **({guard_git.SECRETS_HELD: "1"} if marked else {})},
+                              timeout=60)
+        got = json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"] if done.stdout.strip() else None
+        assert done.returncode == 0 and got == wanted, done.stderr
+    # A wrapper that fails once the dispatcher has handed `sys.argv` to it still names the wrapper it ran.
+    import hook
+
+    real_main = hook.main
+    monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
+    monkeypatch.setattr(hook, "main", lambda argv: (sys.argv.__setitem__(slice(None), ["child"]), 1 / 0))
+    for wrapper in ("claude_pretool.py", "codex_pretool.py"):
+        assert hook.run(["claude", wrapper]) == 0
+        assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny", wrapper
+    # A legacy entry that seems to cover the wrapper never skips it in a credential session: it may not cover this call.
+    ran = []
+    monkeypatch.setattr(hook, "project_for", lambda cwd: (tmp_path, tmp_path))
+    monkeypatch.setattr(hook, "legacy", lambda *a: True)
+    monkeypatch.setattr(hook.runpy, "run_path", lambda *a, **k: ran.append(sys.argv[1:]))
+    for marked in (True, False):
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"{}"), encoding="utf-8"))
+        if not marked:
+            monkeypatch.delenv(guard_git.SECRETS_HELD)
+        assert real_main(["claude", "claude_pretool.py"]) == 0
+        monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
+    assert len(ran) == 1 and "--without" not in ran[0]   # run whole when marked, skipped as legacy otherwise
+    # As the host's process, a wrapper in a credential session is timed: the deadline's answer is the deny.
+    armed, fallbacks = [], []
+    monkeypatch.setattr(hook, "legacy", lambda *a: False)
+    monkeypatch.setattr(hook.hook_deadline, "arm", lambda seconds, fallback: armed.append((seconds, fallback)))
+    monkeypatch.setattr(hook.runpy, "run_path", lambda *a, **k: fallbacks.append(hook.hook_deadline.best))
+    for marked in (True, False):
+        monkeypatch.setattr(sys, "argv", ["hook.py"])   # `main` hands `sys.argv` to the wrapper each time
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"{}"), encoding="utf-8"))
+        if not marked:
+            monkeypatch.delenv(guard_git.SECRETS_HELD)
+        assert real_main(["codex", "codex_pretool.py"]) == 0
+    # Armed with the deny before stdin or the project is read; the same deny stands while the wrapper runs.
+    assert [s for s, _ in armed] == [hook.hook_deadline.PRETOOL["codex_pretool.py"]] * 2
+    assert armed[0][1] == fallbacks[0] and fallbacks[0]["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert armed[1][1] is None and fallbacks[1] is None
+    # One answer: the wrapper's, through the deadline's writer, and the deadline's expiry adds nothing after it.
+    deadline = hook.hook_deadline
+    monkeypatch.setattr(deadline, "_armed", True)
+    monkeypatch.setattr(deadline, "_sent", False)
+    monkeypatch.setattr(deadline, "best", fallbacks[0])
+    monkeypatch.setattr(deadline.os, "_exit", lambda code: None)
+    capsys.readouterr()
+    deadline.send({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}})
+    deadline._expire()
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "allow"
+    monkeypatch.setattr(deadline, "_armed", False)   # unarmed again: every later answer here is written
+    monkeypatch.setattr(deadline, "_sent", False)
+    # Run directly (a per-project install), the wrapper's first import arms the deny itself.
+    probe = "import sys; sys.argv = ['claude_pretool.py']; import hook_deadline as d; print(d._armed, d.best is not None)"
+    done = subprocess.run([sys.executable, "-c", probe], cwd=Path(guard.__file__).parent, capture_output=True,
+                          text=True, encoding="utf-8", env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
+    assert done.stdout.split() == ["True", "True"], done.stderr
+    # Through the dispatcher, its first import arms it: armed when the dispatcher first resolves a path, and before
+    # it loads anything that reads the disk.
+    probe = ("import sys, pathlib; sys.argv = ['hook.py', 'codex', 'codex_pretool.py']; seen = []; "
+             "real = pathlib.Path.resolve\n"
+             "def resolve(self, *a, **k):\n"
+             "    d = sys.modules.get('hook_deadline'); seen.append(bool(d and d._armed and d.best)); "
+             "return real(self, *a, **k)\n"
+             "pathlib.Path.resolve = resolve; import hook; print(seen[0], 'common.paths' in sys.modules)")
+    done = subprocess.run([sys.executable, "-c", probe], cwd=Path(guard.__file__).parent, capture_output=True,
+                          text=True, encoding="utf-8", env={**os.environ, guard_git.SECRETS_HELD: "1"}, timeout=60)
+    assert done.stdout.split() == ["True", "False"], done.stderr
+    import secrets_held
+
+    captured = sys.stdout
+
+    class Broken(io.StringIO):
+        def write(self, text):
+            super().write(text[:5])
+            raise OSError("pipe")
+
+        def reconfigure(self, **kwargs):
+            pass
+
+    class Whole(io.StringIO):
+        def reconfigure(self, **kwargs):
+            pass
+
+    # A write that fails partway leaves the stream as it broke: the failure's deny adds no second answer to it.
+    monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
+    monkeypatch.setattr(deadline, "_armed", True)
+    monkeypatch.setattr(sys, "stdout", broken := Broken())
+    with pytest.raises(OSError):
+        deadline.send({"hookSpecificOutput": {"permissionDecision": "allow"}})
+    secrets_held.closed_out(OSError("pipe"))
+    assert broken.getvalue() == '{"hoo'
+    # An answer that cannot be encoded writes nothing, and the deny goes out whole instead.
+    monkeypatch.setattr(deadline, "_sent", False)
+    monkeypatch.setattr(sys, "stdout", whole := Whole())
+    with pytest.raises(UnicodeEncodeError):
+        deadline.send({"x": "\ud800"})
+    secrets_held.closed_out(UnicodeEncodeError("utf-8", "", 0, 1, "surrogate"))
+    assert json.loads(whole.getvalue())["hookSpecificOutput"]["permissionDecision"] == "deny"
+    monkeypatch.setattr(sys, "stdout", captured)
+    monkeypatch.setattr(deadline, "_armed", False)
+    monkeypatch.setattr(deadline, "_sent", False)
+    monkeypatch.setenv(guard_git.SECRETS_HELD, "1")
+    monkeypatch.setattr(hook, "HERE", tmp_path)   # a wrapper that is not there at all
+    assert real_main(["claude", "claude_pretool.py"]) == 0
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    # A check the Claude wrapper could not load or run denies too, from a module that loads with nothing else.
+    import claude_pretool
+
+    monkeypatch.setattr(claude_pretool, "check", lambda name, payload: (_ for _ in ()).throw(ImportError(name)))
+    assert claude_pretool.verdict(payload)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 @pytest.mark.parametrize("command", ["git log --show-signature", 'git log --format="%G?"', "git show --pretty=%GG",
                                      "git log --format tformat:%GK", "git log --pretty=custom-alias"])
 def test_a_log_option_that_runs_a_verifier_is_not_in_the_row(command):

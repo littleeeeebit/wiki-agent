@@ -16,7 +16,9 @@ does its job (a per-project install), and whatever a checkout's own old
 install still runs (`hook.legacy`).
 """
 
-# First, so the wait on the other imports and on stdin is already being watched.
+# First, so the wait on the other imports and on stdin is already being watched, and a credential session's
+# deny goes out before the host's limit whatever stalls (`hook_deadline.PRETOOL`).
+import hook_deadline
 import hook_diagnostics  # noqa: F401
 import json
 from pathlib import Path
@@ -53,8 +55,9 @@ def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
             continue
         try:
             answer = check(name, payload)
-        except Exception:  # noqa: BLE001 -- each check passed on its own failure, `craft/hooks-fail-open`
-            answer = None
+        except Exception as error:  # noqa: BLE001 -- each check passed on its own failure, `craft/hooks-fail-open`
+            # except in a session carrying a oneshot's secrets, where a check that did not run denies
+            answer = __import__("secrets_held").held_closed(f"`{name}` 검사가 실패했다 ({type(error).__name__})")
         if answer:
             answers.append(answer)
     denied = [a for a in answers if (a.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"]
@@ -83,6 +86,7 @@ if __name__ == "__main__":
         payload = json.load(sys.stdin)
         answer = verdict(payload, without) if isinstance(payload, dict) else None
         if answer:
-            json.dump(answer, sys.stdout, ensure_ascii=False)
+            hook_deadline.send(answer)   # once: the deadline's answer never follows it, nor it the deadline's
     except Exception as error:
         print(type(error).__name__, file=sys.stderr)
+        __import__("secrets_held").closed_out(error)   # a session carrying a oneshot's secrets runs nothing unchecked

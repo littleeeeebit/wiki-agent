@@ -33,7 +33,7 @@ from pydantic import BaseModel
 
 import verify
 import debt
-from common import errorlog, indexes, process, python_environment, shell, swap, worktree_home
+from common import errorlog, indexes, masked, process, python_environment, shell, swap, worktree_home
 from common.paths import RAW
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
@@ -1586,6 +1586,7 @@ def reviewed(spec: dict) -> None:
 
 
 def failed(run, spec: dict, reason: str) -> None:
+    reason = masked(reason, getattr(getattr(run, "chat", None), "hide", None))   # a push's own words can quote one
     errorlog.record("task-failure", reason, repo=spec["repo"], spec=spec["id"], turn=getattr(run, "turn", None))
     note(run, reason)
     update(spec["repo"], spec["id"], fault=reason)
@@ -1666,9 +1667,11 @@ def check(path: Path, run, final: str):
 
     try:
         return _check(path, run, final)
-    except Exception as exc:
-        errorlog.record("task-check", exc, turn=getattr(run, "turn", None), path=str(path))
-        note(run, f"명세 확인이 깨졌다 — {type(exc).__name__}: {exc}")
+    except Exception as exc:   # a oneshot's secrets never reach the log or the turn: every hand-over ends here
+        hide = getattr(getattr(run, "chat", None), "hide", None)
+        errorlog.record("task-check", masked(f"{type(exc).__name__}: {exc}", hide) if hide else exc,
+                        turn=getattr(run, "turn", None), path=str(path))
+        note(run, f"명세 확인이 깨졌다 — {masked(f'{type(exc).__name__}: {exc}', hide)}")
         return None
 
 
@@ -1680,10 +1683,14 @@ def _check(path: Path, run, final: str):
     if spec.get("planning") and spec["planning"].get("phase") != "handoff" and spec["state"] == "작업 중":
         # A plan goes up through `planning` only; a done report here publishes nothing.
         return None
-    from . import oneshot_build, refactor_run   # they import this module
-    if handoff.found(blocks(final)[1]):   # a stop condition: the spec's author decides, not the implementer
+    from . import oneshot_build, oneshot_needs, refactor_run   # they import this module
+    owns, found, hide = oneshot_build.owns(spec), handoff.found(blocks(final)[1]), getattr(run.chat, "hide", None)
+    # Scanned before any block sends or saves: carried secrets, published or not, or an unfinished oneshot's holds.
+    if spec.get("oneshot") and (hide or owns) and (found or not owns) and (why := oneshot_needs.leaked(path, spec, hide, final)):
+        return oneshot_build.checked(path, run, spec, final) if owns else failed(run, spec, why)
+    if found:   # a stop condition: the spec's author decides, not the implementer
         return handoff.escalated(repo, path, run, spec, final)
-    if oneshot_build.owns(spec):   # its own checks, and nothing general: no revision, no gate, no pull request
+    if owns:   # its own checks, and nothing general: no revision, no gate, no pull request
         return oneshot_build.checked(path, run, spec, final)
     changes = [b for b in blocks(final)[1] if b["name"] == "spec-update"]
     if changes:

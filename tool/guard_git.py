@@ -27,6 +27,8 @@ import re
 from guard import Word, moved_to, paths, top
 from guard_models import gate, getopt, row, writes
 
+from secrets_held import SECRETS_HELD, closed_out, held_closed  # noqa: F401 -- read here by older callers
+
 # git's own options before the verb that take no value. `-C` (a directory) and `-c` (a listed key) are read
 # by `m_git`; `--git-dir`, `--work-tree`, `--exec-path` and `--config-env` change which repository,
 # configuration or program runs: they are not here, so they are `top`.
@@ -346,6 +348,9 @@ def m_git(name, args, ctx):
         found = paths("delete" if verb == "worktree remove" else "write", pos[0], ctx)
         out |= {("worktree", e[1]) if e[0] == "delete" and linked(e[1], ctx) else e for e in found}
     elif kind == "push":
+        if os.environ.get(SECRETS_HELD):
+            return top(f"git {verb} from a session carrying a oneshot's secrets — commit only; the server pushes "
+                       "after its secret check"), None
         out |= reached(verb, pos, ctx)
         if NO_REDIRECTS not in settings(args, i) or "--no-recurse-submodules" not in rest_flags:
             out |= top(f"git {verb} without `-c {NO_REDIRECTS}` and `--no-recurse-submodules`")

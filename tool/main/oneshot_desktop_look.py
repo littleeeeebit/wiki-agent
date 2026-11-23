@@ -16,7 +16,9 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
-from . import oneshot_desktop, oneshot_spec
+from common import masked
+
+from . import oneshot_desktop, oneshot_look, oneshot_needs, oneshot_spec
 from .oneshot_device import MAX_TAPS, STATES
 
 VIEW = "window"
@@ -135,11 +137,12 @@ class Launches:
     """The frozen build's starts inside one look: each a job of its own, ended before the next starts."""
 
     def __init__(self, look, build: dict, window: tuple[int, int], stopped, shoot: bool = True, ready=None,
-                 gate=None):
+                 gate=None, given: dict | None = None):
         self.look, self.build, self.window, self.stopped, self.n = look, build, window, stopped, 0
         self.shoot = shoot   # false on the owner's desktop: no PrintWindow there
         self.ready = ready   # called with each start's process made but not yet run: raising never runs it
         self.gate = gate   # held over each start's last stop check and its resume
+        self.given = given or {}   # each secret by its `env`, `None` for one not given (`oneshot_needs.given_in`)
         self.began = time.monotonic()
         # The start and the driver end at once on the owner's stop, and once the whole look is past its deadline:
         # each operation has its own, and this bounds their sum.
@@ -171,8 +174,11 @@ class Launches:
         launch, folder = self.build["launch"], Path(self.build["folder"])
         self.data = data = str(self.look.reserve(f"data{self.n}"))   # this start's `{data}`, for `then` to read
         argv = [str(folder / launch["program"]), *(a.replace("{data}", data) for a in launch["args"])]
+        # The owner's secrets over any spelling of their names the build's launch settings carry.
+        secret = {k.upper() for k in self.given}
         extra = {**{k: v.replace("{data}", data) for k, v in launch["env"].items()
-                    if k.upper() not in oneshot_desktop.LOOK_ENV}, "ONESHOT_SCREEN": sid, "ONESHOT_STATE": state}
+                    if k.upper() not in oneshot_desktop.LOOK_ENV and k.upper() not in secret},
+                 **self.given, "ONESHOT_SCREEN": sid, "ONESHOT_STATE": state}
         # A step's `baseline`, a report file under `{data}`, is read by the driver just before that step acts.
         steps = [{**s, "baseline": str(Path(data) / s["baseline"])} if s.get("baseline") else s for s in steps]
         report, failed = {}, None
@@ -209,10 +215,25 @@ class Launches:
         return report
 
 
-def look(spec: dict, build: dict, folder: Path, stopped=never) -> list[dict]:
+def look(spec: dict, build: dict, folder: Path, stopped=never, *, env: dict | None = None,
+         hide: dict[str, str] | None = None) -> list[dict]:
     """Every screen in every state of the frozen `build` shot into `folder` as `<screen>-window-<state>.png`, with
-    the mechanical, placement and coverage findings. The look is cleaned and proven on every exit."""
+    the mechanical, placement and coverage findings. The look is cleaned and proven on every exit. Each start gets
+    the owner's secrets `env` holds (a `gate_env` result); a screen whose read text holds a value of `hide` is a
+    high finding and is never kept, and neither a finding nor a refusal carries one (`common.masked`)."""
 
+    try:
+        # The names the look and its desktop set themselves keep their values; every other secret is the owner's.
+        own = oneshot_desktop.LOOK_ENV | oneshot_desktop.OWNED_ENV
+        found = _look(spec, build, folder, stopped, oneshot_needs.given_in(spec, env, own), hide or {})
+    except (ValueError, RuntimeError) as exc:
+        if hide and (said := masked(str(exc), hide)) != str(exc):
+            raise type(exc)(said) from None
+        raise
+    return [{**f, "what": masked(f["what"], hide)} for f in found] if hide else found
+
+
+def _look(spec: dict, build: dict, folder: Path, stopped, given: dict, hide: dict[str, str]) -> list[dict]:
     import desktop_session   # Windows only, as a PC app is
 
     looks = oneshot_spec.store(spec["repo"]).folder / "looks"
@@ -221,13 +242,35 @@ def look(spec: dict, build: dict, folder: Path, stopped=never) -> list[dict]:
     for old in folder.glob("*.png"):
         old.unlink()
     try:
-        with desktop_session.look(looks, f"look-{build['identity'][:12]}-{uuid.uuid4().hex[:8]}") as session:
-            runs = Launches(session, build, size(spec["oneshot"]["profile"]), stopped)
-            found = inspect(runs, spec, folder, session.folder / "evidence") + checks(runs, spec, build)
+        # A look whose app carried secrets keeps only the checked shots it copied: its raw evidence goes with it.
+        with desktop_session.look(looks, f"look-{build['identity'][:12]}-{uuid.uuid4().hex[:8]}",
+                                  disposable=bool(hide)) as session:
+            runs = Launches(session, build, size(spec["oneshot"]["profile"]), stopped, given=given)
+            found = inspect(runs, spec, folder, session.folder / "evidence", hide) + checks(runs, spec, build)
     except desktop_session.Refused as exc:
         raise RuntimeError(f"PC 앱 화면 검사의 데스크톱을 정리하지 못했다 — {exc}") from exc
     runs.due()   # its cleanup proven: a look that ended past its deadline is no pass either
     return found
+
+
+def texts(state: dict) -> list[str]:
+    """Every string a state's read carries, its windows' and its elements' alike: what the shot of it can show."""
+
+    out: list[str] = []
+
+    def walk(x) -> None:
+        if isinstance(x, str):
+            out.append(x)
+        elif isinstance(x, dict):
+            for k, v in x.items():
+                if k != "shots":   # the driver's own file names
+                    walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk({k: state.get(k) for k in ("windows", "nodes")})
+    return out
 
 
 def checks(runs: Launches, spec: dict, build: dict) -> list[dict]:
@@ -320,7 +363,7 @@ def refuted(report: dict, state: dict, want: dict) -> bool:
                                    for k, v in desktop_driver.wanted(want).items())
 
 
-def inspect(runs: Launches, spec: dict, folder: Path, evidence: Path) -> list[dict]:
+def inspect(runs: Launches, spec: dict, folder: Path, evidence: Path, hide: dict[str, str] | None = None) -> list[dict]:
     """The shots and findings of every screen and state, then the owner's map on the first screen."""
 
     import desktop_driver
@@ -338,6 +381,10 @@ def inspect(runs: Launches, spec: dict, folder: Path, evidence: Path) -> list[di
             if hwnd is not None and not (start and drawn(start, hwnd)):
                 hwnd = None   # the screen's window is evidence only once the state shows it, shot and read
             file = next(sh["file"] for sh in start["shots"] if sh["hwnd"] == hwnd) if hwnd is not None else None
+            # The critic sends its pictures to a model: a start whose read text holds a secret is never kept.
+            if file and hide and (leaked := oneshot_needs.carried(texts(start), [], hide)):
+                found.append(oneshot_look.shown_secret(leaked))
+                file = None
             if file:
                 shutil.copyfile(evidence / f"driver{runs.n}" / file, folder / f"{s['id']}-{VIEW}-{state}.png")
             elif why or not found:

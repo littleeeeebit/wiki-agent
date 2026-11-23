@@ -995,6 +995,8 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     try:
         chosen = spec.get("cell") or {}
         run = work.Run(work.session(path, chosen.get("model", ""), chosen.get("effort", ""), chosen.get("fast", False)))
+        if getattr(run.chat, "hide", None):   # its push is refused (`secrets_held`); the server pushes
+            text += "\n\nThis session carries the owner's secrets: commit only, never push. The server pushes the branch after its secret check."
         # Seen by `stop` before its thread starts. `stop` sets the halt, then
         # reads `run`: either it saw this run and set the run's halt, which
         # the turn reads before it sends anything, or this sees the halt and

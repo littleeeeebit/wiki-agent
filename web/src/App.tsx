@@ -825,7 +825,7 @@ export default function App() {
                 progressOn={full}
                 onChoice={setChoice}
                 onSend={order}
-                onAnswer={(turn, id, allow, scope, answers) => work.answer(path, turn, id, allow, scope, answers)}
+                onAnswer={(turn, id, allow, scope, answers, picks) => work.answer(path, turn, id, allow, scope, answers, picks)}
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
                 onSteer={(turn, text) => void work.steer(path, turn, text)}
                 queued={work.queued[path]}

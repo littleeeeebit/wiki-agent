@@ -204,7 +204,7 @@ def test_a_look_whose_clean_teardown_ends_past_its_deadline_goes_back_to_the_bui
     import desktop_session
 
     @contextmanager
-    def slow(root, name):
+    def slow(root, name, disposable=False):
         yield type("Look", (), {"folder": tmp_path})()
         monkeypatch.setattr(pc_look, "LOOK_SECONDS", 0)   # the clock crosses the deadline while the desktop ends
 
@@ -222,7 +222,7 @@ def test_a_look_whose_cleanup_is_not_proven_stops_the_stage(tmp_path):
     import desktop_session
 
     @contextmanager
-    def held(root, name):
+    def held(root, name, disposable=False):
         yield type("Look", (), {"folder": tmp_path})()
         raise desktop_session.Refused("the desktop look is held: pid 4 is still running")
 
@@ -256,12 +256,12 @@ class Desk:
         pass
 
 
-def launches(tmp_path, desk, env=None, altered=""):
+def launches(tmp_path, desk, env=None, altered="", given=None):
     import desktop_driver
 
     build = {"folder": str(tmp_path), "launch": {"program": "app.exe", "args": ["{data}"], "cwd": ".",
                                                  "env": env or {}}}
-    runs = pc_look.Launches(desk, build, (1280, 800), pc_look.never)
+    runs = pc_look.Launches(desk, build, (1280, 800), pc_look.never, given=given)
     return runs, patch.object(desktop_driver, "drive", lambda *a, **k: shown("S1", "full", [])), \
         patch.object(pc_look.oneshot_desktop, "altered", lambda b: altered)
 
@@ -347,6 +347,67 @@ def test_the_look_alone_names_the_screen_and_state_and_a_changed_copy_or_a_refus
     runs, driving, kept = launches(tmp_path, Desk(tmp_path, refuse=desktop_session.Refused("CreateProcessW: 193")))
     with driving, kept, pytest.raises(ValueError, match="띄우지 못했다 — CreateProcessW: 193"):
         runs.drive("S1", "full", [])
+
+
+VALUE = "tok-7Hq2kZ"
+NEEDS = {"repo": "budget", "oneshot": {"design": {"outside": [
+    {"id": "X1", "needs": [{"id": "N1", "kind": "secret", "env": "API_KEY", "what": "키"},
+                           {"id": "N2", "kind": "secret", "env": "GONE_KEY", "what": "다른 키"}]}]}}}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a PC app is looked at on Windows only")
+def test_each_start_gets_the_owners_secrets_over_the_builds_own_spelling_of_them(tmp_path):
+    desk = Desk(tmp_path)
+    given = pc_look.oneshot_needs.given_in(NEEDS, {"api_key": VALUE, "PATH": "x"})
+    assert given == {"API_KEY": VALUE, "GONE_KEY": None}   # a secret not given is dropped, never inherited
+    runs, driving, kept = launches(tmp_path, desk, env={"api_Key": "placeholder", "MODE": "test"}, given=given)
+    with driving, kept:
+        runs.drive("S1", "full", [])
+    extra = desk.started[0]
+    assert {k: v for k, v in extra.items() if k.upper() in ("API_KEY", "GONE_KEY", "MODE")} == {
+        "API_KEY": VALUE, "GONE_KEY": None, "MODE": "test"}
+
+
+def test_a_start_whose_read_text_holds_a_secret_is_a_finding_and_its_shot_never_kept(tmp_path):
+    (tmp_path / "shots").mkdir()
+
+    def leaking(sid, state, steps):
+        got = shown(sid, state, steps)
+        if sid == "S2" and not steps:
+            got["states"][0]["nodes"].append(node("note", window=DIALOG, name=f"Key {VALUE[:5]}\n{VALUE[5:].upper()}"))
+        return got
+
+    runs = Runs(tmp_path / "evidence", leaking)
+    spec = {"oneshot": {"front": {"screens": SCREENS}, "frequency": FREQUENCY}}
+    found = pc_look.inspect(runs, spec, tmp_path / "shots", tmp_path / "evidence", {VALUE: "[N1]"})
+    assert {(f["screen"], f["state"]) for f in found if "비밀 값 [N1]" in f["what"]} == {
+        ("S2", state) for state in ("empty", "full", "loading", "error")}
+    assert sorted(p.name for p in (tmp_path / "shots").iterdir()) == sorted(
+        f"S1-window-{state}.png" for state in ("empty", "full", "loading", "error"))
+
+
+def test_the_look_masks_its_findings_and_refusals_and_hands_each_start_the_given_secrets(tmp_path):
+    got = []
+    with patch.object(pc_look, "_look", lambda *a: got.append(a) or [{"what": f"버튼 {VALUE} 가 작다"}]):
+        found = pc_look.look(NEEDS, {}, tmp_path, env={"API_KEY": VALUE}, hide={VALUE: "[N1]"})
+    assert found == [{"what": "버튼 [N1] 가 작다"}]
+    assert got[0][4] == {"API_KEY": VALUE, "GONE_KEY": None} and got[0][5] == {VALUE: "[N1]"}
+    for kind in (ValueError, RuntimeError):
+        def failing(*a, kind=kind):
+            raise kind(f"PC 앱을 띄우지 못했다 — {VALUE}")
+        with patch.object(pc_look, "_look", failing), pytest.raises(kind) as caught:
+            pc_look.look(NEEDS, {}, tmp_path, env={"API_KEY": VALUE}, hide={VALUE: "[N1]"})
+        assert str(caught.value) == "PC 앱을 띄우지 못했다 — [N1]"
+
+
+def test_an_older_designs_start_name_is_the_owners_unless_the_pc_look_sets_it_itself(tmp_path):
+    names = [{"id": f"N{i}", "kind": "secret", "env": name, "what": "키"} for i, name in
+             enumerate(("PORT", "TEMP", "ONESHOT_STATE", "API_KEY"), 1)]
+    spec = {"repo": "budget", "oneshot": {"design": {"outside": [{"id": "X1", "needs": names}]}}}
+    got = []
+    with patch.object(pc_look, "_look", lambda *a: got.append(a) or []):
+        pc_look.look(spec, {}, tmp_path, env={"PORT": "p" * 12, "TEMP": "t" * 12, "ONESHOT_STATE": "s" * 12})
+    assert got[0][4] == {"PORT": "p" * 12, "API_KEY": None}   # the web look's name is the owner's here
 
 
 def copy(tmp_path) -> tuple[Path, dict]:
