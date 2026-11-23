@@ -570,14 +570,14 @@ def to_build(repo: str, o: dict, reviews: list[dict], found: dict, **fields):
 
 
 def replacing(repo: str, o: dict, found: dict) -> None:
-    """The areas whose mechanism the build turn for `found`, the last of `o`'s reviews, is told to replace,
-    whichever path sends that turn: a refusal under the cap, or `[재개]` after the cap stopped it. They count as
-    replaced only once a build passes its checks (`oneshot_answers.passed`): a turn that never ran is told again."""
+    """The areas the build turn for `found`, the last of `o`'s reviews, is told to replace, on either path (under
+    the cap, or `[재개]` after it): replaced once a build passes; until then `sent_refusal` is all it may answer."""
 
     serious = [f for f in blocking(found) if not ruled_out(o, f)]
     new = stuck_areas((o.get("reviews") or [])[:-1], serious, o.get("replaced") or [])
-    if new != (o.get("replacing") or []):
-        oneshot_spec.saved(repo, oneshot={"replacing": new or None})
+    sent = {"head": found["head"], "areas": sorted({area_of(f) for f in serious})}
+    if new != (o.get("replacing") or []) or sent != o.get("sent_refusal"):
+        oneshot_spec.saved(repo, oneshot={"replacing": new or None, "sent_refusal": sent})
 
 
 def later_of(o: dict, found: dict) -> list[dict]:

@@ -636,16 +636,21 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
         git(tree, "add", name)
     git(tree, "commit", "-m", "pins")
     refused = git(tree, "rev-parse", "HEAD")
-    # No `fix`: the refusal as an earlier version recorded it. The turn's text carried it, so its answers count.
-    oneshot_spec.saved("budget", oneshot={"built_head": refused, "reviews": [{"verdict": "refuse", "head": refused,
-                                                                              "findings": [P1]}]})
+    settled = {**P1, "area": "refund wording", "location": "budget_app.py:1"}   # the owner ruled it for the builder
+    # No `fix`: the refusal as an earlier version recorded it. A turn that sends it may answer what it sent.
+    oneshot_spec.saved("budget", oneshot={"built_head": refused, "rulings": {"refund wording": {"keep": "build"}},
+                                          "reviews": [{"verdict": "refuse", "head": refused, "findings": [P1, settled]}]})
+    s = specs.load("budget", oneshot.BRANCH)
+    with pytest.raises(ValueError, match="하나만"):   # no turn sent it yet, as for a plan-repair turn
+        oneshot_answers.answered(tree, s, "```oneshot-answers\n[]\n```\n")
+    oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is sent
     (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\ndef test_refund():\n    pass\n", encoding="utf-8")
     git(tree, "commit", "-am", "a new pin")
     (tree / "test_other.py").write_text("def test_late():\n    pass\n", encoding="utf-8")   # never committed
 
-    def answer(test):
+    def answer(test, area="amount validation"):
         return "```oneshot-answers\n" + json.dumps([{
-            "area": "amount validation", "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
+            "area": area, "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
             "test": test}]) + "\n```\n"
     s = specs.load("budget", oneshot.BRANCH)
     with pytest.raises(ValueError, match="새로 더한"):
@@ -662,10 +667,10 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # a folder at that path is no test file
         oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
     assert oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
-    # A turn the failed measurement sent back carried no refusal: it answers none.
-    s["oneshot"].update(fix="measure", measures=[{**approved(refused), "status": "failed", "owner": None}])
-    with pytest.raises(ValueError, match="하나만"):
-        oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))
+    with pytest.raises(ValueError, match="이번 거절의 영역이 아니다"):   # the settled area was never sent
+        oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund", "refund wording"))
+    # A build that passes ends what the refusal sent: a later turn for something else answers none of it.
+    assert oneshot_answers.passed(tree, s["oneshot"], [])["sent_refusal"] is None
 
 
 def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_did_not_answer(reviewed):

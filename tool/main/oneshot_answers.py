@@ -45,22 +45,24 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
     change, the requirement a change would break, and the test committed since that refusal which pins the
     behaviour it defends. `ValueError` says what is wrong; a turn sent back by nothing answers nothing."""
 
-    from . import oneshot_measure, oneshot_review   # they import `oneshot_build`, which imports this module
+    from . import oneshot_review   # it imports `oneshot_build`, which imports this module
 
     o = spec["oneshot"]
     found = ANSWER.findall(final)
     if not found:
         return []
-    # The refusal `oneshot_review.build_turn` sent, read off the same records its text is: a refusal recorded
-    # before `fix` existed is answered like any other, and a turn the failed measurement sent answers none.
-    last = None if o.get("fix") == "measure" and oneshot_measure.fixing(spec) else oneshot_review.standing(o)
+    # Only the refusal a turn's text sent since the last passed build (`oneshot_review.replacing` records it), and
+    # only the areas it sent: never one the owner ruled for the builder, nor one a turn for something else carried.
+    sent = o.get("sent_refusal") or {}
+    last = next((r for r in reversed(o.get("reviews") or [])
+                 if r["verdict"] == "refuse" and r["head"] == sent.get("head")), None)
     if len(found) > 1 or not last:
         raise ValueError("`oneshot-answers` 는 리뷰가 거절해 돌아온 빌드 턴에 하나만 적는다")
     try:
         value = json.loads(found[0])
     except ValueError as exc:
         raise ValueError(f"`oneshot-answers` 가 JSON 이 아니다 — {exc}") from None
-    areas = {oneshot_review.area_of(f) for f in oneshot_review.blocking(last)}
+    areas = set(sent["areas"])
     anchors, out, changed = oneshot_review.anchors(spec), [], None
     for n, a in enumerate(value if isinstance(value, list) else [None]):
         where = f"`oneshot-answers`[{n}]"
@@ -180,5 +182,6 @@ def passed(path: Path, o: dict, answers: list[dict]) -> dict:
     done = [area for area in asked if changed and area not in defended and any(
         oneshot_review.touched(f["location"], changed) for f in oneshot_review.blocking(last)
         if oneshot_review.area_of(f) == area)]
-    return {"answers": [*(o.get("answers") or []), *answers], "replacing": None, "run_cases": o.get("run_cases"),
+    return {"answers": [*(o.get("answers") or []), *answers], "replacing": None, "sent_refusal": None,
+            "run_cases": o.get("run_cases"),
             "replaced": sorted({*(o.get("replaced") or []), *done})}

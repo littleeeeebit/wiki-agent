@@ -15,7 +15,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_build, oneshot_sheet as sheet, oneshot_spec, runtime as runtime_mod, specs, work
+from main import oneshot, oneshot_build, oneshot_review, oneshot_sheet as sheet, oneshot_spec, runtime as runtime_mod, \
+    specs, work
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import DESIGN, GLOSSARY, REQS, fenced, world  # noqa: F401 — `world` is a fixture
 
@@ -418,6 +419,7 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
                "area": "amount validation", "breaks": ["R1"]}
     oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "attempts": 0, "built_head": refused,
                                           "reviews": [{"verdict": "refuse", "head": refused, "findings": [finding]}]})
+    oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is sent
     answer = {"area": "Amount validation", "location": "app.py:2", "evidence": "음수는 환불이다", "breaks": ["R1"],
               "test": "test_refund.py::test_a_refund_is_negative"}
     said = "답했다.\n" + report() + fenced("oneshot-answers", [answer])
