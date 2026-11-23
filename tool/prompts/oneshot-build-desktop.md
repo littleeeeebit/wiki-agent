@@ -44,6 +44,9 @@ A refusal comes back with the reason, at most three times in all.
   Never print a secret's value, and never write it into a file, a commit or
   your answer. The server refuses a turn whose answer, commits since the
   design commit or uncommitted files hold one, naming only the need.
+  The screen check starts the PC app with each secret's variable set, as the
+  gate does, and the app reads it there. A screen whose text holds a secret is
+  refused, so a secret never reaches the screen.
 - Commit everything and leave nothing uncommitted, then end with the
   `done-report`. No `test-cleanup` block is needed in this stage.
 - Do not push, open a pull request, or ask the person anything: nobody answers

@@ -90,6 +90,8 @@ function Row({ n, busy, give, takeBack }: {
         {n.leaked && <span role="alert" className="text-destructive">값이 결과에 들어 있다</span>}
         {n.unsure && <span role="status" className="text-wait">검사를 끝내지 못해 확인을 기다린다</span>}
         {n.launch && <span role="status" className="text-wait">에이전트를 띄울 때 서버가 쓰는 이름이라 에이전트에게는 주지 않는다</span>}
+        {!!n.started?.length && <span role="status" className="text-wait">
+          {n.started.join(', ')} 화면 검사가 앱을 띄울 때 쓰는 이름이라 그 화면 검사의 앱에는 주지 않는다</span>}
       </div>
       <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); void send() }}>
         {n.kind !== 'account' && (

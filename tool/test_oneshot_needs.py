@@ -120,7 +120,36 @@ def test_every_design_prompt_asks_for_needs_in_the_shape_the_server_takes(prompt
     assert all(f"`{k}`" in text for k in needs.KINDS) and "for it to run for real" in text
 
 
-WEB_CALL = {"id": "X1", "target": "환율 서비스", "does": "오늘 환율을 받아 온다", "failure": "어제 환율로 적고 그렇다고 보여 준다",
+def test_a_name_a_look_sets_when_it_starts_the_app_is_never_a_secrets():
+    from main import oneshot_desktop
+
+    started = {"PORT", "APP_DATA_DIR", "PYTHONUNBUFFERED", *oneshot_desktop.LOOK_ENV, *oneshot_desktop.OWNED_ENV}
+    for name in started:   # the look's value would reach the app in its place
+        assert needs.STARTED.fullmatch(name), name
+        with pytest.raises(ValueError, match="앱을 띄울 때"):
+            needs.parsed([{"id": "N1", "what": "x", "kind": "secret", "env": name}], "X1")
+    assert not needs.STARTED.fullmatch("PORTAL_KEY") and not needs.STARTED.fullmatch("TEMP_TOKEN")
+    with patch.object(needs, "secret_needs", lambda s: [("N1", {"id": "N1", "env": "ONESHOT_SCREEN"})]):
+        assert "앱을 띄울 때" in needs.launchable({"oneshot": {}})   # a design saved before the rule stays at R1
+    # One approved before runs: a launcher that sets the name keeps its own value, and the prompt and its row say
+    # so; a launcher that does not set it, and the Android file, carry the owner's.
+    old = {"id": "N1", "kind": "secret", "env": "ONESHOT_SCREEN", "what": "키"}
+    spec = {"repo": "budget", "oneshot": {"design": {"outside": [{"id": "X1", "needs": [old, {**KEY, "id": "N2"}]}]}}}
+    env = {"ONESHOT_SCREEN": "v" * 20, ENV: "w" * 20}
+    assert needs.given_in(spec, env, oneshot_desktop.LOOK_ENV) == {ENV: "w" * 20}
+    assert needs.given_in(spec, env) == {"ONESHOT_SCREEN": "v" * 20, ENV: "w" * 20}
+    # Its row and prompt name only the kinds whose look keeps its own value.
+    for kinds, said in ((["desktop", "android"], ["PC 앱"]), (["android"], []), (["webapp"], [])):
+        spec["oneshot"]["intent"] = {"kinds": kinds}
+        with patch.object(needs, "held", lambda *a: True), patch.object(needs, "kept", lambda repo: []):
+            assert [n["started"] for n in needs.shown(spec)] == [said, []], kinds
+        assert ("the desktop screen check sets `ONESHOT_SCREEN` itself" in needs.told(spec)) is bool(said), kinds
+    spec["oneshot"]["design"]["outside"][0]["needs"][0]["env"] = "PORT"
+    spec["oneshot"]["intent"] = {"kinds": ["webapp", "desktop"]}
+    assert needs.kept_from(spec, "PORT") == ["webapp"] and needs.kept_from(spec, "TEMP") == ["desktop"]
+
+
+WEB_CALL ={"id": "X1", "target": "환율 서비스", "does": "오늘 환율을 받아 온다", "failure": "어제 환율로 적고 그렇다고 보여 준다",
             "depends_on": ["R1", "P1"], "needs": [KEY]}
 
 

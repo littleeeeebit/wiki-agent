@@ -230,8 +230,50 @@ since has none, and a run with a secret takes
 those shots again before any critique.
 
 The build agent's own turns carry the secrets too (11b2a, below). The PC
-app's screen check and the Android device stages start the product without
-them; they gain them in 11b2b.
+app's screen check and the Android device stages start the product with them
+as well (11b2b), read from the same environment read the web look's mask
+comes from:
+
+- The PC app gets each secret's variable at every start, over any spelling of
+  that name its own launch settings carry. A secret the design names but the
+  store does not hold is dropped from the start's environment, so the
+  server's variable of that name never stands in for it.
+- The Android app has no environment to receive one. On the emulator and on
+  the owner's phone, the debug build gets `oneshot-secrets.json` in its own
+  storage (`Context.getFilesDir()`): a JSON object keyed by each secret's
+  variable. It is written through `run-as` with the values on standard input
+  only, never on a command line or in the APK, before the screens and the
+  instrumented tests run. It is removed when the stage ends, whichever way it
+  ends. A removal that fails fails the stage, so a phone round never passes
+  with the file left on the owner's phone. Decided with the owner on
+  2026-11-23: instrumentation arguments (`am instrument -e`) would show the
+  values on adb's command line and in the device's process list.
+- Each screen's read text gets the web look's check: every UI Automation
+  string of the PC app's start state, and every attribute of the Android
+  hierarchy read before and after its picture. A screen whose text holds a
+  secret is a high finding and its picture is never kept. Every finding and
+  refusal of these stages is masked. A PC look whose app carried secrets
+  keeps only the shots it checked and copied: the desktop session removes its
+  `evidence` folder (the driver's raw shots and reports, the app's output)
+  with its data folders, and recovery does the same. On Android each
+  hierarchy dump is removed from the device as soon as it is read. A phone
+  round's record owes the dump from its first save, before any read can leave
+  one, so a round cut by a failed removal or by a restart keeps it owed, the
+  kept app's included. The card shows it until the phone is listed again and
+  a removal succeeds.
+- A secret cannot take a name a look sets when it starts the app (`PORT`,
+  `APP_DATA_DIR`, `ONESHOT_SCREEN`, `APPDATA`, `TEMP` and the rest of
+  `oneshot_needs.STARTED`): the look's value would reach the app in its
+  place. The design refuses it, and a design saved before the rule stays
+  at R1. One approved before keeps running, as a launch name does: a look that
+  sets the name itself keeps its own value, so the app runs there without the
+  secret, and the need's row and the build prompt say so. A look that does not
+  set it, the PC look for `PORT` or the web look for `TEMP`, gives the owner's
+  value as for any other name, and the Android file carries it.
+
+The check stops at text here too. A value drawn as pixels, or shown on
+Android only between the two reads, is not seen. The phone round's frame and
+memory measurement runs after the file is removed.
 
 In CI the variables are absent. Each test that needs one skips with the need's
 id in its reason, and the run's CI summary lists those skips as owed to the
@@ -301,8 +343,8 @@ knows the values, at commit time, rather than in the reviewer's reading.
 | 11a1 | A design's outside calls may carry `needs`; the owner gives each (secrets to Credential Manager), the sheet lists them, and R1 approval waits for all of them | Done — #416 |
 | 11a2 | Every design prompt returns `oneshot-outside` with `needs`, the single-kind web design included; the R1 screen takes each need and shows whether it is given | Done — #417 |
 | 11b1 | Tests and build prompts without fakes, told every need; every gate the server runs carries the given secrets | Done — #418 |
-| 11b2a | The build agent's own turns carry the secrets under the server's leak check | In progress |
-| 11b2b | The PC app's screen check and the Android device stages get the secrets | Not started |
+| 11b2a | The build agent's own turns carry the secrets under the server's leak check | Done — #424 |
+| 11b2b | The PC app's screen check and the Android device stages get the secrets | In progress |
 | 11b2c | The CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Not started |
 | 11c | The review refuses a fake inside a test file | Not started |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |

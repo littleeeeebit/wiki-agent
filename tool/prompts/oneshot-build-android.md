@@ -47,6 +47,12 @@ A refusal comes back with the reason, at most three times in all.
   Never print a secret's value, and never write it into a file, a commit or
   your answer. The server refuses a turn whose answer, commits since the
   design commit or uncommitted files hold one, naming only the need.
+  On the emulator and the owner's phone the app gets each secret in a file,
+  not a variable: `oneshot-secrets.json` under `Context.getFilesDir()`, a JSON
+  object by each secret's variable name, written before the app starts and
+  removed after. The debug build and its instrumented tests read a secret
+  there; never build one into the APK. A screen whose text holds a secret is
+  refused, so a secret never reaches the screen.
 - Commit everything and leave nothing uncommitted, then end with the
   `done-report`. No `test-cleanup` block is needed in this stage.
 - Do not push, open a pull request, or ask the person anything: nobody answers

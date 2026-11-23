@@ -39,6 +39,10 @@ ENV = re.compile(r"[A-Z][A-Z0-9_]*")
 # agent CLI reads as its own login: a need of that name would never reach the agent as given.
 LAUNCH = re.compile(r"WIKI_AGENT_.*|ORCA_.*|RELEASE_KEY_PASSWORD|ANTHROPIC_.*|CLAUDE_.*|DEEPSEEK_API_KEY|"
                     r"OPENAI_API_KEY|CODEX_.*")
+# What a look sets when it starts the product (`oneshot_look.served`, `oneshot_desktop.LOOK_ENV` and `OWNED_ENV`): a
+# need of that name would reach the started app as the look's value, never the owner's.
+STARTED = re.compile(r"PORT|APP_DATA_DIR|PYTHONUNBUFFERED|ONESHOT_SCREEN|ONESHOT_STATE|APPDATA|LOCALAPPDATA|TEMP|TMP")
+WEB_STARTED = frozenset({"PORT", "APP_DATA_DIR", "PYTHONUNBUFFERED"})   # what `oneshot_look.served` sets itself
 KINDS = {"secret": "비밀 값", "account": "계정", "tool": "프로그램", "file": "파일"}
 MAX_SECRET = 2560   # bytes Credential Manager holds in one credential, as UTF-16
 
@@ -63,6 +67,8 @@ def parsed(value, where: str) -> list[dict]:
             raise ValueError(f"{where} {n['id']}: 비밀 값은 `env` 에 대문자 환경 변수 이름을 적는다")
         if n["kind"] == "secret" and LAUNCH.fullmatch(env):
             raise ValueError(f"{where} {n['id']}: `{env}` 는 서버가 에이전트를 띄울 때 정하는 이름이다 — 다른 이름을 적는다")
+        if n["kind"] == "secret" and STARTED.fullmatch(env):
+            raise ValueError(f"{where} {n['id']}: `{env}` 는 화면 검사가 앱을 띄울 때 정하는 이름이다 — 다른 이름을 적는다")
         if n["kind"] != "secret" and env is not None:
             raise ValueError(f"{where} {n['id']}: `env` 는 비밀 값에만 붙는다")
         out.append({"id": n["id"], "what": " ".join(n["what"].split()), "kind": n["kind"], **({"env": env} if env else {})})
@@ -132,7 +138,8 @@ def shown(spec: dict) -> list[dict]:
     kept = o.get("given") or {}
     return [{**n, "calls": [x["id"] for x in calls], "given": held(spec["repo"], n, kept.get(nid)),
              "leaked": nid in marked(o), "unsure": nid in unsure(o) - marked(o),
-             "launch": bool(LAUNCH.fullmatch(n.get("env") or ""))}
+             "launch": bool(LAUNCH.fullmatch(n.get("env") or "")),
+             "started": [sheet.KIND_NAMES[k] for k in kept_from(spec, n.get("env") or "")]}
             for nid, (n, calls) in owed(o.get("design") or {}).items()]
 
 
@@ -211,6 +218,9 @@ def launchable(spec: dict) -> str:
     never reaches the build cell (`agent`), only the gate, and its row says so (`shown`)."""
     if bad := sorted({n["env"] for _, n in secret_needs(spec) if LAUNCH.fullmatch(n["env"])}):
         return (f"비밀 값 이름 {', '.join(f'`{b}`' for b in bad)} 은(는) 에이전트를 띄울 때 서버가 정하는 이름이다 "
+                "— 그 항목을 수정 의견으로 다른 이름으로 바꾼 뒤 승인한다")
+    if bad := sorted({n["env"] for _, n in secret_needs(spec) if STARTED.fullmatch(n["env"])}):
+        return (f"비밀 값 이름 {', '.join(f'`{b}`' for b in bad)} 은(는) 화면 검사가 앱을 띄울 때 정하는 이름이다 "
                 "— 그 항목을 수정 의견으로 다른 이름으로 바꾼 뒤 승인한다")
     return ""
 
@@ -329,6 +339,54 @@ def decoded(text: str) -> str:
     """`text`, then the same text as a reader of its JSON gets it (`common.unescaped`): what any block, fence or
     parser sends or saves is the decoded value, which a JSON escape (`\\u0041`, `\\/`) spells differently."""
     return f"{text}\n{unescaped(text)}"
+
+
+def carried(texts: list[str], values: list[str], hide: dict) -> list[str]:
+    """The labels of `hide` whose value a screen's `texts` (its drawn and carried text, each one stream) or `values`
+    (its fields' contents) hold: as spelled, or in any casing a style can draw (`folded`, whose fold of a character
+    can depend on the one before); within one text, a value broken across lines reads as one."""
+
+    def compact(text: str) -> str:
+        return "".join(text.split())
+
+    def flats(form, text: str) -> set[str]:   # whitespace gone before and after the spelling, since a fold can
+        return {form(compact(text)), compact(form(text))}   # depend on the character a line break stood next to
+
+    spellings = [(form, [form(x) for x in texts + values], [f for t in texts for f in flats(form, t)])
+                 for form in (str, folded)]
+
+    def seen(value: str) -> bool:
+        for form, whole, streams in spellings:
+            v = form(value)
+            if v and any(v in t for t in whole):
+                return True
+            if any(f and any(f in s for s in streams) for f in flats(form, value)):
+                return True
+        return False
+
+    return sorted({label for value, label in hide.items() if seen(value)})
+
+
+def kept_from(spec: dict, env: str) -> list[str]:
+    """The run's kinds whose look sets `env` itself when it starts the app (a `STARTED` name only a design approved
+    before the rule can bear), so that start runs without the owner's value; the Android file carries every name."""
+
+    from . import oneshot_desktop   # it reaches the stages that import this module
+    from .oneshot_profile import kinds_of
+
+    own = {"webapp": WEB_STARTED, "desktop": oneshot_desktop.LOOK_ENV | oneshot_desktop.OWNED_ENV}
+    return [k for k in kinds_of(spec["oneshot"]) if env.upper() in own.get(k, ())]
+
+
+def given_in(spec: dict, env: dict | None, own: frozenset[str] | set[str] = frozenset()) -> dict[str, str | None]:
+    """What a started product gets over the server's environment: each secret the design names by its `env`, its
+    value in `env` (a `gate_env` result), or `None` (dropped) for one `env` does not hold, so a variable of that name
+    the server happens to have never stands in for it. A name in `own`, one the launcher sets itself (a `STARTED`
+    name, which only a design approved before the rule can bear), is left out: the launcher's value wins, and the
+    need's row and the build prompt say that start runs without it (`shown`, `told`)."""
+
+    have = {k.upper(): v for k, v in (env or {}).items()}
+    return {n["env"]: have.get(n["env"].upper()) for _, n in secret_needs(spec) if n["env"].upper() not in own}
 
 
 def held_in(text: str, hide: dict) -> list[str]:
@@ -514,6 +572,9 @@ def told(spec: dict) -> str:
         if n["kind"] == "secret" and LAUNCH.fullmatch(n["env"]):   # never in the agent's shell (`agent`)
             lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret the server's gate alone has: it is not in "
                          f"your shell, so do not set, read or repair it there; the gate runs its live check ({uses})")
+        elif n["kind"] == "secret" and (kept := kept_from(spec, n["env"])):   # a look's own value wins (`given_in`)
+            lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret the gate has, but the {' and '.join(kept)} "
+                         f"screen check sets `{n['env']}` itself, so the app runs there without it ({uses})")
         elif n["kind"] == "secret":
             lines.append(f"- `{n['env']}`: {nid} {n['what']}, a secret ({uses})")
         elif n["kind"] in ("tool", "file") and (path := (given.get(nid) or {}).get("path")):
