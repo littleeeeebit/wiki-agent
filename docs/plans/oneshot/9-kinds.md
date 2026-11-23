@@ -576,7 +576,10 @@ order:
    or unfinished, not one built to cheat it.
 2. The frozen app from a fresh start of the check's scenario, driven without
    a shot (`shoot: false`), so the driver reads and acts but never calls
-   `PrintWindow`.
+   `PrintWindow`. Every step's declared postcondition must hold on the one
+   element it names, in the whole read of the state that step left. Until
+   it does, the app is not in the state the scenario sets up, and nothing
+   observed counts.
 3. While both still run, the fixture's binding is proven, then what the
    check observes is read: the app's report, or a capture by the helper
    (`tool/owner_capture.cs`). The app's main window as the driver last read

@@ -221,12 +221,16 @@ def base(repo: str) -> Path:
     return oneshot_spec.store(repo).folder / STAGE
 
 
-def ran(report: dict, n: int) -> str:
+def ran(report: dict, asked: list[dict]) -> str:
     """Why the driver's run of a scenario is no ground for an observation, or empty: it passed a deadline, failed
-    or stopped before `done`, chose no main window, read no state, or did not act every one of its `n` steps.
-    On the owner's desktop no window is shot, so a read without a shot counts."""
+    or stopped before `done`, chose no main window, read no state, did not act every one of the `asked` steps, or
+    a step's declared postcondition does not hold on the one element it names in the whole read of the state that
+    step left, so the app was not in the state the scenario sets up. On the owner's desktop no window is shot, so
+    a read without a shot counts."""
 
-    steps = report.get("steps") or []
+    import desktop_driver
+
+    steps, n = report.get("steps") or [], len(asked)
     if report.get("ended"):
         return f"드라이버가 {report['ended']} 에서 시간을 넘겼다"
     if report.get("error") or report.get("phase") != "done":
@@ -235,6 +239,15 @@ def ran(report: dict, n: int) -> str:
         return "앱의 주 창을 읽지 못했다"
     if len(steps) != n or not all(s.get("acted") and not s.get("error") for s in steps):
         return "시나리오의 단계가 다 돌지 않았다"
+    states = {s.get("id"): s for s in report["states"]}
+    for step, want in zip(steps, asked):
+        state = states.get(step.get("state"))
+        expect = want.get("expect") or {}
+        window = desktop_driver.scope(report, state, expect.get("in", "main")) if state else None
+        whole = window is not None and any(r.get("hwnd") == window and r.get("read") for r in state.get("reads") or []) \
+            and not desktop_look.partial(state, {window})
+        if not (whole and desktop_driver.expectation(expect) and desktop_driver.holds(state, expect, window)):
+            return f"시나리오의 `{want.get('name')}` 단계 뒤 앱이 그 단계가 약속한 상태가 아니다"
     return ""
 
 
@@ -333,7 +346,7 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
         return owner_round.proven(binding, members(key))
 
     def then(report: dict, key: str) -> dict:
-        if why := ran(report, len(steps)):
+        if why := ran(report, steps):
             return {"status": "failed", "why": why}
         if why := owner_round.proven(fixture, members(fixture_key)):   # what the app read was not the round's page
             return {"status": "failed", "why": f"고정 창이 바뀌었다 — {why}"}

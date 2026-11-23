@@ -266,7 +266,8 @@ def driven(value: str | None = None, acted: bool = True, before: str | None = No
     def state(value, read=True):
         return {"windows": [{"hwnd": 101, "pid": 7, "class": "App"}],
                 "shots": [{"hwnd": 101, "drawn": False, "unshot": True}], "reads": [{"hwnd": 101, "read": read}],
-                "nodes": [{"window": 101, "id": "seen", "value": value, "type": "Text", "depth": 1}]}
+                "nodes": [{"window": 101, "id": "seen", "value": value, "type": "Text", "depth": 1},
+                          {"window": 101, "id": "capture", "name": "캡처", "type": "Button", "depth": 1}]}
 
     return {"phase": "done", "main": {"hwnd": 101, "pid": 7, "class": "App"},
             "states": [{**state(None), "id": "s00", "name": "start"}, {**state(before), "id": "s01", "name": "before-go"},
@@ -396,7 +397,8 @@ def test_an_owned_report_window_counts_absent_before_the_step_only_when_there_wa
         for state, n in ((got["states"][1], before_windows), (got["states"][2], 1)):
             state["windows"] += [{"hwnd": 200 + i, "pid": 7, "class": "App", "owner": 101} for i in range(n)]
             state["reads"] += [{"hwnd": 200 + i, "read": True} for i in range(n)]
-            state["nodes"] = [{"window": 200, "id": "seen", "value": page, "type": "Text", "depth": 1}]
+            state["nodes"] = [{"window": 200, "id": "seen", "value": page, "type": "Text", "depth": 1},
+                              *(n for n in state["nodes"] if n["id"] == "capture")]   # the step's own control stays
         return got
 
     assert checked(desk, owned, report(0))["status"] == "passed"   # it appeared with the step
@@ -480,6 +482,29 @@ def test_a_capture_counts_only_while_the_driven_app_is_up_before_and_after_it(he
     got = checked(desk, SURFACE, driven())
     assert got["status"] == "failed" and "살아 있지" in got["why"], got
     assert bool(desk[0]["surface"]) is (gone_at == 2)   # never sampled once the app was found gone
+
+
+@pytest.mark.parametrize("left", [
+    lambda nodes: nodes.pop(),   # the step's control is not there after it
+    lambda nodes: nodes[-1].update(name="중지"),   # there, but not as the step promised
+    lambda nodes: nodes.append(dict(nodes[-1])),   # two by its id: which one the step left is unknown
+])
+def test_an_observation_counts_only_once_every_step_left_the_state_it_promised(held, desk, left):
+    _, root = desk
+    (root / "data" / "seen.txt").write_text("apple river garden", encoding="utf-8")
+    assert checked(desk, SCREEN, driven())["status"] == "passed"
+    report = driven()
+    left(report["states"][2]["nodes"])
+    got = checked(desk, SCREEN, report)
+    assert got["status"] == "failed" and "약속한 상태" in got["why"], got
+
+
+def test_a_steps_postcondition_off_a_read_that_was_not_whole_proves_nothing(held, desk):
+    _, root = desk
+    (root / "data" / "seen.txt").write_text("apple river garden", encoding="utf-8")
+    report = driven()
+    report["states"][2]["nodes"].insert(0, {"window": 101, "type": "List", "items": 3, "unread": 1})
+    assert "약속한 상태" in checked(desk, SCREEN, report)["why"]
 
 
 def test_a_handle_naming_another_class_than_the_driver_read_is_never_bound(monkeypatch):
