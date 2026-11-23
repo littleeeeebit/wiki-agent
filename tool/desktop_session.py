@@ -185,8 +185,9 @@ def _removed(folder: Path, entries: list[dict], seconds: float = 30) -> list[str
             try:
                 shutil.rmtree(path)
             except OSError as error:
-                if time.monotonic() >= deadline:
-                    left.append(f"folder {name} could not be removed: {error}")
+                if time.monotonic() >= deadline:   # its kind and code only: a child's file name can hold a secret
+                    code = getattr(error, "winerror", None) or error.errno
+                    left.append(f"folder {name} could not be removed: {type(error).__name__} {code}")
                     break
                 time.sleep(0.5)
     return left

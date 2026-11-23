@@ -723,6 +723,21 @@ def test_a_record_that_cannot_be_read_is_never_taken_for_none(tmp_path, monkeypa
     assert desktop_session.recover_all(tmp_path / "missing") == []
 
 
+def test_a_folder_that_cannot_be_removed_is_named_by_its_own_name_never_a_file_inside_it(tmp_path, monkeypatch):
+    # The look saves the reason in its kept record: a file the app named after a secret never reaches it.
+    (tmp_path / "data1").mkdir()
+    (tmp_path / "data1" / "token-s3cr3t.txt").write_text("x", encoding="utf-8")
+
+    def refused(path, *a, **k):
+        error = PermissionError(13, "Access is denied", str(Path(path) / "token-s3cr3t.txt"))
+        error.winerror = 5
+        raise error
+
+    monkeypatch.setattr(desktop_session.shutil, "rmtree", refused)
+    (left,) = desktop_session._removed(tmp_path, [{"name": "data1", "owned": True}], seconds=0)
+    assert left == "folder data1 could not be removed: PermissionError 5", left
+
+
 def test_a_folder_that_cannot_be_removed_holds_the_look_and_the_next_one(tmp_path, monkeypatch):
     monkeypatch.setattr(desktop_session, "_removed", lambda folder, entries, seconds=30: [
         f"folder {entry['name']} could not be removed: in use" for entry in entries])

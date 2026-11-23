@@ -672,9 +672,14 @@ do (11b2b), from one read of the environment at the round's start. That read
 also supplies the masks. Every string of every state the driver read gets
 the PC look's check. An app whose read text holds a secret fails its check
 with a high finding, before any capture is taken, so the critic's model
-never sees it. With any secret given, the round's look removes its raw
-evidence with its cleanup. Every result, finding and error the round keeps
-is masked.
+never sees it. With any secret given, a capture is taken only of windows
+whose every string was read. A window capture needs a whole read of its
+window, and a composition a whole read of every window of the app's. Any
+other capture fails the check. With any secret given, the round's look also
+removes its raw evidence with its cleanup. Every result, finding and error
+the round keeps is masked. A folder the cleanup could not remove is named in
+the kept record by its own name and the error's kind and code, never by a
+file inside it.
 
 Each capture is copied out before the round's look is cleaned, and the critic
 judges it against `shows` and the fixture's words only after every window the

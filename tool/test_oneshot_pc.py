@@ -654,6 +654,28 @@ def test_a_check_whose_app_shows_a_secret_fails_and_is_never_captured(held, desk
     assert checked(desk, window, report)["status"] == "judge"
 
 
+@pytest.mark.parametrize("what", ["window", "composition"])
+def test_with_secrets_only_windows_read_whole_are_captured_for_the_critic(held, desk, what):
+    # The step's postcondition reads whole in the main window; the dialog it owns is the one captured, and its read
+    # failed, so its text never met the secret check: nothing of it is captured, then read whole, it is.
+    reads, root = desk
+    report = driven()
+    last = report["states"][-1]
+    last["windows"].append({"hwnd": 202, "pid": 7, "class": "Dialog", "owner": 101})
+    last["reads"].append({"hwnd": 202, "read": False})
+    x = {**REPORT, "observe": {what: {"shows": "번역문", "from": "fixture", "in": "owned"}}}
+
+    def run(hide):
+        return pc.one(Session(), Runs(report, root / "data"), 1, x, SCENARIO, "helper.exe", "", root / "keep",
+                      lambda: None, hide)
+
+    got = run({"s3cr3t": "[N1]"})
+    assert got["status"] == "failed" and "비밀 값" in got["why"] and not reads["window"] and not reads["surface"]
+    assert run(None)["status"] == "judge"   # without a secret to hide, the same capture goes on as before
+    last["reads"][-1]["read"] = True
+    assert run({"s3cr3t": "[N1]"})["status"] == "judge"
+
+
 def test_a_failed_check_goes_to_the_build_as_a_finding(held, monkeypatch):
     sent = []
     monkeypatch.setattr(oneshot_build, "send", lambda *a: sent.append(a))

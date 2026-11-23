@@ -246,11 +246,17 @@ def ran(report: dict, asked: list[dict]) -> str:
         state = states.get(step.get("state"))
         expect = want.get("expect") or {}
         window = desktop_driver.scope(report, state, expect.get("in", "main")) if state else None
-        whole = window is not None and any(r.get("hwnd") == window and r.get("read") for r in state.get("reads") or []) \
-            and not desktop_look.partial(state, {window})
-        if not (whole and desktop_driver.expectation(expect) and desktop_driver.holds(state, expect, window)):
+        if not (window is not None and whole(state, {window}) and desktop_driver.expectation(expect)
+                and desktop_driver.holds(state, expect, window)):
             return f"시나리오의 `{want.get('name')}` 단계 뒤 앱이 그 단계가 약속한 상태가 아니다"
     return ""
+
+
+def whole(state: dict, windows: set) -> bool:
+    """Whether each of `windows` was read in `state`, its read complete: none failed, cut or left items unread."""
+
+    return bool(windows) and all(any(r.get("hwnd") == w and r.get("read") for r in state.get("reads") or [])
+                                 for w in windows) and not desktop_look.partial(state, windows)
 
 
 def reported(report: dict, seen: dict, data: Path, page: list[str]) -> str | None:
@@ -374,6 +380,13 @@ def one(session, runs, n: int, x: dict, scenario: dict, exe, missing: str, keep:
                 {"status": "failed", "why": "앱이 캡처했다고 낸 것에 고정 창의 낱말이 다 들어 있지 않다"}
         if why := running(report, key):   # before a capture is allowed: a crashed app's child may still draw
             return {"status": "failed", "why": f"캡처 전에 앱이 살아 있지 않았다 — {why}"}
+        if hide:   # the critic's model sees the capture: only of windows whose every string the secret check read
+            import desktop_driver
+            last = report["states"][-1]
+            shown = {desktop_driver.scope(report, last, seen.get("in", "main"))} if what == "window" else \
+                {w.get("hwnd") for w in last.get("windows") or []}   # a composition can show any of the app's
+            if None in shown or not whole(last, shown):
+                return {"status": "failed", "why": "캡처할 창의 글자를 다 읽지 못해 비밀 값이 없다는 것을 확인할 수 없다"}
         if exe is None:
             return {"status": "pending", "why": missing}
         try:
