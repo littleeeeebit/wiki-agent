@@ -196,7 +196,9 @@ plan rebuilt since answers 409. A result waiting for the owner's verdict is
 set aside (`stale`) when an input changes. A secret's change sets the
 result aside before Credential Manager changes; if that save, or the spec
 read before it, fails, the secret is left as it was and the owner tries
-again. [실측 시작] holds the worktree,
+again. A secret request that changes nothing (the value held already, or a
+removal of one already gone) sets nothing aside. A value Credential Manager
+returns but cannot be decoded counts as different, so it can be replaced. [실측 시작] holds the worktree,
 starts `serve`, runs the script with the inputs in its environment and every
 secret masked from its output, and keeps only the clips it accepts, the
 report and the backend's log, masked (`oneshot_kept`). The script and the

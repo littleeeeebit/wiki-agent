@@ -290,6 +290,11 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
         with patch.object(measure.specs, "load", refused), pytest.raises(HTTPException, match="바꾸지 않았다"):
             change()
         assert release.secret_read(oneshot_needs.name("budget", ENV)) == KEY and o()["measures"][-1]["status"] == "owner"
+    for nothing in (lambda: measure.give("budget", "M2", measure.Value(value=KEY, head=head, env=ENV, kind="secret")),
+                    lambda: oneshot_needs.forget("budget", "NEVER_GIVEN_KEY")):   # changes nothing: never set aside
+        with patch.object(measure, "retire", lambda *a, **k: (_ for _ in ()).throw(AssertionError("set aside"))):
+            nothing()
+        assert o()["measures"][-1]["status"] == "owner"
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
     measure.measure("budget")

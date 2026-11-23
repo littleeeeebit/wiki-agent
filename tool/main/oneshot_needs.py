@@ -241,9 +241,16 @@ CHANGES: dict[str, int] = {}   # changes made per repository, so a measurement s
 def stored(repo: str, env: str, value: str | None) -> None:
     """A secret written, or removed with `None`; a failure names the store, never the value. Every route that
     changes a secret writes through here, so `CHANGED` hears each change, before the store changes: a waiting
-    result is set aside first, and when that fails the store is left as it was. Every caller read the spec
-    before this, so a 404 here is a reread that failed (`specs.load` turns a refused read into `None`)."""
+    result is set aside first, and when that fails the store is left as it was. A request that would change
+    nothing (the value held already, or a removal of one already gone) changes nothing, a waiting result
+    included. Every caller read the spec before this, so a 404 here is a reread that failed (`specs.load` turns
+    a refused read into `None`)."""
 
+    try:
+        if same(name(repo, env), value):
+            return
+    except ValueError:
+        raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
     try:
         for f in CHANGED:
             f(repo, env)
@@ -255,8 +262,9 @@ def stored(repo: str, env: str, value: str | None) -> None:
     try:
         if value is None:
             changed = release.secret_delete(name(repo, env))   # one already gone changes nothing
-        elif changed := not same(name(repo, env), value):   # the same value given again changes nothing either
+        else:
             release.secret_write(name(repo, env), value)
+            changed = True
     except ValueError:
         raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
     except OSError as e:
@@ -265,12 +273,13 @@ def stored(repo: str, env: str, value: str | None) -> None:
         CHANGES[repo] = CHANGES.get(repo, 0) + 1
 
 
-def same(key: str, value: str) -> bool:
-    """Whether Credential Manager holds `value` under `key` already; an unreadable one counts as different."""
+def same(key: str, value: str | None) -> bool:
+    """Whether Credential Manager holds `value` under `key` already, `None` for none. One it cannot read or
+    decode counts as different, so a damaged value can be replaced; no Credential Manager raises `ValueError`."""
 
     try:
         return release.secret_read(key) == value
-    except OSError:
+    except (OSError, UnicodeDecodeError):   # a decoding failure is a `ValueError` too: caught before it
         return False
 
 

@@ -253,6 +253,18 @@ def test_a_host_without_credential_manager_shows_the_sheet_and_refuses_a_secret(
     assert e.value.status_code == 409
 
 
+def test_a_damaged_secret_counts_as_different_so_it_can_be_replaced(at_r1, monkeypatch):
+    def damaged(key):   # Credential Manager returned it, but its bytes are no UTF-16
+        raise UnicodeDecodeError("utf-16-le", b"\x00", 0, 1, "truncated")
+
+    monkeypatch.setattr(needs.release, "secret_read", damaged)
+    assert not needs.same("k", "v") and not needs.same("k", None)
+    written = {}
+    monkeypatch.setattr(needs.release, "secret_write", written.__setitem__)
+    needs.stored("budget", "SOME_KEY", "fresh-value")
+    assert written == {needs.name("budget", "SOME_KEY"): "fresh-value"}
+
+
 def test_what_was_given_can_be_taken_back(at_r1, tmp_path):
     sample = tmp_path / "page.png"
     sample.write_bytes(b"x")
