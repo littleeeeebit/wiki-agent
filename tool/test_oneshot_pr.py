@@ -340,6 +340,31 @@ def test_a_repairs_publication_stacks_on_the_measured_draft_never_a_replacement(
     with patch.object(specs, "sh", listing(remote, 7)):   # reopened: the repair goes up on it
         assert oneshot_publish.published("budget")["number"] == 7
     assert not remote.created() and o()["pr1"]["head"] == git(tree, "rev-parse", "HEAD")
+    # The repository's default branch moved since: the draft keeps the base it was opened into.
+    moved = listing(remote, 7)
+    with patch.object(specs, "sh", lambda args, cwd, timeout=60: subprocess.CompletedProcess(args, 0, "dev\n", "")
+                      if args[:3] == ["gh", "repo", "view"] else moved(args, cwd, timeout)):
+        assert oneshot_publish.published("budget")["base"] == "main"
+    assert not remote.created()
+
+
+def test_a_base_lookup_that_times_out_before_s8s_push_stops_the_run_so_it_can_be_resumed(finished):
+    tree, sent = finished
+    readme(tree)
+    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    remote = Remote()
+
+    def timed_out(args, cwd, timeout=60):
+        if args[:3] == ["gh", "repo", "view"]:
+            raise subprocess.TimeoutExpired(args, timeout)
+        return remote(args, cwd, timeout)
+
+    with patch.object(specs, "sh", timed_out):
+        assert check(tree, SUMMARIZED) is None
+    assert o()["working"] is None and o()["stopped"]["reason"] == "pr" and "TimeoutExpired" in o()["stopped"]["detail"]
+    assert not remote.pushes() and not remote.created()
 
 
 @pytest.mark.parametrize("change, said", [

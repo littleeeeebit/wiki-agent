@@ -1316,9 +1316,10 @@ def own_base(spec: dict) -> str:
     """The base this spec already names: its own, else that of the pull request
     attached to it. A PR published by hand into a non-default base keeps that
     base when the spec is published again; the default would be a second PR
-    from the same branch, which `existing_pr` refuses."""
+    from the same branch, which `existing_pr` refuses. A oneshot's measured draft keeps its base the same way."""
 
-    return spec.get("base") or (spec.get("pr") or {}).get("base") or ""
+    return (spec.get("base") or (spec.get("pr") or {}).get("base")
+            or ((spec.get("oneshot") or {}).get("pr1") or {}).get("base") or "")
 
 
 def local_base(spec: dict, path: Path) -> str:

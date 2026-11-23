@@ -39,13 +39,13 @@ def unready(spec: dict, path: Path) -> str:
 
     if not (n := (spec["oneshot"].get("pr1") or {}).get("number")):
         return ""
-    base = specs.base_of(spec, path)
-    if base.returncode or not base.stdout.strip():
-        return f"기본 브랜치를 모른다 — {specs.said(base)}"
-    try:
+    try:   # the draft's own base (`specs.own_base`), read off GitHub only for a record without one
+        base = specs.base_of(spec, path)
+        if base.returncode or not base.stdout.strip():
+            return f"기본 브랜치를 모른다 — {specs.said(base)}"
         specs.existing_pr(path, specs.branch_of(spec), base.stdout.strip(), n)
-    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
-        return str(exc)
+    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as exc:   # every one a stop with its reason
+        return str(exc) if type(exc) is RuntimeError else f"초안 PR #{n} 을 확인하지 못했다 — {type(exc).__name__}: {exc}"
     return ""
 
 
