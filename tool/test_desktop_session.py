@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -51,6 +52,18 @@ def test_a_look_runs_its_app_on_its_desktop_and_proves_everything_gone(tmp_path)
     assert record["state"] == "proven" and record["proof"]["clean"], record["proof"]
     assert record["listeners"] and not list((tmp_path / "first").glob("data-*"))
     assert all(desktop_session.exited(member) for entry in record["jobs"].values() for member in entry["members"])
+
+
+def test_a_look_on_the_owners_desktop_makes_no_desktop_and_proves_its_cleanup_the_same(tmp_path):
+    # The owner's desktop round's look (plan 9e5b): its record names no desktop, and nothing is started here, so
+    # nothing reaches the owner's screen; its folders and proof are a look's.
+    with desktop_session.look(tmp_path, "owner", owned=False) as look:
+        assert look.record["desktop"] is None and look.desktop is None
+        with pytest.raises(desktop_session.Refused):
+            look.open()
+        folder = look.reserve("files")
+    record = desktop_session.load(tmp_path / "owner")
+    assert record["state"] == "proven" and record["proof"]["clean"] and not folder.exists(), record["proof"]
 
 
 def test_a_command_run_on_the_look_returns_when_its_root_exits_and_what_it_left_ends_with_the_look(tmp_path):
@@ -119,6 +132,29 @@ def test_a_halt_while_the_root_is_recorded_ends_it_before_it_runs(tmp_path, monk
 
     time.sleep(0.5)
     record = desktop_session.load(tmp_path / "late")
+    assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
+
+
+@pytest.mark.parametrize("stop", [False, True])   # `ready` refuses, or a stop comes while it reads
+def test_a_start_whose_ready_check_refuses_or_is_stopped_ends_the_root_before_it_runs(tmp_path, stop):
+    class Moved(Exception):
+        pass
+
+    halt = threading.Event()
+
+    def ready():
+        if not stop:
+            raise Moved("the build moved")
+        halt.set()
+
+    marker = tmp_path / "ran"
+    with desktop_session.look(tmp_path, "ready") as look:
+        with pytest.raises(desktop_session.Halted if stop else Moved):
+            look.start("app", python(f"open({str(marker)!r}, 'w').close()"), tmp_path, halt=halt, ready=ready)
+        assert look.record["jobs"]["app"]["root"]   # recorded, suspended, then rolled back
+
+    time.sleep(0.5)
+    record = desktop_session.load(tmp_path / "ready")
     assert not marker.exists() and record["state"] == "proven" and record["proof"]["clean"], record["proof"]
 
 
@@ -634,7 +670,7 @@ def test_a_relative_root_still_gives_the_app_absolute_data_paths(tmp_path, monke
     look = desktop_session.Look(Path("looks"), "relative")
     seen = {}
 
-    def capture(job, argv, cwd, env, desktop, log, before_resume):
+    def capture(job, argv, cwd, env, desktop, log, before_resume, last=None, gate=None):
         seen.update(env)
         return {}
 
@@ -668,6 +704,38 @@ def test_a_linked_look_folder_is_never_recovered(tmp_path):
     assert made.returncode == 0, made.stderr
 
     assert desktop_session.recover_all(root) == [f"linked: not a plain folder inside {root}; left in place"]
+
+
+def test_a_record_that_cannot_be_read_is_never_taken_for_none(tmp_path, monkeypatch):
+    root = tmp_path / "looks"
+    (root / "held").mkdir(parents=True)
+    (root / "held" / desktop_session.RECORD).write_text("{}", encoding="utf-8")
+    real = os.stat
+
+    def denied(path, *a, **k):   # the record is there; Windows refuses to describe it
+        if Path(path).name == desktop_session.RECORD:
+            raise PermissionError(13, "denied", str(path))
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(desktop_session.os, "stat", denied)
+    with pytest.raises(PermissionError):
+        desktop_session.recover_all(root)
+    assert desktop_session.recover_all(tmp_path / "missing") == []
+
+
+def test_a_folder_that_cannot_be_removed_is_named_by_its_own_name_never_a_file_inside_it(tmp_path, monkeypatch):
+    # The look saves the reason in its kept record: a file the app named after a secret never reaches it.
+    (tmp_path / "data1").mkdir()
+    (tmp_path / "data1" / "token-s3cr3t.txt").write_text("x", encoding="utf-8")
+
+    def refused(path, *a, **k):
+        error = PermissionError(13, "Access is denied", str(Path(path) / "token-s3cr3t.txt"))
+        error.winerror = 5
+        raise error
+
+    monkeypatch.setattr(desktop_session.shutil, "rmtree", refused)
+    (left,) = desktop_session._removed(tmp_path, [{"name": "data1", "owned": True}], seconds=0)
+    assert left == "folder data1 could not be removed: PermissionError 5", left
 
 
 def test_a_folder_that_cannot_be_removed_holds_the_look_and_the_next_one(tmp_path, monkeypatch):

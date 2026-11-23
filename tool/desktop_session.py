@@ -5,6 +5,7 @@ earlier look's record before the next one starts (docs/research/oneshot-desktop-
 import ctypes
 import os
 import shutil
+import stat
 import time
 import uuid
 from contextlib import contextmanager
@@ -184,8 +185,9 @@ def _removed(folder: Path, entries: list[dict], seconds: float = 30) -> list[str
             try:
                 shutil.rmtree(path)
             except OSError as error:
-                if time.monotonic() >= deadline:
-                    left.append(f"folder {name} could not be removed: {error}")
+                if time.monotonic() >= deadline:   # its kind and code only: a child's file name can hold a secret
+                    code = getattr(error, "winerror", None) or error.errno
+                    left.append(f"folder {name} could not be removed: {type(error).__name__} {code}")
                     break
                 time.sleep(0.5)
     return left
@@ -195,7 +197,10 @@ class Look:
     """One look: an owned desktop, its apps' jobs and their disposable folders, all named in `folder`'s record.
     Use it through `look()`, which runs `close()` on every outcome."""
 
-    def __init__(self, root: Path, name: str, disposable: bool = False):
+    def __init__(self, root: Path, name: str, owned: bool = True, disposable: bool = False):
+        """`owned` false is the owner's desktop round (plan 9e5): its jobs start on the desktop the server runs on,
+        the owner's, and the look creates and closes no desktop of its own; its record and proof are the same."""
+
         self.root = Path(root).absolute()   # a child starts elsewhere: its data paths must not be relative
         self.disposable = disposable   # `evidence` too is removed with the look: its apps carried secrets
         self.folder = self.root / name
@@ -212,7 +217,8 @@ class Look:
         owner = native_process.identity(os.getpid())
         if owner is None:   # recovery could not tell a live look of this server from a dead one
             raise Refused("cannot record this server's own identity")
-        self.record = {"state": "owning", "desktop": "wiki-look-" + uuid.uuid4().hex, "session": session(),
+        self.record = {"state": "owning", "desktop": "wiki-look-" + uuid.uuid4().hex if owned else None,
+                       "session": session(),
                        "logon": logon(), "uptime": uptime(), "owner": owner, "folders": [], "jobs": {},
                        "listeners": [], "proof": None}
         self.folder.mkdir()
@@ -227,8 +233,8 @@ class Look:
 
     def open(self) -> None:
         self._open_for_more()
-        if self.desktop:
-            raise Refused("the look's desktop is already open")
+        if self.desktop or not self.record["desktop"]:
+            raise Refused("the look's desktop is already open, or it has none of its own")
         handle = self.u.CreateDesktopW(self.record["desktop"], None, None, 0, DESKTOP_ALL, None)
         if not handle:
             raise Refused(f"cannot create the look's desktop: {ctypes.get_last_error()}")
@@ -257,10 +263,13 @@ class Look:
         save(self.folder, self.record)
         return self.folder / name
 
-    def start(self, key: str, argv: list[str], cwd, extra: dict | None = None, halt=None) -> dict:
+    def start(self, key: str, argv: list[str], cwd, extra: dict | None = None, halt=None, ready=None,
+              gate=None) -> dict:
         """Start `argv` in a job of its own on the look's desktop, its data folders inside a disposable folder
         the record names first, its output in `evidence/<key>.log`. The root's identity. A `halt` set by the
-        time the suspended root is recorded ends it before it runs (`Halted`)."""
+        time the suspended root is recorded ends it before it runs (`Halted`), as does whatever `ready`, called
+        then, raises. `halt` is read a last time under `gate`, held until the root resumes: a stop accepted
+        under that lock first never lets it run."""
 
         self._open_for_more()
         self.check_key(key)
@@ -288,9 +297,16 @@ class Look:
             save(self.folder, self.record)
             if halt is not None and halt.is_set():   # still suspended: the job rolls it back, never run
                 raise Halted(f"halted before {argv[0]} ran")
+            if ready is not None:
+                ready()
+
+        def last() -> None:   # under `gate`, right before the resume
+            if halt is not None and halt.is_set():
+                raise Halted(f"halted before {argv[0]} ran")
 
         with (self.folder / "evidence" / f"{key}.log").open("ab") as log:
-            return job.start(argv, cwd, env, self.record["desktop"], log, before_resume=recorded)
+            return job.start(argv, cwd, env, self.record["desktop"], log, before_resume=recorded, last=last,
+                             gate=gate)
 
     def run(self, key: str, argv: list[str], cwd, seconds: float, halt, extra: dict | None = None) \
             -> tuple[int | None, str, str]:
@@ -504,14 +520,16 @@ class Look:
 
 
 @contextmanager
-def look(root: Path, name: str, disposable: bool = False):
-    """A look in `root/name`, its desktop open; cleaned and proven on every exit. A proof that is not clean
-    raises, naming what it could not prove. A `disposable` look's `evidence` is removed with it."""
+def look(root: Path, name: str, owned: bool = True, disposable: bool = False):
+    """A look in `root/name`, its desktop open (with `owned` false, on the owner's desktop: `Look`); cleaned and
+    proven on every exit. A proof that is not clean raises, naming what it could not prove. A `disposable` look's
+    `evidence` is removed with it."""
 
-    session_ = Look(root, name, disposable)
+    session_ = Look(root, name, owned, disposable)
     failure = None
     try:
-        session_.open()
+        if owned:
+            session_.open()
         yield session_
     except BaseException as error:
         failure = error
@@ -584,9 +602,17 @@ def recover(folder: Path) -> list[str]:
 
 
 def recover_all(root: Path) -> list[str]:
-    """Settle every earlier look's record under `root`; why any is still held."""
+    """Settle every earlier look's record under `root`; why any is still held. Only a missing folder or record is
+    passed over: one that cannot be listed or read raises OSError, never taken for none."""
 
-    root = Path(root)
-    if not root.is_dir():
+    def recorded(child: Path) -> bool:
+        try:
+            return stat.S_ISREG(os.stat(child / RECORD).st_mode)
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+
+    try:
+        children = sorted(Path(entry.path) for entry in os.scandir(root))
+    except FileNotFoundError:
         return []
-    return [reason for child in sorted(root.iterdir()) if (child / RECORD).is_file() for reason in recover(child)]
+    return [reason for child in children if recorded(child) for reason in recover(child)]

@@ -52,20 +52,21 @@ def _allowed(op: str | None, wait: float, settle_ms: int) -> float:
 
 
 def drive(look, app: str, window: tuple[int, int], steps: list[dict], *, wait: float = 30, settle_ms: int = 1000,
-          key: str = "driver", halt=None) -> dict:
+          key: str = "driver", halt=None, shoot: bool = True) -> dict:
     """Drive the app `look` started under `app`: choose its main window, size it to `window`, then shoot and read
     each state, before and after every step. The driver names each operation before it starts, and each is held
     to its own deadline. The driver's report, with `last` naming the last operation it entered and `ended`
     naming one whose deadline passed; the driver's job is then ended, and `end` holds the proof of that end.
     That report is also saved as `result.json` beside the driver's own files, so the evidence a reader opens
     later carries the deadline and the end proof, which the driver's `driver.json` cannot. A `halt` set while it
-    runs ends the driver at once, `ended` then `halted`."""
+    runs ends the driver at once, `ended` then `halted`. With `shoot` false, as on the owner's desktop, no window
+    is shot: each state's windows are read only, their shots marked `unshot`."""
 
     look.check_key(key)   # before any path is made from it
     folder = look.folder / "evidence" / key
     folder.mkdir()
     request = {"out": str(folder), "job": look.jobs[app].name, "window": list(window), "steps": steps,
-               "wait_seconds": wait, "settle_ms": settle_ms}
+               "wait_seconds": wait, "settle_ms": settle_ms, "shoot": shoot}
     (folder / "request.json").write_text(json.dumps(request, indent=1), encoding="utf-8")
     look.start(key, [str(POWERSHELL), *arguments(SCRIPT, folder / "request.json")], folder, halt=halt)
     ended, end = _watch(look.jobs[key], folder / "progress.json", wait, settle_ms, halt)

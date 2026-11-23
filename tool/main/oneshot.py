@@ -720,7 +720,12 @@ def start_worker(store: Store, work: str, fn, args: tuple, fields: dict) -> None
 
         thread = threading.Thread(target=guarded, daemon=True, name=f"oneshot-{store.key}")
         _workers[store.key] = thread
-        thread.start()
+        try:
+            thread.start()
+        except Exception as exc:   # no worker to settle it: `working` would hold the run forever
+            _workers.pop(store.key, None)
+            store.stop("block", f"작업을 시작하지 못했다 — {type(exc).__name__}: {exc}")
+            raise HTTPException(503, f"작업을 시작하지 못했다 — {exc}") from exc
 
 
 def close_all(wait: bool = True) -> list[threading.Thread]:

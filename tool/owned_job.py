@@ -2,6 +2,7 @@
 is followed through the job's completion port, and ending it yields a proof that reads only definite
 answers (docs/research/oneshot-desktop-session.md, "The launcher 9d2 needs")."""
 
+import contextlib
 import ctypes
 import os
 import subprocess
@@ -137,9 +138,12 @@ class Job:
         finally:
             self.k.DeleteProcThreadAttributeList(attributes)
 
-    def start(self, argv: list[str], cwd, env: dict, desktop: str | None, log, before_resume=None) -> dict:
+    def start(self, argv: list[str], cwd, env: dict, desktop: str | None, log, before_resume=None, last=None,
+              gate=None) -> dict:
         """Start `argv` inside the job on `desktop`, its output to `log`. `before_resume` gets the root's
-        identity while it is still suspended, so a caller can record it before it runs. The root's identity."""
+        identity while it is still suspended, so a caller can record it before it runs; `last` is called under
+        `gate` (a lock), which is held through the resume. Whatever either raises rolls the root back before it
+        runs. The root's identity."""
 
         import msvcrt
 
@@ -173,8 +177,11 @@ class Job:
                 raise Refused(f"cannot read the identity of {argv[0]} before it runs")
             if before_resume:
                 before_resume(root)
-            if self.k.ResumeThread(thread) == 0xFFFFFFFF:
-                raise Refused(f"cannot resume {argv[0]}: {ctypes.get_last_error()}")
+            with gate if gate is not None else contextlib.nullcontext():
+                if last:
+                    last()
+                if self.k.ResumeThread(thread) == 0xFFFFFFFF:
+                    raise Refused(f"cannot resume {argv[0]}: {ctypes.get_last_error()}")
         except BaseException:
             self._rollback(process, thread, pid)   # never left suspended, never run unrecorded
             raise
