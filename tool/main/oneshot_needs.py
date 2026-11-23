@@ -454,12 +454,16 @@ def settle(path: Path, run, final: str, moving: bool = False) -> bool:
 ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be")
 
 
-def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
+WIDEST = 24   # bytes one matched character can take: an `i` and its dot above, each a `\uXXXX` escape in UTF-16
+
+
+def asset(file: Path, spec: dict, hide: dict | None = None, packed: bool = False) -> str:
     """Why an asset about to be uploaded (the frozen APK or installer) is not sent: a value of `hide` (the store's
     now, by default) anywhere in it, as UTF-8 or either UTF-16, in any casing: the raw file, every byte the upload
-    sends; an APK being a zip, each entry decompressed with its name; and an NSIS installer, its whole solid
-    stream unpacked, the script and every file it installs (`release_desktop.unpacked`), read in overlapping
-    windows. A file that cannot be read is refused too."""
+    sends; each zip entry decompressed with its name, an APK being a zip; and with `packed`, an installer, its
+    whole NSIS solid stream unpacked, the script and every file it installs (`release_desktop.unpacked`), read in
+    windows overlapping by the widest spelling of the longest value, whatever else the file also is. A file that
+    cannot be read, an installer whose stream cannot be, is refused too."""
 
     import zipfile
     import zlib
@@ -474,15 +478,13 @@ def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
         return {n for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)}
 
     try:
-        parts, packed = [file.read_bytes()], False   # every byte that goes up, signing blocks and gaps included
+        parts = [file.read_bytes()]   # every byte that goes up, signing blocks and gaps included
         if zipfile.is_zipfile(file):
             with zipfile.ZipFile(file) as z:   # and what the entries hold compressed
                 parts += [b for i in z.infolist() for b in (i.filename.encode(), z.read(i))]
-        else:
-            packed = release_desktop.MAGIC in parts[0]
         found = set().union(*map(held, parts))
         if packed:   # a value split across two chunks is whole in the window that carries the last one's tail
-            reach, tail = 12 * max(map(len, hide)) + 16, b""   # a JSON `\uXXXX` escape in UTF-16 is 12 bytes a character
+            reach, tail = WIDEST * max(len(s) for v in hide for s in (v, folded(v))) + 16, b""
             for chunk in release_desktop.unpacked(parts[0]):
                 found |= held(tail + chunk)
                 tail = (tail + chunk)[-reach:]

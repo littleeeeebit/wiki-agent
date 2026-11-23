@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -152,6 +152,7 @@ def restart(spec: dict) -> str:
     """The README turn's text; a resumed S8 starts there again, so a pull request text asked before is dropped."""
 
     specs.update(spec["repo"], spec["id"], writing=None)
+    unstaged(spec)   # a gate's copies a stop kept from going up: the final gate after this turn freezes its own
     return readme_text(spec)
 
 
@@ -221,20 +222,16 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     names = oneshot_build.changed(path, o.get("front_built_head") or o["tests_head"])
     if "README.md" not in names or not (path / "README.md").is_file():
         return "`README.md` 를 쓰지 않았다 — 설치, 실행, 테스트 명령을 적는다"
-    # A PC app's installer is of the build R3 approved: since that build's HEAD, only S8's own files may change. An
-    # Android app among the kinds may also wire its version into its build here (`RELEASE_PROMPT`), as alone.
-    if (approved := (o.get("desktop_build") or {}).get("head")) and "desktop" in kinds_of(o) \
-            and "android" not in kinds_of(o) and (moved := [
-            n for n in oneshot_build.changed(path, approved)
-            if n != "README.md" and not n.startswith((".wiki/", WORKFLOWS))]):
-        return ("R3 가 승인한 PC 앱 빌드 뒤에 앱 파일이 바뀌었다 — S8 은 README, `.wiki/`, CI 워크플로만 바꾼다: "
-                + ", ".join(moved[:5]))
     # Before its gate is read, let alone run: the turn may have added `[release]` and nothing else. The gate is
     # read from that very commit's adapter, and the gate runs only on that commit (`judge`'s `expect`).
     try:
         with release.stoppable(run.halt):
             checked = release.git(path, "rev-parse", "HEAD").strip()
             adapter = kept_adapter(path, o, checked, tree=True)
+            if moved := unapproved(path, o, checked, adapter):
+                return ("R3 가 승인한 PC 앱 빌드 뒤에 앱 파일이 바뀌었다 — S8 은 README, `.wiki/`, CI 워크플로, 새 버전 "
+                        "파일" + (", 안드로이드 앱의 Gradle 빌드 스크립트" if "android" in kinds_of(o) else "")
+                        + "만 바꾼다: " + ", ".join(moved[:5]))
     except (ValueError, release.Stopped) as exc:
         return str(exc)
     gate, backend = str((adapter.get("slots") or {}).get("gate_cmd", "")).strip(), o["gate"]
@@ -291,6 +288,35 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     return ""
 
 
+GRADLE = ("build.gradle", "build.gradle.kts", "gradle.properties")   # where an Android build reads its version
+
+
+def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
+    """What changed since the PC app's build R3 approved that S8 may not change: anything but the README,
+    `.wiki/`, the CI workflows and a version file the turn added (`version_source`), and with an Android app among
+    the kinds, its Gradle build scripts, where its version is wired (`RELEASE_PROMPT`). Empty without that build."""
+
+    if not (approved := (o.get("desktop_build") or {}).get("head")) or "desktop" not in kinds_of(o):
+        return []
+    source = str((adapter.get("release") or {}).get("version_source") or "")
+    added = set(release.git(path, "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames",
+                            "--diff-filter=A", "-z", approved, head).split("\0"))
+    android = "android" in kinds_of(o)
+    return [n for n in oneshot_build.changed(path, approved)
+            if not (n == "README.md" or n.startswith((".wiki/", WORKFLOWS)) or n == source and n in added
+                    or android and PurePosixPath(n).name in GRADLE)]
+
+
+TAURI = ("tauri.conf.json", "tauri.conf.json5", "Tauri.toml")
+
+
+def tauri(path: Path, head: str) -> bool:
+    """`head` holds a Tauri app: a Tauri config file anywhere in its tree."""
+
+    names = release.git(path, "-c", "core.quotepath=off", "ls-tree", "-r", "--name-only", "-z", head).split("\0")
+    return any(PurePosixPath(n).name in TAURI for n in names if n)
+
+
 def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, frozen: dict | None = None,
                     hide: dict | None = None) -> str:
     """The `[release]` table the README turn committed, read as a press reads it at `head`, and each kind it
@@ -308,16 +334,30 @@ def release_checked(path: Path, spec: dict, head: str, halt: threading.Event, fr
                 cfg, later, kit = _declared(path, spec, head)
             except ValueError as exc:
                 return f"`[release]` 표 — {exc}"
-            if "desktop" in kinds_of(spec["oneshot"]) and "desktop" not in cfg and frozen is not None:
-                frozen["installer"] = {"head": head, "error": NO_INSTALLER}
+            if "desktop" in kinds_of(spec["oneshot"]) and "desktop" not in cfg:
+                if tauri(path, head):
+                    return ("`[release.desktop]` 가 없다 — Tauri 앱이다: README 턴이 그 표를 `[release]` 에 쓴다")
+                if frozen is not None:
+                    frozen["installer"] = {"head": head, "error": NO_INSTALLER}
             src = release.checkout(path, head, attempt) if {"android", "desktop"} & set(cfg) else None
+
+            def pristine() -> None:   # one build's changes never reach the next build or the bytes checked
+                if release.git(src, "rev-parse", "HEAD").strip() != head or release.git(
+                        src, "status", "--porcelain", "--untracked-files=no").strip():
+                    raise release.BuildFailed("빌드가 체크아웃의 커밋된 파일을 바꿨다 — 정식 빌드는 소스를 고치지 않는다")
+
             for kind in [k for k in ("android", "desktop") if k in cfg]:
+                # A PC app's commands start only its confirmed tools or the checkout's own files, as its gate's do.
+                table = {**cfg[kind], "build": oneshot_build.run_as(cfg[kind]["build"], spec["oneshot"], src)}
+                pristine()
                 if kind == "android":
-                    apk = release.build(src, cfg[kind], later, kit, halt)
+                    apk = release.build(src, table, later, kit, halt)
+                    pristine()
                     seen = release.badging(release.run([kit["aapt2"], "dump", "badging", apk], release.environment(kit)))
                     wrong = release.built_wrong(seen, later, cfg[kind])
                 else:
-                    installer = release.build(src, cfg[kind], later, kit, halt, read=release_desktop.readable)
+                    installer = release.build(src, table, later, kit, halt, read=release_desktop.readable)
+                    pristine()
                     try:   # the installer and the app EXE the build made: one it does not hold is the build's
                         seen = release_desktop.facts(installer, release.output(src, cfg[kind], later, "exe"))
                     except ValueError as exc:
@@ -436,7 +476,7 @@ def froze(spec: dict, head: str, hide: dict, key: str = "apk", source: Path | No
         shutil.copyfile(source, into / name)
         # Read under the values its build ran with (`hide`, from the gate's own environment): an upload later,
         # after a value changed or was taken back, still needs this scan, bound to these bytes by their digest.
-        scan = oneshot_needs.asset(into / name, spec, hide)
+        scan = oneshot_needs.asset(into / name, spec, hide, packed=key == "installer")
         return {"head": head, "name": name, "path": str(into / name), "sha256": android_owned.sha256(into / name),
                 "scan": scan}
     except BaseException:
@@ -509,13 +549,15 @@ def _released(spec: dict, key: str, prerelease, tag: str) -> dict:
             raise ValueError(f"최종 게이트가 고정한 {bare} 사본이 없거나 바뀌었다")
         # The exact bytes that go up: clean under the values the build ran with (`froze`) and under today's.
         if why := ("scan" not in frozen and f"최종 게이트가 고정한 {scanned} 검사한 기록이 없다") or frozen["scan"] \
-                or oneshot_needs.asset(file, spec):
+                or oneshot_needs.asset(file, spec, packed=key == "installer"):
             raise ValueError(why)
         repo, held = prerelease()
         failed = None
         for n in range(TRIES + 1):   # the read after the last try decides: a last upload that landed counts
-            mine = next((a for a in github_release.release(repo, held["id"]).get("assets") or []
-                         if a["name"] == frozen["name"]), None)
+            # Read fresh each time: the owner may publish the draft meanwhile, and a published release is not S8's.
+            if not ((now := github_release.release(repo, held["id"])).get("draft") and now.get("prerelease")):
+                raise ValueError(f"태그 `{tag}` 의 릴리스가 더는 초안 프리릴리스가 아니다 — 거기에 올리지 않는다")
+            mine = next((a for a in now.get("assets") or [] if a["name"] == frozen["name"]), None)
             # Already there with these bytes: the try before landed, or an earlier S8's whose record was never saved.
             if mine and mine.get("state") == "uploaded" and github_release.digest(mine) == frozen["sha256"]:
                 break
@@ -549,9 +591,7 @@ def asked(repo: str) -> None:
     if keys := [key for key, (kind, *_) in ASSETS.items() if kind in kinds_of(spec["oneshot"])]:   # alone or among several
         spec = oneshot_spec.saved(repo, oneshot={**released(spec, keys), "attached": spec["oneshot"]["final_head"]})
     if oneshot_spec.held(spec["oneshot"]):   # a PC app's pull request is the next step's: the stop says what went up
-        went = [f"{ASSETS[key][1]} — " + ("초안 프리릴리스에 올렸다" if (r := spec["oneshot"].get(key) or {}).get("url")
-                                          else f"올리지 못했다: {r.get('error')}") for key in keys]
-        return oneshot_spec.store(repo).stop("kind", "; ".join([oneshot_spec.kind_stop(STAGE)["detail"], *went])) and None
+        return oneshot_spec.store(repo).stop("kind", oneshot_spec.kind_stop(STAGE, spec["oneshot"])["detail"]) and None
     path, head = Path(spec["worktree"]), oneshot_spec.spec_of(repo)["oneshot"]["final_head"]
     spec = specs.update(repo, spec["id"], writing={"head": head, "asked": 1})
     said = decisions(spec["oneshot"])

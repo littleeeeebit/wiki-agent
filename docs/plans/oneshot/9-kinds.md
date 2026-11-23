@@ -759,19 +759,25 @@ version a press would publish next. It checks the installer as a release
 does (`release_desktop`): its version, product name and publisher, what it
 registers with Windows, and that it holds the very app EXE the build made. A
 table that fails sends the README turn back. The installer that passes is
-frozen with its HEAD and digest, as an APK is. A PC app on another stack
-writes no table and gets no installer; the body says why. The owner chose
-this on 2026-11-23.
+frozen with its HEAD and digest, as an APK is. A Tauri app, one whose tree
+holds a Tauri config, must write the table. A PC app on another stack writes
+none and gets no installer; the body says why. The owner chose this on
+2026-11-23. Each kind's release build starts only the confirmed tools or
+the checkout's own files, as the gate's commands do. It must leave the
+checkout's committed files as they were, so one kind's build never changes
+the source of the next.
 
 Before an upload, a secret scan reads the installer's whole packed stream:
-its script and every file it installs. The draft prerelease carries the
-run's assets: the installer, the APK, or both. Each is reused only for the
-same HEAD and digest, and an asset already there with the same bytes is not
-sent again. A release of that tag that is not a draft prerelease is left
-untouched. A failed copy or upload never blocks the pull request; its body
-says why. Since the build R3 approved, S8 may change only the README,
-`.wiki/` and the CI workflow, unless an Android app among the kinds wires its
-version.
+its script and every file it installs, whatever else the file also is. The
+stream must end on a block boundary. The draft prerelease carries the run's
+assets: the installer, the APK, or both. Each is reused only for the same
+HEAD and digest, and an asset already there with the same bytes is not sent
+again. A release of that tag that is not a draft prerelease, read before
+each file goes up, gets nothing more. A failed copy or upload never blocks
+the pull request; the stop and the body say why. Since the build R3
+approved, S8 may change only the README, `.wiki/`, the CI workflows and a
+version file it adds. With an Android app among the kinds, its Gradle build
+scripts may change too, where its version is wired.
 
 S1's `ci` choice is kept. When CI is chosen and `desktop` is among the kinds,
 the workflow job runs on `windows-latest`:

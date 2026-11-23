@@ -158,24 +158,38 @@ def _solid(data: bytes) -> tuple[int, int, int, lzma.LZMADecompressor]:
 
 def unpacked(data: bytes):
     """Every byte the installer's solid stream holds, the script and every file it installs, as chunks of at most
-    `CHUNK`: what a scan reads, since the raw installer shows none of it. A stream past `LIMITS["unpacked"]`, or
-    one that is not Tauri's, raises `ValueError`."""
+    `CHUNK`: what a scan reads, since the raw installer shows none of it. The stream is NSIS's run of blocks,
+    each a 4-byte length and that many bytes, the script first; whether or not it carries an end marker, it is
+    whole only when its input or its marker ends exactly after a block. A stream cut inside a block, one past
+    `LIMITS["unpacked"]`, or one that is not Tauri's, raises `ValueError`."""
 
     at, _, end, decoder = _solid(data)
     packed, fed, total = memoryview(data)[at + 33:end], 0, 0
+    size, left = b"", 0   # the next block's length read so far, and the bytes of the current block still to come
     try:
         while not decoder.eof:
             feed = b""
             if decoder.needs_input:
                 if fed >= len(packed):
-                    return
+                    break
                 feed, fed = packed[fed:fed + CHUNK], fed + CHUNK
             got = decoder.decompress(feed, max_length=CHUNK)
             if (total := total + len(got)) > LIMITS["unpacked"]:
                 raise ValueError("압축을 푼 크기가 한도를 넘는다")
+            i = 0
+            while i < len(got):
+                if left:
+                    step = min(left, len(got) - i)
+                    left, i = left - step, i + step
+                else:
+                    size, i = size + got[i:i + 4 - len(size)], i + 4 - len(size)
+                    if len(size) == 4:
+                        left, size = int.from_bytes(size, "little"), b""
             yield got
     except lzma.LZMAError as exc:
         raise ValueError("Tauri 기본 압축(solid LZMA)이 아니다 — 담긴 파일을 읽을 수 없다") from exc
+    if left or size:
+        raise ValueError("NSIS 압축 흐름이 블록 중간에서 끝난다 — 잘린 설치 파일이다")
 
 
 def payload(data: bytes) -> tuple[list[tuple], dict[str, set[int]], dict[int, bool], dict[int, set], _Stream]:

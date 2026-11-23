@@ -552,10 +552,13 @@ def standing(repo: str, build: dict) -> bool:
 
 
 def kind_stop(stage: str, o: dict | None = None) -> dict:
-    """The `kind` stop at `stage`, where this version's run ends."""
+    """The `kind` stop at `stage`, where this version's run ends; at S8, with each attached file's saved record
+    (put on the draft prerelease, or why not), so a stop rebuilt after a restart says it too."""
 
-    return {"reason": "kind", "state": stage, "detail": {"pr": "README 와 최종 게이트를 마쳤다 — 풀 리퀘스트는 다음 버전에서 이어진다"}.get(
-        stage, "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다")}
+    went = [f"{name} — " + ("초안 프리릴리스에 올렸다" if r.get("url") else f"올리지 못했다: {r.get('error')}")
+            for key, name in (("apk", "APK"), ("installer", "설치 파일")) if stage == "pr" and (r := (o or {}).get(key))]
+    return {"reason": "kind", "state": stage, "detail": "; ".join([{"pr": "README 와 최종 게이트를 마쳤다 — 풀 리퀘스트는 다음 버전에서 이어진다"}.get(
+        stage, "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"), *went])}
 
 
 def handed(o: dict) -> bool:
