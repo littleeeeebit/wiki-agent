@@ -334,15 +334,33 @@ def unapproved(path: Path, o: dict, head: str, adapter: dict) -> list[str]:
                     or n == source and n in added and version_file(path, head, n))]
 
 
-# A command's words, a quoted part kept whole with its spaces, and a word's values: split at `=`, `,` and `;` outside
-# quotes. A value that leads out of the checkout: drive-qualified anywhere (`C:\x`, and `C:..\x`, relative to that
-# drive's own folder), or, itself or past its switch (`/out:`, `-o:`), a share, rooted at the current drive, a home or
-# a root with a folder in it. A switch such as `/p:x` or `-p:x` is not one.
-WORD = re.compile(r"""(?:"[^"]*"|'[^']*'|[^\s"'])+""")
-VALUES = re.compile(r"""[=,;](?=(?:[^"']*["'][^"']*["'])*[^"']*$)""")
+# A value that leads out of the checkout: drive-qualified anywhere (`C:\x`, and `C:..\x`, relative to that drive's own
+# folder), or, itself or past its switch (`/out:`, `-o:`), a share, rooted at the current drive, a home or a root with
+# a folder in it. A word that is a lone `/name` is a switch (`/p:x`, `cmd /c`); an option's value never is.
 DRIVE = re.compile(r"(?<![\w$%/\\.-])[A-Za-z]:")
 ROOTED = re.compile(r"\\|~[\\/]|/[^/\\:]*[/\\]")
 SWITCH = re.compile(r"^[-/]+[\w.-]*:")
+
+
+def values(command: str) -> list[tuple[str, bool]]:
+    """A command's values, quotes dropped and tracked one delimiter at a time, so a quoted space, comma or apostrophe
+    stays inside its value: split at whitespace and, outside quotes, at `=`, `,` and `;`, each with whether it
+    follows one of those, an option's value."""
+
+    out, cur, quote, lead = [], "", "", False
+    for ch in command:
+        if quote and ch == quote:
+            quote = ""
+        elif quote:
+            cur += ch
+        elif ch in "\"'":
+            quote = ch
+        elif ch.isspace() or ch in "=,;":
+            out += [(cur, lead)] * bool(cur)
+            cur, lead = "", ch in "=,;"
+        else:
+            cur += ch
+    return out + [(cur, lead)] * bool(cur)
 
 
 def outside(command: str) -> str:
@@ -351,10 +369,11 @@ def outside(command: str) -> str:
     the live worktree would build bytes R3 never saw. A variable (`$env:X`) is not a path. What the approved
     commit's own files name, its Tauri config among them, is the app R3 built and approved (an accepted limit)."""
 
-    for value in (re.sub(r"[\"']", "", v) for w in WORD.findall(command) for v in VALUES.split(w)):
+    for value, lead in values(command):
         bare = SWITCH.sub("", value)
-        if DRIVE.search(value) or any(ROOTED.match(s) or posixpath.normpath(s.replace("\\", "/")).split("/")[0] == ".."
-                                      for s in {value, bare} if s):
+        if (DRIVE.search(value) or ROOTED.match(value) or ROOTED.match(bare)
+                or (lead or bare != value) and bare[:1] in ("/", "\\")
+                or any(posixpath.normpath(s.replace("\\", "/")).split("/")[0] == ".." for s in {value, bare} if s)):
             return value
     return ""
 
