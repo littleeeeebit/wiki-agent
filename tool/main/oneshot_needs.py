@@ -23,8 +23,8 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release
-from .oneshot_spec import SAVES, VIEWS, idle, saved, spec_of, view
+from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, release, specs
+from .oneshot_spec import VIEWS, idle, saved, spec_of, view
 
 router = APIRouter()
 NID = re.compile(r"N[1-9]\d*")
@@ -260,8 +260,10 @@ def stored(repo: str, env: str, value: str | None) -> None:
         raise HTTPException(409, f"자격 증명 관리자를 읽지 못해 비밀 값을 바꾸지 않았다 — {e} — 다시 시도한다") from None
     undo = []
     try:
-        for f in CHANGED:
-            undo.append(f(repo, env))
+        with specs._files:   # the file the set-aside wrote, read before a save by any other route can come
+            for f in CHANGED:
+                undo.append(f(repo, env))
+            at = written(repo)
     except (OSError, HTTPException) as e:
         if isinstance(e, HTTPException) and e.status_code != 404:
             raise
@@ -274,8 +276,8 @@ def stored(repo: str, env: str, value: str | None) -> None:
             release.secret_write(name(repo, env), value)
             changed = True
     except (ValueError, OSError) as e:
-        at = SAVES.get(repo, 0)   # the save count as the set-aside left it: the store kept its value, so does the result
-        BACK.setdefault(repo, []).extend((at, fields) for fields in undo if fields)
+        if at:   # the store kept its value, so does the result; an unknown file leaves it set aside
+            BACK.setdefault(repo, []).extend((at, fields) for fields in undo if fields)
         settled(repo)
         if isinstance(e, ValueError):
             raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
@@ -287,18 +289,31 @@ def stored(repo: str, env: str, value: str | None) -> None:
 BACK: dict[str, list] = {}   # per repository, what a refused change set aside and has yet to put back
 
 
+def written(repo: str) -> tuple | None:
+    """Which write the spec file is: `specs.save` writes a new file and swaps it in, so each save gets a new file
+    id, and the write time is kept beside it. `None` when it cannot be read, which matches no write."""
+
+    try:
+        st = specs.file_of(repo, oneshot.BRANCH).stat()
+    except OSError:
+        return None
+    return st.st_ino, st.st_mtime_ns
+
+
 def settled(repo: str) -> None:
-    """Each `(save count, fields)` a refused change left in `BACK`, put back: only while no Oneshot save came
-    since that change set the result aside (`oneshot_spec.SAVES`), even one that left the record as it was.
-    Anything saved since (an input, a new run, any field) leaves the result set aside, and the owner measures
-    again. While a put-back fails, the result stays set aside (no verdict on it) and the request answers 409;
-    the next secret request tries again. `BACK` is memory: after a restart the result stays set aside."""
+    """Each `(written, fields)` a refused change left in `BACK`, put back: only while the spec file is still the
+    one that change's set-aside wrote. Any save since, by any route (an input, a new run, the task editor), swaps
+    in a new file, even one that leaves the record as it was, and leaves the result set aside: the owner measures
+    again. The check and the put-back hold the spec file lock every save takes. While a put-back fails, the
+    result stays set aside (no verdict on it) and the request answers 409; the next secret request tries again.
+    `BACK` is memory: after a restart the result stays set aside."""
 
     while BACK.get(repo):
         try:
             at, back = BACK[repo][0]
-            if SAVES.get(repo, 0) == at:
-                saved(repo, oneshot=back)
+            with specs._files:   # taken after `oneshot._lock`, as every Oneshot save takes them
+                if written(repo) == at:
+                    saved(repo, oneshot=back)
         except (OSError, HTTPException) as e:
             raise HTTPException(409, f"비밀 값은 그대로인데 내려놓았던 결과를 되돌리지 못했다 ({type(e).__name__}) — "
                                      "다시 시도하면 되돌린다") from None

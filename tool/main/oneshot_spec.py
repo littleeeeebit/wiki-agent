@@ -29,7 +29,6 @@ SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
 TURNS = {"tests", "build"}   # a stage run as a work turn (`oneshot_build.STAGES`), resumed by sending it again
 VIEWS: list = []   # a later stage's fields for the screen, `fn(spec) -> dict`
 RECOVERS: list = []   # a later stage's start-up repair of a run an earlier version left, `fn(repo, o)`
-SAVES: dict[str, int] = {}   # `saved` calls per repository since the server started, an identical save included
 MAX_TALK = 4_000
 
 router = APIRouter()
@@ -55,15 +54,16 @@ def spec_of(repo: str) -> dict:
 
 
 def saved(repo: str, **fields) -> dict:
-    """`oneshot` fields (`oneshot={...}` merges) and top-level ones in one save, counted in `SAVES`. Going back from
-    the critique or past it, or dropping the PC build, drops the look's secrets (`oneshot_front_build.MASKS`)."""
+    """Top-level spec fields and `oneshot` fields (`oneshot={...}` merges) written in one save. Going back from the
+    critique or past it, or dropping the frozen PC build, retires the look: no critique reads its shots again, so
+    their secrets leave memory (`oneshot_front_build.MASKS`)."""
+
     with oneshot._lock:
         spec = spec_of(repo)
         before, changes = spec["oneshot"].get("stage"), fields.pop("oneshot", {})
         merged = {**spec["oneshot"], **changes}
         spec.update(fields, oneshot=merged)
         specs.save(spec)
-        SAVES[repo] = SAVES.get(repo, 0) + 1
     at = [STAGE_ORDER.index(s) if s in STAGE_ORDER else -1 for s in (before, merged.get("stage"))]
     if 0 <= at[1] < STAGE_ORDER.index("critique") <= at[0] or changes.get("desktop_build", ()) is None:
         from . import oneshot_front_build   # it imports this module

@@ -47,7 +47,7 @@ gets the standing refusal and its areas' history (`build_turn`, `recurring`).
 | Findings that belong to a later stage | They are not blocking findings of the backend. Each goes to that kind's own build turn |
 | "Replace the mechanism" | Once per area |
 | What the measurement's keeping guards against | Mistakes, not an attacker. The measurement script and the backend are this run's own code and already hold the secrets in their environment. Keeping masks what they leak by accident and survives ordinary failures: a full disk, a read-only file, a failed read, a leftover folder. A link, junction or hard link they plant, or a file they swap between a check and its read, is outside what the keeping promises. The link checks that exist stay, as a courtesy, not as a guarantee (owner, 2026-11-23) |
-| A result set aside for a secret change the store then refused | Put back only while no Oneshot save has come since that change set it aside. Anything saved since, even a save that returns the record to how it was, leaves it set aside, and the owner measures again: a measurement repeated is preferred to a verdict on a result whose inputs may have moved (owner, 2026-11-23) |
+| A result set aside for a secret change the store then refused | Put back only while no save to the spec, by any route, has come since that change set it aside. Anything saved since, even a save that returns the record to how it was, leaves it set aside, and the owner measures again: a measurement repeated is preferred to a verdict on a result whose inputs may have moved (owner, 2026-11-23) |
 | The round cap on `[재개]` | It resets, as before |
 | Order after the build | Build gate → pull request #1 (a draft) → real measurement → review. Fix commits stack on the same pull request, and the last stage makes it ready |
 | What the measurement runs | The backend ships a runnable headless server, with its API, its workers and the real sign-in, as a required product of the build. The measurement starts it with real accounts and real addresses |
@@ -204,9 +204,11 @@ tries again. A value too long for Credential Manager is refused before
 anything changes, and a write or removal the store refuses puts the result
 it set aside back. When that put-back fails too, the result stays set aside
 with no verdict on it, the answer says so, and the next secret request puts
-it back first, but only while no Oneshot save has come since the refused
-change set it aside, counted per save, so a save that left the record as it
-was counts too. Anything saved since (an input, a new run, any field)
+it back first, but only while the spec file is still the one the refused
+change's set-aside wrote. Every save, by any route, the task editor
+included, swaps in a new file, so a save that left the record as it was
+counts too. The set-aside, that file's reading, the check and the put-back
+each hold the spec file lock every save takes. Anything saved since (an input, a new run, any field)
 leaves the result set aside, and the owner measures again. What is still to
 be put back is held in memory: after a restart the result stays set aside,
 and the owner measures again. A value Credential Manager returns but cannot be decoded counts

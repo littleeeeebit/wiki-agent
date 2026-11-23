@@ -330,6 +330,11 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
         measure.give("budget", "M1", measure.Value(value=value, head=head, env="BUDGET_URL", kind="text"))
     measure.give("budget", "M2", measure.Value(value=KEY, head=head, env=ENV, kind="secret"))
     assert o()["measures"][-1]["status"] == "stale" and not oneshot_needs.BACK.get("budget")
+    oneshot_needs.BACK["budget"] = [(oneshot_needs.written("budget"), {"measures": [*o()["measures"][:-1],
+                                                                                 {**o()["measures"][-1], "status": "owner"}]})]
+    measure.specs.save(spec())   # the same record saved by another route, as the task editor does: a new file
+    measure.give("budget", "M2", measure.Value(value=KEY, head=head, env=ENV, kind="secret"))
+    assert o()["measures"][-1]["status"] == "stale" and not oneshot_needs.BACK.get("budget")
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
     measure.measure("budget")
