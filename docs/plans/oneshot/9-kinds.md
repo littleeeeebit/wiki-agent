@@ -372,6 +372,13 @@ source, and the server assigns it:
     its fragment. A provider that gives an unread item the id of another
     element walked inside the same container, such as a grid header, has
     that item counted as read.
+    A known limit, accepted by the owner: UI Automation has an element that
+    realizes its children late offer `ItemContainer` for them. An item
+    container's items are counted. The children of a realized item are
+    taken as the walk found them, beyond the horizontal view check above. A
+    provider that realizes an item, such as a row or a card, but leaves part
+    of its content unrealized without an enumeration can have that part
+    missed.
     A known limit, accepted by the owner: UI Automation offers no snapshot
     of a tree, so the driver reads the tree live. The checks above catch a
     change that is still there when it is read again. They cannot catch an
