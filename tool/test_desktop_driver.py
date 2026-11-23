@@ -344,6 +344,14 @@ def test_a_report_file_that_is_not_utf8_has_no_baseline_text(tmp_path):
     assert set(report["steps"][0]["baseline"]) == {"error"}, report
 
 
+def test_a_value_is_kept_only_when_its_control_has_the_same_id_after_the_value_was_read():
+    nodes = desktop_driver.SCRIPT.read_text(encoding="utf-8").split("function Nodes(", 1)[1].split("function ", 1)[0]
+    at = [nodes.index(s) for s in ("id = $c.AutomationId", "ValuePattern]::ValueProperty, $true)",
+                                   "AutomationElement]::AutomationIdProperty, $true)",
+                                   "if ($again -cne [string]$node.id) { $node.value = $null; $node.unvalued = $true }")]
+    assert at == sorted(at), at
+
+
 def test_a_value_that_is_not_whole_utf16_is_read_as_unknown_never_with_a_replacement(tmp_path):
     script = tmp_path / "form.ps1"
     # The app holds a lone surrogate itself: a request's JSON would carry one only as U+FFFD.

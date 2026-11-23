@@ -346,7 +346,8 @@ source, and the server assigns it:
     joined into one token, is no match. The driver reads a control's value
     without UI Automation's defaults, so a provider that does not supply it
     leaves the value unknown, never empty. So does a value that is not
-    whole UTF-16. A report file is read through one open that shares
+    whole UTF-16, and so does one whose control reads another automation
+    id after the value than before it, a control rebound meanwhile. A report file is read through one open that shares
     reading only, so it is one version of the file. A file the app still
     holds open for writing is no report.
     A known limit, accepted by the owner: the approval decides what the

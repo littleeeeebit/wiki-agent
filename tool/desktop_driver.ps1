@@ -215,6 +215,11 @@ function Nodes([System.Windows.Automation.AutomationElement]$element, [int64]$hw
         if ($v.Length -gt $MAX_VALUE -or -not $whole) { $node.unvalued = $true }
       }
     } catch { $node.value = $null; $node.unvalued = $true }   # unread or cut: what it held is unknown, not empty
+    # The id again, after the value: a control rebound meanwhile held this value under another id, so whose it is
+    # is unknown.
+    try { $again = [string]$element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $true) }
+    catch { $again = $null }
+    if ($again -cne [string]$node.id) { $node.value = $null; $node.unvalued = $true }
   }
   if ($patterns -contains "Toggle") {
     try { $node.toggle = [string]$element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState }
