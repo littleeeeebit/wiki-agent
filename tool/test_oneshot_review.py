@@ -137,7 +137,8 @@ def test_a_fake_in_a_pinned_contract_test_stops_for_the_owner_and_one_the_build_
         assert o()["stage"] == "build" and len(sent) == 1 and "the translation API" in sent[0][2]
         return
     stopped = o()["stopped"]
-    assert stopped["reason"] == "fake" and f"`{file}:3` the translation API" in stopped["detail"] and not sent
+    # The card names the file that stopped it, beside the reviewer's place for it.
+    assert stopped["reason"] == "fake" and f"{file} (`{file}:3`) the translation API" in stopped["detail"] and not sent
     finding, = o()["reviews"][-1]["findings"]
     assert finding["fake"] == "the translation API" and finding["file"] == file and finding["pinned"] and not o().get("refused")
     with pytest.raises(HTTPException) as refused:   # `[재개]` would only send the build what it may not change
@@ -168,6 +169,11 @@ def test_a_pinned_file_is_the_same_file_on_disk_however_either_is_spelled(tmp_pa
     assert not pinned("other/test_budget.py", "tests/test_budget.py") and not pinned("tests/test_strasse.py", "tests/test_straße.py")
     assert not pinned("tests/test_budget.py:3", "tests/test_budget.py") and not pinned("../outside.py", "../outside.py")
     assert oneshot_review.faked_file(tmp_path, "tests") is None and oneshot_review.faked_file(tmp_path, "") is None
+    probed = []   # a path outside the checkout is refused unread; one the disk refuses to read is no file
+    with patch.object(oneshot_review.os.path, "realpath", lambda p: probed.append(p) or str(p)):
+        assert oneshot_review.faked_file(tmp_path, "../outside.py") is None and not probed
+    with patch.object(Path, "is_file", lambda self: (_ for _ in ()).throw(PermissionError(13, "denied"))):
+        assert oneshot_review.faked_file(tmp_path, "tests/test_budget.py") is None
 
 
 @pytest.mark.parametrize("finding, said", [

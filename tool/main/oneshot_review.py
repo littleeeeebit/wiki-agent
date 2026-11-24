@@ -256,12 +256,16 @@ def touched(location: str, changed: dict[str, list[tuple[int, int]]]) -> bool:
 
 def faked_file(root: Path, file) -> Path | None:
     """The test file a `fake` finding names in `file`, its path in the checkout `root` exactly as written, no line
-    or column and nothing trimmed, or None when that is no file inside `root`."""
+    or column and nothing trimmed, or None when that is no file inside `root`. A path outside `root` is never
+    probed, and one the disk refuses to read is no file: either way the reviewer is asked again."""
 
-    if not (isinstance(file, str) and file):
+    if not (isinstance(file, str) and file) or not Path(os.path.normpath(root / file)).is_relative_to(os.path.normpath(root)):
         return None
-    path = Path(os.path.realpath(root / file))
-    return path if path.is_file() and path.is_relative_to(os.path.realpath(root)) else None
+    try:
+        path = Path(os.path.realpath(root / file))
+        return path if path.is_relative_to(os.path.realpath(root)) and path.is_file() else None
+    except (OSError, ValueError):
+        return None
 
 
 def pinned(root: Path, file: str, pins) -> bool:
@@ -577,7 +581,7 @@ def decided(repo: str, store, spec: dict, found: dict):
         with oneshot._lock:
             store.put(reviews=reviews, working=None, later=later_of(o, found), stopped={
                 "reason": "fake", "state": store.get()[store.state], "detail": "고정한 계약 테스트에 가짜가 있어 빌드가 "
-                "고칠 수 없다 — " + " / ".join(f"{f['location']} {f['fake']}: {f['reason']}" for f in faked)})
+                "고칠 수 없다 — " + " / ".join(f"{f['file']} ({f['location']}) {f['fake']}: {f['reason']}" for f in faked)})
         return None
     refused = int(o.get("refused") or 0) + 1
     if conflicts := conflicted(o, found):   # a decision only the owner can make: no build turn, no round counted

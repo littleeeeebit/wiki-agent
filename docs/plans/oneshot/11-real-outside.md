@@ -334,13 +334,14 @@ file in `file`: the path in the repository exactly, with no line number. Its
 `location` stays what it is for every finding, a place for the owner to
 read, and nothing is parsed out of it. The verdict is refused, and the
 reviewer asked again, when `file` is no file of the checkout the review read
-(`oneshot_review.faked_file`). The finding is pinned when that file and a
+(`oneshot_review.faked_file`): a path outside it is refused unread, and one
+the disk will not read counts as none. The finding is pinned when that file and a
 pin, each read in the same checkout, are the same file on disk
 (`oneshot_review.pinned`), so `./`, an absolute path into the checkout or
 Windows letter case name the same pin, and a name that only looks alike
 never does. The run stops on a pinned file's fake (`fake`) before the round
-cap or any build turn, the card shows every such finding with what it stands
-in for, and `[재개]` is refused, since it would only send the build a test it
+cap or any build turn, the card shows every such finding with its file, the
+reviewer's place for it and what it stands in for, and `[재개]` is refused, since it would only send the build a test it
 may not change. A fake in a test file the build wrote goes to the build like
 any refusal. Decided with the owner on 2026-11-24.
 
