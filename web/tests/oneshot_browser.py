@@ -1021,7 +1021,9 @@ def measurement():
     verdict sent with the HEAD; a refusal needs words. Then the owner's ruling between the builder and the review."""
     head = "a" * 40
     view = run("measure-demo", "measure", waits=True)
-    view["measure"] = {"plan": PLAN, "error": "", "runs": [], "pr": {"number": 1, "url": "https://github.com/o/r/pull/1"}, "head": head}
+    # The owner's one measurement (plan 13): the server's own pass is in, so the next one is the owner's.
+    view["measure"] = {"plan": PLAN, "error": "", "runs": [], "pr": {"number": 1, "url": "https://github.com/o/r/pull/1"}, "head": head,
+                       "next": "owner"}
     view["secrets_kept"] = ["OLD_KEY"]   # a secret an earlier design held, the plan does not list
     views = {"measure-demo": view}
     posted: list = []
@@ -1044,7 +1046,7 @@ def measurement():
                     v["working"] = "measure"
                 if act == "measure/stop":
                     v["working"] = None
-                    v["measure"]["runs"] = [{"n": 1, "head": head, "ts": 0, "status": "owner", "clips": ["s1.wav"],
+                    v["measure"]["runs"] = [{"n": 1, "head": head, "ts": 0, "status": "owner", "mode": "owner", "clips": ["s1.wav"],
                                              "notes": "18분 동안 끊김 없이 받았다", "metrics": [
                                                  {**PLAN["metrics"][0], "value": 41, "ok": True}]}]
                 if act == "measure/decide":
