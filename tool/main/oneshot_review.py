@@ -577,7 +577,7 @@ def replacing(repo: str, o: dict, found: dict) -> dict:
     if new != (o.get("replacing") or []):
         oneshot_spec.saved(repo, oneshot={"replacing": new or None})
     return {"head": found["head"], "areas": sorted({area_of(f) for f in serious}),
-            "sent": sorted(oneshot_answers.spot(f) for f in serious)}   # what an answer may name, finding by finding
+            "sent": [n for n, f in enumerate(found["findings"]) if f in serious]}   # each finding sent, by its index
 
 
 def later_of(o: dict, found: dict) -> list[dict]:

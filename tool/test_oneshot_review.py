@@ -641,8 +641,10 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     git(tree, "commit", "-m", "pins")
     refused = git(tree, "rev-parse", "HEAD")
     settled = {**P1, "area": "refund wording", "location": "budget_app.py:1"}   # the owner ruled it for the builder
-    oneshot_spec.saved("budget", oneshot={"built_head": refused, "rulings": {"refund wording": {"keep": "build"}},
-                                          "reviews": [{"verdict": "refuse", "head": refused, "findings": [P1, settled]}]})
+    twin = {**P1, "severity": "P0", "reason": "합계가 깨진다"}   # P1's spot; a ruling for the builder never drops a P0
+    ruled = {"refund wording": {"keep": "build"}, "amount validation": {"keep": "build"}}
+    oneshot_spec.saved("budget", oneshot={"built_head": refused, "rulings": ruled, "reviews": [
+        {"verdict": "refuse", "head": refused, "findings": [P1, settled, twin]}]})
     s = specs.load("budget", oneshot.BRANCH)
     with pytest.raises(ValueError, match="하나만"):   # no turn sent it yet, as for a plan-repair turn
         answered(s, "```oneshot-answers\n[]\n```\n")
@@ -653,6 +655,7 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     assert oneshot_answers.carried(o(), SimpleNamespace(person=True)) == (None, "")   # a person's turn has none
     kept, more = oneshot_answers.carried(o(), SimpleNamespace(token="t"))   # the retry or the guidance after `t`
     assert kept["head"] == refused and "amount validation" in more and "refund wording" not in more
+    assert "합계가 깨진다" in more and "음수 금액을 받는다" not in more   # the P0 it was sent, never the P1 at its spot
     # A turn that ends on the refused HEAD is offered the answer only when that refusal was sent to it.
     assert "oneshot-answers" in oneshot_answers.unchanged(tree, o(), "t")
     assert "oneshot-answers" not in oneshot_answers.unchanged(tree, o(), "u")
