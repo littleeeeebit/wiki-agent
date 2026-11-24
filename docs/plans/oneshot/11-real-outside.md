@@ -320,14 +320,21 @@ The review prompts already refuse "a contract test made weaker by something
 outside its file (a fake, a configuration, a mock that hides the
 behaviour)". They gain a fake inside a test file too: a P1 whose `breaks`
 names the design test it fakes for and whose `fake` says what it stands in
-for (`oneshot_review.verdict_of` refuses a `fake` on anything else). It is P1
-though the person never meets a test file, since it hides what they would.
+for. The server refuses a `fake` on anything else, one whose `breaks` names
+no design test, and one deferred to a device or a later build
+(`oneshot_review.verdict_of`, `held`), since it would then pass the review.
+It is P1 though the person never meets a test file, since it hides what
+they would.
 The one stand-in a kind's tests may keep, for the platform a thin platform
 module wraps, is not one.
 
 A fake in a pinned contract test is one no build turn may fix, since the
-build may not change those files. The run stops there (`fake`), the card
-shows each such finding, and `[재개]` is refused, since it would only send the
+build may not change those files. A finding's location points into one
+however it spells the path: its line and column left off, `./` and
+backslashes read as the same path, and on Windows any letter case
+(`oneshot_review.pinned`). The run stops there (`fake`) before the round cap
+or any build turn, the card shows every such finding with what it stands in
+for, and `[재개]` is refused, since it would only send the
 build a test it may not change. A fake in a test file the build wrote goes
 to the build like any refusal. Decided with the owner on 2026-11-24.
 

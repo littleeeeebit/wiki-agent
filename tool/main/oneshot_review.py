@@ -14,6 +14,7 @@ review reads the real measurement the owner approved. Nothing here pushes.
 from __future__ import annotations
 
 import json
+import os
 import posixpath
 import re
 import shutil
@@ -276,7 +277,8 @@ def ruled(spec: dict, tree: Path, head: str) -> dict:
     ruled = {a for a, r in (o.get("rulings") or {}).items() if r.get("keep") == "build"}
     return {"anchors": anchors(spec), "known": set(rounds), "repeated": {a for a, n in rounds.items() if len(n) >= 2},
             "changed": changed, "since": reviews[-1]["head"] if changed is not None else None,
-            "answered": answered, "ruled": ruled, "kinds": set(kinds_of(o))}
+            "answered": answered, "ruled": ruled, "kinds": set(kinds_of(o)),
+            "tests": {str(t["id"]) for t in o["design"].get("tests") or [] if isinstance(t, dict) and t.get("id")}}
 
 
 def rules_text(rules: dict) -> str:
@@ -363,8 +365,10 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
             and all(isinstance(f.get(k), str) and f[k].strip() for k in ("location", "reason", "evidence"))
             for f in findings):
         raise ValueError("`findings` 마다 `location`, `severity`(P0·P1·P2), `reason`, `evidence` 가 있어야 한다")
-    if any("fake" in f and not (f["severity"] == "P1" and isinstance(f["fake"], str) and f["fake"].strip()) for f in findings):
-        raise ValueError("`fake` 는 테스트 파일 안의 가짜를 짚은 P1 발견에만 붙고, 그 가짜가 대신하는 것을 적는다")
+    if any("fake" in f and not (f["severity"] == "P1" and isinstance(f["fake"], str) and f["fake"].strip()
+                                and "device" not in f and "later" not in f) for f in findings):
+        raise ValueError("`fake` 는 테스트 파일 안의 가짜를 짚은 P1 발견에만 붙고, 그 가짜가 대신하는 것을 적는다 — "
+                         "지금 고칠 것이라 `device` 나 `later` 로 미루지 못한다")
     if any("device" in f and "later" in f for f in findings):
         raise ValueError("발견 하나에 `device` 와 `later` 를 함께 붙이지 않는다")
     if any("later" in f and not later_ok(f, (rules or {}).get("kinds")) for f in findings):
@@ -419,6 +423,8 @@ def held(f: dict, rules: dict) -> None:
     allowed, breaks = rules.get("anchors") or set(), f.get("breaks")
     if breaks is not None and not (isinstance(breaks, list) and all(isinstance(b, str) and b in allowed for b in breaks)):
         raise ValueError(f"`breaks` 는 입력에 적힌 설계 항목·요구 번호의 목록이다 — 받은 값 {breaks}")
+    if f.get("fake") and not set(breaks or ()) & rules.get("tests", set()):
+        raise ValueError("`fake` 발견의 `breaks` 에는 그 가짜가 대신 서는 설계 테스트 번호(T…)를 적는다")
     if allowed and f["severity"] == "P1" and not breaks:
         raise ValueError("P1 발견마다 그것이 깨뜨리는 설계 항목·요구 번호를 `breaks` 에 적는다 — 아무것도 "
                          "깨뜨리지 않으면 P2 다")
@@ -543,11 +549,11 @@ def decided(repo: str, store, spec: dict, found: dict):
                                           "later": later_of(o, found), "working": "split"})
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
     # A fake in a pinned contract test is one no build turn may fix: the run stops, and the owner sees it.
-    if faked := [f for f in blocking(found) if f.get("fake") and f["location"].rsplit(":", 1)[0] in o.get("contract", ())]:
+    if faked := [f for f in blocking(found) if f.get("fake") and pinned(o, f["location"])]:
         with oneshot._lock:
             store.put(reviews=reviews, working=None, later=later_of(o, found), stopped={
                 "reason": "fake", "state": store.get()[store.state], "detail": "고정한 계약 테스트에 가짜가 있어 빌드가 "
-                "고칠 수 없다 — " + " / ".join(f"{f['location']} {f['fake']}: {f['reason']}" for f in faked[:5])})
+                "고칠 수 없다 — " + " / ".join(f"{f['location']} {f['fake']}: {f['reason']}" for f in faked)})
         return None
     refused = int(o.get("refused") or 0) + 1
     if conflicts := conflicted(o, found):   # a decision only the owner can make: no build turn, no round counted
@@ -565,6 +571,16 @@ def decided(repo: str, store, spec: dict, found: dict):
         return None
     # `working` names the build before it is sent: a server that dies in between leaves it for `recover`.
     return to_build(repo, o, reviews, found, refused=refused)
+
+
+def pinned(o: dict, location: str) -> bool:
+    """`location` points into one of the run's pinned contract tests, its line and column left off, however the
+    path is spelled: `./`, backslashes, and on Windows any letter case."""
+
+    def key(path: str) -> str:
+        path = posixpath.normpath(path.strip().replace("\\", "/"))
+        return path.casefold() if os.name == "nt" else path
+    return key(re.sub(r"(:\d+(-\d+)?)+$", "", location.strip())) in {key(c) for c in o.get("contract") or ()}
 
 
 def to_build(repo: str, o: dict, reviews: list[dict], found: dict, **fields):

@@ -5,6 +5,7 @@ See `docs/plans/oneshot/3-spec-backend.md` ("Backend review"). The review turn
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -128,11 +129,38 @@ def test_a_fake_in_a_pinned_contract_test_stops_for_the_owner_and_one_the_build_
     assert refused.value.status_code == 409 and refused.value.detail == stopped["detail"]
 
 
-@pytest.mark.parametrize("finding", [{**FAKE, "severity": "P2"}, {**FAKE, "fake": " "}, {**FAKE, "fake": ["x"]}])
-def test_a_fake_mark_names_what_a_p1_finding_stands_in_for(reviewed, finding):
+def test_every_pinned_fake_is_named_in_the_stop(reviewed):
+    _, head, sent = reviewed
+    six = [{**FAKE, "location": f"test_budget.py:{n}", "fake": f"service {n}"} for n in range(1, 7)]
+    _, asking = answers(verdict(head, "refuse", *six))
+    with asking:
+        oneshot_review.review("budget")
+    assert all(f"service {n}" in o()["stopped"]["detail"] for n in range(1, 7)) and not sent
+
+
+@pytest.mark.parametrize("location, pinned", [
+    ("tests/test_budget.py:3", True), ("./tests/test_budget.py:3", True), ("tests/test_budget.py:3:8", True),
+    ("tests/test_budget.py:3-9", True), ("tests/test_budget.py", True), ("tests\\test_budget.py:3", True),
+    ("other/test_budget.py:3", False), ("tests/test_budget.py:helper.py", False),
+    ("TESTS/TEST_BUDGET.PY:3", os.name == "nt"),   # a Windows checkout's file is the same in any letter case
+])
+def test_a_pinned_file_is_the_same_however_its_location_spells_it(location, pinned):
+    assert oneshot_review.pinned({"contract": ["tests/test_budget.py"]}, location) is pinned
+
+
+@pytest.mark.parametrize("finding, said", [
+    ({**FAKE, "severity": "P2"}, "`fake`"), ({**FAKE, "fake": " "}, "`fake`"), ({**FAKE, "fake": ["x"]}, "`fake`"),
+    # A fake is fixed now: never deferred to a device or a kind's later build, where it would pass the review.
+    ({**FAKE, "later": {"kind": "android", "what": "x"}}, "`later`"),
+    ({**FAKE, "device": {"kind": "android", "requirement": "R1", "check": "x"}}, "`device`"),
+    ({**FAKE, "breaks": ["R1"]}, "설계 테스트 번호"),   # it names the design test the fake stands in for
+])
+def test_a_fake_mark_is_a_blocking_p1_that_names_its_test_and_what_it_stands_in_for(reviewed, finding, said):
     _, head, _ = reviewed
-    with pytest.raises(ValueError, match="`fake`"):
-        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [finding, P1]}, head)
+    rules = {"anchors": {"T1", "R1"}, "tests": {"T1"}, "kinds": {"android"}}
+    with pytest.raises(ValueError, match=said):
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [finding, P1]}, head,
+                                  {"android": {"R1"}}, rules)
 
 
 @pytest.mark.parametrize("kind", ["webapp", "android", "desktop", "kinds"])
