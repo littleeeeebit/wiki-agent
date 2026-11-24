@@ -468,9 +468,16 @@ def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
     assert masked("İ", {"̇": "[N1]"}) == "I[N1]"   # as spelled, though the fold here drops it
     assert masked("x abcdefghi y", {"abcdef": "[N1]", "defghi": "[N2]"}) == "x [N1] y"   # two that overlap: no rest
     assert masked("abcd-cdef-efgh", {"abcd-cd": "[N1]", "cdef-ef": "[N2]", "efgh": "[N3]"}) == "[N1]"   # a chain
+    # Two regions claimed first, then one that grows the first, then one that bridges both: the first label holds.
+    assert masked("aaaaaaaa..bbbbbbb", {"aaaaaaaa": "[N1]", "bbbbbbb": "[N2]", "aaa..": "[N3]", "a..b": "[N4]"}) \
+        == "[N1]"
     many = "k " * 20000
     started = time.monotonic()
     assert masked(many, {"k": "[N1]"}) == "[N1] " * 20000 and time.monotonic() - started < 2   # linear in matches
+    overlapping = "abcdefghi " * 10000
+    started = time.monotonic()
+    assert masked(overlapping, {"abcdef": "[N1]", "defghi": "[N2]"}) == "[N1] " * 10000 \
+        and time.monotonic() - started < 2   # each overlap merged in one sweep, never by a scan of the rest
 
 
 def test_a_secret_that_folds_to_nothing_shows_on_no_page():

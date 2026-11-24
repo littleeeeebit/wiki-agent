@@ -149,7 +149,7 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
     """Where `masked` puts each label in `text`, as `(start, end, label)` in order, none overlapping."""
     folds = _folds(text)
     flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
-    taken, chosen = bytearray(len(text)), []
+    claims: list[tuple[int, int, int, str]] = []   # (start, end, the order it was claimed in, label)
     tokens = [m.span() for m in _ESCAPE.finditer(text)] if "\\" in text else []
     starts = [s for s, _ in tokens]
 
@@ -161,16 +161,7 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
     def claim(start: int, end: int, label: str) -> None:
         # Never part of an escape: the label covers each one it touches, so JSON stays JSON.
         start, end = (widened(start, 0), widened(end, 1)) if tokens else (start, end)
-        if not any(taken[start:end]):
-            taken[start:end] = b"\x01" * (end - start)
-            chosen.append((start, end, label))
-        elif not all(taken[start:end]):   # it runs past one already claimed: one label covers both, none of either shown
-            hit = [c for c in chosen if c[0] < end and start < c[1]]
-            for c in hit:
-                chosen.remove(c)
-            start, end = min(start, *(c[0] for c in hit)), max(end, *(c[1] for c in hit))
-            taken[start:end] = b"\x01" * (end - start)
-            chosen.append((start, end, hit[0][2]))
+        claims.append((start, end, len(claims), label))
 
     # Also as its JSON decodes: each match there covers the escapes it was written with.
     plain, where = _unescape(text) if tokens else (text, [])
@@ -192,7 +183,16 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
                 first, end = (at, at + len(needle) - 1) if own is None else (own[at], own[at + len(needle) - 1])
                 claim(where[first][0], where[end][1], hide[value])
                 at += 1
-    return sorted(chosen)
+    # Matches that overlap are one span, under the label claimed first (the longest value): no part of either is
+    # shown. One sweep in order of start, so the work grows with the matches, never with their square.
+    chosen: list[tuple[int, int, int, str]] = []
+    for start, end, rank, label in sorted(claims):
+        if chosen and start < chosen[-1][1]:
+            s, e, r, lab = chosen[-1]
+            chosen[-1] = (s, max(e, end), *min((r, lab), (rank, label)))
+        else:
+            chosen.append((start, end, rank, label))
+    return [(s, e, lab) for s, e, _, lab in chosen]
 
 
 class Veil:
