@@ -33,8 +33,9 @@ with these five parts, and the code each part names.
 4. `during`: the steps the owner takes while the script runs, such as
    choosing a Google account in the browser window it opens. Use the same
    step shape. The measurement screen shows nothing the script prints or
-   writes while it runs, and the owner never reads its output: a saved
-   result keeps only a masked tail of it. When a step needs the owner to read
+   writes while it runs, and the owner never needs to read its console
+   output; a saved result keeps a masked tail of that output beside the
+   report and the clips. When a step needs the owner to read
    something, such as a device code, the script opens it for them in the
    default browser, on a page the backend or the script serves on
    `127.0.0.1` that shows it. That step has no `url`, since the script
