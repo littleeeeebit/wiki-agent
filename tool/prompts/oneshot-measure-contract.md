@@ -33,16 +33,22 @@ with these five parts, and the code each part names.
 4. `during`: the steps the owner takes while the script runs, such as
    choosing a Google account in the browser window it opens. Use the same
    step shape. The measurement screen shows nothing the script prints or
-   writes while it runs. After it ends, the run's record keeps a masked
-   tail of what it printed, and the screen shows the report's metrics and
-   `notes` when there are any, an `input_error`, the clips, and any error
-   of the measurement itself. When a step needs the owner to read
+   writes while it runs. A run whose result is saved keeps a masked tail of
+   what it printed. When that result stays on the measurement screen, the
+   screen shows the report's metrics and `notes` when there are any, an
+   `input_error`, the clips, and any error of the measurement itself; a
+   failed run that goes straight back to the build is not shown there, and
+   a stopped run saves no result. When a step needs the owner to read
    something, such as a device code, the script opens it for them in the
    default browser, on a page the backend or the script serves on
    `127.0.0.1` that shows it. That step has no `url`, since the script
    opens the page itself, and no `copy`. One step per browser page, as
    everywhere: the step on that page says how to carry what it shows to the
-   next page, and the next step says where it goes there. For example:
+   next page, and the next step says where it goes there. The example below
+   is only the code handoff: the real `during` steps go on until the
+   service has authorized the device, through any sign-in and every consent
+   screen, and each step's `see` covers both a browser already signed in
+   and one that is not.
 
    ```json
    [{"window": "브라우저 — 기기 코드 (실측이 열어 준 창)",
