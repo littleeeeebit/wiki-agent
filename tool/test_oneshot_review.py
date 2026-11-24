@@ -111,10 +111,25 @@ FAKE = {**P1, "location": "test_budget.py:3", "reason": "번역 API 를 부르�
         "evidence": "3행의 stub", "area": "faked translation", "breaks": ["T1"], "fake": "the translation API"}
 
 
-@pytest.mark.parametrize("location, stops", [("test_budget.py:3", True), ("tests/test_own.py:3", False)])
+def committed(tree: Path, *paths: str) -> str:
+    """`paths` committed as test files on top of the build, the new HEAD the review reads and the owner approved."""
+
+    for path in paths:
+        (tree / path).parent.mkdir(parents=True, exist_ok=True)
+        (tree / path).write_text("def test_it():\n    assert True\n", encoding="utf-8")
+        git(tree, "add", path)
+    git(tree, "commit", "-m", "tests")
+    head = git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={"built_head": head, "measures": [approved(head)]})
+    return head
+
+
+@pytest.mark.parametrize("location, stops", [("test_budget.py:3", True), ("`./test_budget.py:3:8`", True),
+                                             ("tests/test_own.py:3", False)])
 def test_a_fake_in_a_pinned_contract_test_stops_for_the_owner_and_one_the_build_wrote_goes_to_it(reviewed, location, stops):
     # A pinned contract test is one no build turn may change: its fake is the owner's to see, never a repair round.
-    _, head, sent = reviewed
+    tree, _, sent = reviewed
+    head = committed(tree, "test_budget.py", "tests/test_own.py")
     _, asking = answers(verdict(head, "refuse", {**FAKE, "location": location}))
     with asking:
         oneshot_review.review("budget")
@@ -122,15 +137,17 @@ def test_a_fake_in_a_pinned_contract_test_stops_for_the_owner_and_one_the_build_
         assert o()["stage"] == "build" and len(sent) == 1 and "the translation API" in sent[0][2]
         return
     stopped = o()["stopped"]
-    assert stopped["reason"] == "fake" and "test_budget.py:3 the translation API" in stopped["detail"] and not sent
-    assert o()["reviews"][-1]["findings"][0]["fake"] == "the translation API" and not o().get("refused")
+    assert stopped["reason"] == "fake" and f"{location} the translation API" in stopped["detail"] and not sent
+    finding, = o()["reviews"][-1]["findings"]
+    assert finding["fake"] == "the translation API" and finding["file"] == "test_budget.py" and not o().get("refused")
     with pytest.raises(HTTPException) as refused:   # `[재개]` would only send the build what it may not change
         oneshot_spec.resume("budget")
     assert refused.value.status_code == 409 and refused.value.detail == stopped["detail"]
 
 
 def test_every_pinned_fake_is_named_in_the_stop(reviewed):
-    _, head, sent = reviewed
+    tree, _, sent = reviewed
+    head = committed(tree, "test_budget.py")
     six = [{**FAKE, "location": f"test_budget.py:{n}", "fake": f"service {n}"} for n in range(1, 7)]
     _, asking = answers(verdict(head, "refuse", *six))
     with asking:
@@ -138,14 +155,22 @@ def test_every_pinned_fake_is_named_in_the_stop(reviewed):
     assert all(f"service {n}" in o()["stopped"]["detail"] for n in range(1, 7)) and not sent
 
 
-@pytest.mark.parametrize("location, pinned", [
-    ("tests/test_budget.py:3", True), ("./tests/test_budget.py:3", True), ("tests/test_budget.py:3:8", True),
-    ("tests/test_budget.py:3-9", True), ("tests/test_budget.py", True), ("tests\\test_budget.py:3", True),
-    ("other/test_budget.py:3", False), ("tests/test_budget.py:helper.py", False),
-    ("TESTS/TEST_BUDGET.PY:3", os.name == "nt"),   # a Windows checkout's file is the same in any letter case
-])
-def test_a_pinned_file_is_the_same_however_its_location_spells_it(location, pinned):
-    assert oneshot_review.pinned({"contract": ["tests/test_budget.py"]}, location) is pinned
+def test_a_fake_names_the_file_of_the_checkout_however_its_location_spells_it(tmp_path):
+    root = tmp_path / "seen"
+    for path in ("tests/test_budget.py", "tests/test_straße.py", "other/test_budget.py", "tests/test-contract"):
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text("", encoding="utf-8")
+    (tmp_path / "outside.py").write_text("", encoding="utf-8")
+    nt = os.name == "nt"
+    cases = {"tests/test_budget.py:3": "tests/test_budget.py", "`tests/test_budget.py:3`": "tests/test_budget.py",
+             "./tests/test_budget.py:3:8": "tests/test_budget.py", "tests/test_budget.py:3-9": "tests/test_budget.py",
+             f"{root / 'tests' / 'test_budget.py'}:3": "tests/test_budget.py", "tests/test_budget.py": "tests/test_budget.py",
+             "other/test_budget.py:3": "other/test_budget.py", "tests/test-contract:3": "tests/test-contract",
+             # A name that only folds alike is another file; a real file's case is the checkout's own.
+             "tests/test_strasse.py:3": "", "TESTS/TEST_BUDGET.PY:3": "tests/test_budget.py" if nt else "",
+             "tests\\test_budget.py:3": "tests/test_budget.py" if nt else "",
+             "tests/test_budget.py:helper.py": "", "../outside.py:1": "", "tests:3": ""}
+    assert {loc: oneshot_review.located(root, loc) for loc in cases} == cases
 
 
 @pytest.mark.parametrize("finding, said", [
@@ -154,10 +179,12 @@ def test_a_pinned_file_is_the_same_however_its_location_spells_it(location, pinn
     ({**FAKE, "later": {"kind": "android", "what": "x"}}, "`later`"),
     ({**FAKE, "device": {"kind": "android", "requirement": "R1", "check": "x"}}, "`device`"),
     ({**FAKE, "breaks": ["R1"]}, "설계 테스트 번호"),   # it names the design test the fake stands in for
+    ({**FAKE, "location": "tests/test_gone.py:3"}, "`location`"),   # and a file the review read
 ])
-def test_a_fake_mark_is_a_blocking_p1_that_names_its_test_and_what_it_stands_in_for(reviewed, finding, said):
+def test_a_fake_mark_is_a_blocking_p1_that_names_its_test_and_what_it_stands_in_for(reviewed, tmp_path, finding, said):
     _, head, _ = reviewed
-    rules = {"anchors": {"T1", "R1"}, "tests": {"T1"}, "kinds": {"android"}}
+    rules = {"anchors": {"T1", "R1"}, "tests": {"T1"}, "kinds": {"android"}, "seen": tmp_path}
+    (tmp_path / "test_budget.py").write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match=said):
         oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [finding, P1]}, head,
                                   {"android": {"R1"}}, rules)

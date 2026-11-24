@@ -133,8 +133,8 @@
     },
     "tool/main/oneshot_review.py": {
       "dup": 0,
-      "lines": 825,
-      "reason": "Plan 11c: a review finding marked `fake` must be a blocking P1 that names its design test and says what it stands in for, never deferred to a device or a later build, and a fake in a pinned contract test, however its location spells the path (`pinned`), stops the run for the owner instead of sending the build a test it may not change (PR #436 round 1; the stop sits beside the cap's, under the same lock)."
+      "lines": 835,
+      "reason": "Plan 11c: a review finding marked `fake` must be a blocking P1 that names its design test, says what it stands in for and names a file of the checkout the review read (`located`, which settles the file by the real path, a code span, `./`, backslashes, an absolute path and line or column suffixes included), never deferred to a device or a later build; a fake in a pinned contract test stops the run for the owner instead of sending the build a test it may not change (PR #436 rounds 1-2; the stop sits beside the cap's, under the same lock)."
     },
     "tool/main/oneshot.py": {
       "dup": 0,

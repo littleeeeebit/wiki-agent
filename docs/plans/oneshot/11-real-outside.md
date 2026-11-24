@@ -329,10 +329,14 @@ The one stand-in a kind's tests may keep, for the platform a thin platform
 module wraps, is not one.
 
 A fake in a pinned contract test is one no build turn may fix, since the
-build may not change those files. A finding's location points into one
-however it spells the path: its line and column left off, `./` and
-backslashes read as the same path, and on Windows any letter case
-(`oneshot_review.pinned`). The run stops there (`fake`) before the round cap
+build may not change those files. A `fake` finding's location must name a
+file of the checkout the review read, and the verdict keeps that file as Git
+spells it (`oneshot_review.located`): the whole location first, then with a
+trailing line, range or column left off, so a real name ending in one keeps
+it. A code span, `./`, backslashes and an absolute path into the checkout
+name the same file, and the real path settles letter case, so two names that
+only fold alike stay two files. One whose location names no such file is
+refused and asked again. The run stops on a pinned file's fake (`fake`) before the round cap
 or any build turn, the card shows every such finding with what it stands in
 for, and `[재개]` is refused, since it would only send the
 build a test it may not change. A fake in a test file the build wrote goes

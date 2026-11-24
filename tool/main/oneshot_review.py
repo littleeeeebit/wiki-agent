@@ -254,6 +254,22 @@ def touched(location: str, changed: dict[str, list[tuple[int, int]]]) -> bool:
     return bool(m) and any(a <= int(m[2]) <= b for a, b in changed.get(canonical(m[1]), []))
 
 
+def located(root: Path, location: str) -> str:
+    """The file `location` names in the checkout `root`, as Git spells it there, or "": the whole text first, then
+    with each trailing `:<line>`, `:<a>-<b>` or `:<column>` left off, so a file whose real name ends in one keeps it.
+    A code span, `./`, backslashes and an absolute path into `root` name the same file; the real path settles
+    letter case on Windows, so two names that only fold alike stay two files."""
+
+    text, base = location.strip().strip("`").strip(), Path(os.path.realpath(root))
+    while True:
+        path = Path(os.path.realpath(Path(text) if Path(text).is_absolute() else root / text))
+        if path.is_file() and path.is_relative_to(base):
+            return path.relative_to(base).as_posix()
+        if not (cut := re.fullmatch(r"(.+):\d+(-\d+)?", text)):
+            return ""
+        text = cut[1]
+
+
 def canonical(path: str) -> str:
     """A worktree-relative path in one spelling: `./a\\b/../c` is `a/c`, as Git writes it."""
 
@@ -397,6 +413,7 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
                           **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
                           **({k: f[k] for k in ("breaks", "repro", "rebuttal", "fake") if f.get(k)}),
+                          **({"file": located(rules["seen"], f["location"])} if f.get("fake") and (rules or {}).get("seen") else {}),
                           **({"later": {k: str(f["later"][k]).strip() for k in ("kind", "what")}} if "later" in f else {}),
                           **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source", "act", "expect", "observe")
                                          if k in f["device"]}}
@@ -425,6 +442,8 @@ def held(f: dict, rules: dict) -> None:
         raise ValueError(f"`breaks` 는 입력에 적힌 설계 항목·요구 번호의 목록이다 — 받은 값 {breaks}")
     if f.get("fake") and not set(breaks or ()) & rules.get("tests", set()):
         raise ValueError("`fake` 발견의 `breaks` 에는 그 가짜가 대신 서는 설계 테스트 번호(T…)를 적는다")
+    if f.get("fake") and rules.get("seen") and not located(rules["seen"], f["location"]):
+        raise ValueError(f"`fake` 발견의 `location` 은 읽은 체크아웃 안의 테스트 파일을 짚는다 — {f['location']}")
     if allowed and f["severity"] == "P1" and not breaks:
         raise ValueError("P1 발견마다 그것이 깨뜨리는 설계 항목·요구 번호를 `breaks` 에 적는다 — 아무것도 "
                          "깨뜨리지 않으면 P2 다")
@@ -549,7 +568,8 @@ def decided(repo: str, store, spec: dict, found: dict):
                                           "later": later_of(o, found), "working": "split"})
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
     # A fake in a pinned contract test is one no build turn may fix: the run stops, and the owner sees it.
-    if faked := [f for f in blocking(found) if f.get("fake") and pinned(o, f["location"])]:
+    # The verdict resolved each fake's `file` in the checkout the review read (`located`), as Git spells it.
+    if faked := [f for f in blocking(found) if f.get("fake") and f.get("file") in {canonical(c) for c in o.get("contract") or ()}]:
         with oneshot._lock:
             store.put(reviews=reviews, working=None, later=later_of(o, found), stopped={
                 "reason": "fake", "state": store.get()[store.state], "detail": "고정한 계약 테스트에 가짜가 있어 빌드가 "
@@ -571,16 +591,6 @@ def decided(repo: str, store, spec: dict, found: dict):
         return None
     # `working` names the build before it is sent: a server that dies in between leaves it for `recover`.
     return to_build(repo, o, reviews, found, refused=refused)
-
-
-def pinned(o: dict, location: str) -> bool:
-    """`location` points into one of the run's pinned contract tests, its line and column left off, however the
-    path is spelled: `./`, backslashes, and on Windows any letter case."""
-
-    def key(path: str) -> str:
-        path = posixpath.normpath(path.strip().replace("\\", "/"))
-        return path.casefold() if os.name == "nt" else path
-    return key(re.sub(r"(:\d+(-\d+)?)+$", "", location.strip())) in {key(c) for c in o.get("contract") or ()}
 
 
 def to_build(repo: str, o: dict, reviews: list[dict], found: dict, **fields):
@@ -675,7 +685,7 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
             rules = ruled(spec, tree, head)
             found = oneshot.turned(store, "review", oneshot.prompt("review", shape(spec["oneshot"])),
                                    review_text(spec, head, how, rules), "oneshot-review",
-                                   lambda value: verdict_of(value, head, deferrable(spec), rules), seen)
+                                   lambda value: verdict_of(value, head, deferrable(spec), {**rules, "seen": seen}), seen)
     except MovedError as exc:   # the approved HEAD is no longer the tree: the build checks it again
         rebuild(spec["repo"], store, f"리뷰 직전에 작업트리가 바뀌었다 — {exc}")
         return None
