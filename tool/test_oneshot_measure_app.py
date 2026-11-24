@@ -154,7 +154,10 @@ class Job:
 
 
 def session(tmp_path: Path, job: Job, seen: dict):
-    """A stand-in for `desktop_session`: its look records what it was asked to start, and starts nothing."""
+    """A stand-in for `desktop_session`: its look records what it was asked to start, and starts nothing; with
+    `refuse` in `seen`, Windows refuses the program as `owned_job` does."""
+
+    refused = type("Refused", (ValueError,), {})
 
     class Look:
         def __init__(self, root, name, owned, disposable):
@@ -163,6 +166,8 @@ def session(tmp_path: Path, job: Job, seen: dict):
             seen.update(owned=owned, disposable=disposable)
 
         def start(self, key, argv, cwd, extra, halt=None):
+            if seen.get("refuse"):
+                raise refused("the program asks for elevation")
             (self.folder / "evidence" / f"{key}.log").write_text("app started", encoding="utf-8")
             seen.update(key=key, argv=argv, cwd=cwd, extra=extra)
             self.jobs[key] = job
@@ -176,15 +181,14 @@ def session(tmp_path: Path, job: Job, seen: dict):
     def look(root, name, owned=True, disposable=False):
         yield Look(root, name, owned, disposable)
 
-    return types.SimpleNamespace(look=look, Halted=type("Halted", (Exception,), {}),
-                                 Refused=type("Refused", (ValueError,), {}))
+    return types.SimpleNamespace(look=look, Halted=type("Halted", (Exception,), {}), Refused=refused)
 
 
 def test_the_frozen_program_starts_with_its_data_the_inputs_and_whose_measurement_it_is(at_measure, tmp_path):  # noqa: F811 — the imported fixture
     tree, _ = at_measure
     s = spec()
     plan = {"app": program(tree), "inputs": [{"env": "BUDGET_URL"}, {"env": ENV}]}
-    env = {"BUDGET_URL": "https://example.test/live", ENV: KEY, "PATH": "C:/gate"}   # the script's environment
+    env = {"BUDGET_URL": "https://example.test/live", ENV: KEY, "PATH": "C:/gate", "GATE_ONLY_TOKEN": "g"}
     halt, job, seen = measure.Halted(), Job(), {}
     answers = iter([None, 200])
     with patch.dict(sys.modules, desktop_session=session(tmp_path, job, seen)), \
@@ -200,6 +204,7 @@ def test_the_frozen_program_starts_with_its_data_the_inputs_and_whose_measuremen
     assert seen["extra"]["ONESHOT_MEASURE"] == "auto" and seen["extra"]["BUDGET_URL"] == "https://example.test/live"
     assert seen["extra"][ENV] == KEY and seen["extra"]["PATH"] == "C:/gate"   # what the script gets, no more
     assert seen["extra"]["SERVER_ONLY_TOKEN"] is None   # dropped by `Look.start`: no server secret reaches it
+    assert "GATE_ONLY_TOKEN" not in seen["extra"]   # nor one the gate's environment carries that no input names
     assert job.ended == [product.END_SECONDS] and (tmp_path / "out" / "serve.log").read_text() == "app started"
     (data / "kept.txt").write_text("sign-in", encoding="utf-8")
     (tree / "build" / "app.exe").write_bytes(b"rebuilt since the pass")   # the owner never opens a new build
@@ -243,6 +248,24 @@ def test_the_program_must_answer_from_its_own_job_and_not_end(at_measure, tmp_pa
         with pytest.raises(ValueError, match="떠 있지 않고 끝났다"), \
                 product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "c.log", {}, "auto"):
             pass
+    answers, statuses = iter([None, 200, 200]), iter([False, True])   # its own socket, ready on the second read
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, Job(), {})), \
+            patch.object(product, "answers", lambda url: next(answers)), \
+            patch.object(product, "vouched", lambda pids, url, status=False: next(statuses) if status else True), \
+            patch.object(product.time, "sleep", lambda s: None):
+        with product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "e.log", {}, "auto") as build:
+            pass
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, Job(), {"refuse": True})),             patch.object(product, "answers", lambda url: None):
+        with pytest.raises(ValueError, match="띄우지 못했다"), \
+                product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "f.log", {}, "auto"):
+            pass   # Windows would not run it: the build's to fix, never a desktop stop
+    answers = iter([None, 200])
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, Job(), {})), \
+            patch.object(product, "answers", lambda url: next(answers)), \
+            patch.object(product, "vouched", lambda pids, url, status=False: True):
+        with pytest.raises(ValueError, match="자기 사본을 바꿨다"), \
+                product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "g.log", {}, "auto") as build:
+            (Path(build["folder"]) / "cache.bin").write_bytes(b"beside itself")
     refusing = session(tmp_path, Job(), {})
 
     def refused(*a, **k):
@@ -261,8 +284,8 @@ def test_the_status_and_the_process_answering_it_are_read_on_one_connection():
     class Health(http.server.BaseHTTPRequestHandler):
         code = 200
 
-        def do_GET(self):
-            self.send_response(Health.code)
+        def do_GET(self):   # an endpoint that speaks only HTTP/1.1, as `answers`' urllib does
+            self.send_response(Health.code if self.request_version == "HTTP/1.1" else 505)
             self.end_headers()
 
         def log_message(self, *args):
@@ -325,3 +348,26 @@ def test_pull_request_one_starts_the_servers_own_measurement_at_once(at_measure)
             patch.object(oneshot_publish.work, "notice", lambda *a: notes.append(a)):
         oneshot_publish.publish("budget")
     assert "M1" in notes[-1][1]   # an input not given yet: the owner's press starts it
+
+
+def test_the_owners_measurement_is_chosen_with_the_values_it_measures(with_person):
+    given()
+    started_once()
+    assert measure.shown(spec())["measure"]["next"] == "owner"
+    first = measure.planned
+
+    def moved_meanwhile(*a, **k):   # a secret changed after the worker's first read, before the values' read
+        plan = first(*a, **k)
+        with measure.oneshot._lock:
+            measure.retire(spec(), "비밀 값이 바뀌었다")
+        return plan
+    with patch.object(measure, "planned", moved_meanwhile):
+        started_once()
+    assert o()["measures"][-1]["mode"] == "auto"   # the server's own again, never the owner's on new values
+
+
+def test_a_gate_log_that_cannot_be_removed_stops_for_the_owner(at_measure):  # noqa: F811 — the imported fixture
+    tree, _ = at_measure
+    run = types.SimpleNamespace(halt=measure.Halted())
+    with patch.object(measure.shutil, "rmtree", lambda *a, **k: None), pytest.raises(RuntimeError, match="임시 로그"):
+        measure.serve_check(tree, run, spec())

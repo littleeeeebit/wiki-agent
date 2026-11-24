@@ -25,11 +25,19 @@ from urllib.parse import urlsplit
 
 from common import masked, process, shell
 
-from . import oneshot_build, oneshot_desktop, oneshot_spec
+from . import oneshot_build, oneshot_desktop, oneshot_needs, oneshot_spec
 from .oneshot_kept import tail
 
 MODE = "ONESHOT_MEASURE"   # `auto`: the server's measurement, no person; `owner`: the owner's, on their screen
 END_SECONDS = 30
+# What a Windows program needs from the server's environment to run at all, and nothing that could be a credential:
+# the program gets these, the measurement's inputs and the design's secrets, and its own launch settings.
+RUNTIME = frozenset({
+    "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "OS", "USERPROFILE", "HOMEDRIVE",
+    "HOMEPATH", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "ALLUSERSPROFILE", "PUBLIC", "PROGRAMDATA",
+    "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER",
+    "PROCESSOR_LEVEL", "PROCESSOR_REVISION", "DRIVERDATA"})
 
 
 def app_of(value) -> dict:
@@ -160,7 +168,7 @@ def vouched(tree: set[int], health: str, status: bool = False) -> bool:
                 if accepted_by(psutil, s.getpeername()[:2], s.getsockname()[:2]) not in tree:
                     return False
                 if status:
-                    s.sendall(f"GET {path} HTTP/1.0\r\nHost: {url.netloc}\r\nConnection: close\r\n\r\n".encode())
+                    s.sendall(f"GET {path} HTTP/1.1\r\nHost: {url.netloc}\r\nConnection: close\r\n\r\n".encode())
                     line = s.makefile("rb").readline(256).split()
                     if len(line) < 2 or line[1] != b"200":
                         return False
@@ -188,14 +196,15 @@ def accepted_by(psutil, server: tuple, client: tuple, seconds: float = 3.0) -> i
 
 # -- Starting the PC program, in a run that builds one ----------------------------------------------------
 
-def environment(launch_env: dict, env: dict, mode: str) -> dict:
-    """The program's environment over the server's, as `Look.start` reads it: the launch settings, then the
-    measurement's own environment (the script's: the gate's base and the inputs), then the mode, each name once
-    to Windows; every other name the server holds is dropped (`None`), so no secret outside the inputs reaches
-    the program."""
+def environment(spec: dict, plan: dict, launch_env: dict, env: dict, mode: str) -> dict:
+    """The program's environment over the server's, as `Look.start` reads it: the launch settings, then from the
+    measurement's environment only what a program needs to run (`RUNTIME`), the plan's inputs and the design's
+    secrets, then the mode, each name once to Windows. Every other name the server holds is dropped (`None`), so
+    no credential the measurement does not name reaches the program, nor its log."""
 
+    named = RUNTIME | {x["env"].upper() for x in plan["inputs"]} | {n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)}
     merged: dict = {}
-    for part in (launch_env, env, {MODE: mode}):
+    for part in (launch_env, {k: v for k, v in env.items() if k.upper() in named}, {MODE: mode}):
         for name, value in part.items():
             for old in [k for k in merged if k.upper() == name.upper()]:
                 del merged[old]
@@ -247,14 +256,18 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
     data.mkdir(parents=True, exist_ok=True)
     launch, copy = build["launch"], Path(build["folder"])
     argv = [str(copy / launch["program"]), *(a.replace(oneshot_desktop.DATA, str(data)) for a in launch["args"])]
-    extra = environment({k: v.replace(oneshot_desktop.DATA, str(data)) for k, v in launch["env"].items()}, env, mode)
+    extra = environment(spec, plan, {k: v.replace(oneshot_desktop.DATA, str(data)) for k, v in launch["env"].items()},
+                        env, mode)
     (root / "looks").mkdir(exist_ok=True)
     try:
         with desktop_session.look(root / "looks", f"measure-{mode}-{uuid.uuid4().hex[:12]}", owned=mode == "auto",
                                   disposable=True) as look:
             app_log = look.folder / "evidence" / "app.log"
             try:
-                look.start("app", argv, copy / launch["cwd"], extra, halt=halt)
+                try:
+                    look.start("app", argv, copy / launch["cwd"], extra, halt=halt)
+                except desktop_session.Refused as exc:   # Windows would not run this program: the build's to fix
+                    raise ValueError(f"PC 프로그램을 띄우지 못했다 — {masked(str(exc), hide)}") from None
                 job = look.jobs["app"]
                 deadline = time.monotonic() + app["seconds"]
                 while True:
@@ -263,10 +276,12 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                     if job.finished():
                         raise ValueError(f"PC 프로그램이 떠 있지 않고 끝났다 — {tail(app_log, hide)}")
                     if answers(app["health"]) == 200:
-                        if not vouched({m["pid"] for m in job.members()}, app["health"], status=True):
-                            raise ValueError(f"`{app['health']}` 에 200 으로 답한 것이 띄운 PC 프로그램이 아니다 — 같은 "
-                                             "포트를 쓰는 다른 프로그램을 끈다")
-                        break
+                        pids = {m["pid"] for m in job.members()}
+                        if not vouched(pids, app["health"]):
+                            raise ValueError(f"`{app['health']}` 에 답한 것이 띄운 PC 프로그램이 아니다 — 같은 포트를 쓰는 "
+                                             "다른 프로그램을 끈다")
+                        if vouched(pids, app["health"], status=True):   # the 200 and its process, one connection
+                            break
                     if time.monotonic() > deadline:
                         raise ValueError(f"PC 프로그램이 {app['seconds']}초 안에 `{app['health']}` 에 200 으로 답하지 "
                                          f"않았다 — {tail(app_log, hide)}")
@@ -276,12 +291,15 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                 look.observe()
                 if (job := look.jobs.get("app")) is not None and not (end := job.end(END_SECONDS))["clean"]:
                     raise RuntimeError(f"PC 프로그램을 끝내지 못했다 — {'; '.join(end['reasons'])}")
-                try:
+                try:   # masked before it is written: no copy of the program's output holds a secret
                     log.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(app_log, log)
+                    log.write_text(masked(app_log.read_text(encoding="utf-8", errors="replace"), hide), encoding="utf-8")
                 except OSError:
                     pass   # no log is kept: the measurement says what it says without it
+            if why := changed(build):   # it wrote beside itself: a pass would stand for a copy no longer there
+                raise ValueError(f"PC 프로그램이 실행 중에 자기 사본을 바꿨다 — 쓰는 것은 모두 `{{data}}` 아래에 둔다 ({why})")
     except desktop_session.Halted:   # stopped before the program ran: never started
         raise ValueError("사람이 멈췄다") from None
     except desktop_session.Refused as exc:   # the desktop, never the build: opening it or cleaning it up
-        raise RuntimeError(f"PC 프로그램의 데스크톱을 열거나 치우지 못했다 — {masked(str(exc), hide)}") from exc
+        raise RuntimeError(f"PC 프로그램의 데스크톱을 열거나 치우지 못했다 — {masked(str(exc), hide)}. 남은 것은 "
+                           f"`{root / 'looks'}` 에 있다 — 손으로 지운 뒤 다시 시작한다") from exc

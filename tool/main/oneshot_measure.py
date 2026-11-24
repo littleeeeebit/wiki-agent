@@ -266,6 +266,8 @@ def serve_check(path: Path, run, spec: dict) -> str:
                 pass
         finally:
             shutil.rmtree(log.parent, ignore_errors=True)
+            if log.parent.exists():   # never left quietly: the owner's, not the build's (`RuntimeError`)
+                raise RuntimeError(f"빌드 검사의 임시 로그 폴더 `{log.parent}` 를 지우지 못했다 — 손으로 지운 뒤 [재개]를 누른다")
     except ValueError as exc:
         return masked(str(exc), hide) if "hide" in locals() else str(exc)
     if specs.dirty(path):   # the HEAD the build passed is the one measured, so the tree stays as committed
@@ -276,7 +278,8 @@ def serve_check(path: Path, run, spec: dict) -> str:
 
 def waiting(record: dict | None) -> bool:
     """Whether `record` is the owner's own measurement, waiting for their verdict. A result from before plan 13,
-    which has no `mode`, is never one: it never had the server's own pass, so the server measures again."""
+    which has no `mode`, is never one: it never had the server's own pass, so the server measures again. An
+    approval the owner gave before plan 13 stands, as the plan says."""
 
     return bool(record) and record["status"] == "owner" and record.get("mode") == "owner" and not record.get("owner")
 
@@ -339,17 +342,15 @@ def measure(repo: str, mode: str | None = None) -> None:
         except ValueError as exc:
             store.stop("measure", str(exc))
             return None
-        n, how = len(o.get("measures") or []) + 1, mode or next_mode(o)
-        passed = (o.get("measures") or [None])[-1] if how == "owner" else None
-        if passed and "app" in plan and (why := product.changed(passed.get("build"))):
-            with oneshot._lock:   # the pass no longer stands for what would open: the server measures again
-                retire(oneshot_spec.spec_of(repo), why)
-            store.stop("measure", f"{why} — [자동 실측 시작]으로 다시 잰다")
-            return None
-        out = store.folder / "measure" / f"m{n}-{o['built_head'][:12]}"
-        raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept_from` copies leave it
         with oneshot._lock:   # every stored-value change counts under this lock: the values and the count agree
             now = oneshot_spec.spec_of(repo)   # what the owner gave by now, a value taken back since included
+            runs = now["oneshot"].get("measures") or []   # whose measurement, read with the values it measures
+            n, how = len(runs) + 1, mode or next_mode(now["oneshot"])
+            passed = runs[-1] if how == "owner" and runs else None
+            if passed and "app" in plan and (why := product.changed(passed.get("build"))):
+                retire(now, why)   # the pass no longer stands for what would open: the server measures again
+                store.stop("measure", f"{why} — [자동 실측 시작]으로 다시 잰다")
+                return None
             try:   # one read gives the presence, the child's environment and the mask
                 env, hide = env_of(now, plan)
             except ValueError as exc:
@@ -361,12 +362,14 @@ def measure(repo: str, mode: str | None = None) -> None:
                 return None
             since = oneshot_needs.CHANGES.get(repo, 0)
             env[product.MODE] = how   # the script and the program both know whose measurement it is
+        out = store.folder / "measure" / f"m{n}-{o['built_head'][:12]}"
+        raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept_from` copies leave it
         if why := fresh(out, raw):   # made only once the run goes ahead: an early stop leaves no folder
             store.stop("measure", why)
             return None
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name, "mode": how}, None
         try:
-            with product.started(spec, plan, tree, env, halt, raw / "serve.log", hide, how,
+            with product.started(now, plan, tree, env, halt, raw / "serve.log", hide, how,
                                  (passed or {}).get("build")) as build:
                 if build:   # the frozen copy measured: the owner's measurement starts this one, never a new one
                     record["build"] = build
@@ -437,7 +440,8 @@ def result(repo: str, store, record: dict):
         return None
     if record["status"] == "passed":   # every machine metric passed: the owner measures once, on their own screen
         oneshot_spec.saved(repo, oneshot={"measures": runs, "working": None, "measure_fails": 0})
-        work.notice("자동 실측 통과 · 주인 실측을 기다린다", f"{repo} · [실측 시작]을 누르면 프로그램이 이 화면에 뜨고 소리가 난다")
+        work.notice("자동 실측 통과 · 주인 실측을 기다린다", f"{repo} · [주인 실측 시작]을 누르면 " + (
+            "통과한 PC 프로그램이 이 화면에 뜨고 소리가 난다" if record.get("build") else "사람이 필요한 항목까지 잰다"))
         return None
     if record["status"] == "stale":   # an input changed while it ran: no fault of the build, measured again
         oneshot_spec.saved(repo, oneshot={"measures": runs})

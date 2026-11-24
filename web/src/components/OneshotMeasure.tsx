@@ -100,7 +100,8 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
     <section aria-label="실측 중" className={BOX}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p>{view.working === 'publish' ? 'PR #1 초안을 올리는 중이다.'
-          : owner ? '주인 실측 중이다. 화면에 뜬 프로그램을 보고 소리를 듣는다.' : '서버가 혼자 실측하는 중이다. 할 일은 없다.'}</p>
+          : !owner ? '서버가 혼자 실측하는 중이다. 할 일은 없다.'
+            : view.measure?.plan?.app ? '주인 실측 중이다. 화면에 뜬 프로그램을 보고 소리를 듣는다.' : '주인 실측 중이다. 아래 단계를 한다.'}</p>
         {view.working === 'measure' && <Btn disabled={busy} onClick={() => void act(() => api.measureStop(repo))}>멈춤</Btn>}
       </div>
       {view.working === 'measure' && owner && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}

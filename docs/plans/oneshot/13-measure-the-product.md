@@ -108,8 +108,10 @@ with a note that goes to the build agent like a failed metric.
 
 The server's pass stands only for what it measured. An input changed since,
 or a frozen copy no longer as it passed, sets the pass aside, and the server
-measures again. A result from before this step has no mode and never had the
-server's pass, so the server measures that HEAD first too.
+measures again. A result from before this step, still waiting for a verdict,
+has no mode and never had the server's pass, so the server measures that HEAD
+first too. An approval the owner gave before this step stands: the owner
+already measured that HEAD in full and judged it, and the review reads it.
 
 A program that leaves the owner's screen empty, opens no window of its own,
 or plays no sound the owner can hear is the owner's to refuse; the note says
