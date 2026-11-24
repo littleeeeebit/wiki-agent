@@ -164,7 +164,11 @@ Every build turn ends on the measurement contract
 - `inputs`: what only the owner can give, each a secret or a plain value,
   with its guide.
 - `during`: what the owner does while it runs, such as finishing a Google
-  sign-in.
+  sign-in. The measurement screen shows nothing the script prints or writes
+  before it ends, so what the owner must read meanwhile, such as a device
+  code, the script opens for them in the browser, on a page served on
+  `127.0.0.1`; that step has no `url` and no `copy` (owner, 2026-11-24: the
+  script shows it, wiki-agent reads nothing while it runs).
 - `metrics`: each with its requirements, the design's outside calls it
   reaches, and its threshold.
 

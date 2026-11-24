@@ -32,7 +32,29 @@ with these five parts, and the code each part names.
    `env` is one of the design's needs shares that need's stored value.
 4. `during`: the steps the owner takes while the script runs, such as
    choosing a Google account in the browser window it opens. Use the same
-   step shape.
+   step shape. The measurement screen shows nothing the script prints or
+   writes while it runs, and the owner never needs to read its console
+   output; a saved result keeps a masked tail of that output beside the
+   report and the clips. When a step needs the owner to read
+   something, such as a device code, the script opens it for them in the
+   default browser, on a page the backend or the script serves on
+   `127.0.0.1` that shows it. That step has no `url`, since the script
+   opens the page itself, and no `copy`. One step per browser page, as
+   everywhere: the step on that page says how to carry what it shows to the
+   next page, and the next step says where it goes there. The example below
+   is only the code handoff: the real `during` steps go on until the
+   service has authorized the device, through any sign-in and every consent
+   screen, and each step's `see` covers both a browser already signed in
+   and one that is not.
+
+   ```json
+   [{"window": "브라우저 — 기기 코드 (실측이 열어 준 창)",
+     "do": "창에 보이는 기기 코드를 적어 두거나 「복사」를 누른다. 그다음 같은 창의 「Google 기기 연결 열기」를 누른다.",
+     "see": "새 탭에 Google 의 기기 연결 화면이 열리고, 코드를 넣는 칸이 보인다."},
+    {"window": "브라우저 — Google 기기 연결", "url": "https://www.google.com/device",
+     "do": "코드 칸에 앞 창의 기기 코드를 넣거나 붙여 넣고 「다음(Next)」을 누른다.",
+     "see": "이미 로그인했으면 연결할 Google 계정을 고르는 목록이, 아니면 Google 로그인 화면이 보인다."}]
+   ```
 5. `metrics`: each
    `{"id": "live_delay_s", "what": "<Korean>", "unit": "초",
    "requirements": ["R8"], "calls": ["X2"], "pass": {"op": "<=",
@@ -61,10 +83,12 @@ the first time:
   same screen.
 - `see` says what appears after the action, so the owner knows the step
   worked before going on.
-- `url` opens the page directly, where one exists.
-- The last step names in `copy` exactly what to copy from that screen, for
-  example `"클라이언트 ID"`. The owner pastes it into this input's box in the
-  wiki-agent window.
+- `url` opens the page directly, where one exists. It is an `https://`
+  address; a page the script opens on `127.0.0.1` has none.
+- The last step of an input's guide names in `copy` exactly what to copy
+  from that screen, for example `"클라이언트 ID"`. The owner pastes it into
+  this input's box in the wiki-agent window. A `during` step has no box to
+  paste into: it says in `do` where what it shows goes.
 - Start from nothing: signing in, creating the project, turning on an API,
   any consent or test-user setting the call needs. Leave nothing to "set it
   up as usual". Where a value is shown only once (an OAuth client secret is),
