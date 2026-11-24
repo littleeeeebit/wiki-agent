@@ -33,19 +33,24 @@ with these five parts, and the code each part names.
 4. `during`: the steps the owner takes while the script runs, such as
    choosing a Google account in the browser window it opens. Use the same
    step shape. The measurement screen shows nothing the script prints or
-   writes while it runs. What it prints is kept in the finished run's
-   record, and the owner reads only the report's metrics, its `notes`, an
-   `input_error` and the clips. When a step needs the owner to read
+   writes while it runs. After it ends, the run's record keeps a masked
+   tail of what it printed, and the screen shows the report's metrics and
+   `notes` when there are any, an `input_error`, the clips, and any error
+   of the measurement itself. When a step needs the owner to read
    something, such as a device code, the script opens it for them in the
    default browser, on a page the backend or the script serves on
    `127.0.0.1` that shows it. That step has no `url`, since the script
-   opens the page itself, and no `copy`. Its `window` names that browser
-   page, and its `do` says where to put what it shows, for example:
+   opens the page itself, and no `copy`. One step per browser page, as
+   everywhere: the step on that page says how to carry what it shows to the
+   next page, and the next step says where it goes there. For example:
 
    ```json
-   {"window": "브라우저 — 기기 코드 (실측이 열어 준 창)",
-    "do": "창에 보이는 기기 코드를 그대로 두고, 같은 창의 「https://www.google.com/device 열기」를 누른다. 열린 Google 화면의 코드 칸에 그 코드를 넣고 「다음(Next)」을 누른다.",
-    "see": "Google 화면에 연결할 계정을 고르는 목록이 보인다."}
+   [{"window": "브라우저 — 기기 코드 (실측이 열어 준 창)",
+     "do": "창에 보이는 기기 코드를 적어 두거나 「복사」를 누른다. 그다음 같은 창의 「Google 기기 연결 열기」를 누른다.",
+     "see": "새 탭에 Google 의 기기 연결 화면이 열리고, 코드를 넣는 칸이 보인다."},
+    {"window": "브라우저 — Google 기기 연결", "url": "https://www.google.com/device",
+     "do": "코드 칸에 앞 창의 기기 코드를 넣거나 붙여 넣고 「다음(Next)」을 누른다.",
+     "see": "연결할 Google 계정을 고르는 목록이 보인다."}]
    ```
 5. `metrics`: each
    `{"id": "live_delay_s", "what": "<Korean>", "unit": "초",
