@@ -264,9 +264,10 @@ class Look:
         return self.folder / name
 
     def start(self, key: str, argv: list[str], cwd, extra: dict | None = None, halt=None, ready=None,
-              gate=None) -> dict:
+              gate=None, output=None) -> dict:
         """Start `argv` in a job of its own on the look's desktop, its data folders inside a disposable folder
-        the record names first, its output in `evidence/<key>.log`. The root's identity. A `halt` set by the
+        the record names first, its output in `evidence/<key>.log`, or in `output`, a binary file object such as
+        a pipe's end, so a caller can keep it off the disk. The root's identity. A `halt` set by the
         time the suspended root is recorded ends it before it runs (`Halted`), as does whatever `ready`, called
         then, raises. `halt` is read a last time under `gate`, held until the root resumes: a stop accepted
         under that lock first never lets it run."""
@@ -304,6 +305,9 @@ class Look:
             if halt is not None and halt.is_set():
                 raise Halted(f"halted before {argv[0]} ran")
 
+        if output is not None:
+            return job.start(argv, cwd, env, self.record["desktop"], output, before_resume=recorded, last=last,
+                             gate=gate)
         with (self.folder / "evidence" / f"{key}.log").open("ab") as log:
             return job.start(argv, cwd, env, self.record["desktop"], log, before_resume=recorded, last=last,
                              gate=gate)

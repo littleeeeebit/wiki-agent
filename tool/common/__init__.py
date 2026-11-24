@@ -149,7 +149,7 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
     """Where `masked` puts each label in `text`, as `(start, end, label)` in order, none overlapping."""
     folds = _folds(text)
     flat, owner = "".join(folds), [i for i, f in enumerate(folds) for _ in f]
-    taken, chosen = bytearray(len(text)), []
+    claims: list[tuple[int, int, int, str]] = []   # (start, end, the order it was claimed in, label)
     tokens = [m.span() for m in _ESCAPE.finditer(text)] if "\\" in text else []
     starts = [s for s, _ in tokens]
 
@@ -161,9 +161,7 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
     def claim(start: int, end: int, label: str) -> None:
         # Never part of an escape: the label covers each one it touches, so JSON stays JSON.
         start, end = (widened(start, 0), widened(end, 1)) if tokens else (start, end)
-        if not any(taken[start:end]):
-            taken[start:end] = b"\x01" * (end - start)
-            chosen.append((start, end, label))
+        claims.append((start, end, len(claims), label))
 
     # Also as its JSON decodes: each match there covers the escapes it was written with.
     plain, where = _unescape(text) if tokens else (text, [])
@@ -185,7 +183,16 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
                 first, end = (at, at + len(needle) - 1) if own is None else (own[at], own[at + len(needle) - 1])
                 claim(where[first][0], where[end][1], hide[value])
                 at += 1
-    return sorted(chosen)
+    # Matches that overlap are one span, under the label claimed first (the longest value): no part of either is
+    # shown. One sweep in order of start, so the work grows with the matches, never with their square.
+    chosen: list[tuple[int, int, int, str]] = []
+    for start, end, rank, label in sorted(claims):
+        if chosen and start < chosen[-1][1]:
+            s, e, r, lab = chosen[-1]
+            chosen[-1] = (s, max(e, end), *min((r, lab), (rank, label)))
+        else:
+            chosen.append((start, end, rank, label))
+    return [(s, e, lab) for s, e, _, lab in chosen]
 
 
 class Veil:
@@ -205,6 +212,9 @@ class Veil:
         self.hide, self.held = hide or {}, {}
         self.needles = [(v, folded(v)) for v in self.hide if v]
         self.raw, self.flat = (max((len(x[i]) for x in self.needles), default=0) for i in (0, 1))
+        # Past this far from the end no value can be half written (12: an escape's longest form). Twice it is what
+        # one running text may hold back: past that a run of values is shown as its label (`stream`).
+        self.window = 12 * max(self.raw, self.flat) + 64
 
     def deep(self, value):
         if not self.hide:
@@ -299,7 +309,8 @@ class Veil:
         """What of `key`'s text can be shown now, `chunk` added: all but a tail some value starts with."""
         if not self.hide:
             return chunk
-        text = self.held.pop(key, ("", meta))[0] + chunk
+        text, _, shown = self.held.pop(key, ("", meta, 0))
+        text += chunk
         # Where a value could still start, read as the complete match reads: at any folded position, even inside
         # one character's expansion (a ligature), mapped back to the character that holds it; or as spelled.
         folds = _folds(text)
@@ -324,19 +335,52 @@ class Veil:
                                     if any(n.startswith(pflat[j:]) for _, n in self.needles)),
                        *(where[i][0] for i in range(max(0, len(plain) - self.raw), len(plain))
                          if any(v.startswith(plain[i:]) for v, _ in self.needles))])
-        for start, end, _ in _spans(text, self.hide):
+        spans = _spans(text, self.hide)
+        shown = self._shown(spans, shown)
+        for start, end, _ in spans:
             if start < cut < end:   # spans never overlap: one at most holds the cut
                 cut = start
-        # Never inside an escape: what goes out and what is held each start at a boundary JSON reads there too.
-        if tokens and (i := bisect.bisect_right([s for s, _ in tokens], cut) - 1) >= 0 and tokens[i][0] < cut < tokens[i][1]:
-            cut = tokens[i][0]
-        if cut < len(text):
-            self.held[key] = (text[cut:], meta)
-        return masked(text[:cut], self.hide)
+        cut = 0 if cut < shown else cut
+
+        def edge(at: int) -> int:
+            """Never inside an escape: what goes out and what is held each start at a boundary JSON reads there too."""
+            i = bisect.bisect_right([s for s, _ in tokens], at) - 1 if tokens else -1
+            return tokens[i][0] if i >= 0 and tokens[i][0] < at < tokens[i][1] else at
+
+        cut = edge(cut)
+        base = shown if cut < shown else cut
+        out = masked(text[shown:cut], self.hide) if cut >= shown else ""
+        held, after = text[cut:], (shown if cut < shown else 0)
+        if len(held) > 2 * self.window:
+            # A run of values that overlap on and on, one span: its label goes out now and only its last stretch is
+            # held, marked as already shown, so the hold and the work per part stay bounded.
+            at = edge(len(text) - self.window)
+            region = next(((s, e, lab) for s, e, lab in spans if s < at < e), None)
+            if shown > at:   # inside the run already shown
+                held, after = text[at:], shown - at
+            elif region:
+                out += masked(text[base:region[0]], self.hide) + region[2]
+                held, after = text[at:], region[1] - at
+            else:
+                out += masked(text[base:at], self.hide)
+                held, after = text[at:], 0
+        if held:
+            self.held[key] = (held, meta, after)
+        return out
+
+    @staticmethod
+    def _shown(spans: list, shown: int) -> int:
+        """How much of a held text's start belongs to a value whose label already went out, a value running on from
+        it included."""
+        for start, end, _ in spans:
+            if start < shown:
+                shown = max(shown, end)
+        return shown
 
     def rest(self) -> list[tuple[str, str, dict]]:
         """Every held tail as `(kind, text, meta)`, masked: the stream ended, so no value completes it."""
-        out = [(key[0], masked(text, self.hide), self.meta(meta)) for key, (text, meta) in self.held.items()]
+        out = [(key[0], masked(text[self._shown(_spans(text, self.hide), shown):], self.hide), self.meta(meta))
+               for key, (text, meta, shown) in self.held.items()]
         self.held.clear()
         return out
 

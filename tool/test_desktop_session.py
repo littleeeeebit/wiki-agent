@@ -863,3 +863,13 @@ def test_a_job_key_is_used_once(tmp_path):
         look.start("app", python(SLEEP), tmp_path)
         with pytest.raises(ValueError, match="fresh job key"):
             look.start("app", python(SLEEP), tmp_path)
+
+
+def test_an_output_given_to_the_start_takes_the_apps_output_and_no_log_is_written(tmp_path):
+    read, write = os.pipe()
+    with os.fdopen(read, "rb") as reader, desktop_session.look(tmp_path, "piped") as look:
+        with os.fdopen(write, "wb") as writer:
+            look.start("app", python("print('only to the pipe', flush=True)"), tmp_path, output=writer)
+        got = reader.read()   # every writing end closes once the app ends
+        assert b"only to the pipe" in got
+        assert not (look.folder / "evidence" / "app.log").exists()

@@ -17,17 +17,19 @@ export function Owner({ repo, view, busy, act }: { repo: string; view: SpecView;
 }
 
 /** The real measurement between the backend's build and its review (`tool/main/oneshot_measure.py`). The build
- *  agent wrote every step below; the owner follows them one window at a time, pastes what the last step names
- *  into its box, starts the run, then listens and approves or refuses. A stop (a wrong input, the owner's stop)
- *  shows above and [실측 시작] starts again. */
+ *  agent wrote every step below; the owner follows them one window at a time and pastes what the last step names
+ *  into its box. The server measures by itself until every metric that needs no person passes; then the owner
+ *  measures once, the program on their own screen with its sound, and approves or refuses. A stop (a wrong input,
+ *  the owner's stop) shows above and the button starts again. */
 function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy: boolean; act: Act }) {
   const m = view.measure
   if (!m) return null
   const last = m.runs.at(-1)
   const current = last && last.head === m.head ? last : undefined
-  const waiting = current?.status === 'owner' && !current.owner
+  const waiting = !!current && verdictDue(current)
   const failed = current?.status === 'failed'   // stopped at the cap: the button hands it to the build agent, no input needed
   const missing = failed ? [] : m.plan?.inputs.filter((x) => !x.given) ?? []
+  const owner = m.next === 'owner'
   return (
     <div className={PAD}>
       <header className="flex flex-col gap-1">
@@ -55,18 +57,24 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
           </section>
         )}
         <section aria-label="실측" className={BOX}>
-          <h2 className="text-[15px] font-semibold">2. 실측 시작</h2>
-          {m.plan.during.length > 0 && <>
-            <p>[실측 시작]을 누른 뒤, 도는 동안 이것을 한다:</p>
-            <Steps steps={m.plan.during} />
-          </>}
-          <p className="text-muted-foreground">
-            약 {m.plan.measure.minutes}분 걸린다. 이 PC 에서 백엔드를 띄우고, 진짜 서비스로 아래를 잰다.
-          </p>
+          <h2 className="text-[15px] font-semibold">
+            {waiting ? '2. 주인 실측 — 판정을 기다린다' : owner ? '2. 주인 실측 — 한 번만 한다' : '2. 자동 실측 — 서버가 먼저 잰다'}</h2>
+          {waiting ? <p>주인 실측이 끝났다. 아래 결과를 보고 듣고, 승인하거나 거절한다.</p> : owner ? <>
+            <p>사람이 필요 없는 항목은 서버가 모두 통과시켰다. {m.plan.app
+              ? '이제 통과한 그 PC 프로그램이 이 화면에 뜨고 소리가 난다. 직접 보고 듣는다.'
+              : '이제 서버가 백엔드를 다시 띄우고, 사람이 필요한 항목까지 잰다. 끝나면 클립을 직접 듣는다.'}</p>
+            {m.plan.during.length > 0 && <><p>[주인 실측 시작]을 누른 뒤, 도는 동안 이것을 한다:</p><Steps steps={m.plan.during} /></>}
+          </> : (
+            <p>{m.plan.app ? '서버가 이 PC 에서 PC 프로그램을 띄워 사람이 필요 없는 항목을 혼자 잰다. 화면에 뜨지 않고 소리도 나지 않는다.'
+              : '서버가 이 PC 에서 백엔드를 띄워 사람이 필요 없는 항목을 혼자 잰다.'}
+              {' '}통과하지 못한 항목만 빌드 에이전트가 고치고, 서버가 다시 잰다. 모두 통과하면 주인 실측을 한 번 부른다.</p>
+          )}
+          <p className="text-muted-foreground">한 번에 약 {m.plan.measure.minutes}분 걸린다. 진짜 서비스로 아래를 잰다.</p>
           <Metrics run={current} plan={m.plan.metrics} />
           <div className="flex flex-wrap items-center gap-3">
             <Btn tone="wait" disabled={busy || !!view.working || missing.length > 0 || waiting}
-              onClick={() => void act(() => api.measureStart(repo, m.head))}>{failed ? '빌드 에이전트에게 고치게 하기' : '실측 시작'}</Btn>
+              onClick={() => void act(() => api.measureStart(repo, m.head))}>
+              {failed ? '빌드 에이전트에게 고치게 하기' : owner ? '주인 실측 시작' : '자동 실측 시작'}</Btn>
             {missing.length > 0 && <span className="text-wait">아직 넣지 않은 값: {missing.map((x) => x.id).join(', ')}</span>}
           </div>
         </section>
@@ -87,13 +95,16 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
 /** The running measurement, shown with the track: the owner's `during` steps stay in view, with a stop. */
 function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; busy: boolean; act: Act }) {
   const during = view.measure?.plan?.during ?? []
+  const owner = view.measure?.next === 'owner'   // the server's own measurement asks nothing of the owner
   return (
     <section aria-label="실측 중" className={BOX}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p>{view.working === 'publish' ? 'PR #1 초안을 올리는 중이다.' : '진짜 서비스로 실측하는 중이다.'}</p>
+        <p>{view.working === 'publish' ? 'PR #1 초안을 올리는 중이다.'
+          : !owner ? '서버가 혼자 실측하는 중이다. 할 일은 없다.'
+            : view.measure?.plan?.app ? '주인 실측 중이다. 화면에 뜬 프로그램을 보고 소리를 듣는다.' : '주인 실측 중이다. 아래 단계를 한다.'}</p>
         {view.working === 'measure' && <Btn disabled={busy} onClick={() => void act(() => api.measureStop(repo))}>멈춤</Btn>}
       </div>
-      {view.working === 'measure' && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
+      {view.working === 'measure' && owner && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
     </section>
   )
 }
@@ -160,10 +171,13 @@ function Metrics({ run, plan }: { run?: MeasureRun; plan: Metric[] }) {
       <tbody>
         {rows.map((m) => (
           <tr key={m.id} className="border-t border-border">
-            <td className="py-1 pr-3">{m.what} <span className="text-muted-foreground">({m.requirements.join(', ')})</span></td>
+            <td className="py-1 pr-3">{m.what} <span className="text-muted-foreground">({m.requirements.join(', ')})</span>
+              {m.person && <span className="ml-1 text-wait">· 사람 필요</span>}</td>
             <td className="pr-3 font-mono">{m.pass.op} {shown(m.pass.value)}{m.unit}</td>
             {run?.metrics && <><td className="pr-3 font-mono">{shown(m.value)}{m.value !== null ? m.unit : ''}</td>
-              <td className={m.ok ? 'text-st-ready' : 'text-destructive'}>{m.ok ? '통과' : '실패'}</td></>}
+              {run.mode === 'auto' && m.person && !m.ok
+                ? <td className="text-muted-foreground">주인 실측에서</td>
+                : <td className={m.ok ? 'text-st-ready' : 'text-destructive'}>{m.ok ? '통과' : '실패'}</td>}</>}
           </tr>
         ))}
       </tbody>
@@ -171,13 +185,18 @@ function Metrics({ run, plan }: { run?: MeasureRun; plan: Metric[] }) {
   )
 }
 
+/** The owner's own measurement, waiting for their verdict: a result from before the server measured first
+ *  (no `mode`) is never one (`oneshot_measure.waiting`). */
+const verdictDue = (r: MeasureRun) => r.status === 'owner' && r.mode === 'owner' && !r.owner
+
 const said = (r: MeasureRun) => (r.owner ? (r.owner.approve ? '주인 승인' : '주인 거절')
-  : r.status === 'owner' ? '판정 기다림' : r.status === 'input' ? '넣은 값이 틀림' : r.status === 'stale' ? '판정하지 않음'
-    : '실패 — 빌드가 고친다') + (r.comment_error ? ` · ${r.comment_error}` : '')
+  : r.status === 'owner' ? (r.mode === 'owner' ? '판정 기다림' : '판정하지 않음 — 자동 실측부터 다시') : r.status === 'passed' ? '자동 실측 통과 — 주인 실측 차례'
+    : r.status === 'input' ? '넣은 값이 틀림' : r.status === 'stale' ? '판정하지 않음'
+      : r.mode === 'auto' ? '자동 실측 실패 — 빌드가 고친다' : '실패 — 빌드가 고친다') + (r.comment_error ? ` · ${r.comment_error}` : '')
 
 function Result({ repo, run, busy, act }: { repo: string; run: MeasureRun; busy: boolean; act: Act }) {
   const [note, setNote] = useState('')
-  const waiting = run.status === 'owner' && !run.owner
+  const waiting = verdictDue(run)
   return (
     <section aria-label="실측 결과" className={BOX}>
       <h2 className="text-[15px] font-semibold">3. 결과 — {run.n}회째 · {said(run)}</h2>
@@ -192,7 +211,8 @@ function Result({ repo, run, busy, act }: { repo: string; run: MeasureRun; busy:
                 <audio controls preload="metadata" src={api.clip(repo, run.n, c)} aria-label={c} /></div>)}
         </div>
       )}
-      {run.status === 'failed' && <p className="text-muted-foreground">빌드 에이전트가 이 결과를 받아 고치고, 고친 커밋으로 다시 실측한다.</p>}
+      {run.status === 'failed' && <p className="text-muted-foreground">빌드 에이전트가 통과하지 못한 항목만 받아 고치고, 서버가 고친 커밋으로 다시 잰다.</p>}
+      {run.status === 'passed' && <p className="text-muted-foreground">사람이 필요 없는 항목이 모두 통과했다. 위의 [주인 실측 시작]으로 한 번 직접 보고 듣는다.</p>}
       {waiting && (
         <form className="flex flex-col gap-2" onSubmit={(e) => e.preventDefault()}>
           <label className="flex flex-col gap-1">

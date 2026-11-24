@@ -23,6 +23,15 @@ class Refused(ValueError):
     """The process could not be started inside its job; nothing was driven."""
 
 
+class Unrunnable(Refused):
+    """Windows refuses the program itself: its manifest asks for elevation, or its file is not a program this
+    machine runs (`UNRUNNABLE`). Its build is the one to fix, never the host."""
+
+
+# ERROR_BAD_EXE_FORMAT, ERROR_EXE_MACHINE_TYPE_MISMATCH, ERROR_FILE_CORRUPT, ERROR_SXS_CANT_GEN_ACTCTX
+UNRUNNABLE = {193, 216, 1392, 14001}
+
+
 class _Limits(ctypes.Structure):   # JOBOBJECT_EXTENDED_LIMIT_INFORMATION
     _fields_ = [("times", ctypes.c_int64 * 2), ("flags", w.DWORD), ("sets", ctypes.c_size_t * 2),
                 ("active", w.DWORD), ("affinity", ctypes.c_size_t), ("priority", w.DWORD),
@@ -168,8 +177,9 @@ class Job:
             raise
         if not isinstance(created, tuple):
             if created == ELEVATION_REQUIRED:
-                raise Refused("the app asks for elevation; it is not retried through the shell")
-            raise Refused(f"cannot start {argv[0]} inside its job: Windows error {created}")
+                raise Unrunnable("the app asks for elevation; it is not retried through the shell")
+            raise (Unrunnable if created in UNRUNNABLE else Refused)(
+                f"cannot start {argv[0]} inside its job: Windows error {created}")
         process, thread, pid = created
         try:
             root = native_process.identity(pid, process)

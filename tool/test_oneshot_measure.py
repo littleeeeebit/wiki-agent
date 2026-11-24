@@ -99,7 +99,7 @@ def test_a_measurement_runs_the_backend_and_its_script_with_the_inputs_and_the_o
     with pytest.raises(HTTPException, match="M1, M2"):
         measure.start("budget", measure.Start(head=o()["built_head"]))
     given()
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     run = o()["measures"][-1]
     assert run["status"] == "owner" and run["metrics"][0]["ok"] and run["clips"] == ["sample.wav"]
     assert KEY not in json.dumps(o(), ensure_ascii=False) and f"[{ENV}]" in run["notes"]
@@ -157,7 +157,7 @@ def test_a_failure_at_the_round_cap_goes_to_the_build_agent_when_the_owner_start
     given(url="https://example.test/other")
     from main import oneshot_review
     oneshot_spec.saved("budget", oneshot={"measure_fails": oneshot_review.cap() - 1})
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     assert o()["stage"] == "measure" and o()["stopped"] and o()["measures"][-1]["status"] == "failed"
     runs = len(o()["measures"])
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
@@ -179,7 +179,7 @@ def test_a_failure_at_the_round_cap_goes_to_the_build_agent_when_the_owner_start
 def test_a_failed_measurement_or_a_refusal_goes_back_to_the_build_agent_which_must_commit(at_measure):
     tree, sent = at_measure
     given(url="https://example.test/other")
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     assert o()["stage"] == "build" and o()["fix"] == "measure" and o()["measures"][-1]["status"] == "failed"
     assert sent[-1][1] == "build" and "total_ok=False" in sent[-1][2] and "measure.json" in sent[-1][2]
     # The same HEAD comes back with no commit: refused before any gate.
@@ -192,7 +192,7 @@ def test_a_failed_measurement_or_a_refusal_goes_back_to_the_build_agent_which_mu
     assert o()["stage"] == "measure"
     oneshot_spec.saved("budget", oneshot={"working": None})
     given()
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
         measure.decide("budget", measure.Decision(head=o()["built_head"], n=o()["measures"][-1]["n"], note="목소리가 끊긴다"))
     assert o()["stage"] == "build" and "목소리가 끊긴다" in sent[-1][2]
@@ -200,14 +200,14 @@ def test_a_failed_measurement_or_a_refusal_goes_back_to_the_build_agent_which_mu
 
 def test_an_input_the_script_calls_wrong_stops_for_the_owner_without_showing_it(at_measure):
     given(key="wrong")
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     assert o()["stopped"]["reason"] == "measure-input" and o()["stage"] == "measure"
     assert "M2" in o()["stopped"]["detail"] and f"[{ENV}]" in o()["stopped"]["detail"]
     given()
     measure.start("budget", measure.Start(head=o()["built_head"]))   # one press starts it again
     from main import oneshot
     oneshot._workers["spec:budget"].join(60)
-    assert o()["measures"][-1]["status"] == "owner"
+    assert o()["measures"][-1]["status"] == "passed" and o()["measures"][-1]["mode"] == "auto"   # the server's own first
 
 
 def test_the_backend_that_never_answers_fails_the_measurement(at_measure):
@@ -218,7 +218,7 @@ def test_the_backend_that_never_answers_fails_the_measurement(at_measure):
     git(tree, "commit", "-am", "broken serve")
     oneshot_spec.saved("budget", oneshot={"built_head": git(tree, "rev-parse", "HEAD")})
     given()
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     assert o()["measures"][-1]["status"] == "failed" and "떠 있지 않고 끝났다" in o()["measures"][-1]["error"]
 
 
@@ -238,7 +238,7 @@ def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(a
     seen = []
     with patch.object(measure, "spelled", lambda hide: {**hide, "escaped-form": "[E]"}), \
             patch.object(measure.specs, "gate", lambda *a, **k: seen.append(k["hide"]) or (1, "", "")):
-        measure.measure("budget")
+        measure.measure("budget", "owner")
     assert seen and seen[0].get("escaped-form") == "[E]" and KEY in seen[0]
     secret = 'sk-"q\\uote'   # a diagnostic serialized inside the report's notes keeps its escape
     (tmp_path / "report.json").write_text(json.dumps({"metrics": {}, "notes": json.dumps({"key": secret})}),
@@ -277,7 +277,7 @@ def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_ne
 def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_strands_the_run(at_measure):
     tree, sent = at_measure
     given()
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     assert o()["measures"][-1]["status"] == "owner"
     head = o()["built_head"]
     for change in (lambda: oneshot_needs.forget("budget", ENV),   # every route: the general one and the boxes
@@ -350,7 +350,7 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     assert o()["measures"][-1]["status"] == "stale" and not oneshot_needs.BACK.get("budget")
     given(key="sk-other-" + "8" * 20)   # a new value while the verdict waits: that result no longer stands
     assert o()["measures"][-1]["status"] == "stale"
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     assert o()["measures"][-1]["status"] == "owner"
     shown = oneshot_needs.forget("budget", ENV)   # the general route that removes a secret at any stage
     assert o()["measures"][-1]["status"] == "stale" and shown["oneshot"]["measures"][-1]["status"] == "stale"
@@ -365,7 +365,7 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
         return gate(*args, **kwargs)
     given()
     with patch.object(measure.specs, "gate", refused):
-        measure.measure("budget")
+        measure.measure("budget", "owner")
     assert o()["measures"][-1]["status"] == "owner"
 
     def changing(*args, **kwargs):   # the value removed while the script runs
@@ -373,7 +373,7 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
         return gate(*args, **kwargs)
     given()
     with patch.object(measure.specs, "gate", changing):
-        measure.measure("budget")
+        measure.measure("budget", "owner")
     assert o()["measures"][-1]["status"] == "stale" and o()["stage"] == "measure" and not o().get("measure_fails")
     given()
     read = measure.report_of
@@ -382,18 +382,18 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
         oneshot_needs.forget("budget", ENV)
         return read(*args)
     with patch.object(measure, "report_of", late):
-        measure.measure("budget")
+        measure.measure("budget", "owner")
     assert o()["measures"][-1]["status"] == "stale"
     given()
     runs = len(o()["measures"])
     oneshot_spec.saved("budget", oneshot={"pr1": {**o()["pr1"], "head": "old"}})   # PR #1 is published first
     with patch.object(measure.oneshot_publish, "published", lambda repo: oneshot_needs.forget("budget", ENV)):
-        measure.measure("budget")   # the value taken back meanwhile: a stop for the owner, no failed run
+        measure.measure("budget", "owner")   # the value taken back meanwhile: a stop for the owner, no failed run
     assert len(o()["measures"]) == runs and not o().get("measure_fails") and "M2" in o()["stopped"]["detail"]
     assert not list((oneshot_spec.store("budget").folder / "measure").glob("*.raw"))   # no folder made for it
     oneshot_spec.saved("budget", oneshot={"pr1": {**o()["pr1"], "head": o()["built_head"]}})
     given()
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     run = o()["measures"][-1]
     write(tree, "stray.txt", "x")   # the tree moved since it was measured
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
@@ -532,18 +532,18 @@ def test_a_failed_copy_still_removes_the_scripts_folder_and_leaves_no_partial_re
 
 def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_measure, tmp_path):
     given()
-    with patch.object(measure, "served", lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))), \
+    with patch.object(measure.product, "served", lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))), \
             patch.object(measure, "kept_from", lambda *a: "실측 원본 폴더 `x` 를 지우지 못했다"):
-        measure.measure("budget")
+        measure.measure("budget", "owner")
     assert "지우지 못했다" in o()["stopped"]["detail"] and not o().get("measures")
     oneshot_spec.saved("budget", oneshot={"stopped": None})
-    with patch.object(measure, "served", lambda *a: (_ for _ in ()).throw(FileNotFoundError(f"{KEY}\\gate"))):
-        measure.measure("budget")   # a launch error naming an input: the folder goes, and the text is masked
+    with patch.object(measure.product, "served", lambda *a: (_ for _ in ()).throw(FileNotFoundError(f"{KEY}\\gate"))):
+        measure.measure("budget", "owner")   # a launch error naming an input: the folder goes, and the text is masked
     assert "FileNotFoundError" in o()["stopped"]["detail"] and KEY not in json.dumps(o(), ensure_ascii=False)
     oneshot_spec.saved("budget", oneshot={"stopped": None})
     with patch.object(measure, "has", lambda *a: True), \
             patch.object(measure.release, "secret_read", lambda name: (_ for _ in ()).throw(OSError("locked"))):
-        measure.measure("budget")   # present a moment ago, the read for the launch failed: a stop, before any folder
+        measure.measure("budget", "owner")   # present a moment ago, the read for the launch failed: a stop, before any folder
     assert "읽지 못했다" in o()["stopped"]["detail"] and not o().get("measures")
     assert not list((oneshot_spec.store("budget").folder / "measure").glob("*.raw"))
     oneshot_spec.saved("budget", oneshot={"stopped": None})
@@ -556,12 +556,12 @@ def test_an_unforeseen_failure_of_the_run_still_says_why_its_folder_remains(at_m
         return True
 
     with patch.object(measure, "has", once), \
-            patch.object(measure, "served", lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))):
-        measure.measure("budget")   # a secret's presence is the launch read's, never a second read of the store
+            patch.object(measure.product, "served", lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))):
+        measure.measure("budget", "owner")   # a secret's presence is the launch read's, never a second read of the store
     assert "예상하지 못한" in o()["stopped"]["detail"]
     oneshot_spec.saved("budget", oneshot={"stopped": None})
     with patch.object(measure, "report_of", lambda *a: {"io": "실측 보고서를 읽지 못했다 (PermissionError)"}):
-        measure.measure("budget")   # the disk, not the build: no failure counted
+        measure.measure("budget", "owner")   # the disk, not the build: no failure counted
     assert "읽지 못했다" in o()["stopped"]["detail"] and not o().get("measures") and not o().get("measure_fails")
     raw = tmp_path / "m1.raw"
     (raw / "report.json").parent.mkdir()
@@ -643,7 +643,7 @@ def test_a_number_that_is_not_finite_is_refused_in_a_report_and_a_plan(tmp_path)
 def test_the_health_check_never_goes_through_a_proxy():
     import urllib.request
     # The empty handler stands in for the default one, which would read the machine's proxy settings.
-    assert not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies for h in measure.NO_REDIRECT.handlers)
+    assert not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies for h in measure.product.NO_REDIRECT.handlers)
     assert any(isinstance(h, urllib.request.ProxyHandler) for h in urllib.request.build_opener().handlers) \
         or not urllib.request.getproxies()
 
@@ -663,7 +663,7 @@ def test_a_redirect_from_the_health_address_is_its_status_never_followed():
     server = http.server.HTTPServer(("127.0.0.1", 0), Moved)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        assert measure.answers(f"http://127.0.0.1:{server.server_port}/health") == 302
+        assert measure.product.answers(f"http://127.0.0.1:{server.server_port}/health") == 302
     finally:
         server.shutdown()
         server.server_close()
@@ -679,24 +679,24 @@ def test_only_the_started_backend_vouches_for_the_health_address():
         port = listener.getsockname()[1]
         accepted = []
         threading.Thread(target=lambda: [accepted.append(listener.accept()[0]) for _ in range(2)], daemon=True).start()
-        assert measure.owned(NS(pid=os.getpid()), f"http://127.0.0.1:{port}/health")   # it accepted the connection
+        assert measure.product.owned(NS(pid=os.getpid()), f"http://127.0.0.1:{port}/health")   # it accepted the connection
         other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:   # a process that started nothing answering there
-            assert not measure.owned(other, f"http://127.0.0.1:{port}/health")
+            assert not measure.product.owned(other, f"http://127.0.0.1:{port}/health")
         finally:
             other.kill()
             other.wait()
             for c in accepted:
                 c.close()
-    assert not measure.owned(NS(pid=os.getpid()), f"http://127.0.0.1:{port}/health")   # nothing answers
+    assert not measure.product.owned(NS(pid=os.getpid()), f"http://127.0.0.1:{port}/health")   # nothing answers
     row = lambda pid, here, there: NS(pid=pid, laddr=NS(ip=here[0], port=here[1]),   # noqa: E731
                                       raddr=NS(ip=there[0], port=there[1]))
     table = NS(net_connections=lambda kind: [row(99, ("::1", 8000), ("::1", 50000)),   # IPv6, the same two ports
                                              row(11, ("::ffff:127.0.0.1", 8000), ("::ffff:127.0.0.1", 50000))])
-    assert measure.accepted_by(table, ("127.0.0.1", 8000), ("127.0.0.1", 50000)) == 11   # both ends, mapped read
+    assert measure.product.accepted_by(table, ("127.0.0.1", 8000), ("127.0.0.1", 50000)) == 11   # both ends, mapped read
     queued = iter([[row(None, ("127.0.0.1", 8000), ("127.0.0.1", 50000))]] * 2 + [[row(11, ("127.0.0.1", 8000),
                                                                                        ("127.0.0.1", 50000))]])
-    assert measure.accepted_by(NS(net_connections=lambda kind: next(queued)), ("127.0.0.1", 8000),
+    assert measure.product.accepted_by(NS(net_connections=lambda kind: next(queued)), ("127.0.0.1", 8000),
                                ("127.0.0.1", 50000)) == 11   # no owner while queued, then the one accepting
 
 
@@ -718,7 +718,7 @@ def test_a_port_something_else_answers_is_refused_before_the_backend_starts(at_m
     threading.Thread(target=other.serve_forever, daemon=True).start()
     try:
         given()
-        measure.measure("budget")
+        measure.measure("budget", "owner")
         assert o()["measures"][-1]["status"] == "failed" and "이미 다른 프로그램" in o()["measures"][-1]["error"]
     finally:
         other.shutdown()
@@ -729,7 +729,7 @@ def test_a_stop_pressed_before_the_worker_starts_still_stops_it(at_measure):
     given()
     measure.HALTS["budget"] = measure.Halted()
     measure.stop("budget")   # pressed between `[실측 시작]` and the worker's first line
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     assert o()["stopped"]["reason"] == "measure" and "멈췄다" in o()["stopped"]["detail"]
     assert not o().get("measures")
 
@@ -759,7 +759,7 @@ def test_the_worker_measures_with_the_built_heads_plan_whatever_the_tree_holds(a
     git(tree, "update-index", "--skip-worktree", ".wiki/measure.json")   # an edit git status does not show
     write(tree, ".wiki/measure.json", "{")
     measure.HALTS["budget"] = measure.Halted()   # as `start` makes it: no stop pressed in an earlier run holds
-    measure.measure("budget")
+    measure.measure("budget", "owner")
     assert o()["measures"][-1]["status"] == "owner"
     assert measure.committed(tree, "HEAD", ".wiki/no-such-file") is None
 

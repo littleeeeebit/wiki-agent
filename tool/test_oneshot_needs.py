@@ -466,9 +466,18 @@ def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
     assert masked("İd, mark ̇ here", {"i̇d": "[N1]", "̇": "[N2]"}) == "[N1], mark [N2] here"
     assert masked("ab", {"İ": "[N1]", "": "[N2]"}) == "ab"   # nothing folds to nothing
     assert masked("İ", {"̇": "[N1]"}) == "I[N1]"   # as spelled, though the fold here drops it
+    assert masked("x abcdefghi y", {"abcdef": "[N1]", "defghi": "[N2]"}) == "x [N1] y"   # two that overlap: no rest
+    assert masked("abcd-cdef-efgh", {"abcd-cd": "[N1]", "cdef-ef": "[N2]", "efgh": "[N3]"}) == "[N1]"   # a chain
+    # Two regions claimed first, then one that grows the first, then one that bridges both: the first label holds.
+    assert masked("aaaaaaaa..bbbbbbb", {"aaaaaaaa": "[N1]", "bbbbbbb": "[N2]", "aaa..": "[N3]", "a..b": "[N4]"}) \
+        == "[N1]"
     many = "k " * 20000
     started = time.monotonic()
     assert masked(many, {"k": "[N1]"}) == "[N1] " * 20000 and time.monotonic() - started < 2   # linear in matches
+    overlapping = "abcdefghi " * 10000
+    started = time.monotonic()
+    assert masked(overlapping, {"abcdef": "[N1]", "defghi": "[N2]"}) == "[N1] " * 10000 \
+        and time.monotonic() - started < 2   # each overlap merged in one sweep, never by a scan of the rest
 
 
 def test_a_secret_that_folds_to_nothing_shows_on_no_page():
@@ -816,6 +825,17 @@ def test_a_stream_never_splits_an_escaped_backslash_before_a_value_part_written_
         shown = veil.stream("d", text[:at], {}) + veil.stream("d", text[at:], {})
         whole = shown + "".join(t for _, t, _ in veil.rest())
         assert value not in unescaped(whole) and json.loads(whole.split("\n")[1])["q"].count("[N1]") == 2, at
+
+
+def test_a_run_of_values_overlapping_on_is_shown_as_its_label_and_held_bounded():
+    for hide, run in (({"aa": "[N1]"}, "a"), ({"abab": "[N1]", "baba": "[N2]"}, "ab")):
+        veil = Veil(hide)
+        out, started = veil.stream("d", "x ", {}), time.perf_counter()
+        for _ in range(2000):
+            out += veil.stream("d", run * 50, {})
+            assert len(veil.held["d"][0]) <= 2 * veil.window + 100   # never the whole run
+        out += veil.stream("d", " y", {}) + "".join(t for _, t, _ in veil.rest())
+        assert out == "x [N1] y" and time.perf_counter() - started < 5, out[:80]
 
 
 def test_masking_many_short_matches_among_many_escapes_stays_linear():
