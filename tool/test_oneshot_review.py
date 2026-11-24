@@ -5,6 +5,7 @@ See `docs/plans/oneshot/3-spec-backend.md` ("Backend review"). The review turn
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -104,6 +105,109 @@ def test_a_verdict_its_findings_do_not_justify_is_refused(reviewed, kind, findin
     _, head, _ = reviewed
     with pytest.raises(ValueError, match=said):
         oneshot_review.verdict_of({"verdict": kind, "head": head, "findings": findings}, head)
+
+
+FAKE = {**P1, "location": "test_budget.py:3", "reason": "번역 API 를 부르지 않고 정해 둔 답을 돌려준다",
+        "evidence": "3행의 stub", "area": "faked translation", "breaks": ["T1"], "fake": "the translation API",
+        "file": "test_budget.py"}
+
+
+def committed(tree: Path, *paths: str) -> str:
+    """`paths` committed as test files on top of the build, the new HEAD the review reads and the owner approved."""
+
+    for path in paths:
+        (tree / path).parent.mkdir(parents=True, exist_ok=True)
+        (tree / path).write_text("def test_it():\n    assert True\n", encoding="utf-8")
+        git(tree, "add", path)
+    git(tree, "commit", "-m", "tests")
+    head = git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={"built_head": head, "measures": [approved(head)]})
+    return head
+
+
+@pytest.mark.parametrize("file, stops", [("test_budget.py", True), ("./test_budget.py", True), ("tests/test_own.py", False)])
+def test_a_fake_in_a_pinned_contract_test_stops_for_the_owner_and_one_the_build_wrote_goes_to_it(reviewed, file, stops):
+    # A pinned contract test is one no build turn may change: its fake is the owner's to see, never a repair round.
+    tree, _, sent = reviewed
+    head = committed(tree, "test_budget.py", "tests/test_own.py")
+    _, asking = answers(verdict(head, "refuse", {**FAKE, "location": f"`{file}:3`", "file": file}))
+    with asking:
+        oneshot_review.review("budget")
+    if not stops:
+        assert o()["stage"] == "build" and len(sent) == 1 and "the translation API" in sent[0][2]
+        return
+    stopped = o()["stopped"]
+    # The card names the file that stopped it, beside the reviewer's place for it.
+    assert stopped["reason"] == "fake" and f"{file} (`{file}:3`) the translation API" in stopped["detail"] and not sent
+    finding, = o()["reviews"][-1]["findings"]
+    assert finding["fake"] == "the translation API" and finding["file"] == file and finding["pinned"] and not o().get("refused")
+    with pytest.raises(HTTPException) as refused:   # `[재개]` would only send the build what it may not change
+        oneshot_spec.resume("budget")
+    assert refused.value.status_code == 409 and refused.value.detail == stopped["detail"]
+
+
+def test_every_pinned_fake_is_named_in_the_stop(reviewed):
+    tree, _, sent = reviewed
+    head = committed(tree, "test_budget.py")
+    six = [{**FAKE, "location": f"test_budget.py:{n}", "fake": f"service {n}"} for n in range(1, 7)]
+    _, asking = answers(verdict(head, "refuse", *six))
+    with asking:
+        oneshot_review.review("budget")
+    assert all(f"service {n}" in o()["stopped"]["detail"] for n in range(1, 7)) and not sent
+
+
+def test_a_pinned_file_is_the_same_file_on_disk_however_either_is_spelled(tmp_path):
+    for path in ("tests/test_budget.py", "tests/test_straße.py", "other/test_budget.py", " lead.py", "lead.py"):
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("", encoding="utf-8")
+    (tmp_path.parent / "outside.py").write_text("", encoding="utf-8")
+    pinned = lambda file, *pins: oneshot_review.pinned(tmp_path, file, pins)  # noqa: E731
+    assert pinned("tests/test_budget.py", "./tests/test_budget.py") and pinned("./tests/test_budget.py", "tests/test_budget.py")
+    assert pinned(str(tmp_path / "tests" / "test_budget.py"), "tests/test_budget.py")
+    assert pinned("TESTS/test_budget.py", "tests/test_budget.py") is (os.name == "nt")   # the same file on Windows
+    assert pinned(" lead.py", " lead.py") and not pinned(" lead.py", "lead.py") and not pinned("lead.py", " lead.py")
+    assert not pinned("other/test_budget.py", "tests/test_budget.py") and not pinned("tests/test_straße.py", "tests/test_budget.py")
+    for file in ("tests/test_budget.py:3", "../outside.py", "tests/test_strasse.py"):   # no file of the checkout
+        with pytest.raises(ValueError):
+            pinned(file, "tests/test_budget.py")
+    # A lookup or comparison the disk will not settle asks the verdict again; it never reads as "not pinned".
+    real = oneshot_review.faked_file
+    for fail in ("tests/test_budget.py", "./tests/test_budget.py"):   # the fake's own lookup, then the pin's
+        with patch.object(oneshot_review, "faked_file", lambda root, file: None if file == fail else real(root, file)),                 pytest.raises(ValueError):
+            pinned("tests/test_budget.py", "./tests/test_budget.py")
+    with patch.object(oneshot_review.os.path, "samefile", side_effect=PermissionError(13, "denied")), pytest.raises(ValueError):
+        pinned("tests/test_budget.py", "./tests/test_budget.py")
+    assert pinned("tests/test_budget.py", "nowhere.py", "tests/test_budget.py")   # a match settles it, whatever else
+    assert oneshot_review.faked_file(tmp_path, "tests") is None and oneshot_review.faked_file(tmp_path, "") is None
+    probed = []   # a path outside the checkout is refused unread; one the disk refuses to read is no file
+    with patch.object(oneshot_review.os.path, "realpath", lambda p: probed.append(p) or str(p)):
+        assert oneshot_review.faked_file(tmp_path, "../outside.py") is None and not probed
+    with patch.object(Path, "is_file", lambda self: (_ for _ in ()).throw(PermissionError(13, "denied"))):
+        assert oneshot_review.faked_file(tmp_path, "tests/test_budget.py") is None
+
+
+@pytest.mark.parametrize("finding, said", [
+    ({**FAKE, "severity": "P2"}, "`fake`"), ({**FAKE, "fake": " "}, "`fake`"), ({**FAKE, "fake": ["x"]}, "`fake`"),
+    # A fake is fixed now: never deferred to a device or a kind's later build, where it would pass the review.
+    ({**FAKE, "later": {"kind": "android", "what": "x"}}, "`later`"),
+    ({**FAKE, "device": {"kind": "android", "requirement": "R1", "check": "x"}}, "`device`"),
+    ({**FAKE, "breaks": ["R1"]}, "설계 테스트 번호"),   # it names the design test the fake stands in for
+    ({**FAKE, "file": "tests/test_gone.py"}, "`file`"), ({**FAKE, "file": "test_budget.py:3"}, "`file`"),   # a file it read
+])
+def test_a_fake_mark_is_a_blocking_p1_that_names_its_test_and_what_it_stands_in_for(reviewed, tmp_path, finding, said):
+    _, head, _ = reviewed
+    rules = {"anchors": {"T1", "R1"}, "tests": {"T1"}, "kinds": {"android"}, "seen": tmp_path}
+    (tmp_path / "test_budget.py").write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match=said):
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [finding, P1]}, head,
+                                  {"android": {"R1"}}, rules)
+
+
+@pytest.mark.parametrize("kind", ["webapp", "android", "desktop", "kinds"])
+def test_every_review_prompt_refuses_a_fake_inside_a_test_file(kind):
+    text = oneshot.prompt("review", kind)
+    assert "stand-in" in text and "inside a test file" in text and "whose `fake` says" in text and "its `file` is" in text
+    assert "P1 though the person never meets it" in text
 
 
 def test_a_refusal_goes_to_the_build_each_time_until_the_round_cap_stops_the_run(reviewed):
@@ -505,7 +609,7 @@ def test_an_answered_area_is_rebutted_or_left_out_and_two_answered_rounds_go_to_
 
 def test_a_build_resumed_at_the_cap_replaces_a_stuck_mechanism_once_and_remembers_it(reviewed):
     tree, head, _ = reviewed
-    oneshot_spec.saved("budget", oneshot={"stage": "build", "reviews": [
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "reviews": [   # as the capped `[재개]` saves it
         {"verdict": "refuse", "head": h, "findings": [P1]} for h in ("old1", "old2", head)]})
     assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
     assert o()["replacing"] == ["amount validation"] and not o().get("replaced")
@@ -631,36 +735,65 @@ def test_a_head_refused_in_an_earlier_round_is_never_built_on_again(reviewed):
 def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     tree, head, _ = reviewed
     from main import oneshot_answers
+
+    def answered(s, final):   # as the check of the turn `t` reads it
+        return oneshot_answers.answered(tree, s, final, "t")
+
     for name in ("test_pin.py", "test_other.py"):
         (tree / name).write_text("def test_old():\n    assert True\n", encoding="utf-8")
         git(tree, "add", name)
     git(tree, "commit", "-m", "pins")
     refused = git(tree, "rev-parse", "HEAD")
-    oneshot_spec.saved("budget", oneshot={"fix": "review", "reviews": [{"verdict": "refuse", "head": refused,
-                                                                         "findings": [P1]}]})
+    settled = {**P1, "area": "refund wording", "location": "budget_app.py:1"}   # the owner ruled it for the builder
+    twin = {**P1, "severity": "P0", "reason": "합계가 깨진다"}   # P1's spot; a ruling for the builder never drops a P0
+    ruled = {"refund wording": {"keep": "build"}, "amount validation": {"keep": "build"}}
+    oneshot_spec.saved("budget", oneshot={"built_head": refused, "rulings": ruled, "reviews": [
+        {"verdict": "refuse", "head": refused, "findings": [P1, settled, twin]}]})
+    s = specs.load("budget", oneshot.BRANCH)
+    with pytest.raises(ValueError, match="하나만"):   # no turn sent it yet, as for a plan-repair turn
+        answered(s, "```oneshot-answers\n[]\n```\n")
+    due = oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is composed
+    assert oneshot_answers.composed("the refusal's turn", due).refusal == due   # what `send` binds to the turn `t`
+    oneshot_spec.saved("budget", oneshot={"sent_refusal": {**due, "turn": "t"}})
+    assert oneshot_answers.carried(o(), SimpleNamespace(token="u")) == (None, "")   # a turn it was never sent to
+    assert oneshot_answers.carried(o(), SimpleNamespace(person=True)) == (None, "")   # a person's turn has none
+    kept, more = oneshot_answers.carried(o(), SimpleNamespace(token="t"))   # the retry or the guidance after `t`
+    assert kept["head"] == refused and "amount validation" in more and "refund wording" not in more
+    assert "합계가 깨진다" in more and "음수 금액을 받는다" not in more   # the P0 it was sent, never the P1 at its spot
+    # A turn that ends on the refused HEAD is offered the answer only when that refusal was sent to it.
+    assert "oneshot-answers" in oneshot_answers.unchanged(tree, o(), "t")
+    assert "oneshot-answers" not in oneshot_answers.unchanged(tree, o(), "u")
     (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\ndef test_refund():\n    pass\n", encoding="utf-8")
     git(tree, "commit", "-am", "a new pin")
     (tree / "test_other.py").write_text("def test_late():\n    pass\n", encoding="utf-8")   # never committed
 
-    def answer(test):
+    def answer(test, area="amount validation"):
         return "```oneshot-answers\n" + json.dumps([{
-            "area": "amount validation", "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
+            "area": area, "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
             "test": test}]) + "\n```\n"
     s = specs.load("budget", oneshot.BRANCH)
     with pytest.raises(ValueError, match="새로 더한"):
-        oneshot_answers.answered(tree, s, answer("test_other.py::test_late"))
+        answered(s,answer("test_other.py::test_late"))
     git(tree, "rm", "-q", "--cached", "test_other.py")
     git(tree, "commit", "-m", "the other file deleted")
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # in the diff, but not in the commit the review reads
-        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
+        answered(s,answer("test_other.py::test_old"))
     (tree / "test_other.py").unlink()
     (tree / "test_other.py").mkdir()
     (tree / "test_other.py" / "test_in.py").write_text("def test_old():\n    pass\n", encoding="utf-8")
     git(tree, "add", "test_other.py/test_in.py")
     git(tree, "commit", "-m", "a folder where the file was")
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # a folder at that path is no test file
-        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
-    assert oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
+        answered(s,answer("test_other.py::test_old"))
+    with pytest.raises(ValueError, match="위치가 아니다"):   # its area was sent, but no finding at that location
+        answered(s, answer("test_pin.py::test_refund").replace("budget_app.py:2", "budget_app.py:9"))
+    with pytest.raises(ValueError, match="하나만"):   # another turn than the one it was sent to
+        oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"), "u")
+    assert answered(s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
+    with pytest.raises(ValueError, match="이번 거절의 영역이 아니다"):   # the settled area was never sent
+        answered(s,answer("test_pin.py::test_refund", "refund wording"))
+    # A build that passes ends what the refusal sent: a later turn for something else answers none of it.
+    assert oneshot_answers.passed(tree, s["oneshot"], [])["sent_refusal"] is None
 
 
 def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_did_not_answer(reviewed):

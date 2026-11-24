@@ -222,6 +222,9 @@ SKIPPED = '<testsuite><testcase classname="t" name="{name}"><skipped message="{w
     ({"": SKIPPED.format(name="test_values[a\\|b]", why="N1")}, r"- ` t test_values[a\|b] `: N1"),
     ({"": SKIPPED.format(name="test_values[**fast**]", why="N1")}, "- ` t test_values[**fast**] `: N1"),
     ({"": SKIPPED.format(name="test_values[a`b]", why="N1")}, "- `` t test_values[a`b] ``: N1"),
+    # Spacing is the name's own; only a line break, which would end the item, becomes a space.
+    ({"": SKIPPED.format(name="test_values[a  b]", why="N1")}, "- ` t test_values[a  b] `: N1"),
+    ({"": SKIPPED.format(name="test_values[a&#13;&#10;b&#10;c]", why="N1")}, "- ` t test_values[a b c] `: N1"),
     # A need id before a Korean particle is still the id; a longer one is another.
     ({"": SKIPPED.format(name="test_rate", why="N1이 없다, N12 도, N2cache N3_fixture")}, "- ` t test_rate `: N1, N12"),
     # Two reports: which is the gate's is not known, so none is listed.
@@ -467,7 +470,7 @@ def github(android, monkeypatch):
 def held(fake, head):
     """S8's one release for `head`, with its assets' digests."""
 
-    rels = [r for r in fake.rels if r["tag_name"] == f"oneshot-apk-{head[:12]}"]
+    rels = [r for r in fake.rels if r["tag_name"] == f"oneshot-{head[:12]}"]
     assert len(rels) == 1
     return rels[0], [gh.digest(a) for a in rels[0]["assets"]]
 
@@ -506,7 +509,7 @@ def test_an_android_apps_apk_goes_to_a_draft_prerelease_the_pull_request_links(a
     assert [a["name"] for a in rel["assets"]] == [f"budget-{head[:12]}-debug.apk"] and digests == [digest]
     apk = o()["apk"]
     assert apk == {"head": head, "name": f"budget-{head[:12]}-debug.apk", "sha256": digest,
-                   "tag": f"oneshot-apk-{head[:12]}", "url": rel["html_url"]}
+                   "tag": f"oneshot-{head[:12]}", "url": rel["html_url"]}
     assert not Path(frozen[-1]["path"]).exists()   # the copy it uploaded is gone
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         oneshot_pr.asked("budget")   # a resumed S8 asks for the text again: the release is not made twice
@@ -679,7 +682,7 @@ def releasing(android, tmp_path, monkeypatch):
     git(tree, "commit", "-m", "release table")
     seen, built = {"package": DEVICE["package"], "code": 1001, "name": "0.1.1", "abis": [], "debuggable": False}, []
 
-    def build(src, android, version, kit, halt):
+    def build(src, android, version, kit, halt, drop=frozenset()):
         assert release._stop.halt is halt   # under the stop's scope, the checkout's clone before it included
         built.append((git(src, "rev-parse", "HEAD"), git(src, "status", "--porcelain"), version, android["artifact"]))
         return src / android["artifact"]
@@ -735,7 +738,7 @@ def test_a_stop_before_the_check_reads_the_commit_runs_nothing(releasing, monkey
     assert launched == [] and built == []
 
 
-def test_s8_refuses_an_installer_table_until_the_oneshot_ships_its_installer(releasing):
+def test_s8_refuses_an_installer_table_for_an_app_with_no_pc_app(releasing):
     tree = releasing[0]
     write(tree, ".wiki/adapter.toml", (tree / ".wiki/adapter.toml").read_text(encoding="utf-8") +
           '\n[release.desktop]\nbuild = "b"\nartifact = "../outside.exe"\nexe = "a.exe"\nproduct_name = "p"\n'
@@ -748,7 +751,7 @@ def test_s8_refuses_an_installer_table_until_the_oneshot_ships_its_installer(rel
 def test_a_stop_during_the_release_build_ends_the_check_and_still_removes_its_checkout(releasing, monkeypatch):
     tree = releasing[0]
 
-    def stopped(src, android, version, kit, halt):
+    def stopped(src, android, version, kit, halt, drop=frozenset()):
         raise release.Stopped("멈췄다")
 
     monkeypatch.setattr(release, "build", stopped)
@@ -774,7 +777,7 @@ def test_s8_sends_back_a_missing_or_wrong_release_table_and_a_failed_release_bui
                                                                        threading.Event())
     git(tree, "revert", "--no-edit", "HEAD")
 
-    def failed(src, *a):
+    def failed(src, *a, **k):
         raise release.BuildFailed("빌드 실패 — 1 로 끝났다")
 
     monkeypatch.setattr(release, "build", failed)

@@ -34,7 +34,10 @@ build transcript is in the builder's Claude session for
 
 `[재개]` resetting `refused` is intended. A resumed review still reads every
 earlier refusal (`earlier_text` reads all `reviews`), and a resumed build turn
-gets the standing refusal and its areas' history (`build_turn`, `recurring`).
+the review sent back (`fix: review`) gets the standing refusal and its areas'
+history (`build_turn`, `recurring`). A build record saved before `fix` was
+kept resumes as a plain build turn: such a record cannot tell a review repair
+from a worktree recheck, and no live run holds one (owner, 2026-11-24).
 
 ## Decided with the owner (2026-11-22)
 

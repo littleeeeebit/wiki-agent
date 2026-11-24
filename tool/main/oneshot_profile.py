@@ -25,9 +25,13 @@ HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # several kinds without `desktop` since 9c4b. `desktop`, alone or among other kinds, runs its core path, S6, R2
 # and the frontend build with every kind's look, its PC app's included (9e4a), and the critique with its `look`
 # owed checks and the phone round of an Android app among them (9e4b), and the owner's desktop round once the
-# owner approved it (9e5), and R3 with its `PC 앱` section (9e6a); it waits before the pull request until S8's
-# README, installer and CI job land (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
+# owner approved it (9e5), R3 with its `PC 앱` section (9e6a), and S8's README turn, final gate and installer on the
+# draft prerelease (9e6b); it waits before the pull request's text until S8's CI job lands
+# (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
 KIND_STOPS: dict[str, str] = {"desktop": "pr"}
+# A stop inside its stage: the run waits there only once this holds. S8's is after its files went up for the head
+# the final gate passed (`oneshot_pr.asked`), before the pull request's text is asked.
+INSIDE = {"pr": lambda o: bool(o.get("final_head")) and o.get("attached") == o["final_head"]}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
 STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "measure", "review", "conflict", "split", "board", "frontend",
                "r2", "build-front", "critique", "phone", "pc", "r3", "pr", "done")
@@ -91,7 +95,10 @@ def held(o: dict) -> bool:
     earlier version carried past today's stop (several kinds with `desktop` at `frontend`) stays held as well."""
 
     stop = waits_at(o)
-    return stop is not None and o.get("stage") in STAGE_ORDER and STAGE_ORDER.index(o["stage"]) >= STAGE_ORDER.index(stop)
+    if stop is None or o.get("stage") not in STAGE_ORDER:
+        return False
+    at, end = STAGE_ORDER.index(o["stage"]), STAGE_ORDER.index(stop)
+    return at > end or at == end and INSIDE.get(stop, lambda o: True)(o)
 
 
 def unavailable() -> dict[str, str]:

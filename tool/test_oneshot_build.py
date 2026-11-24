@@ -15,7 +15,8 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from main import oneshot, oneshot_build, oneshot_sheet as sheet, oneshot_spec, runtime as runtime_mod, specs, work
+from main import oneshot, oneshot_build, oneshot_review, oneshot_sheet as sheet, oneshot_spec, runtime as runtime_mod, \
+    specs, work
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_oneshot_spec import DESIGN, GLOSSARY, REQS, fenced, world  # noqa: F401 — `world` is a fixture
 
@@ -44,7 +45,7 @@ def month(name):
 
 class Turn:
     def __init__(self, person=False):
-        self.events, self.halt, self.person = [], threading.Event(), person
+        self.events, self.halt, self.person, self.token = [], threading.Event(), person, "turn"
         self.chat = SimpleNamespace(id="c", parent_id=None)
 
     def put(self, payload):
@@ -416,9 +417,11 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     refused = git(tree, "rev-parse", "HEAD")
     finding = {"location": "app.py:2", "severity": "P1", "reason": "음수를 받는다", "evidence": "add(-1)",
                "area": "amount validation", "breaks": ["R1"]}
-    oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "attempts": 0,
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "attempts": 0, "built_head": refused,
                                           "reviews": [{"verdict": "refuse", "head": refused, "findings": [finding]}]})
-    answer = {"area": "Amount validation", "location": "app.py:2", "evidence": "음수는 환불이다", "breaks": ["R1"],
+    due = oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is composed
+    oneshot_spec.saved("budget", oneshot={"sent_refusal": {**due, "turn": "turn"}})   # as `send` begins it
+    answer ={"area": "Amount validation", "location": "app.py:2", "evidence": "음수는 환불이다", "breaks": ["R1"],
               "test": "test_refund.py::test_a_refund_is_negative"}
     said = "답했다.\n" + report() + fenced("oneshot-answers", [answer])
     for _ in range(oneshot_build.MAX_ATTEMPTS + 1):   # no-commit turns go back uncounted, never to a stop
@@ -430,6 +433,7 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     git(tree, "commit", "-m", "pin the refund")
     check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
     assert "test_missing(돌지 않음)" in sent[-1][2]   # its file was committed; the test run has no such case
+    assert sent[-1][2].refusal["head"] == refused and "음수를 받는다" in sent[-1][2]   # the retry carries it, findings and all
     assert o()["attempts"] == 1   # HEAD moved, and the gate still refused it: counted
     # Turns that start on this HEAD (`send` records it), a resumed one included, and end on it without a commit.
     oneshot_spec.saved("budget", oneshot={"turn_head": git(tree, "rev-parse", "HEAD")})
@@ -683,6 +687,18 @@ def test_a_work_turn_runs_on_the_build_model_the_run_fixed(built_world):
         SEND("budget", "tests", "x")
     assert opened == [("sonnet", "medium")]
     assert o()["turn_head"] == git(tree, "rev-parse", "HEAD")   # the HEAD the turn started on, which `checked` reads
+    from main import oneshot_answers
+    due = {"head": "a", "areas": ["b"]}
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    with patch.object(work, "notice", lambda *a: None), patch.object(work, "remember", lambda *a, **k: None), \
+         patch.object(work, "begin", lambda path, chat, text, release, turn: (release(), turn.unsent())), \
+         patch.object(work, "session", session), \
+         patch("main.query.config", lambda *a: {"model": "window", "effort": "e"}):
+        SEND("budget", "tests", oneshot_answers.composed("x", due))   # the turn its text carried may answer it
+        first = o()["sent_refusal"]
+        assert {**first, "turn": None} == {**due, "turn": None} and first["turn"]
+        SEND("budget", "tests", "x")   # a text composed from no refusal answers none
+        assert o()["sent_refusal"] is None
 
 
 def test_a_resume_waits_while_a_stopped_turn_is_still_being_charged(built_world):

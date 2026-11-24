@@ -115,7 +115,7 @@ commit a new test that pins the behaviour you defend, and answer it in exactly
 one fenced block:
 
 ```oneshot-answers
-[{"area": "<the finding's area, word for word>", "location": "<file:line>", "evidence": "<Korean: why the code is right, naming the lines and any measured value>", "breaks": ["R12"], "test": "worker/tests/test_ingest.py::test_close_delimited_body_is_failed"}]
+[{"area": "<the finding's area, word for word>", "location": "<the finding's location, word for word>", "evidence": "<Korean: why the code is right, naming the lines and any measured value>", "breaks": ["R12"], "test": "worker/tests/test_ingest.py::test_close_delimited_body_is_failed"}]
 ```
 
 `breaks` names the requirements a change would break, and `test` names the
