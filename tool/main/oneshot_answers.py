@@ -73,6 +73,9 @@ def answered(path: Path, spec: dict, final: str, turn: str | None = None) -> lis
             raise ValueError(f"{where}: area, location, evidence, breaks, test 를 적는다")
         if oneshot_review.area_of(a) not in areas:
             raise ValueError(f"{where}: `{a['area']}` 는 이번 거절의 영역이 아니다 — 발견의 `area` 를 그대로 적는다")
+        if spot(a) not in sent.get("sent", []):   # a finding left out of the turn is no finding it was sent
+            raise ValueError(f"{where}: `{a['location']}` 는 이번 턴에 보낸 `{a['area']}` 발견의 위치가 아니다 — "
+                             "그 발견의 `location` 을 그대로 적는다")
         if not isinstance(a.get("breaks"), list) or not a["breaks"] or not all(isinstance(b, str) and b in anchors
                                                                               for b in a["breaks"]):
             raise ValueError(f"{where}: `breaks` 는 고치면 깨지는 설계 항목·요구 번호의 목록이다")
@@ -113,6 +116,14 @@ def carried(o: dict, carry) -> tuple[dict | None, str]:
     return sent, still(o)
 
 
+def spot(f: dict) -> list[str]:
+    """A finding, or an answer to one, by its area and location: what a refusal sent, and what an answer names."""
+
+    from . import oneshot_review   # it imports `oneshot_build`, which imports this module
+
+    return [oneshot_review.area_of(f), " ".join(str(f.get("location") or "").split())]
+
+
 def still(o: dict) -> str:
     """The refusal a build turn was sent (`sent_refusal`), again with its findings for a turn that carries on from
     it: a conversation the provider had to start afresh reads them there too."""
@@ -124,8 +135,7 @@ def still(o: dict) -> str:
                  if r["verdict"] == "refuse" and r["head"] == sent.get("head")), None)
     if not last:
         return ""
-    findings = [f for f in oneshot_review.blocking(last)
-                if not oneshot_review.ruled_out(o, f) and oneshot_review.area_of(f) in set(sent["areas"])]
+    findings = [f for f in oneshot_review.blocking(last) if spot(f) in sent.get("sent", [])]
     return (f"\n\nThe review's refusal of HEAD `{sent['head']}` still stands: fix the findings below where they "
             "point, or answer them in one `oneshot-answers` block. The areas it may answer: "
             + ", ".join(f"`{a}`" for a in sent["areas"]) + ".\n\n```json\n"

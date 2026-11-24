@@ -576,7 +576,8 @@ def replacing(repo: str, o: dict, found: dict) -> dict:
     new = stuck_areas((o.get("reviews") or [])[:-1], serious, o.get("replaced") or [])
     if new != (o.get("replacing") or []):
         oneshot_spec.saved(repo, oneshot={"replacing": new or None})
-    return {"head": found["head"], "areas": sorted({area_of(f) for f in serious})}
+    return {"head": found["head"], "areas": sorted({area_of(f) for f in serious}),
+            "sent": sorted(oneshot_answers.spot(f) for f in serious)}   # what an answer may name, finding by finding
 
 
 def later_of(o: dict, found: dict) -> list[dict]:
@@ -712,8 +713,8 @@ def build_turn(spec: dict) -> str:
         from . import oneshot_measure   # it imports this module
         if text := oneshot_measure.fixing(spec):
             return text
-    # Only a build the review sent back resends it, a record from before `fix` was kept (no key) included.
-    if o.get("fix", "review") != "review" or not (last := standing(o)):
+    # Only a build the review sent back resends it; one saved before `fix` was kept is a plain build (owner).
+    if o.get("fix") != "review" or not (last := standing(o)):
         return oneshot_build.build_text(spec)
     return oneshot_answers.composed(fixing(spec, last), replacing(spec["repo"], o, last))
 

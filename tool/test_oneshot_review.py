@@ -505,7 +505,7 @@ def test_an_answered_area_is_rebutted_or_left_out_and_two_answered_rounds_go_to_
 
 def test_a_build_resumed_at_the_cap_replaces_a_stuck_mechanism_once_and_remembers_it(reviewed):
     tree, head, _ = reviewed
-    oneshot_spec.saved("budget", oneshot={"stage": "build", "reviews": [   # no `fix`, as an earlier version saved it
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "reviews": [   # as the capped `[재개]` saves it
         {"verdict": "refuse", "head": h, "findings": [P1]} for h in ("old1", "old2", head)]})
     assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
     assert o()["replacing"] == ["amount validation"] and not o().get("replaced")
@@ -678,6 +678,8 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     git(tree, "commit", "-m", "a folder where the file was")
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # a folder at that path is no test file
         answered(s,answer("test_other.py::test_old"))
+    with pytest.raises(ValueError, match="위치가 아니다"):   # its area was sent, but no finding at that location
+        answered(s, answer("test_pin.py::test_refund").replace("budget_app.py:2", "budget_app.py:9"))
     with pytest.raises(ValueError, match="하나만"):   # another turn than the one it was sent to
         oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"), "u")
     assert answered(s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
