@@ -506,6 +506,13 @@ def test_a_value_the_program_was_cut_off_writing_is_never_shown():
     assert captured.text(5) == "ready\n"
 
 
+def test_a_value_cut_off_inside_a_character_is_never_shown():
+    secret = "üñ-value-é"
+    captured = product.Captured({secret: "[M8]"})
+    captured.writer.write(b"start " + secret.encode()[:-1])   # half of `é`, then the job ends
+    assert captured.text(5) == "start "
+
+
 def test_a_value_half_written_in_json_escapes_is_never_shown():
     secret = "DDDDvalue"
     captured = product.Captured({secret: "[M7]"})

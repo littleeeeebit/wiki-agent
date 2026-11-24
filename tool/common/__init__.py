@@ -164,6 +164,13 @@ def _spans(text: str, hide: dict[str, str]) -> list[tuple[int, int, str]]:
         if not any(taken[start:end]):
             taken[start:end] = b"\x01" * (end - start)
             chosen.append((start, end, label))
+        elif not all(taken[start:end]):   # it runs past one already claimed: one label covers both, none of either shown
+            hit = [c for c in chosen if c[0] < end and start < c[1]]
+            for c in hit:
+                chosen.remove(c)
+            start, end = min(start, *(c[0] for c in hit)), max(end, *(c[1] for c in hit))
+            taken[start:end] = b"\x01" * (end - start)
+            chosen.append((start, end, hit[0][2]))
 
     # Also as its JSON decodes: each match there covers the escapes it was written with.
     plain, where = _unescape(text) if tokens else (text, [])

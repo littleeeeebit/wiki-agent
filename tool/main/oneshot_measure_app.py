@@ -240,11 +240,12 @@ class Captured:
         with self._read:
             while chunk := self._read.read(65536):
                 self._add(decode(chunk))
-        self._add(decode(b"", final=True), last=True)   # a last lone `\\r` is a line end too
+        # Nothing follows a held tail: a character half written, a last `\\r`, anything added now could only make
+        # it look settled, so the stream ends as it stands.
 
-    def _add(self, text: str, last: bool = False) -> None:
+    def _add(self, text: str) -> None:
         text, self.held = self.held + text, ""
-        if text.endswith("\r") and not last:   # its `\\n` may be in the next chunk
+        if text.endswith("\r"):   # its `\\n` may be in the next chunk
             text, self.held = text[:-1], "\r"
         shown = self.veil.stream("app", text.replace("\r\n", "\n").replace("\r", "\n"), {})
         with self.lock:

@@ -466,6 +466,8 @@ def test_a_secret_is_masked_in_any_casing_and_the_longest_first():
     assert masked("İd, mark ̇ here", {"i̇d": "[N1]", "̇": "[N2]"}) == "[N1], mark [N2] here"
     assert masked("ab", {"İ": "[N1]", "": "[N2]"}) == "ab"   # nothing folds to nothing
     assert masked("İ", {"̇": "[N1]"}) == "I[N1]"   # as spelled, though the fold here drops it
+    assert masked("x abcdefghi y", {"abcdef": "[N1]", "defghi": "[N2]"}) == "x [N1] y"   # two that overlap: no rest
+    assert masked("abcd-cdef-efgh", {"abcd-cd": "[N1]", "cdef-ef": "[N2]", "efgh": "[N3]"}) == "[N1]"   # a chain
     many = "k " * 20000
     started = time.monotonic()
     assert masked(many, {"k": "[N1]"}) == "[N1] " * 20000 and time.monotonic() - started < 2   # linear in matches
