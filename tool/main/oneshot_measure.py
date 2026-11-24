@@ -778,41 +778,68 @@ def shown(spec: dict) -> dict:
     inputs = [{**x, "given": has(spec, x)} for x in (plan or {}).get("inputs") or []]
     runs = [{k: v for k, v in m.items() if k != "folder"} for m in o.get("measures") or []]
     return {"measure": {"plan": plan and {**plan, "inputs": inputs}, "error": error, "runs": runs,
-                        "pr": o.get("pr1"), "head": o["built_head"], "told": told(spec["repo"])}}
+                        "pr": o.get("pr1"), "head": o["built_head"], "told": LIVE.get(spec["repo"], "")}}
 
 
 SHOWN = "owner.json"   # what a running script shows the owner: `{"text": "<Korean>"}`, written whole each time
-LIVE: dict[str, tuple[Path, dict | None]] = {}   # each running measurement's script folder and mask
+LIVE: dict[str, str] = {}   # what each running measurement shows the owner, masked, read by its own thread
 
 
 @contextmanager
 def watched(repo: str, raw: Path, hide: dict | None):
-    """The measuring command's run, during which `told` reads what the script shows the owner."""
+    """The measuring command's run. A thread of its own reads what the script shows the owner (`told`) once a
+    second and keeps it for the screen; it is stopped and joined before the command's folder is dealt with, so no
+    read is open on it then, and a poll reads only the text this attempt kept, never a file or a mask."""
 
-    LIVE[repo] = (raw, hide)
+    done = threading.Event()
+
+    def look() -> None:
+        while not done.wait(1):
+            LIVE[repo] = told(raw / SHOWN, hide)
+
+    looking = threading.Thread(target=look, name=f"oneshot-told-{repo}", daemon=True)
+    looking.start()
     try:
         yield
     finally:
+        done.set()
+        looking.join()
         LIVE.pop(repo, None)
 
 
-def told(repo: str) -> str:
-    """What the running script shows the owner (`{out}/owner.json`), such as a sign-in code a `during` step has
-    them read: read whole, so a write still under way is no JSON and shows nothing, then masked like the record.
-    Nothing else the script writes or prints is in view before it ends; an unreadable file shows nothing."""
+def told(path: Path, hide: dict | None) -> str:
+    """What the running script shows the owner, such as a sign-in code a `during` step has them read: the file
+    read whole (a write still under way is no JSON and shows nothing), masked as the record's notes are. Nothing
+    else the script writes or prints is in view before it ends; a file that cannot be read shows nothing."""
 
-    if not (at := LIVE.get(repo)):
-        return ""
     try:
-        with open(at[0] / SHOWN, "rb") as f:
-            data = f.read(MAX_TEXT * 4 + 1)
-        value = json.loads(data.decode("utf-8")) if len(data) <= MAX_TEXT * 4 else None
-    except (OSError, ValueError):
+        data = shared(path, MAX_TEXT * 4 + 1)
+        value = None if len(data) > MAX_TEXT * 4 else strict(data.decode("utf-8"))
+    except (OSError, ValueError, RecursionError):   # a lone surrogate escape is a `UnicodeEncodeError` there
         return ""
-    if not isinstance(text := value.get("text") if isinstance(value, dict) else None, str):
-        return ""
-    # As written, then with its line endings as a text-mode read gives them (`spelled` holds both): then cut.
-    return masked(masked(text, at[1]).replace("\r\n", "\n").replace("\r", "\n"), at[1])[:MAX_TEXT]
+    text = value.get("text") if isinstance(value, dict) else None
+    return masked(text, hide)[:MAX_TEXT] if isinstance(text, str) else ""
+
+
+def shared(path: Path, size: int) -> bytes:
+    """Up to `size` bytes of `path`. On Windows it is opened so its writer may still replace or delete it."""
+
+    if os.name != "nt":
+        with open(path, "rb") as f:
+            return f.read(size)
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateFileW.restype = wintypes.HANDLE
+    k.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                              wintypes.DWORD, wintypes.HANDLE]
+    # GENERIC_READ, shared for reading, writing and deleting, OPEN_EXISTING, a normal file
+    handle = k.CreateFileW(str(path), 0x80000000, 0x7, None, 3, 0x80, None)
+    if handle in (None, ctypes.c_void_p(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    with open(msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY), "rb") as f:
+        return f.read(size)
 
 
 oneshot_spec.VIEWS.append(shown)

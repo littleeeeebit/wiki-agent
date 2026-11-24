@@ -10,6 +10,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -247,22 +248,31 @@ def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(a
     assert "uote" not in found and "[K]" in found
 
 
-def test_what_the_running_script_shows_the_owner_reaches_the_screen_whole_masked_and_only_while_it_runs(at_measure):
+def test_what_the_running_script_shows_the_owner_reaches_the_screen_whole_masked_and_only_while_it_runs(at_measure,
+                                                                                                         tmp_path):
     given()
     seen = []
 
     def gate(cmd, *a, **k):   # the script shows a sign-in code the owner must read while it waits for them
-        shown = measure.LIVE["budget"][0] / measure.SHOWN
-        for written in (json.dumps({"text": f"기기 코드: AB-CD\r\n{KEY}"}),   # a Windows text-mode write
-                        '{"text": "기기 코드: AB',   # caught mid-write: no JSON yet
-                        "[1]", "x" * 9000):   # not the shape, or too long to be a whole message
-            shown.write_bytes(written.encode())
-            seen.append(measure.shown(oneshot_spec.spec_of("budget"))["measure"]["told"])
+        raw = next((oneshot_spec.store("budget").folder / "measure").glob("m*.raw"))
+        (raw / "w.tmp").write_text(json.dumps({"text": f"기기 코드: AB-CD {KEY}"}), encoding="utf-8")
+        os.replace(raw / "w.tmp", raw / measure.SHOWN)   # written whole, as the contract asks
+        for _ in range(50):
+            if text := measure.shown(oneshot_spec.spec_of("budget"))["measure"]["told"]:
+                seen.append(text)
+                break
+            time.sleep(0.1)
         return 1, "", ""
     with patch.object(measure.specs, "gate", gate):
         measure.measure("budget")
-    assert seen[0].startswith("기기 코드: AB-CD\n") and KEY not in seen[0] and seen[1:] == ["", "", ""]
+    assert seen and seen[0].startswith("기기 코드: AB-CD") and KEY not in seen[0]
     assert "budget" not in measure.LIVE and measure.shown(oneshot_spec.spec_of("budget"))["measure"]["told"] == ""
+    hide = measure.spelled({KEY: "[K]"})
+    for written in (b'{"text": "AB', b"[1]", b"x" * 9000,   # mid-write, not the shape, too long for a message
+                    b'{"text": "\\ud800"}', b"[" * 50_000):   # what the screen could not send, or not parse
+        (tmp_path / "o.json").write_bytes(written)
+        assert measure.told(tmp_path / "o.json", hide) == ""
+    assert measure.told(tmp_path / "none.json", hide) == ""
 
 
 def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_never_text(at_measure):

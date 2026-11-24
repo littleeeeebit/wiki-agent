@@ -163,10 +163,11 @@ Every build turn ends on the measurement contract
 - `during`: what the owner does while it runs, such as finishing a Google
   sign-in. To show the owner something while it runs, such as a device
   code, the script writes `{out}/owner.json` (`{"text": …}`), whole each
-  time. The running measurement's screen reads it whole, so a write still
-  under way shows nothing, masks it like the record and shows it in a
-  `실측이 보여 주는 것` box (`oneshot_measure.told`). Nothing the script
-  prints, and no other file it writes, is in view before it ends.
+  time. A thread of the run reads it whole once a second, so a write still
+  under way shows nothing, masks it like the report's notes and keeps it for
+  the screen's `실측이 보여 주는 것` box (`oneshot_measure.watched`); it is
+  joined before the run's folder is dealt with. Nothing the script prints,
+  and no other file it writes, is in view before it ends.
 - `metrics`: each with its requirements, the design's outside calls it
   reaches, and its threshold.
 

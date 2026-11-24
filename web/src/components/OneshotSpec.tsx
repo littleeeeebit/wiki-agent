@@ -93,17 +93,18 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   const [view, setView] = useState<SpecView | null>(null)
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
-  // Each read is numbered when asked, an action's answer when it lands: a view lands only if newer than the one
-  // shown, so a poll asked while the stage ran never puts a finished stage back on screen.
-  const asked = useRef(0)
-  const shown = useRef(0)
-  const land = useCallback((n: number, next: SpecView) => {
-    if (n > shown.current) { shown.current = n; setView(next) }
-  }, [])
-  const read = useCallback(() => {
-    const n = ++asked.current
-    api.view(repo).then((next) => land(n, next)).catch((err) => setFault(error(err)))
-  }, [repo, land])
+  // One read at a time, and one more after any asked meanwhile or after an action's answer: the last view to land
+  // is always one the server made after every earlier answer, so a delayed one never stays on screen.
+  const reading = useRef(false)
+  const again = useRef(false)
+  const read = useCallback(function next() {
+    if (reading.current) { again.current = true; return }
+    reading.current = true
+    api.view(repo).then(setView).catch((err) => setFault(error(err))).finally(() => {
+      reading.current = false
+      if (again.current) { again.current = false; next() }
+    })
+  }, [repo])
 
   useEffect(() => { read() }, [read])
   useEffect(() => { if (view) onView?.(view) }, [view, onView])
@@ -119,8 +120,8 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
     setFault('')
     setBusy(true)
     try {
-      const next = await fn()
-      land(++asked.current, next)
+      setView(await fn())
+      read()   // a view the server made after it, in case a read asked before it lands later
       return true
     } catch (err) {
       setFault(error(err))
