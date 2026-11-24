@@ -151,9 +151,10 @@ any job and outside the record. 9d2 changes it:
 - Windows does not guarantee those messages, so a member whose join and exit
   were both lost would be missing from every rule above. Once the job has
   ended and can admit no new member, its cumulative `TotalProcesses` count,
-  from `JobObjectBasicAccountingInformation`, must equal the number of
-  distinct members the look verified and held. Any difference leaves the proof
-  inconclusive. The count proves coverage; the signalled handles prove exit.
+  from `JobObjectBasicAccountingInformation`, must equal the number of joins
+  the look observed, held or not. Any difference leaves the proof
+  inconclusive. The count proves coverage; each join needs its own exit proof,
+  by the rules above.
   9d2 tests a windowless child, with no listener, whose two messages are both
   dropped.
 
