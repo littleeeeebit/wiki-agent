@@ -464,9 +464,9 @@ def test_the_measurement_mode_is_never_a_design_secrets_name(at_measure):  # noq
 
 
 def drained(captured, part):
-    """Wait until the reader has taken `part` in."""
+    """Wait until the reader has shown `part`."""
     deadline = time.monotonic() + 10
-    while part not in captured.raw + captured.done and time.monotonic() < deadline:
+    while part not in captured.text() and time.monotonic() < deadline:
         time.sleep(0.01)
 
 
@@ -493,7 +493,25 @@ def test_a_look_while_the_program_still_writes_leaves_out_a_half_written_value()
     secret = "CCCC-half-written-value"
     captured = product.Captured({secret: "[M5]"})
     captured.writer.write(b"started " + secret[:12].encode())
-    drained(captured, "CCCC")
+    drained(captured, "started")
     assert "CCCC" not in captured.text()   # the rest may still come
     captured.writer.write(secret[12:].encode() + b" ok")
     assert captured.text(5) == "started [M5] ok"
+
+
+def test_a_value_the_program_was_cut_off_writing_is_never_shown():
+    secret = "first-line-of-it\nsecond-line-of-it"
+    captured = product.Captured({secret: "[M6]"})
+    captured.writer.write(b"ready\nfirst-line-of-it\n")   # the job ends here
+    assert captured.text(5) == "ready\n"
+
+
+def test_a_value_half_written_in_json_escapes_is_never_shown():
+    secret = "DDDDvalue"
+    captured = product.Captured({secret: "[M7]"})
+    escaped = "".join(f"\\u{ord(c):04x}" for c in secret)
+    captured.writer.write(f'{{"key": "{escaped[:30]}'.encode())
+    drained(captured, '{"key"')
+    assert "\\u0044" not in captured.text()   # five of its letters, each written as six characters
+    captured.writer.write(f'{escaped[30:]}"}}'.encode())
+    assert captured.text(5) == '{"key": "[M7]"}'

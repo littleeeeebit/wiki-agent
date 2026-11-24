@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from common import _spans, masked, process, shell   # `_spans`: where `masked` would cut
+from common import Veil, masked, process, shell
 
 from . import oneshot_build, oneshot_desktop, oneshot_needs, oneshot_spec
 from .oneshot_kept import spelled, tail
@@ -219,21 +219,19 @@ def environment(spec: dict, plan: dict, launch_env: dict, env: dict, mode: str) 
 
 class Captured:
     """The program's output, read off a pipe into memory and never written as it came: only its masked text
-    reaches the disk. Its line endings are read as a text-mode read reads them (`\\r\\n` and `\\r` to `\\n`) and
-    every spelling `oneshot_kept.spelled` gives a value is masked. Text is masked before any of it is let go: the
-    last `LIMIT` characters stay raw, a value running across the cut keeps all of itself raw, and the rest is masked
-    then trimmed. A look before the output has ended leaves out its last stretch, where a value may be half
-    written."""
+    reaches the disk. Its line endings are read as a text-mode read reads them (`\\r\\n` and `\\r` to `\\n`), and
+    each piece is masked as it arrives by `common.Veil` with every spelling `oneshot_kept.spelled` gives a value:
+    a tail some value could still start with, in JSON escapes too, is held back until it is known. The masked text
+    keeps its last `LIMIT` characters. A tail still held when the output ends was cut off inside a value, and is
+    never shown."""
 
     LIMIT = 1 << 20
 
     def __init__(self, hide: dict):
         read, write = os.pipe()
         self.writer, self._read = os.fdopen(write, "wb", buffering=0), os.fdopen(read, "rb", buffering=0)
-        self.hide = spelled(hide)
-        self.edge = 2 * max(map(len, self.hide), default=0) + 16   # longer than any value, in any casing
-        self.done, self.lock = "", threading.Lock()   # masked, and the raw text after it
-        self.raw, self.held = "", ""
+        self.veil = Veil(spelled(hide))
+        self.done, self.held, self.lock = "", "", threading.Lock()
         self.thread = threading.Thread(target=self._drain, daemon=True, name="oneshot-measure-app-output")
         self.thread.start()
 
@@ -248,32 +246,19 @@ class Captured:
         text, self.held = self.held + text, ""
         if text.endswith("\r") and not last:   # its `\\n` may be in the next chunk
             text, self.held = text[:-1], "\r"
+        shown = self.veil.stream("app", text.replace("\r\n", "\n").replace("\r", "\n"), {})
         with self.lock:
-            self.raw += text.replace("\r\n", "\n").replace("\r", "\n")
-            if len(self.raw) > 2 * self.LIMIT:
-                head, cut = self._settled(max(self.LIMIT, self.edge))
-                self.done, self.raw = (self.done + head)[-self.LIMIT:], self.raw[cut:]
-
-    def _settled(self, keep: int) -> tuple[str, int]:
-        """The raw text but its last `keep` characters, masked, and where it ends: moved back to the start of a
-        value it would cut through."""
-
-        cut = max(0, len(self.raw) - keep)
-        for start, end, _ in _spans(self.raw, self.hide) if cut < len(self.raw) else ():
-            if start < cut < end:
-                cut = start
-        return masked(self.raw[:cut], self.hide), cut
+            self.done = (self.done + shown)[-self.LIMIT:]
 
     def text(self, wait: float = 0) -> str:
-        """What the program wrote so far, masked; with `wait`, once every end that writes is closed. Output still
-        coming leaves out its last stretch."""
+        """What the program wrote so far, masked, without a tail a value could still start with; with `wait`, once
+        every end that writes is closed."""
 
         if wait:
             self.writer.close()   # ours: the program's own copy closes when its job ends
             self.thread.join(wait)
         with self.lock:
-            head, _ = self._settled(0 if not self.thread.is_alive() else self.edge)
-            return (self.done + head)[-self.LIMIT:]
+            return self.done
 
 
 def changed(build) -> str:
