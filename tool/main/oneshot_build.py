@@ -202,9 +202,9 @@ def run_as(command: str, o: dict, path: Path) -> str:
     return "&&".join(parts)
 
 
-def send(repo: str, stage: str, text: str, carry=None) -> None:
-    """One work turn for `stage` in the spec's worktree, carrying on from the turn `carry` if given; a turn that
-    cannot be sent stops the stage, and the instruction the person queued for the worktree goes then."""
+def send(repo: str, stage: str, text: str) -> None:
+    """One work turn for `stage` in the spec's worktree, answering only the refusal its `text` was `composed` with;
+    a turn that cannot be sent stops the stage, and the instruction the person queued for the worktree goes then."""
 
     if stopped_for_kind(repo) or not resolve_tools(repo, stage):
         return
@@ -227,8 +227,7 @@ def send(repo: str, stage: str, text: str, carry=None) -> None:
     release.held = held.held
     turn = None
     try:
-        from . import oneshot_answers   # it imports this module
-        due, more = oneshot_answers.carried(store.get(), carry, text)   # read with the tree held, bound to this turn
+        due = getattr(text, "refusal", None)   # bound to this turn alone
         cfg = oneshot.role_config("build", store)
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
@@ -237,7 +236,7 @@ def send(repo: str, stage: str, text: str, carry=None) -> None:
                   sent_refusal=due and {**due, "turn": turn.token})
         if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
             oneshot_spec.saved(repo, adapter=True)
-        work.begin(path, chat, text + more, release, turn)
+        work.begin(path, chat, text, release, turn)
     except BaseException as exc:
         if turn is not None:
             turn.unsent()
@@ -643,9 +642,12 @@ def checked(path: Path, run, spec: dict, final: str):
     if attempts >= MAX_ATTEMPTS or run.halt.is_set():
         store.stop(stop, why)
         return None
-    return unless_stopped(run, repo, lambda: send(repo, stage, masked(   # as composed: a value can span the words
+    from . import oneshot_answers as sent   # it imports this module
+    due, more = sent.carried(was, run)   # the refusal this turn was sent, bound now while it holds the tree
+    text = sent.composed(masked(   # as composed: a value can span the words
         f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
-        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else "."), hide), run))
+        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else "."), hide) + more, due)
+    return unless_stopped(run, repo, lambda: send(repo, stage, text))
 
 
 def unless_stopped(run, repo: str, then):
@@ -725,7 +727,7 @@ def built(path: Path, run, spec: dict, final: str) -> str:
 
     o = spec["oneshot"]
     from . import oneshot_answers as sent, oneshot_measure   # they import this module
-    if why := sent.unchanged(path, o) or reported(spec, final) or pinned(path, o):
+    if why := sent.unchanged(path, o, getattr(run, "token", None)) or reported(spec, final) or pinned(path, o):
         return why
     try:
         answers = sent.answered(path, spec, final, getattr(run, "token", None))

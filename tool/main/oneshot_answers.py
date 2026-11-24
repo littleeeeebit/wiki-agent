@@ -22,13 +22,15 @@ class Again(str):
     that ended without a commit is a bug of the turn, never a stop (owner decision)."""
 
 
-def unchanged(path: Path, o: dict) -> str:
+def unchanged(path: Path, o: dict, turn: str | None = None) -> str:
     """Why the build ended on a HEAD the review refused, or one whose measurement failed or the owner refused, as
     an `Again`, or empty. Any such HEAD, the last or an earlier one gone back to, is never read again: the turn
-    commits its fix, or the tests that pin what it answered with evidence."""
+    commits its fix, or, when that refusal was sent to this `turn`, the tests that pin what it answered."""
 
-    now = oneshot_build.head(path)
+    now, sent = oneshot_build.head(path), o.get("sent_refusal") or {}
     if now in {r["head"] for r in o.get("reviews") or [] if r["verdict"] == "refuse"}:
+        if not sent.get("turn") or sent["turn"] != turn or sent.get("head") != now:
+            return Again(f"리뷰가 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 고친 코드를 커밋한다")
         return Again(f"리뷰가 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 고친 코드를 커밋하거나, 고치지 않고 "
                      "증거로 답한 발견마다 그 동작을 고정하는 테스트를 커밋하고 `oneshot-answers` 에 적는다")
     if now in {m["head"] for m in o.get("measures") or []
@@ -94,20 +96,17 @@ class Composed(str):
     refusal: dict | None = None
 
 
-def composed(text: str, refusal: dict) -> str:
+def composed(text: str, refusal: dict | None) -> str:
     out = Composed(text)
     out.refusal = refusal
     return out
 
 
-def carried(o: dict, carry, text: str) -> tuple[dict | None, str]:
-    """The refusal a new build turn may answer, and what its text adds. A turn whose `text` was `composed` from a
-    refusal gets that refusal. A turn that carries on from the turn `carry` (the server's retry, the author's
-    guidance) gets the refusal `carry` itself was sent, with its findings again, and nothing when `carry` was
-    sent none: a person's turn never was. Any other turn answers nothing."""
+def carried(o: dict, carry) -> tuple[dict | None, str]:
+    """For a turn that carries on from the turn `carry` (the server's retry, the author's guidance), read while
+    `carry` still holds the tree: the refusal `carry` itself was sent, and its findings to add to the text; nothing
+    when `carry` was sent none, as a person's turn never is. The caller `composed`s its text with both."""
 
-    if carry is None:
-        return getattr(text, "refusal", None), ""
     sent = o.get("sent_refusal") or {}
     if not sent.get("turn") or sent["turn"] != getattr(carry, "token", None):
         return None, ""

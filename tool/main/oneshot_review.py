@@ -712,7 +712,8 @@ def build_turn(spec: dict) -> str:
         from . import oneshot_measure   # it imports this module
         if text := oneshot_measure.fixing(spec):
             return text
-    if o.get("fix") != "review" or not (last := standing(o)):   # only a build the review sent back resends it
+    # Only a build the review sent back resends it, a record from before `fix` was kept (no key) included.
+    if o.get("fix", "review") != "review" or not (last := standing(o)):
         return oneshot_build.build_text(spec)
     return oneshot_answers.composed(fixing(spec, last), replacing(spec["repo"], o, last))
 

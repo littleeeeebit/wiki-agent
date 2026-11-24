@@ -433,9 +433,7 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     git(tree, "commit", "-m", "pin the refund")
     check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
     assert "test_missing(돌지 않음)" in sent[-1][2]   # its file was committed; the test run has no such case
-    from main import oneshot_answers
-    carried = oneshot_answers.carried(o(), sent[-1][3], sent[-1][2])   # as `send` reads it
-    assert carried[0]["head"] == refused and "음수를 받는다" in carried[1]   # the retry carries on that refusal, findings and all
+    assert sent[-1][2].refusal["head"] == refused and "음수를 받는다" in sent[-1][2]   # the retry carries it, findings and all
     assert o()["attempts"] == 1   # HEAD moved, and the gate still refused it: counted
     # Turns that start on this HEAD (`send` records it), a resumed one included, and end on it without a commit.
     oneshot_spec.saved("budget", oneshot={"turn_head": git(tree, "rev-parse", "HEAD")})
@@ -699,10 +697,7 @@ def test_a_work_turn_runs_on_the_build_model_the_run_fixed(built_world):
         SEND("budget", "tests", oneshot_answers.composed("x", due))   # the turn its text carried may answer it
         first = o()["sent_refusal"]
         assert {**first, "turn": None} == {**due, "turn": None} and first["turn"]
-        SEND("budget", "tests", "x", SimpleNamespace(token=first["turn"]))   # carries on that turn
-        second = o()["sent_refusal"]
-        assert second["head"] == "a" and second["turn"] not in (None, first["turn"])
-        SEND("budget", "tests", "x", SimpleNamespace(token=first["turn"]))   # a turn that was not the last one sent it
+        SEND("budget", "tests", "x")   # a text composed from no refusal answers none
         assert o()["sent_refusal"] is None
 
 
