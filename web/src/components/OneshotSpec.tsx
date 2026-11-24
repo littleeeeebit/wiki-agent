@@ -123,7 +123,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   const android = ['android', 'desktop'].includes(o.intent?.kind ?? '')   // the six parts (`oneshot_profile.parts`)
   const idle = !view.working && !view.stopped
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
-  const resume = !['kind', 'rekind'].includes(view.stopped?.reason ?? '') && (
+  const resume = !['kind', 'rekind', 'fake'].includes(view.stopped?.reason ?? '') && (
     <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
   const unposted = view.stage !== 'measure' && view.measure?.runs.at(-1)?.comment_error   // told past the measure screen
   const leaked = view.needs?.some((n) => n.leaked || n.unsure)
@@ -718,9 +718,9 @@ function Finished({ summary }: { summary: RunSummary }) {
           ))}
         </dl>
         <Calls calls={summary.calls ?? []} ci={!!summary.ci} />
-        {summary.apk && (summary.apk.url
-          ? <p>디버그 APK: <a href={summary.apk.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">{summary.apk.name}</a> — 초안 프리릴리스</p>
-          : <p className="text-faint">디버그 APK 를 Release 에 올리지 못했다 — {summary.apk.error}</p>)}
+        {([['디버그 APK', '디버그 APK 를', summary.apk], ['PC 앱 설치 파일', 'PC 앱 설치 파일을', summary.installer]] as const).map(([label, object, asset]) => asset && (asset.url
+          ? <p key={label}>{label}: <a href={asset.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">{asset.name}</a> — 초안 프리릴리스</p>
+          : <p key={label} className="text-faint">{object} Release 에 올리지 못했다 — {asset.error}</p>))}
         <div className="overflow-x-auto">
           <table className="w-full text-left [&_td]:border-t [&_td]:border-border [&_td]:py-2.5 [&_td]:pr-6 [&_th]:pb-2 [&_th]:pr-6">
             <thead><tr className="text-[12.5px] text-faint"><th>검토</th><th>회차</th><th>고친 항목</th><th>읽은 시간</th><th>펼친 부분</th></tr></thead>

@@ -462,26 +462,30 @@ def settle(path: Path, run, final: str, moving: bool = False) -> bool:
 ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be")
 
 
-def asset(file: Path, spec: dict, hide: dict | None = None) -> str:
-    """Why an asset about to be uploaded (the frozen APK) is not sent: a value of `hide` (the store's now, by
-    default) anywhere in it, as UTF-8 or either UTF-16, in any casing: the raw file, every byte the upload sends,
-    and, an APK being a zip, each entry decompressed with its name. A file that cannot be read is refused too."""
+def asset(file: Path, spec: dict, hide: dict | None = None, packed: bool = False) -> str:
+    """Why an asset about to be uploaded (the APK, the installer) is not sent: a value of `hide` (the store's now, by
+    default) in it, as UTF-8 or either UTF-16, in any casing: every byte sent, each zip entry with its name, and with
+    `packed` an installer's NSIS stream (`release_desktop.windows`), read whole even unmasked. Unreadable: refused."""
 
     import zipfile
     import zlib
 
+    from . import release_desktop
+
     hide = agent(spec)[1] if hide is None else hide
-    if not hide:
+    if not hide and not packed:
         return ""
     try:
         parts = [file.read_bytes()]   # every byte that goes up, signing blocks and gaps included
         if zipfile.is_zipfile(file):
             with zipfile.ZipFile(file) as z:   # and what the entries hold compressed
                 parts += [b for i in z.infolist() for b in (i.filename.encode(), z.read(i))]
+        longest = max((len(s) for v in hide for s in (v, folded(v))), default=0)
+        # UTF-16 pairs may start at an odd byte: each buffer is read from its first and its second byte.
+        found = sorted({n for b in itertools.chain(parts, release_desktop.windows(parts[0], longest) if packed else ())
+                        for enc in ENCODINGS for s in (b, b[1:]) for n in (held_in(s.decode(enc, "ignore"), hide) if hide else ())})
     except (OSError, zipfile.BadZipFile, RuntimeError, ValueError, zlib.error, EOFError) as exc:
         return masked(f"올릴 파일을 읽지 못해 올리지 않는다 ({type(exc).__name__})", hide)
-    # UTF-16 pairs may start at an odd byte: each buffer is read from its first and its second byte.
-    found = sorted({n for b in parts for enc in ENCODINGS for s in (b, b[1:]) for n in held_in(s.decode(enc, "ignore"), hide)})
     return masked(f"비밀 값 {', '.join(f'[{n}]' for n in found)} 이(가) 올릴 파일에 들어 있다 — 올리지 않는다", hide) \
         if found else ""
 

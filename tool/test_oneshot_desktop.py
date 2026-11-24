@@ -583,16 +583,18 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
 
 
 def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    # A PC app runs through its critique, the phone round, the owner's desktop round and R3, alone or among other
-    # kinds (9e6a), and is held before its pull request.
+    # A PC app runs through its critique, the phone round, the owner's desktop round, R3 and S8's README turn, final
+    # gate and attachments, alone or among other kinds (9e6b), and is held before its pull request's text.
     assert oneshot_profile.waits_at(o()) == "pr" and not oneshot_profile.held({**o(), "stage": "r3"})
     oneshot_spec.saved("budget", oneshot={"stage": "critique",
                                           "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
     assert oneshot_profile.waits_at(o()) == "pr" and not oneshot_profile.held(o())
-    for stage in ("pr", "done"):
-        with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
-                pytest.raises(HTTPException, match="다음 버전"):
-            START("budget", "design", stage=stage)
+    at_pr = {**o(), "stage": "pr", "final_head": "h"}
+    assert not oneshot_profile.held(at_pr) and not oneshot_profile.held({**at_pr, "attached": "g"})
+    assert oneshot_profile.held({**at_pr, "attached": "h"})   # its files went up for the head the gate passed
+    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
+            pytest.raises(HTTPException, match="다음 버전"):
+        START("budget", "design", stage="done")
     assert o()["stage"] == "critique"
 
 
@@ -669,10 +671,12 @@ def test_an_earlier_versions_frozen_run_at_the_build_is_resumable(desktop, tmp_p
 
 
 def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage_nor_its_build_again(desktop, tmp_path):
-    # R3 approved and the run waits before its pull request (9e6a): neither the hand-off nor a start moves it back.
+    # S8's files went up and the run waits before its pull request's text (9e6b): neither the hand-off nor a start
+    # moves it back.
     stage = "pr"
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": stage, "working": None, "stopped": None, "features": [],
+                                          "final_head": "h", "attached": "h",
                                           "desktop_build": frozen_in(desktop, tmp_path)})
     with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
             patch.object(oneshot_spec, "start", START):
