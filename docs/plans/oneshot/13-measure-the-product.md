@@ -106,6 +106,11 @@ the program play the video and the live broadcast, and hears it speak
 Korean. The clips stay for a second listen. The owner approves, or refuses
 with a note that goes to the build agent like a failed metric.
 
+The server's pass stands only for what it measured. An input changed since,
+or a frozen copy no longer as it passed, sets the pass aside, and the server
+measures again. A result from before this step has no mode and never had the
+server's pass, so the server measures that HEAD first too.
+
 A program that leaves the owner's screen empty, opens no window of its own,
 or plays no sound the owner can hear is the owner's to refuse; the note says
 which.

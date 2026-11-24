@@ -26,11 +26,10 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
   if (!m) return null
   const last = m.runs.at(-1)
   const current = last && last.head === m.head ? last : undefined
-  const waiting = current?.status === 'owner' && !current.owner
+  const waiting = !!current && verdictDue(current)
   const failed = current?.status === 'failed'   // stopped at the cap: the button hands it to the build agent, no input needed
   const missing = failed ? [] : m.plan?.inputs.filter((x) => !x.given) ?? []
   const owner = m.next === 'owner'
-  const what = m.plan?.app ? 'PC 프로그램' : '백엔드'
   return (
     <div className={PAD}>
       <header className="flex flex-col gap-1">
@@ -58,13 +57,17 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
           </section>
         )}
         <section aria-label="실측" className={BOX}>
-          <h2 className="text-[15px] font-semibold">{owner ? '2. 주인 실측 — 한 번만 한다' : '2. 자동 실측 — 서버가 먼저 잰다'}</h2>
-          {owner ? <>
-            <p>사람이 필요 없는 항목은 서버가 모두 통과시켰다. 이제 {what}이 이 화면에 뜨고, 동영상과 생방송이 한국어로 들린다. 직접 보고 듣는다.</p>
+          <h2 className="text-[15px] font-semibold">
+            {waiting ? '2. 주인 실측 — 판정을 기다린다' : owner ? '2. 주인 실측 — 한 번만 한다' : '2. 자동 실측 — 서버가 먼저 잰다'}</h2>
+          {waiting ? <p>주인 실측이 끝났다. 아래 결과를 보고 듣고, 승인하거나 거절한다.</p> : owner ? <>
+            <p>사람이 필요 없는 항목은 서버가 모두 통과시켰다. {m.plan.app
+              ? '이제 통과한 그 PC 프로그램이 이 화면에 뜨고 소리가 난다. 직접 보고 듣는다.'
+              : '이제 서버가 백엔드를 다시 띄우고, 사람이 필요한 항목까지 잰다. 끝나면 클립을 직접 듣는다.'}</p>
             {m.plan.during.length > 0 && <><p>[주인 실측 시작]을 누른 뒤, 도는 동안 이것을 한다:</p><Steps steps={m.plan.during} /></>}
           </> : (
-            <p>서버가 이 PC 에서 {what}을 띄워 사람이 필요 없는 항목을 혼자 잰다. 화면에 뜨지 않고 소리도 나지 않는다.
-              통과하지 못한 항목만 빌드 에이전트가 고치고, 서버가 다시 잰다. 모두 통과하면 주인 실측을 한 번 부른다.</p>
+            <p>{m.plan.app ? '서버가 이 PC 에서 PC 프로그램을 띄워 사람이 필요 없는 항목을 혼자 잰다. 화면에 뜨지 않고 소리도 나지 않는다.'
+              : '서버가 이 PC 에서 백엔드를 띄워 사람이 필요 없는 항목을 혼자 잰다.'}
+              {' '}통과하지 못한 항목만 빌드 에이전트가 고치고, 서버가 다시 잰다. 모두 통과하면 주인 실측을 한 번 부른다.</p>
           )}
           <p className="text-muted-foreground">한 번에 약 {m.plan.measure.minutes}분 걸린다. 진짜 서비스로 아래를 잰다.</p>
           <Metrics run={current} plan={m.plan.metrics} />
@@ -181,14 +184,18 @@ function Metrics({ run, plan }: { run?: MeasureRun; plan: Metric[] }) {
   )
 }
 
+/** The owner's own measurement, waiting for their verdict: a result from before the server measured first
+ *  (no `mode`) is never one (`oneshot_measure.waiting`). */
+const verdictDue = (r: MeasureRun) => r.status === 'owner' && r.mode === 'owner' && !r.owner
+
 const said = (r: MeasureRun) => (r.owner ? (r.owner.approve ? '주인 승인' : '주인 거절')
-  : r.status === 'owner' ? '판정 기다림' : r.status === 'passed' ? '자동 실측 통과 — 주인 실측 차례'
+  : r.status === 'owner' ? (r.mode === 'owner' ? '판정 기다림' : '판정하지 않음 — 자동 실측부터 다시') : r.status === 'passed' ? '자동 실측 통과 — 주인 실측 차례'
     : r.status === 'input' ? '넣은 값이 틀림' : r.status === 'stale' ? '판정하지 않음'
       : r.mode === 'auto' ? '자동 실측 실패 — 빌드가 고친다' : '실패 — 빌드가 고친다') + (r.comment_error ? ` · ${r.comment_error}` : '')
 
 function Result({ repo, run, busy, act }: { repo: string; run: MeasureRun; busy: boolean; act: Act }) {
   const [note, setNote] = useState('')
-  const waiting = run.status === 'owner' && !run.owner
+  const waiting = verdictDue(run)
   return (
     <section aria-label="실측 결과" className={BOX}>
       <h2 className="text-[15px] font-semibold">3. 결과 — {run.n}회째 · {said(run)}</h2>

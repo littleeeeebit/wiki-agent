@@ -274,6 +274,13 @@ def serve_check(path: Path, run, spec: dict) -> str:
     return ""
 
 
+def waiting(record: dict | None) -> bool:
+    """Whether `record` is the owner's own measurement, waiting for their verdict. A result from before plan 13,
+    which has no `mode`, is never one: it never had the server's own pass, so the server measures again."""
+
+    return bool(record) and record["status"] == "owner" and record.get("mode") == "owner" and not record.get("owner")
+
+
 def next_mode(o: dict) -> str:
     """`owner` once the server's own measurement of the built HEAD passed every metric that needs no person, and
     nothing since; else `auto`: the owner is called only when a machine has nothing left to find."""
@@ -314,8 +321,8 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
 
 
 def measure(repo: str, mode: str | None = None) -> None:
-    """One measurement of the built HEAD: `mode` `auto` by the server, `owner` on the owner's screen; by default
-    the one the record calls for (`next_mode`)."""
+    """One measurement of the built HEAD: `auto` by the server, `owner` on the owner's screen, the one the record
+    calls for when the worker reads it (`next_mode`). `mode` forces one, for a test; the server never passes it."""
 
     from . import oneshot_review   # it imports this module
 
@@ -333,6 +340,12 @@ def measure(repo: str, mode: str | None = None) -> None:
             store.stop("measure", str(exc))
             return None
         n, how = len(o.get("measures") or []) + 1, mode or next_mode(o)
+        passed = (o.get("measures") or [None])[-1] if how == "owner" else None
+        if passed and "app" in plan and (why := product.changed(passed.get("build"))):
+            with oneshot._lock:   # the pass no longer stands for what would open: the server measures again
+                retire(oneshot_spec.spec_of(repo), why)
+            store.stop("measure", f"{why} — [자동 실측 시작]으로 다시 잰다")
+            return None
         out = store.folder / "measure" / f"m{n}-{o['built_head'][:12]}"
         raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept_from` copies leave it
         with oneshot._lock:   # every stored-value change counts under this lock: the values and the count agree
@@ -353,7 +366,10 @@ def measure(repo: str, mode: str | None = None) -> None:
             return None
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name, "mode": how}, None
         try:
-            with product.started(spec, plan, tree, env, halt, raw / "serve.log", hide, how):
+            with product.started(spec, plan, tree, env, halt, raw / "serve.log", hide, how,
+                                 (passed or {}).get("build")) as build:
+                if build:   # the frozen copy measured: the owner's measurement starts this one, never a new one
+                    record["build"] = build
                 limit = plan["measure"]["minutes"] * 60 + 300
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
                     "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
@@ -472,11 +488,14 @@ def fixing(spec: dict) -> str:
         auto = last.get("mode") == "auto"
         why = (f"The {'server' + chr(39) + 's own ' if auto else ''}real measurement of HEAD `{last['head']}` failed: "
                f"{failure(last)}.\n\n"
-               + ("Only the metrics that failed are below; every other metric passed, and those that need a person "
-                  "were not judged in this measurement.\n\n" if auto else "")
+               + ("Only the metrics that failed are below; those that need a person were not judged in this "
+                  "measurement.\n\n" if auto else "")
                + f"The metrics {'that failed' if auto else 'as measured'}:\n\n```json\n"
                f"{json.dumps(failed_metrics(last) if auto else last.get('metrics') or [], ensure_ascii=False, indent=2)}\n```\n\n"
-               f"The end of the measuring script's output:\n\n```\n{last.get('tail', '')[-1500:]}\n```\n")
+               + (f"The report's notes:\n\n```\n{last['notes']}\n```\n\n" if last.get("notes") else "")
+               + f"The end of the measuring script's output:\n\n```\n{last.get('tail', '')[-1500:]}\n```\n\n"
+               f"The end of the log of what it measured (the program, or the backend):\n\n```\n"
+               f"{tail(oneshot_spec.store(spec['repo']).folder / 'measure' / last.get('folder', '') / 'serve.log', {})}\n```\n")
     elif (last.get("owner") or {}).get("approve") is False:
         why = (f"The owner listened to the real measurement of HEAD `{last['head']}` and refused it. They wrote, in "
                f"their own words:\n\n> {last['owner']['note']}\n\nThe metrics as measured:\n\n```json\n"
@@ -531,10 +550,11 @@ def plain_input(spec: dict, given: dict) -> dict:   # the same values again chan
 
 
 def retire(spec: dict, why: str, **fields) -> dict:
-    """The result waiting for the owner's verdict set aside (`stale`) with `why`, saved with `fields`."""
+    """The result waiting for the owner, their verdict or their measurement after the server's own pass, set
+    aside (`stale`) with `why`, saved with `fields`: what it measured is no longer what would be judged."""
 
     runs = list(spec["oneshot"].get("measures") or [])
-    if runs and runs[-1]["status"] == "owner" and not runs[-1].get("owner"):
+    if runs and runs[-1]["status"] in ("owner", "passed") and not runs[-1].get("owner"):
         runs[-1] = {**runs[-1], "status": "stale", "error": why}
         fields["measures"] = runs
     return oneshot_spec.saved(spec["repo"], oneshot=fields) if fields else spec
@@ -594,10 +614,10 @@ def start(repo: str, body: Start) -> dict:
         else:   # the same lock scope decides and launches: no other request's result slips in between
             if missing := [x["id"] for x in plan["inputs"] if not has(spec, x)]:
                 raise HTTPException(400, f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")
-            if last and last["head"] == o["built_head"] and last["status"] == "owner" and not last.get("owner"):
+            if last and last["head"] == o["built_head"] and waiting(last):
                 raise HTTPException(409, "이 빌드의 실측이 판정을 기다린다 — 듣고 승인하거나 거절한다")
             HALTS[repo] = Halted()   # before the worker: a stop pressed as it starts is kept
-            oneshot.start_worker(oneshot_spec.store(repo), "measure", measure, (repo, next_mode(o)), {})
+            oneshot.start_worker(oneshot_spec.store(repo), "measure", measure, (repo,), {})
             then = None
     if then:   # the build agent's turn goes after the lock is let go
         then()
@@ -632,7 +652,7 @@ def decide(repo: str, body: Decision) -> dict:
         runs = list(o.get("measures") or [])
         last = runs[-1] if runs else None
         if not last or last["head"] != o.get("built_head") or body.head != last["head"] or body.n != last["n"] \
-                or last["status"] != "owner" or last.get("owner"):
+                or not waiting(last):
             raise HTTPException(409, "판정할 실측이 없다 — 다시 불러온다")
         if not body.approve and not note:
             raise HTTPException(400, "거절하려면 들은 것과 무엇이 틀렸는지 적는다")

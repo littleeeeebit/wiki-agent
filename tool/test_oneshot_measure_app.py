@@ -6,6 +6,7 @@ the program's desktop is replaced, since a look opens a real one.
 """
 
 import json
+import os
 import shutil
 import sys
 import types
@@ -183,31 +184,42 @@ def test_the_frozen_program_starts_with_its_data_the_inputs_and_whose_measuremen
     tree, _ = at_measure
     s = spec()
     plan = {"app": program(tree), "inputs": [{"env": "BUDGET_URL"}, {"env": ENV}]}
-    env = {"BUDGET_URL": "https://example.test/live", ENV.lower(): KEY, "OTHER": "x"}
+    env = {"BUDGET_URL": "https://example.test/live", ENV: KEY, "PATH": "C:/gate"}   # the script's environment
     halt, job, seen = measure.Halted(), Job(), {}
     answers = iter([None, 200])
     with patch.dict(sys.modules, desktop_session=session(tmp_path, job, seen)), \
+            patch.dict(os.environ, {"SERVER_ONLY_TOKEN": "s3cret"}), \
             patch.object(product, "answers", lambda url: next(answers)), \
-            patch.object(product, "vouched", lambda pids, url: pids == {4242}):
-        with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "auto"):
+            patch.object(product, "vouched", lambda pids, url, status=False: pids == {4242}):
+        with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "auto") as build:
             assert not job.ended
     data = product.folder(s) / "data"
     assert seen["owned"] and seen["disposable"] and seen["key"] == "app"   # auto: the run's own desktop
     assert Path(seen["argv"][0]).name == "app.exe" and product.folder(s) in Path(seen["argv"][0]).parents
     assert seen["argv"][1:] == ["--data", str(data)] and data.is_dir()
     assert seen["extra"]["ONESHOT_MEASURE"] == "auto" and seen["extra"]["BUDGET_URL"] == "https://example.test/live"
-    assert seen["extra"][ENV] == KEY and "OTHER" not in seen["extra"]   # the inputs, by their names, nothing else
+    assert seen["extra"][ENV] == KEY and seen["extra"]["PATH"] == "C:/gate"   # what the script gets, no more
+    assert seen["extra"]["SERVER_ONLY_TOKEN"] is None   # dropped by `Look.start`: no server secret reaches it
     assert job.ended == [product.END_SECONDS] and (tmp_path / "out" / "serve.log").read_text() == "app started"
     (data / "kept.txt").write_text("sign-in", encoding="utf-8")
+    (tree / "build" / "app.exe").write_bytes(b"rebuilt since the pass")   # the owner never opens a new build
     seen.clear()
     answers = iter([None, 200])
     with patch.dict(sys.modules, desktop_session=session(tmp_path, Job(), seen)), \
             patch.object(product, "answers", lambda url: next(answers)), \
-            patch.object(product, "vouched", lambda pids, url: True):
-        with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "owner"):
-            pass
+            patch.object(product, "vouched", lambda pids, url, status=False: True):
+        with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "owner", build) as same:
+            assert same == build
     assert not seen["owned"] and seen["extra"]["ONESHOT_MEASURE"] == "owner"   # the owner's own screen
+    assert seen["argv"][0] == str(Path(build["folder"]) / "app.exe")   # the copy that passed
     assert (data / "kept.txt").read_text(encoding="utf-8") == "sign-in"   # one data folder for the whole run
+    (Path(build["folder"]) / "app.exe").write_bytes(b"changed")   # the frozen copy itself changed
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, Job(), {})), \
+            patch.object(product, "answers", lambda url: None):
+        with pytest.raises(RuntimeError, match="자동 실측부터|자동 실측 시작"), \
+                product.running(s, plan, tree, env, halt, tmp_path / "o.log", {}, "owner", build):
+            pass
+    assert product.changed(None) and product.changed({"identity": ""})
 
 
 def test_the_program_must_answer_from_its_own_job_and_not_end(at_measure, tmp_path):  # noqa: F811 — the imported fixture
@@ -221,7 +233,7 @@ def test_the_program_must_answer_from_its_own_job_and_not_end(at_measure, tmp_pa
     answers = iter([None, 200])
     with patch.dict(sys.modules, desktop_session=session(tmp_path, job := Job(), {})), \
             patch.object(product, "answers", lambda url: next(answers)), \
-            patch.object(product, "vouched", lambda pids, url: False):
+            patch.object(product, "vouched", lambda pids, url, status=False: False):
         with pytest.raises(ValueError, match="띄운 PC 프로그램이 아니다"), \
                 product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "b.log", {}, "auto"):
             pass
@@ -231,6 +243,71 @@ def test_the_program_must_answer_from_its_own_job_and_not_end(at_measure, tmp_pa
         with pytest.raises(ValueError, match="떠 있지 않고 끝났다"), \
                 product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "c.log", {}, "auto"):
             pass
+    refusing = session(tmp_path, Job(), {})
+
+    def refused(*a, **k):
+        raise refusing.Refused("evidence not removed")
+    refusing.look = refused   # a desktop that cannot be opened or cleaned is never charged to the build
+    with patch.dict(sys.modules, desktop_session=refusing), patch.object(product, "answers", lambda url: None):
+        with pytest.raises(RuntimeError, match="데스크톱"), \
+                product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "d.log", {}, "auto"):
+            pass
+
+
+def test_the_status_and_the_process_answering_it_are_read_on_one_connection():
+    import http.server
+    import threading
+
+    class Health(http.server.BaseHTTPRequestHandler):
+        code = 200
+
+        def do_GET(self):
+            self.send_response(Health.code)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+    server = http.server.HTTPServer(("127.0.0.1", 0), Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}/api/link/info"
+    try:
+        assert product.vouched({os.getpid()}, url, status=True)   # this process accepted the very connection that said 200
+        assert not product.vouched({os.getpid() + 1}, url, status=True)   # another process's socket
+        Health.code = 503
+        assert not product.vouched({os.getpid()}, url, status=True)   # its own socket, but not ready
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert not product.vouched({os.getpid()}, url, status=True)   # nothing answers
+
+
+def test_a_result_from_before_the_server_measured_first_is_measured_again_never_judged(with_person):
+    given()
+    old = {"n": 1, "head": o()["built_head"], "ts": 1, "folder": "m1", "status": "owner", "metrics": []}
+    oneshot_spec.saved("budget", oneshot={"measures": [old]})
+    with pytest.raises(HTTPException) as e:   # no verdict on a measurement the server never passed
+        measure.decide("budget", measure.Decision(head=o()["built_head"], n=1, approve=True, note=""))
+    assert e.value.status_code == 409
+    started_once()   # the button measures, the server's own first
+    assert o()["measures"][-1]["mode"] == "auto" and o()["measures"][-1]["status"] == "passed"
+
+
+def test_an_input_changed_after_the_servers_pass_sends_it_back_to_the_servers_measurement(with_person):
+    given()
+    started_once()
+    assert measure.shown(spec())["measure"]["next"] == "owner"
+    measure.give("budget", "M1", measure.Value(value="https://example.test/live2", head=o()["built_head"],
+                                               env="BUDGET_URL", kind="text"))
+    assert o()["measures"][-1]["status"] == "stale" and measure.shown(spec())["measure"]["next"] == "auto"
+
+
+def test_the_build_agent_gets_the_reports_notes_and_the_end_of_the_measured_log(with_person):
+    tree, sent = with_person
+    given(url="https://example.test/other")
+    started_once()
+    text = sent[-1][2]
+    assert "The report's notes" in text and "로 불렀다" in text and KEY not in text   # masked, as kept
+    assert "The end of the log of what it measured" in text
 
 
 def test_pull_request_one_starts_the_servers_own_measurement_at_once(at_measure):  # noqa: F811 — the imported fixture

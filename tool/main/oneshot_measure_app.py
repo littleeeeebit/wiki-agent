@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 
 from common import masked, process, shell
 
-from . import oneshot_build, oneshot_desktop, oneshot_needs, oneshot_spec
+from . import oneshot_build, oneshot_desktop, oneshot_spec
 from .oneshot_kept import tail
 
 MODE = "ONESHOT_MEASURE"   # `auto`: the server's measurement, no person; `owner`: the owner's, on their screen
@@ -49,20 +49,13 @@ def folder(spec: dict) -> Path:
     return oneshot_spec.store(spec["repo"]).folder / "measure-app"
 
 
-def given(spec: dict, plan: dict, env: dict) -> dict:
-    """What the program gets over the server's environment: every input of the plan and every design secret, by
-    their `env`, as the measurement's environment holds them; a name it does not hold is dropped (`None`)."""
-
-    names = {x["env"] for x in plan["inputs"]} | {n["env"] for _, n in oneshot_needs.secret_needs(spec)}
-    have = {k.upper(): v for k, v in env.items()}
-    return {name: have.get(name.upper()) for name in names}
-
-
-def started(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide: dict, mode: str):
-    """What the measurement runs, started for the block: the PC program in a run that builds one, else the backend."""
+def started(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide: dict, mode: str,
+            passed: dict | None = None):
+    """What the measurement runs, started for the block, which gets the frozen build or `None`: the PC program in
+    a run that builds one (`owner` starting the build the server's own measurement `passed`), else the backend."""
 
     if "app" in plan:
-        return running(spec, plan, tree, env, halt, log, hide, mode)
+        return running(spec, plan, tree, env, halt, log, hide, mode, passed)
     return served(oneshot_build.run_as(plan["serve"]["command"], spec["oneshot"], tree), tree, env,
                   plan["serve"]["health"], plan["serve"]["seconds"], halt, log, hide)
 
@@ -147,13 +140,15 @@ def owned(proc: subprocess.Popen, health: str) -> bool:
     return vouched(tree, health)
 
 
-def vouched(tree: set[int], health: str) -> bool:
-    """Whether every process that accepts a connection to `health` is one of `tree`: `owned`'s read, for a program
-    whose processes a job of its own names (`running`)."""
+def vouched(tree: set[int], health: str, status: bool = False) -> bool:
+    """Whether every process that accepts a connection to `health` is one of `tree`: `owned`'s read, and the PC
+    program's, whose processes its job names (`running`). With `status`, each of those connections answers 200
+    itself: the answer and the process behind it are never read off two connections."""
 
     import psutil   # `owned` and the program's launch have checked it is installed
     url = urlsplit(health)
-    port, pids = url.port or 80, []
+    port, path = url.port or 80, (url.path or "/") + (f"?{url.query}" if url.query else "")
+    seen = False
     try:
         for family, kind, _, _, address in socket.getaddrinfo(url.hostname, port, type=socket.SOCK_STREAM):
             with socket.socket(family, kind) as s:
@@ -162,8 +157,15 @@ def vouched(tree: set[int], health: str) -> bool:
                     s.connect(address)
                 except OSError:
                     continue   # nothing answers on this address: it cannot answer for the backend either
-                pids.append(accepted_by(psutil, s.getpeername()[:2], s.getsockname()[:2]))
-        return bool(pids) and all(p in tree for p in pids)
+                if accepted_by(psutil, s.getpeername()[:2], s.getsockname()[:2]) not in tree:
+                    return False
+                if status:
+                    s.sendall(f"GET {path} HTTP/1.0\r\nHost: {url.netloc}\r\nConnection: close\r\n\r\n".encode())
+                    line = s.makefile("rb").readline(256).split()
+                    if len(line) < 2 or line[1] != b"200":
+                        return False
+                seen = True
+        return seen
     except (psutil.Error, OSError):
         return False
 
@@ -186,31 +188,66 @@ def accepted_by(psutil, server: tuple, client: tuple, seconds: float = 3.0) -> i
 
 # -- Starting the PC program, in a run that builds one ----------------------------------------------------
 
+def environment(launch_env: dict, env: dict, mode: str) -> dict:
+    """The program's environment over the server's, as `Look.start` reads it: the launch settings, then the
+    measurement's own environment (the script's: the gate's base and the inputs), then the mode, each name once
+    to Windows; every other name the server holds is dropped (`None`), so no secret outside the inputs reaches
+    the program."""
+
+    merged: dict = {}
+    for part in (launch_env, env, {MODE: mode}):
+        for name, value in part.items():
+            for old in [k for k in merged if k.upper() == name.upper()]:
+                del merged[old]
+            merged[name] = value
+    kept = {k.upper() for k in merged}
+    return {name: None for name in os.environ if name.upper() not in kept} | merged
+
+
+def changed(build) -> str:
+    """Why the frozen copy the server's own measurement passed is no longer there as it passed, or empty."""
+
+    if not isinstance(build, dict) or not build.get("identity"):
+        return "자동 실측을 통과한 PC 앱 빌드의 기록이 없다"
+    try:
+        return oneshot_desktop.altered(build)
+    except (OSError, ValueError) as exc:
+        return f"자동 실측을 통과한 PC 앱 빌드를 읽지 못했다 ({type(exc).__name__})"
+
+
 @contextmanager
-def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide: dict, mode: str):
-    """The frozen program started with the measurement's inputs and answering `health` with 200 from a socket its
-    job holds, for the block; `ValueError` with the end of its log when it exits or does not answer in time. Ended
-    with everything it started after, its log copied to `log` for the kept folder to mask."""
+def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide: dict, mode: str,
+            passed: dict | None = None):
+    """The frozen program started with the measurement's environment and answering `health` with 200 from a
+    socket its job holds, for the block, which gets the frozen build; `ValueError` with the end of its log when it
+    exits or does not answer in time. `auto` freezes the built HEAD's copy anew; `owner` starts the copy the
+    server's own measurement `passed`, unchanged, never a new one. Ended with everything it started after, its
+    log copied to `log` for the kept folder to mask. A desktop that cannot be opened or cleaned is the owner's
+    to see to, never the build's (`RuntimeError`)."""
 
     import desktop_session   # Windows only, as a PC app is
 
     app = plan["app"]
     if answers(app["health"]):   # whatever answers now is not the program about to start
         raise ValueError(f"`{app['health']}` 에 이미 다른 프로그램이 답한다 — 그 프로그램을 끄거나 `app.health` 의 포트를 바꾼다")
-    desktop = {"run": app["run"], "installer": ""}
-    if why := oneshot_desktop.built(tree, desktop):
-        raise ValueError(why)
     root = folder(spec)
-    into = root / "app"
-    shutil.rmtree(into, ignore_errors=True)
-    into.mkdir(parents=True)
-    build = oneshot_desktop.frozen(tree, desktop, into)
+    if mode == "owner":
+        if why := changed(passed):
+            raise RuntimeError(f"{why} — [자동 실측 시작]으로 다시 잰다")
+        build = passed
+    else:
+        desktop = {"run": app["run"], "installer": ""}
+        if why := oneshot_desktop.built(tree, desktop):
+            raise ValueError(why)
+        into = root / "app"
+        shutil.rmtree(into, ignore_errors=True)
+        into.mkdir(parents=True)
+        build = oneshot_desktop.frozen(tree, desktop, into)
     data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
     launch, copy = build["launch"], Path(build["folder"])
     argv = [str(copy / launch["program"]), *(a.replace(oneshot_desktop.DATA, str(data)) for a in launch["args"])]
-    extra = {**{k: v.replace(oneshot_desktop.DATA, str(data)) for k, v in launch["env"].items()},
-             **given(spec, plan, env), MODE: mode}
+    extra = environment({k: v.replace(oneshot_desktop.DATA, str(data)) for k, v in launch["env"].items()}, env, mode)
     (root / "looks").mkdir(exist_ok=True)
     try:
         with desktop_session.look(root / "looks", f"measure-{mode}-{uuid.uuid4().hex[:12]}", owned=mode == "auto",
@@ -226,15 +263,15 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                     if job.finished():
                         raise ValueError(f"PC 프로그램이 떠 있지 않고 끝났다 — {tail(app_log, hide)}")
                     if answers(app["health"]) == 200:
-                        if not vouched({m["pid"] for m in job.members()}, app["health"]):
-                            raise ValueError(f"`{app['health']}` 에 답한 것이 띄운 PC 프로그램이 아니다 — 같은 포트를 쓰는 "
-                                             "다른 프로그램을 끈다")
+                        if not vouched({m["pid"] for m in job.members()}, app["health"], status=True):
+                            raise ValueError(f"`{app['health']}` 에 200 으로 답한 것이 띄운 PC 프로그램이 아니다 — 같은 "
+                                             "포트를 쓰는 다른 프로그램을 끈다")
                         break
                     if time.monotonic() > deadline:
                         raise ValueError(f"PC 프로그램이 {app['seconds']}초 안에 `{app['health']}` 에 200 으로 답하지 "
                                          f"않았다 — {tail(app_log, hide)}")
                     time.sleep(1)
-                yield
+                yield build
             finally:
                 look.observe()
                 if (job := look.jobs.get("app")) is not None and not (end := job.end(END_SECONDS))["clean"]:
@@ -246,5 +283,5 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                     pass   # no log is kept: the measurement says what it says without it
     except desktop_session.Halted:   # stopped before the program ran: never started
         raise ValueError("사람이 멈췄다") from None
-    except desktop_session.Refused as exc:
-        raise ValueError(f"PC 프로그램을 띄우지 못했다 — {masked(str(exc), hide)}") from exc
+    except desktop_session.Refused as exc:   # the desktop, never the build: opening it or cleaning it up
+        raise RuntimeError(f"PC 프로그램의 데스크톱을 열거나 치우지 못했다 — {masked(str(exc), hide)}") from exc
