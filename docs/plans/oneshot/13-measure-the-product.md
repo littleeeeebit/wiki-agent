@@ -88,9 +88,12 @@ After every build turn whose gate passes, the server measures by itself.
   so a sign-in the owner gave once is still there for the next build.
 - The program gets only what it needs to run, the measurement's inputs, the
   design's secrets and its own launch settings. The script keeps the gate's
-  environment, the toolchain it runs with, as in step 12. A value under a
-  credential's name is masked in what the script reports. A credential under
-  another name is not: an accepted limit.
+  environment, the toolchain it runs with, as in step 12. A value of eight
+  characters or more under a credential's name is masked in what the script
+  reports. A shorter one is not, since masking a short value would garble the
+  text, and nor is a credential under another name: accepted limits.
+- The program's output is read off a pipe into memory and reaches the disk
+  only masked, so no leftover file holds a secret it printed.
 - A failed metric that needs no person sends the run back to the build agent
   (`fix: measure`) with those metrics only: their values, thresholds, the
   report's notes and the end of the program's log. The build agent may run

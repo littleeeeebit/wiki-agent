@@ -167,11 +167,11 @@ def session(tmp_path: Path, job: Job, seen: dict):
             (self.folder / "evidence").mkdir(parents=True)
             seen.update(owned=owned, disposable=disposable)
 
-        def start(self, key, argv, cwd, extra, halt=None):
+        def start(self, key, argv, cwd, extra, halt=None, output=None):
             if seen.get("refuse"):
                 raise (owned_job.Unrunnable if seen["refuse"] == "program" else refused)("refused")
-            (self.folder / "evidence" / f"{key}.log").write_text(seen.get("log", "app started"), encoding="utf-8")
-            seen["evidence"] = self.folder / "evidence" / f"{key}.log"
+            output.write(seen.get("log", "app started").encode())   # what the program prints, to its pipe
+            seen["evidence"] = self.folder / "evidence"
             seen.update(key=key, argv=argv, cwd=cwd, extra=extra)
             self.jobs[key] = job
 
@@ -385,12 +385,23 @@ def test_the_owners_measurement_is_chosen_with_the_values_it_measures(with_perso
 
 def test_a_gate_log_that_cannot_be_removed_stops_for_the_owner(at_measure):  # noqa: F811 — the imported fixture
     tree, _ = at_measure
-    run = types.SimpleNamespace(halt=measure.Halted())
-    with patch.object(measure.shutil, "rmtree", lambda *a, **k: None), pytest.raises(RuntimeError, match="임시 로그"):
+    run = types.SimpleNamespace(halt=measure.Halted(), put=lambda *a, **k: None,   # a gate run's note goes nowhere
+                                chat=types.SimpleNamespace(id="c", parent_id=None))
+    with patch.object(measure.shutil, "rmtree", lambda *a, **k: None), patch.object(measure.time, "sleep", lambda s: None), \
+            pytest.raises(RuntimeError, match="임시 로그"):
         measure.serve_check(tree, run, spec())
+    tries, removed = [], shutil.rmtree   # `measure.shutil` is this module: the real one, kept before the patch
+
+    def busy_once(path, *a, **k):   # a file the ended backend held a moment ago, then let go
+        tries.append(path)
+        if len(tries) == 1:
+            raise PermissionError("in use")
+        removed(path)
+    with patch.object(measure.shutil, "rmtree", busy_once), patch.object(measure.time, "sleep", lambda s: None):
+        assert measure.serve_check(tree, run, spec()) == "" and len(tries) == 2
 
 
-def test_the_programs_own_log_is_masked_where_it_lies_before_the_desktop_is_cleaned(at_measure, tmp_path):  # noqa: F811 — the imported fixture
+def test_the_programs_output_reaches_the_disk_only_masked(at_measure, tmp_path):  # noqa: F811 — the imported fixture
     tree, _ = at_measure
     s, plan, seen = spec(), {"app": program(tree), "inputs": []}, {"log": f"printed {KEY} by mistake"}
     answers = iter([None, 200])
@@ -399,7 +410,7 @@ def test_the_programs_own_log_is_masked_where_it_lies_before_the_desktop_is_clea
             patch.object(product, "vouched", lambda pids, url, status=False: True):
         with product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "k.log", {KEY: "[M2]"}, "auto"):
             pass
-    assert seen["evidence"].read_text(encoding="utf-8") == "printed [M2] by mistake"   # even if cleanup leaves it
+    assert not any(seen["evidence"].iterdir())   # never a raw log a failed cleanup could leave behind
     assert (tmp_path / "k.log").read_text(encoding="utf-8") == "printed [M2] by mistake"
 
 
@@ -440,3 +451,12 @@ def test_a_value_the_server_holds_under_a_credentials_name_is_masked(at_measure)
     with patch.dict(os.environ, {"UNRELATED_API_TOKEN": "tok-unrelated-123456"}):
         env, hide = measure.env_of(spec(), plan)
     assert "tok-unrelated-123456" not in measure.masked(f"env: {env.get('UNRELATED_API_TOKEN')}", hide)
+
+
+def test_the_measurement_mode_is_never_a_design_secrets_name(at_measure):  # noqa: F811 — the imported fixture
+    tree, _ = at_measure
+    plan = json.loads((tree / ".wiki/measure.json").read_text(encoding="utf-8"))
+    assert measure.oneshot_needs.STARTED.fullmatch("ONESHOT_MEASURE")   # refused at R1 for a new design
+    with patch.object(measure.oneshot_needs, "secret_needs", lambda s: [("N9", {"env": "ONESHOT_MEASURE", "kind": "secret"})]), \
+            pytest.raises(ValueError, match="ONESHOT_MEASURE"):   # a design saved before: its plan names the clash
+        measure.checked(plan, spec(), tree)

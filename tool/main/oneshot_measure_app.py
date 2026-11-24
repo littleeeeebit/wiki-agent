@@ -15,6 +15,7 @@ import os
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -215,6 +216,40 @@ def environment(spec: dict, plan: dict, launch_env: dict, env: dict, mode: str) 
     return {name: None for name in os.environ if name.upper() not in kept} | merged
 
 
+class Captured:
+    """The program's output, read off a pipe into memory and never written as it came: only its masked text
+    reaches the disk. The last `LIMIT` bytes are kept, and a cut drops the line it splits, so no part of a secret
+    is left at its edge unmasked."""
+
+    LIMIT = 1 << 20
+
+    def __init__(self):
+        read, write = os.pipe()
+        self.writer, self._read = os.fdopen(write, "wb", buffering=0), os.fdopen(read, "rb", buffering=0)
+        self.data, self.cut = bytearray(), False
+        self.thread = threading.Thread(target=self._drain, daemon=True, name="oneshot-measure-app-output")
+        self.thread.start()
+
+    def _drain(self) -> None:
+        with self._read:
+            while chunk := self._read.read(65536):
+                self.data += chunk
+                if len(self.data) > 2 * self.LIMIT:
+                    del self.data[:-self.LIMIT]
+                    self.cut = True
+
+    def text(self, hide: dict, wait: float = 0) -> str:
+        """What the program wrote so far, masked whole; with `wait`, once every end that writes is closed."""
+
+        if wait:
+            self.writer.close()   # ours: the program's own copy closes when its job ends
+            self.thread.join(wait)
+        data = bytes(self.data)
+        cut = self.cut or len(data) > self.LIMIT
+        text = data[-self.LIMIT:].decode("utf-8", errors="replace")
+        return masked(text.split("\n", 1)[-1] if cut else text, hide)
+
+
 def changed(build) -> str:
     """Why the frozen copy the server's own measurement passed is no longer there as it passed, or empty."""
 
@@ -262,22 +297,24 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
     extra = environment(spec, plan, {k: v.replace(oneshot_desktop.DATA, str(data)) for k, v in launch["env"].items()},
                         env, mode)
     (root / "looks").mkdir(exist_ok=True)
+    output = Captured()   # the program's output stays in memory until it is masked
     try:
         with desktop_session.look(root / "looks", f"measure-{mode}-{uuid.uuid4().hex[:12]}", owned=mode == "auto",
                                   disposable=True) as look:
-            app_log = look.folder / "evidence" / "app.log"
             try:
                 try:
-                    look.start("app", argv, copy / launch["cwd"], extra, halt=halt)
+                    look.start("app", argv, copy / launch["cwd"], extra, halt=halt, output=output.writer)
                 except owned_job.Unrunnable as exc:   # Windows would not run this program: the build's to fix
                     raise ValueError(f"PC 프로그램을 띄우지 못했다 — {masked(str(exc), hide)}") from None
+                finally:
+                    output.writer.close()   # the program holds its own end now
                 job = look.jobs["app"]
                 deadline = time.monotonic() + app["seconds"]
                 while True:
                     if halt.is_set():
                         raise ValueError("사람이 멈췄다")
                     if job.finished():
-                        raise ValueError(f"PC 프로그램이 떠 있지 않고 끝났다 — {tail(app_log, hide)}")
+                        raise ValueError(f"PC 프로그램이 떠 있지 않고 끝났다 — {output.text(hide, 5)[-1500:].strip() or '(출력 없음)'}")
                     if answers(app["health"]) == 200:
                         pids = {m["pid"] for m in job.members()}
                         if not vouched(pids, app["health"]):
@@ -287,26 +324,20 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                             break
                     if time.monotonic() > deadline:
                         raise ValueError(f"PC 프로그램이 {app['seconds']}초 안에 `{app['health']}` 에 200 으로 답하지 "
-                                         f"않았다 — {tail(app_log, hide)}")
+                                         f"않았다 — {output.text(hide)[-1500:].strip() or '(출력 없음)'}")
                     time.sleep(1)
                 yield build
             finally:
                 look.observe()
-                if (job := look.jobs.get("app")) is not None and not (end := job.end(END_SECONDS))["clean"]:
-                    raise RuntimeError(f"PC 프로그램을 끝내지 못했다 — {'; '.join(end['reasons'])}")
-                # Masked in place once the program has ended, before the look removes it: a log the cleanup leaves
-                # behind holds no secret either. The kept folder gets the same masked text.
-                text = masked(app_log.read_text(encoding="utf-8", errors="replace"), hide) if app_log.exists() else ""
-                try:
-                    app_log.write_text(text, encoding="utf-8")
-                except OSError as exc:
-                    raise RuntimeError(f"PC 프로그램의 로그 `{app_log}` 를 가리지 못했다 ({type(exc).__name__}) — 손으로 "
-                                       "지운 뒤 다시 시작한다") from None
-                try:
+                job = look.jobs.get("app")
+                end = job.end(END_SECONDS) if job is not None else {"clean": True}
+                try:   # only the masked text is ever written, here, for the kept folder
                     log.parent.mkdir(parents=True, exist_ok=True)
-                    log.write_text(text, encoding="utf-8")
+                    log.write_text(output.text(hide, 5), encoding="utf-8")
                 except OSError:
                     pass   # no log is kept: the measurement says what it says without it
+                if not end["clean"]:
+                    raise RuntimeError(f"PC 프로그램을 끝내지 못했다 — {'; '.join(end['reasons'])}")
             try:
                 why = oneshot_desktop.altered(build)
             except (OSError, ValueError) as exc:   # the host could not read the copy: never shown as changed
@@ -318,3 +349,5 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
     except desktop_session.Refused as exc:   # the desktop, never the build: opening it or cleaning it up
         raise RuntimeError(f"PC 프로그램의 데스크톱을 열거나 치우지 못했다 — {masked(str(exc), hide)}. 남은 것은 "
                            f"`{root / 'looks'}` 에 있다 — 손으로 지운 뒤 다시 시작한다") from exc
+    finally:
+        output.writer.close()   # a desktop refused before the start: the reader still ends

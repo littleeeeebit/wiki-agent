@@ -40,9 +40,9 @@ ENV = re.compile(r"[A-Z][A-Z0-9_]*")
 # agent CLI reads as its own login: a need of that name would never reach the agent as given.
 LAUNCH = re.compile(r"WIKI_AGENT_.*|ORCA_.*|RELEASE_KEY_PASSWORD|ANTHROPIC_.*|CLAUDE_.*|DEEPSEEK_API_KEY|"
                     r"OPENAI_API_KEY|CODEX_.*")
-# What a look sets when it starts the product (`oneshot_look.served`, `oneshot_desktop.LOOK_ENV` and `OWNED_ENV`): a
-# need of that name would reach the started app as the look's value, never the owner's.
-STARTED = re.compile(r"PORT|APP_DATA_DIR|PYTHONUNBUFFERED|ONESHOT_SCREEN|ONESHOT_STATE|APPDATA|LOCALAPPDATA|TEMP|TMP")
+# What a look sets when it starts the product (`oneshot_look.served`, `oneshot_desktop.LOOK_ENV` and `OWNED_ENV`), and
+# the measurement's mode (plan 13): a need of that name would reach the started app as that value, never the owner's.
+STARTED = re.compile(r"PORT|APP_DATA_DIR|PYTHONUNBUFFERED|ONESHOT_\w+|APPDATA|LOCALAPPDATA|TEMP|TMP")
 WEB_STARTED = frozenset({"PORT", "APP_DATA_DIR", "PYTHONUNBUFFERED"})   # what `oneshot_look.served` sets itself
 KINDS = {"secret": "비밀 값", "account": "계정", "tool": "프로그램", "file": "파일"}
 MAX_SECRET = 2560   # bytes Credential Manager holds in one credential, as UTF-16

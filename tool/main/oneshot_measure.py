@@ -187,6 +187,9 @@ def checked(value, spec: dict, path: Path) -> dict:
         raise ValueError(f"person: true 인 측정값 {', '.join(unserved)} 을 재게 하는 during 단계가 없다")
     if missing := sorted(calls - covered):
         raise ValueError(f"실측이 닿지 않는 바깥 호출이 있다: {', '.join(missing)} — 측정값의 `calls` 에 넣어 진짜로 부른다")
+    if reserved := sorted({n["env"] for _, n in oneshot_needs.secret_needs(spec) if n["env"].upper() == product.MODE}):
+        raise ValueError(f"디자인의 비밀 값 이름 `{reserved[0]}` 는 실측이 스크립트와 프로그램에 넘기는 이름이다 — 디자인에서 "
+                         "그 비밀 값의 이름을 바꾼다")
     if desktop and (clash := sorted(({x["env"].upper() for x in inputs} | {n["env"].upper() for _, n in
                                      oneshot_needs.secret_needs(spec)}) & {k.upper() for k in run["env"]})):
         raise ValueError(f"`app.run.env` 의 `{clash[0]}` 는 입력값이나 비밀값의 이름이다 — 실행 설정(`{{data}}` 자리)을 "
@@ -273,9 +276,20 @@ def serve_check(path: Path, run, spec: dict) -> str:
             with product.started(spec, plan, path, {**env, product.MODE: "auto"}, run.halt, log, hide, "auto"):
                 pass
         finally:
-            shutil.rmtree(log.parent, ignore_errors=True)
+            error = None
+            for _ in range(40):   # a file the ended backend held a moment ago: Windows lets it go shortly
+                try:
+                    shutil.rmtree(log.parent)
+                except FileNotFoundError:
+                    break
+                except OSError as exc:
+                    error = exc
+                    time.sleep(0.25)
+                if not log.parent.exists():
+                    break
             if log.parent.exists():   # never left quietly: the owner's, not the build's (`RuntimeError`)
-                raise RuntimeError(f"빌드 검사의 임시 로그 폴더 `{log.parent}` 를 지우지 못했다 — 손으로 지운 뒤 [재개]를 누른다")
+                raise RuntimeError(f"빌드 검사의 임시 로그 폴더 `{log.parent}` 를 지우지 못했다"
+                                   f"{f' ({type(error).__name__}: {error})' if error else ''} — 손으로 지운 뒤 [재개]를 누른다")
     except ValueError as exc:
         return masked(str(exc), hide) if "hide" in locals() else str(exc)
     if specs.dirty(path):   # the HEAD the build passed is the one measured, so the tree stays as committed
