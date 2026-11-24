@@ -198,15 +198,22 @@ def _files(numstat: str) -> list[str]:
 
 
 def apk_section(spec: dict) -> list[str]:
-    """A oneshot Android app's debug APK, as S8 attached it to a draft prerelease, or why it is not there."""
+    """A oneshot Android app's debug APK and a PC app's installer, as S8 attached them to a draft prerelease, or
+    why each is not there."""
 
-    apk = (spec.get("oneshot") or {}).get("apk")
-    if not apk:
-        return []
-    if not apk.get("url"):
-        return ["## APK", "", f"디버그 APK 를 Release 에 올리지 못했다 — {apk['error']}", ""]
-    return ["## APK", "", f"- 디버그 APK: [{apk['name']}]({apk['url']}) — 초안 프리릴리스에 올렸다",
-            f"  - 빌드 커밋 `{apk['head'][:12]}` · SHA-256 `{apk['sha256']}`", ""]
+    lines = []
+    for key, title, name, object in (("apk", "APK", "디버그 APK", "디버그 APK 를"),
+                                     ("installer", "설치 파일", "PC 앱 설치 파일", "PC 앱 설치 파일을")):
+        if not (asset := (spec.get("oneshot") or {}).get(key)):
+            continue
+        if not asset.get("url"):
+            lines += [f"## {title}", "", f"{object} Release 에 올리지 못했다 — {asset['error']}", ""]
+            continue
+        lines += [f"## {title}", "", f"- {name}: [{asset['name']}]({asset['url']}) — 초안 프리릴리스에 올렸다",
+                  f"  - 빌드 커밋 `{(asset.get('built') or asset['head'])[:12]}` · SHA-256 `{asset['sha256']}`",
+                  *([f"  - 정식 빌드 표로 버전 {asset['version']} 을 넣어 만들었다. 서명하지 않아 Windows 가 실행 전에 경고한다"]
+                    if asset.get("version") else []), ""]
+    return lines
 
 
 def body_of(spec: dict, numstat: str = "") -> str:

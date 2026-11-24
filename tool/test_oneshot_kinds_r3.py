@@ -124,11 +124,11 @@ def test_s8_of_several_kinds_builds_on_the_android_toolchain_and_releases_the_an
         assert oneshot_build.built_env(oneshot_spec.spec_of("budget")) == {"JAVA_HOME": "jdk"}
         assert oneshot_build.toolchain(oneshot_spec.spec_of("budget")) is None   # S4: the core in the host runner
     released = []
-    with patch.object(oneshot_pr, "released", lambda spec: released.append(spec) or {"head": "h", "error": "없음"}), \
+    with patch.object(oneshot_pr, "released", lambda spec, keys: released.append(keys) or {"apk": {"head": "h", "error": "없음"}}), \
             patch.object(oneshot_pr.pr_text, "writing", lambda *a: "Write the pull request's text."):
         oneshot_spec.saved("budget", oneshot={"stage": "pr", "final_head": "h"})
         oneshot_pr.asked("budget")
-    assert released and o()["apk"] == {"head": "h", "error": "없음"}
+    assert released == [["apk"]] and o()["apk"] == {"head": "h", "error": "없음"}
 
 
 def test_a_run_an_earlier_version_stopped_before_r3_opens_its_sheet(at_r3):

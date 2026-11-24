@@ -39,13 +39,13 @@ TAURI = [(UNINSTALL, "DisplayName", "r"), (UNINSTALL, "Publisher", "o"), (UNINST
 
 def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.MARKER + rd.NSIS), ("r.exe", PACKED)),
          flags=0, dictionary=1 << 16, context=("0",), view=("256",),
-         uninstaller=(b"icon", b"MZ uninstaller"), out=None, extra=()) -> Path:
+         uninstaller=(b"icon", b"MZ uninstaller"), out=None, extra=(), tail=b"") -> Path:
     """A synthetic installer laid out as Unicode NSIS 3 lays one out: a stub, the first header on a 512-byte
     boundary, one solid LZMA stream holding the script (its blocks, its entries, its strings), each file and the
     uninstaller's two records, and the CRC32 of everything from byte 512. A value of None is a variable, as
     `$INSTDIR` is; an uninstaller record of None is one the stream never holds. `context` and `view` are what
     `SetShellVarContext` and `SetRegView` set; `out` is what `SetOutPath` sets before the files, `$INSTDIR` by
-    default; `extra` holds more entries as (opcode, operands)."""
+    default; `extra` holds more entries as (opcode, operands); `tail` is more of the stream after the records."""
 
     table, at = bytearray(), {}
 
@@ -74,7 +74,7 @@ def nsis(tmp_path: Path, writes=TAURI, files=(("helper.exe", b"MZ helper " + rd.
     strings = blocks + 28 * len(entries)
     script = (struct.pack("<I", 0) + struct.pack("<16I", 0, 0, 0, 0, blocks, len(entries), strings, 0, *[0] * 8)
               + b"".join(struct.pack("<i6i", w, *a) for w, a in entries) + bytes(table))
-    packed = lzma.compress(struct.pack("<I", len(script)) + script + data, format=lzma.FORMAT_RAW,
+    packed = lzma.compress(struct.pack("<I", len(script)) + script + data + tail, format=lzma.FORMAT_RAW,
                            filters=[{"id": lzma.FILTER_LZMA1, "dict_size": 1 << 16}])
     props = bytes([(2 * 5 + 0) * 9 + 3]) + struct.pack("<I", dictionary)   # pb=2, lp=0, lc=3: the filter's default
     head = struct.pack("<I", flags) + rd.MAGIC + struct.pack("<II", len(script), 28 + 5 + len(packed) + 4)
@@ -285,6 +285,15 @@ def test_a_damaged_or_foreign_installer_is_a_read_error(tmp_path, resources):
                          ({"dictionary": 1 << 30}, "한도를 넘는다")):
         with pytest.raises(ValueError, match=said):
             rd.facts(nsis(tmp_path, **kwargs))
+
+
+def test_the_whole_stream_unpacks_only_when_it_ends_after_a_block(tmp_path):
+    whole = nsis(tmp_path).read_bytes()
+    assert b"".join(rd.unpacked(whole)).endswith(b"MZ uninstaller")
+    (tmp_path / "cut").mkdir()
+    cut = nsis(tmp_path / "cut", tail=struct.pack("<I", 100) + b"short").read_bytes()   # a block's length, then less
+    with pytest.raises(ValueError, match="블록 중간에서 끝난다"):
+        list(rd.unpacked(cut))
 
 
 def test_a_record_that_runs_past_the_stream_or_the_limit_is_refused(tmp_path, resources, monkeypatch):

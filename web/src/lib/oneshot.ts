@@ -47,6 +47,7 @@ export type RunSummary = {
   spend: { usd?: number; seconds?: number; calls?: number; unknown?: number }
   /** An Android app's debug APK on a draft prerelease (`oneshot_pr.released`), or why it is not there. */
   apk?: { url?: string; name?: string; error?: string } | null
+  installer?: { url?: string; name?: string; error?: string } | null
   /** Each outside call, the gate runs that reached it, and the planned tests CI skips for its secret. */
   calls?: Call[]
   /** Whether the product repository has CI, which skips the tests that need a secret. */
