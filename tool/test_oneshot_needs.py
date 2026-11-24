@@ -827,6 +827,17 @@ def test_a_stream_never_splits_an_escaped_backslash_before_a_value_part_written_
         assert value not in unescaped(whole) and json.loads(whole.split("\n")[1])["q"].count("[N1]") == 2, at
 
 
+def test_a_run_of_values_overlapping_on_is_shown_as_its_label_and_held_bounded():
+    for hide, run in (({"aa": "[N1]"}, "a"), ({"abab": "[N1]", "baba": "[N2]"}, "ab")):
+        veil = Veil(hide)
+        out, started = veil.stream("d", "x ", {}), time.perf_counter()
+        for _ in range(2000):
+            out += veil.stream("d", run * 50, {})
+            assert len(veil.held["d"][0]) <= 2 * veil.window + 100   # never the whole run
+        out += veil.stream("d", " y", {}) + "".join(t for _, t, _ in veil.rest())
+        assert out == "x [N1] y" and time.perf_counter() - started < 5, out[:80]
+
+
 def test_masking_many_short_matches_among_many_escapes_stays_linear():
     text = '{"a": "' + "\\u0041x" * 20000 + '"}'
     started = time.perf_counter()
