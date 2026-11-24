@@ -88,14 +88,22 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
 
 
 def still(o: dict) -> str:
-    """The refusal a build turn was sent (`sent_refusal`), named again when the server sends that turn back: the
-    retry's text says what its answers may answer, as the record does."""
+    """The refusal a build turn was sent (`sent_refusal`), again with its findings when a turn carries on from it
+    (a retry, the author's guidance): a conversation the provider had to start afresh reads them here too."""
 
-    if not (sent := o.get("sent_refusal")):
+    from . import oneshot_review   # it imports `oneshot_build`, which imports this module
+
+    sent = o.get("sent_refusal") or {}
+    last = next((r for r in reversed(o.get("reviews") or [])
+                 if r["verdict"] == "refuse" and r["head"] == sent.get("head")), None)
+    if not last:
         return ""
-    return (f"\n\nThe review's refusal of HEAD `{sent['head']}`, sent earlier in this conversation, still stands: fix "
-            "its findings or answer them in one `oneshot-answers` block. The areas it may answer: "
-            + ", ".join(f"`{a}`" for a in sent["areas"]) + ".")
+    findings = [f for f in oneshot_review.blocking(last)
+                if not oneshot_review.ruled_out(o, f) and oneshot_review.area_of(f) in set(sent["areas"])]
+    return (f"\n\nThe review's refusal of HEAD `{sent['head']}` still stands: fix the findings below where they "
+            "point, or answer them in one `oneshot-answers` block. The areas it may answer: "
+            + ", ".join(f"`{a}`" for a in sent["areas"]) + ".\n\n```json\n"
+            + json.dumps(findings, ensure_ascii=False, indent=2) + "\n```")
 
 
 def committed(path: Path, rev: str, file: str) -> str:
@@ -193,6 +201,6 @@ def passed(path: Path, o: dict, answers: list[dict]) -> dict:
     done = [area for area in asked if changed and area not in defended and any(
         oneshot_review.touched(f["location"], changed) for f in oneshot_review.blocking(last)
         if oneshot_review.area_of(f) == area)]
-    return {"answers": [*(o.get("answers") or []), *answers], "replacing": None, "sent_refusal": None,
+    return {"answers": [*(o.get("answers") or []), *answers], "replacing": None, "sent_refusal": None, "refusal_due": None,
             "run_cases": o.get("run_cases"),
             "replaced": sorted({*(o.get("replaced") or []), *done})}

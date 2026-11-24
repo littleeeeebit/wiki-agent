@@ -419,8 +419,9 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
                "area": "amount validation", "breaks": ["R1"]}
     oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "attempts": 0, "built_head": refused,
                                           "reviews": [{"verdict": "refuse", "head": refused, "findings": [finding]}]})
-    oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is sent
-    answer = {"area": "Amount validation", "location": "app.py:2", "evidence": "음수는 환불이다", "breaks": ["R1"],
+    oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is composed
+    oneshot_spec.saved("budget", oneshot={"sent_refusal": o()["refusal_due"], "refusal_due": None})   # as `send` begins it
+    answer ={"area": "Amount validation", "location": "app.py:2", "evidence": "음수는 환불이다", "breaks": ["R1"],
               "test": "test_refund.py::test_a_refund_is_negative"}
     said = "답했다.\n" + report() + fenced("oneshot-answers", [answer])
     for _ in range(oneshot_build.MAX_ATTEMPTS + 1):   # no-commit turns go back uncounted, never to a stop
@@ -433,6 +434,7 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
     assert "test_missing(돌지 않음)" in sent[-1][2]   # its file was committed; the test run has no such case
     assert f"refusal of HEAD `{refused}`" in sent[-1][2] and "`amount validation`" in sent[-1][2]   # still answerable
+    assert "음수를 받는다" in sent[-1][2] and sent[-1][3] is True   # the findings again, and it carries on that refusal
     assert o()["attempts"] == 1   # HEAD moved, and the gate still refused it: counted
     # Turns that start on this HEAD (`send` records it), a resumed one included, and end on it without a commit.
     oneshot_spec.saved("budget", oneshot={"turn_head": git(tree, "rev-parse", "HEAD")})
@@ -662,8 +664,10 @@ def test_a_turn_that_cannot_be_begun_leaves_nothing_in_flight_and_charges_nothin
          patch.object(work, "session", lambda *a: SimpleNamespace(id="c", parent_id=None, repo=str(tree))), \
          patch.object(oneshot, "role_config", lambda *a: {"model": "m", "effort": "e"}), \
          patch.object(oneshot, "codex_role", lambda *a: False):
+        oneshot_spec.saved("budget", oneshot={"refusal_due": {"head": "a", "areas": ["b"]}})
         SEND("budget", "tests", "x")
     assert o()["inflight"] is None and "보내지 못했다" in o()["stopped"]["detail"]
+    assert o().get("sent_refusal") is None and o().get("refusal_due") is None   # an unsent turn delivered no refusal
     assert not (o().get("spend") or {}).get("calls")   # no model ran
     assert str(tree) not in work._busy   # the worktree is free for the resumed turn
 
@@ -686,6 +690,19 @@ def test_a_work_turn_runs_on_the_build_model_the_run_fixed(built_world):
         SEND("budget", "tests", "x")
     assert opened == [("sonnet", "medium")]
     assert o()["turn_head"] == git(tree, "rev-parse", "HEAD")   # the HEAD the turn started on, which `checked` reads
+    due = {"head": "a", "areas": ["b"]}
+    oneshot_spec.saved("budget", oneshot={"refusal_due": due, "stopped": None})
+    with patch.object(work, "notice", lambda *a: None), patch.object(work, "remember", lambda *a, **k: None), \
+         patch.object(work, "begin", lambda path, chat, text, release, turn: release()), \
+         patch.object(work, "session", session), \
+         patch("main.query.config", lambda *a: {"model": "window", "effort": "e"}):
+        SEND("budget", "tests", "x")   # the turn its text carried: it may answer that refusal
+        assert o()["sent_refusal"] == due and o()["refusal_due"] is None
+        oneshot_spec.saved("budget", oneshot={"refusal_due": {"head": "c", "areas": ["d"]}})
+        SEND("budget", "tests", "x", True)   # a retry carries on the refusal already sent, never one only due
+        assert o()["sent_refusal"] == due and o()["refusal_due"] is None
+        SEND("budget", "tests", "x")   # any other turn answers nothing
+        assert o()["sent_refusal"] is None
 
 
 def test_a_resume_waits_while_a_stopped_turn_is_still_being_charged(built_world):

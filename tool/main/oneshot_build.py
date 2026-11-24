@@ -136,8 +136,7 @@ def word_of(part: str) -> tuple[str, str]:
 
 
 def links(command: str) -> list[str]:
-    """`command`'s chain parts, cut at each `&&` outside quoted text (a quoted label or the server's own report
-    path may hold one)."""
+    """`command`'s chain parts, cut at each `&&` outside quoted text (a quoted label or report path may hold one)."""
 
     bare, cuts, start = syntax(command)[0], [], 0
     for m in re.finditer("&&", bare):
@@ -204,9 +203,10 @@ def run_as(command: str, o: dict, path: Path) -> str:
     return "&&".join(parts)
 
 
-def send(repo: str, stage: str, text: str) -> None:
-    """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage, and
-    the instruction the person queued for the worktree goes then, as after a turn."""
+def send(repo: str, stage: str, text: str, carry: bool = False) -> None:
+    """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage, and the
+    instruction the person queued for the worktree goes then, as after a turn. It may answer the refusal its own
+    text carries (`refusal_due`), or, when it `carry`s on that refusal's turn, the one already sent; nothing else."""
 
     if stopped_for_kind(repo) or not resolve_tools(repo, stage):
         return
@@ -233,7 +233,8 @@ def send(repo: str, stage: str, text: str) -> None:
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
         store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
-                  inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token})
+                  inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
+                  sent_refusal=spec["oneshot"].get("sent_refusal" if carry else "refusal_due"), refusal_due=None)
         if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
             oneshot_spec.saved(repo, adapter=True)
         work.begin(path, chat, text, release, turn)
@@ -241,6 +242,7 @@ def send(repo: str, stage: str, text: str) -> None:
         if turn is not None:
             turn.unsent()
         release()
+        store.put(sent_refusal=None, refusal_due=None)   # an unsent turn delivered no refusal
         store.stop("restart" if runtime.stopping.is_set() else "block",
                    f"작업 턴을 보내지 못했다 — {getattr(exc, 'detail', exc)}")
         idle(path)
@@ -261,8 +263,7 @@ TOOLCHAIN = ("JAVA_HOME", "ANDROID_HOME", "ANDROID_USER_HOME", "GRADLE_USER_HOME
 
 
 def toolchain(spec: dict) -> dict | None:
-    """The environment an Android run's tests and gate run in, or `None` for the server's own; either with the
-    owner's secrets for the outside calls."""
+    """An Android run's tests and gate environment, or `None` for the server's; either with the owner's secrets."""
 
     return oneshot_needs.gate_env(spec, oneshot_android.build_env() if shape(spec["oneshot"]) == "android" else None)
 
@@ -612,8 +613,7 @@ def owns(spec: dict) -> bool:
 
 
 def checked(path: Path, run, spec: dict, final: str):
-    """`specs._check`'s hand-over: the stage's check, then the next turn to send; a person's turn, or one in a
-    stage S4 does not own, changes nothing."""
+    """`specs._check`'s hand-over: the stage's check, then the next turn; a person's turn, or one S4 does not own, is left."""
     from . import oneshot_answers as sent   # it imports this module
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
     if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
@@ -647,7 +647,7 @@ def checked(path: Path, run, spec: dict, final: str):
         return None
     return unless_stopped(run, repo, lambda: send(repo, stage, masked(   # as composed: a value can span the words
         f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
-        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else ".") + sent.still(was), hide)))
+        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else ".") + sent.still(was), hide), True))
 
 
 def unless_stopped(run, repo: str, then):

@@ -643,7 +643,10 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     s = specs.load("budget", oneshot.BRANCH)
     with pytest.raises(ValueError, match="하나만"):   # no turn sent it yet, as for a plan-repair turn
         oneshot_answers.answered(tree, s, "```oneshot-answers\n[]\n```\n")
-    oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is sent
+    oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is composed
+    with pytest.raises(ValueError, match="하나만"):   # due, but no turn has delivered it yet
+        oneshot_answers.answered(tree, specs.load("budget", oneshot.BRANCH), "```oneshot-answers\n[]\n```\n")
+    oneshot_spec.saved("budget", oneshot={"sent_refusal": o()["refusal_due"], "refusal_due": None})   # as `send` begins it
     (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\ndef test_refund():\n    pass\n", encoding="utf-8")
     git(tree, "commit", "-am", "a new pin")
     (tree / "test_other.py").write_text("def test_late():\n    pass\n", encoding="utf-8")   # never committed

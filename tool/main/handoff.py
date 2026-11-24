@@ -387,8 +387,9 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
                       f"상위 모델의 답을 적용하지 못했다 — {exc}")
     specs.note(run, f"상위 모델이 `{name}` 로 답했다 — 구현을 이어 간다")
     if oneshot:   # a Stop pressed while this turn is recorded leaves the stage resumable instead
-        from . import oneshot_build
+        from . import oneshot_answers, oneshot_build
         run.checked = True   # handled: the stage's finalizer records no unchecked turn
         return oneshot_build.unless_stopped(run, spec["repo"],
-                                            lambda: oneshot_build.send(spec["repo"], spec["oneshot"]["stage"], told))
+                                            lambda: oneshot_build.send(spec["repo"], spec["oneshot"]["stage"],
+                                                                        told + oneshot_answers.still(spec["oneshot"]), True))
     return lambda: None if run.halt.is_set() else specs.again(path, run.chat, told, spec)
