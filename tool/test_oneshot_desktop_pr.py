@@ -556,6 +556,8 @@ def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_
                        ({"env": "tools"}, False), ({"env": True}, False),   # no environment Actions reads
                        ({"shell": "cmd"}, False), ({"shell": None}, False),   # the gate is written for PowerShell
                        ({"working-directory": "desktop"}, False), ({"continue-on-error": True}, False),
+                       ({"run": oneshot_pr.ci_gate(GATE) + "\nGet-ChildItem artifacts"}, False),   # its exit code
+                       ({"run": "Write-Output gate\n" + oneshot_pr.ci_gate(GATE)}, False),
                        ({"env": {"GRADLE_OPTS": "-Xmx2g"}}, True)]:
         readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, gate=gate)))
         assert ci(tree) is kept, gate
@@ -584,7 +586,7 @@ def test_a_run_setup_names_its_shell_so_no_job_default_picks_another(pc):
     assert not ci(tree)
     readme(tree, (oneshot_pr.CI, flow({**setup, "working-directory": "desktop"}, path)))   # run from elsewhere
     assert not ci(tree)
-    assert "a step that `run`s with `shell: pwsh` exactly these lines" in oneshot_pr.readme_text(spec())
+    assert "a step that `run`s with `shell: pwsh`, and nothing else, exactly these lines" in oneshot_pr.readme_text(spec())
 
 
 def test_with_ci_on_a_preinstalled_tool_needs_only_its_path_check(pc):

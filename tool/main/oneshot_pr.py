@@ -109,7 +109,7 @@ def readme_text(spec: dict) -> str:
     kinds = kinds_of(spec["oneshot"])
     android = "android" in kinds   # alone, or among several kinds, whose gate builds it on the core
     gate = slots_for(None, Path(spec["worktree"])).get("gate_cmd", "").strip()
-    run = (f"a step that `run`s{' with `shell: pwsh`' if 'desktop' in kinds else ''} exactly these lines, as the "
+    run = (f"a step that `run`s{' with `shell: pwsh`, and nothing else,' if 'desktop' in kinds else ''} exactly these lines, as the "
            f"server's gate ran them:\n\n```\n{ci_gate(gate)}\n```\n\n")
     job = (f"a job on `{RUNNER}` that sets up a JDK (`actions/setup-java`) and the Android SDK "
            f"(`android-actions/setup-android`), then {run}" if android else f"a job on `{RUNNER}` with {run}")
@@ -190,7 +190,8 @@ def ci_gate(gate: str) -> str:
 def ci_file(path: Path, mode: str | None, gate: str, before: list[dict] = ()) -> bool:
     """`ci.yml` committed as a plain file (a link points anywhere) whose workflow has a trigger and a
     job step that runs the gate, followed in that job by `SKIPS`: a comment or an empty job is no CI. With `before`,
-    that job has each of those steps before the gate's, the last after the others, and is `oneshot_ci.placed`."""
+    the gate's step runs its lines alone, the job has each of those steps before it, the last after the others, and
+    is `oneshot_ci.placed`."""
 
     if mode not in ("100644", "100755"):
         return False
@@ -220,7 +221,8 @@ def ci_file(path: Path, mode: str | None, gate: str, before: list[dict] = ()) ->
             have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()]
             if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
                 found = [next((i for i, x in enumerate(steps[:at]) if oneshot_ci.matches(x, b)), None) for b in before]
-                if before and (None in found or found[-1] < max(found) or not oneshot_ci.placed(flow, job, s)):
+                if before and (have != want or None in found or found[-1] < max(found)   # a line after the gate
+                               or not oneshot_ci.placed(flow, job, s)):   # would set the step's exit code
                     continue
                 if any(all(later.get(k) == SKIP_STEP[k] for k in ("if", "shell", "run")) for later in steps[at + 1:]):
                     return True
