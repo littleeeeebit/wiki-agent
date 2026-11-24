@@ -1,0 +1,66 @@
+"""A PC app's CI steps before the gate (plan 9e, "S8"): what the README turn is told to write into the job, and
+how S8 matches a workflow's steps against them (`oneshot_pr.ci_file`)."""
+
+from __future__ import annotations
+
+from . import oneshot_build
+from .oneshot_profile import kinds_of
+
+
+def ci_steps(o: dict) -> list[dict]:
+    """Each declared tool's confirmed `setup` as written (none for a `preinstalled` one), a `run` in the runner's
+    own shell named outright (a job's `defaults` could pick another), then a check that every declared tool is on
+    `PATH`; none without a PC app."""
+
+    if (declared := oneshot_build.tools(o)) is None:
+        return []
+    names = ", ".join(f"'{t['name']}'" for t in declared)
+    check = (f"foreach ($tool in @({names})) {{ if (-not (Get-Command $tool -CommandType Application,ExternalScript "
+             '-ErrorAction SilentlyContinue)) { throw "$tool is not on PATH" } }')   # a file, as the gate finds it
+    return [{**s, "shell": "pwsh"} if "run" in s else dict(s) for t in declared if isinstance(s := t.get("setup"), dict)] + [
+        {"name": "Declared tools on PATH", "shell": "pwsh", "run": check}]
+
+
+# An Android app's JDK and SDK setup the prompt names (`readme_text`), any version, required beside a PC app's steps.
+ANDROID_STEPS = [{"uses": "actions/setup-java"}, {"uses": "android-actions/setup-android"}]
+
+
+def required(o: dict) -> list[dict]:
+    """The steps S8 requires before the gate's in a PC app's CI job, the `PATH` check last; none without one."""
+
+    return (ANDROID_STEPS if "android" in kinds_of(o) else []) + steps if (steps := ci_steps(o)) else []
+
+
+def placed(flow: dict, job: dict, gate: dict) -> bool:
+    """A PC app's CI job as S8 requires it around the steps: on `windows-latest`, its gate's step in `pwsh` (the
+    gate is written for PowerShell, `shell.invoked`) on the `PATH` the check saw, and every step run from the
+    repository root, as the confirmed setup and the gate were written."""
+
+    env = gate.get("env", {})
+    runs = [d.get("run", {}) if isinstance(d, dict) else None for d in (flow.get("defaults", {}), job.get("defaults", {}))]
+    return (job.get("runs-on") == "windows-latest" and gate.get("shell") == "pwsh"
+            and all(s.get("continue-on-error") in (None, False) for s in (job, gate))   # a red gate shows red
+            and gate.get("working-directory") is None and isinstance(env, dict)   # an environment Actions reads
+            and "PATH" not in {str(k).upper() for k in env}
+            and all(isinstance(r, dict) and r.get("working-directory") is None for r in runs))   # defaults Actions reads
+
+
+def matches(step: dict, want: dict) -> bool:
+    """A step that is `want`, name aside: the same action and inputs or `run` lines and shell, no `if` to skip it nor
+    failure to go past, nor an `env` (it would see another `PATH` than the gate's) or directory of its own. A `uses`
+    without `@` is that action at any version, with any inputs and environment."""
+
+    if step.get("if") is not None or any(step.get(k) not in (None, False) for k in ("continue-on-error", "background")):
+        return False   # skipped, gone past, or still running when the gate starts
+    if not isinstance(step.get("with", {}), dict):   # inputs Actions cannot read
+        return False
+    if "uses" in want and "@" not in want["uses"]:
+        return str(step.get("uses") or "").startswith(want["uses"] + "@")
+    if step.get("env") is not None or step.get("working-directory") is not None:   # run as written, from the root
+        return False
+    if "run" in want:
+        lines = [[x.strip() for x in str(s.get("run") or "").splitlines() if x.strip()] for s in (step, want)]
+        return lines[0] == lines[1] and step.get("shell") == want.get("shell")
+    return step.get("uses") == want["uses"] and {   # inputs read as text
+        k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in (step.get("with") or {}).items()
+    } == dict(want.get("with") or {})

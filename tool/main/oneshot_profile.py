@@ -21,17 +21,11 @@ SUPPORTED_KINDS = ("webapp", "android", "desktop")
 # A kind only some hosts build, with why the others cannot: a PC app is built on Windows only in plan 9.
 HOST_ONLY = {"desktop": ("win32", "PC 앱은 Windows 에서만 만든다")}
 # The stage a kind waits at in this version, stopped with reason `kind` until its plan step lands. A kind not
-# here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2), and
-# several kinds without `desktop` since 9c4b. `desktop`, alone or among other kinds, runs its core path, S6, R2
-# and the frontend build with every kind's look, its PC app's included (9e4a), and the critique with its `look`
-# owed checks and the phone round of an Android app among them (9e4b), and the owner's desktop round once the
-# owner approved it (9e5), R3 with its `PC 앱` section (9e6a), and S8's README turn, final gate and installer on the
-# draft prerelease (9e6b); it waits before the pull request's text until S8's CI job lands
-# (`docs/plans/oneshot/9-kinds.md`, "Steps and their stops").
-KIND_STOPS: dict[str, str] = {"desktop": "pr"}
-# A stop inside its stage: the run waits there only once this holds. S8's is after its files went up for the head
-# the final gate passed (`oneshot_pr.asked`), before the pull request's text is asked.
-INSIDE = {"pr": lambda o: bool(o.get("final_head")) and o.get("attached") == o["final_head"]}
+# here runs to the end: `android` does since its R3 sheet and S8 (`docs/plans/oneshot/7-android.md`, 7f2), several
+# kinds without `desktop` since 9c4b, and `desktop`, alone or among other kinds, since S8's CI job (9e6c,
+# `docs/plans/oneshot/9-kinds.md`, "Steps and their stops"). A run an earlier version stopped here is let go on
+# recovery (`oneshot_spec.recover`).
+KIND_STOPS: dict[str, str] = {}
 # A run's stages in order after the bootstrap (`web/src/lib/oneshot.ts` STAGES).
 STAGE_ORDER = ("spec", "design", "r1", "tests", "build", "measure", "review", "conflict", "split", "board", "frontend",
                "r2", "build-front", "critique", "phone", "pc", "r3", "pr", "done")
@@ -97,8 +91,7 @@ def held(o: dict) -> bool:
     stop = waits_at(o)
     if stop is None or o.get("stage") not in STAGE_ORDER:
         return False
-    at, end = STAGE_ORDER.index(o["stage"]), STAGE_ORDER.index(stop)
-    return at > end or at == end and INSIDE.get(stop, lambda o: True)(o)
+    return STAGE_ORDER.index(o["stage"]) >= STAGE_ORDER.index(stop)
 
 
 def unavailable() -> dict[str, str]:

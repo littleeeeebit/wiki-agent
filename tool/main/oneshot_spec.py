@@ -328,7 +328,7 @@ def briefing(repo: str, gate: str, fields: dict):
     o = {**spec_of(repo)["oneshot"], **fields}
     if held(o):   # this version ends before the review it would open: the run waits there, its rounds kept
         saved(repo, oneshot={**{k: v for k, v in fields.items() if k != gate}, "working": None,
-                             "stopped": kind_stop(o["stage"], o)})   # the review's opening is never written
+                             "stopped": kind_stop(o["stage"])})   # the review's opening is never written
         return None
     saved(repo, oneshot={**fields, "working": "brief"})
     return lambda: briefed(repo, gate)
@@ -473,6 +473,9 @@ def recover() -> None:
         if o and (repair := brief.recovered(o)):   # a brief the server went down writing, or its orphaned turn
             o = saved(folder.name, oneshot=repair)["oneshot"]
         o = waiting(folder.name, o) if o else o
+        if o and o.get("stage") == "pr" and "desktop" in kinds_of(o) and o.get("attached") == o.get("final_head") \
+                and o.get("attached") and not o.get("working"):   # 9e6b held this run: its stop, kept or lost
+            o = saved(folder.name, oneshot={"attached": None, "stopped": o.get("stopped") or kind_stop("pr")})["oneshot"]
         stop = o.get("stopped") or {}
         if stop.get("reason") == "kind" and not held(o):
             # The owner's board needs no worker: released, it is theirs to submit again (a PC app's, from 9e2c).
@@ -511,7 +514,7 @@ def waiting(repo: str, o: dict) -> dict:
                                              "detail": "얼린 PC 앱 빌드에서 멈췄다 — [재개]를 누르면 다시 빌드하고 검사한다"}})[
             "oneshot"]
     if held(o) and not o.get("working") and (o.get("stopped") or {}).get("reason") != "kind":
-        return saved(repo, oneshot={"stopped": kind_stop(o["stage"], o)})["oneshot"]
+        return saved(repo, oneshot={"stopped": kind_stop(o["stage"])})["oneshot"]
     return o
 
 
@@ -551,14 +554,10 @@ def standing(repo: str, build: dict) -> bool:
         return True
 
 
-def kind_stop(stage: str, o: dict | None = None) -> dict:
-    """The `kind` stop at `stage`, where this version's run ends; at S8, with each attached file's saved record
-    (put on the draft prerelease, or why not), so a stop rebuilt after a restart says it too."""
+def kind_stop(stage: str) -> dict:
+    """The `kind` stop at `stage`, where this version's run ends."""
 
-    went = [f"{name} — " + ("초안 프리릴리스에 올렸다" if r.get("url") else f"올리지 못했다: {r.get('error')}")
-            for key, name in (("apk", "APK"), ("installer", "설치 파일")) if stage == "pr" and (r := (o or {}).get(key))]
-    return {"reason": "kind", "state": stage, "detail": "; ".join([{"pr": "README 와 최종 게이트를 마쳤다 — 풀 리퀘스트는 다음 버전에서 이어진다"}.get(
-        stage, "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"), *went])}
+    return {"reason": "kind", "state": stage, "detail": "이 버전은 여기까지 이어 간다 — 다음 단계는 다음 버전에서 이어진다"}
 
 
 def handed(o: dict) -> bool:

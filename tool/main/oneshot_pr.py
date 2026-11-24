@@ -28,7 +28,7 @@ import android_owned
 from common import errorlog, masked, shell
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_publish, oneshot_spec
+from . import github_release, oneshot_build, oneshot_calls, oneshot_ci, oneshot_device, oneshot_needs, oneshot_publish, oneshot_spec
 from . import pr_text, release, release_desktop, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
@@ -109,7 +109,8 @@ def readme_text(spec: dict) -> str:
     kinds = kinds_of(spec["oneshot"])
     android = "android" in kinds   # alone, or among several kinds, whose gate builds it on the core
     gate = slots_for(None, Path(spec["worktree"])).get("gate_cmd", "").strip()
-    run = f"a step that `run`s exactly these lines, as the server's gate ran them:\n\n```\n{ci_gate(gate)}\n```\n\n"
+    run = (f"a step that `run`s{' with `shell: pwsh`, and nothing else,' if 'desktop' in kinds else ''} exactly these lines, as the "
+           f"server's gate ran them:\n\n```\n{ci_gate(gate)}\n```\n\n")
     job = (f"a job on `{RUNNER}` that sets up a JDK (`actions/setup-java`) and the Android SDK "
            f"(`android-actions/setup-android`), then {run}" if android else f"a job on `{RUNNER}` with {run}")
     several = f"""
@@ -140,7 +141,13 @@ installer its release build makes, and how to run it.
             .replace("{installer}", (spec["oneshot"].get("desktop_build") or {}).get("installer") or "")
             + scope(spec["oneshot"]) if "desktop" in kinds else ""))
             .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}"
-                     "That job has no `if` or `needs`, and that step no `if` or `background`. "
+                     + (f"Before that step, in the same job and after any other setup, add these steps exactly as "
+                        "written, in this order: each tool the PC app's build declared, set up as the owner confirmed "
+                        "(a tool the image already has needs none), then the check that every declared tool is on "
+                        f"`PATH`:\n\n```yaml\n{yaml.safe_dump(steps, sort_keys=False, allow_unicode=True, width=1000)}"
+                        "```\n\n"
+                        if (steps := oneshot_ci.ci_steps(spec["oneshot"])) else "")
+                     + "That job has no `if` or `needs`, and that step no `if` or `background`. "
                      "After that step, in the same job, add this step exactly as written; it lists in the run's "
                      f"summary the tests CI skipped for want of a secret:\n\n```yaml\n{SKIPS}```"
                      if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
@@ -180,9 +187,11 @@ def ci_gate(gate: str) -> str:
     return shell.invoked(gate) if os.name == "nt" else gate
 
 
-def ci_file(path: Path, mode: str | None, gate: str) -> bool:
+def ci_file(path: Path, mode: str | None, gate: str, before: list[dict] = ()) -> bool:
     """`ci.yml` committed as a plain file (a link points anywhere) whose workflow has a trigger and a
-    job step that runs the gate, followed in that job by `SKIPS`: a comment or an empty job is no CI."""
+    job step that runs the gate, followed in that job by `SKIPS`: a comment or an empty job is no CI. With `before`,
+    the gate's step runs its lines alone, the job has each of those steps before it, the last after the others, and
+    is `oneshot_ci.placed`."""
 
     if mode not in ("100644", "100755"):
         return False
@@ -211,6 +220,10 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
                 continue
             have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()]
             if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
+                found = [next((i for i, x in enumerate(steps[:at]) if oneshot_ci.matches(x, b)), None) for b in before]
+                if before and (have != want or None in found or found[-1] < max(found)   # a line after the gate
+                               or not oneshot_ci.placed(flow, job, s)):   # would set the step's exit code
+                    continue
                 if any(all(later.get(k) == SKIP_STEP[k] for k in ("if", "shell", "run")) for later in steps[at + 1:]):
                     return True
     return False
@@ -248,9 +261,12 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     public = o["profile"].get("visibility") == "public" and o["profile"].get("ci") == "github-actions"
     if flows and not public:
         return "이 저장소는 CI 워크플로를 두지 않는다 — " + ", ".join(flows[:5]) + " 를 지운다"
-    if public and not ci_file(path, held.get(CI), gate):
+    if public and not ci_file(path, held.get(CI), gate, before := oneshot_ci.required(o)):
         return (f"공개 저장소의 CI 워크플로(`{CI}`)가 없다 — 커밋된 보통 파일로, `on:` 트리거와 "
-                f"게이트(`{gate}`)를 `run` 하는 job step, 같은 job 에서 그 뒤에 README 턴이 준 건너뛴 테스트 요약 step 을 그대로 둔다")
+                f"게이트(`{gate}`)를 `run` 하는 job step, 같은 job 에서 그 뒤에 README 턴이 준 건너뛴 테스트 요약 step 을 그대로 둔다"
+                + ("; PC 앱이 있으면 그 job 은 `windows-latest` 에서 돌고, 게이트 step 앞에 선언한 도구마다의 `setup` step"
+                   + (", JDK 와 Android SDK 설정" if "android" in kinds_of(o) else "")
+                   + ", 그 뒤 도구가 모두 `PATH` 에 있는지 보는 step 을 README 턴이 준 그대로 둔다" if before else ""))
     if why := oneshot_build.pinned(path, o):
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
@@ -666,9 +682,7 @@ def asked(repo: str) -> None:
         unstaged(spec)   # a resume runs the final gate again, which freezes its own
         return oneshot_spec.store(repo).stop(STAGE, why) and None   # stopped: no next turn
     if keys := [key for key, (kind, *_) in ASSETS.items() if kind in kinds_of(spec["oneshot"])]:   # alone or among several
-        spec = oneshot_spec.saved(repo, oneshot={**released(spec, keys), "attached": spec["oneshot"]["final_head"]})
-    if oneshot_spec.held(spec["oneshot"]):   # a PC app's pull request is the next step's: the stop says what went up
-        return oneshot_spec.store(repo).stop("kind", oneshot_spec.kind_stop(STAGE, spec["oneshot"])["detail"]) and None
+        spec = oneshot_spec.saved(repo, oneshot=released(spec, keys))
     path, head = Path(spec["worktree"]), oneshot_spec.spec_of(repo)["oneshot"]["final_head"]
     spec = specs.update(repo, spec["id"], writing={"head": head, "asked": 1})
     said = decisions(spec["oneshot"])
