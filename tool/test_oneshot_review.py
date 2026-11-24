@@ -108,7 +108,8 @@ def test_a_verdict_its_findings_do_not_justify_is_refused(reviewed, kind, findin
 
 
 FAKE = {**P1, "location": "test_budget.py:3", "reason": "번역 API 를 부르지 않고 정해 둔 답을 돌려준다",
-        "evidence": "3행의 stub", "area": "faked translation", "breaks": ["T1"], "fake": "the translation API"}
+        "evidence": "3행의 stub", "area": "faked translation", "breaks": ["T1"], "fake": "the translation API",
+        "file": "test_budget.py"}
 
 
 def committed(tree: Path, *paths: str) -> str:
@@ -124,22 +125,21 @@ def committed(tree: Path, *paths: str) -> str:
     return head
 
 
-@pytest.mark.parametrize("location, stops", [("test_budget.py:3", True), ("`./test_budget.py:3:8`", True),
-                                             ("tests/test_own.py:3", False)])
-def test_a_fake_in_a_pinned_contract_test_stops_for_the_owner_and_one_the_build_wrote_goes_to_it(reviewed, location, stops):
+@pytest.mark.parametrize("file, stops", [("test_budget.py", True), ("./test_budget.py", True), ("tests/test_own.py", False)])
+def test_a_fake_in_a_pinned_contract_test_stops_for_the_owner_and_one_the_build_wrote_goes_to_it(reviewed, file, stops):
     # A pinned contract test is one no build turn may change: its fake is the owner's to see, never a repair round.
     tree, _, sent = reviewed
     head = committed(tree, "test_budget.py", "tests/test_own.py")
-    _, asking = answers(verdict(head, "refuse", {**FAKE, "location": location}))
+    _, asking = answers(verdict(head, "refuse", {**FAKE, "location": f"`{file}:3`", "file": file}))
     with asking:
         oneshot_review.review("budget")
     if not stops:
         assert o()["stage"] == "build" and len(sent) == 1 and "the translation API" in sent[0][2]
         return
     stopped = o()["stopped"]
-    assert stopped["reason"] == "fake" and f"{location} the translation API" in stopped["detail"] and not sent
+    assert stopped["reason"] == "fake" and f"`{file}:3` the translation API" in stopped["detail"] and not sent
     finding, = o()["reviews"][-1]["findings"]
-    assert finding["fake"] == "the translation API" and finding["file"] == "test_budget.py" and not o().get("refused")
+    assert finding["fake"] == "the translation API" and finding["file"] == file and finding["pinned"] and not o().get("refused")
     with pytest.raises(HTTPException) as refused:   # `[재개]` would only send the build what it may not change
         oneshot_spec.resume("budget")
     assert refused.value.status_code == 409 and refused.value.detail == stopped["detail"]
@@ -155,31 +155,19 @@ def test_every_pinned_fake_is_named_in_the_stop(reviewed):
     assert all(f"service {n}" in o()["stopped"]["detail"] for n in range(1, 7)) and not sent
 
 
-def test_a_fake_names_the_file_of_the_checkout_however_its_location_spells_it(tmp_path):
-    root = tmp_path / "seen"
-    for path in ("tests/test_budget.py", "tests/test_straße.py", "other/test_budget.py", "tests/test-contract", " lead.py"):
-        (root / path).parent.mkdir(parents=True, exist_ok=True)
-        (root / path).write_text("", encoding="utf-8")
-    (tmp_path / "outside.py").write_text("", encoding="utf-8")
-    nt = os.name == "nt"
-    cases = {"tests/test_budget.py:3": "tests/test_budget.py", "`tests/test_budget.py:3`": "tests/test_budget.py",
-             "./tests/test_budget.py:3:8": "tests/test_budget.py", "tests/test_budget.py:3-9": "tests/test_budget.py",
-             f"{root / 'tests' / 'test_budget.py'}:3": "tests/test_budget.py", "tests/test_budget.py": "tests/test_budget.py",
-             "other/test_budget.py:3": "other/test_budget.py", "tests/test-contract:3": "tests/test-contract",
-             # A name that only folds alike is another file; a real file's case is the checkout's own.
-             "tests/test_strasse.py:3": "", "TESTS/TEST_BUDGET.PY:3": "tests/test_budget.py" if nt else "",
-             "tests\\test_budget.py:3": "tests/test_budget.py" if nt else "",
-             "tests/test_budget.py:helper.py": "", "../outside.py:1": "", "tests:3": "",
-             "./ lead.py:3": " lead.py"}   # a real name's own characters stay, as the tests stage saved its pins
-    assert {loc: oneshot_review.located(root, loc) for loc in cases} == cases
-
-
-@pytest.mark.skipif(os.name == "nt", reason="a Windows file name holds no colon")
-def test_a_location_that_reads_as_two_files_names_neither(tmp_path):
-    for path in ("tests/check", "tests/check:3"):   # line 3 of one, or the other file: the reviewer must say
+def test_a_pinned_file_is_the_same_file_on_disk_however_either_is_spelled(tmp_path):
+    for path in ("tests/test_budget.py", "tests/test_straße.py", "other/test_budget.py", " lead.py", "lead.py"):
         (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / path).write_text("", encoding="utf-8")
-    assert oneshot_review.located(tmp_path, "tests/check:3") == "" and oneshot_review.located(tmp_path, "tests/check") == "tests/check"
+    (tmp_path.parent / "outside.py").write_text("", encoding="utf-8")
+    pinned = lambda file, *pins: oneshot_review.pinned(tmp_path, file, pins)  # noqa: E731
+    assert pinned("tests/test_budget.py", "./tests/test_budget.py") and pinned("./tests/test_budget.py", "tests/test_budget.py")
+    assert pinned(str(tmp_path / "tests" / "test_budget.py"), "tests/test_budget.py")
+    assert pinned("TESTS/test_budget.py", "tests/test_budget.py") is (os.name == "nt")   # the same file on Windows
+    assert pinned(" lead.py", " lead.py") and not pinned(" lead.py", "lead.py") and not pinned("lead.py", " lead.py")
+    assert not pinned("other/test_budget.py", "tests/test_budget.py") and not pinned("tests/test_strasse.py", "tests/test_straße.py")
+    assert not pinned("tests/test_budget.py:3", "tests/test_budget.py") and not pinned("../outside.py", "../outside.py")
+    assert oneshot_review.faked_file(tmp_path, "tests") is None and oneshot_review.faked_file(tmp_path, "") is None
 
 
 @pytest.mark.parametrize("finding, said", [
@@ -188,7 +176,7 @@ def test_a_location_that_reads_as_two_files_names_neither(tmp_path):
     ({**FAKE, "later": {"kind": "android", "what": "x"}}, "`later`"),
     ({**FAKE, "device": {"kind": "android", "requirement": "R1", "check": "x"}}, "`device`"),
     ({**FAKE, "breaks": ["R1"]}, "설계 테스트 번호"),   # it names the design test the fake stands in for
-    ({**FAKE, "location": "tests/test_gone.py:3"}, "`location`"),   # and a file the review read
+    ({**FAKE, "file": "tests/test_gone.py"}, "`file`"), ({**FAKE, "file": "test_budget.py:3"}, "`file`"),   # a file it read
 ])
 def test_a_fake_mark_is_a_blocking_p1_that_names_its_test_and_what_it_stands_in_for(reviewed, tmp_path, finding, said):
     _, head, _ = reviewed
@@ -202,7 +190,7 @@ def test_a_fake_mark_is_a_blocking_p1_that_names_its_test_and_what_it_stands_in_
 @pytest.mark.parametrize("kind", ["webapp", "android", "desktop", "kinds"])
 def test_every_review_prompt_refuses_a_fake_inside_a_test_file(kind):
     text = oneshot.prompt("review", kind)
-    assert "stand-in" in text and "inside a test file" in text and "whose `fake` says" in text
+    assert "stand-in" in text and "inside a test file" in text and "whose `fake` says" in text and "its `file` is" in text
     assert "P1 though the person never meets it" in text
 
 

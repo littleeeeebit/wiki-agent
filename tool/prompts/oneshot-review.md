@@ -24,7 +24,8 @@ and where to read the diff from the base commit to the HEAD under review.
 - A fake, mock, stub or stand-in of anything inside a test file: a call that
   leaves the server is made for real, with what the owner gave for it.
   It is a P1 whose `breaks` names the design test it fakes for (`T1`) and
-  whose `fake` says what it stands in for (`"the Gemini API"`).
+  whose `fake` says what it stands in for (`"the Gemini API"`); its `file` is
+  that test file's path in the repository, exactly, with no line number.
 
 Grade each finding: P0 is a crash, corruption or lost flow; P1 changes the
 requested behaviour; P2 is a nonblocking suggestion. Style alone is P2.
