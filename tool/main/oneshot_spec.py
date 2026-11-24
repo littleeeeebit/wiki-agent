@@ -473,7 +473,8 @@ def recover() -> None:
         if o and (repair := brief.recovered(o)):   # a brief the server went down writing, or its orphaned turn
             o = saved(folder.name, oneshot=repair)["oneshot"]
         o = waiting(folder.name, o) if o else o
-        if o and o.get("stage") == "pr" and o.get("attached") and not o.get("working"):   # 9e6b's stop, kept or lost
+        if o and o.get("stage") == "pr" and "desktop" in kinds_of(o) and o.get("attached") == o.get("final_head") \
+                and o.get("attached") and not o.get("working"):   # 9e6b held this run: its stop, kept or lost
             o = saved(folder.name, oneshot={"attached": None, "stopped": o.get("stopped") or kind_stop("pr")})["oneshot"]
         stop = o.get("stopped") or {}
         if stop.get("reason") == "kind" and not held(o):

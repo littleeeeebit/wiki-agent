@@ -160,6 +160,14 @@ def test_an_earlier_versions_stop_before_the_pull_request_is_let_go_on_recovery(
     assert not o()["stopped"]
 
 
+def test_an_android_apps_run_at_its_pull_request_is_left_as_it_is_on_recovery(pc):
+    # 9e6b recorded `attached` for an APK too, and that run was never held.
+    oneshot_spec.saved("budget", oneshot={"intent": {"kind": "android"}, "working": None, "stopped": None,
+                                          "final_head": "h", "attached": "h"})
+    oneshot_spec.recover()
+    assert not o()["stopped"] and o()["attached"] == "h"
+
+
 def test_a_pc_app_with_no_installer_table_still_finishes_its_gate_and_says_why(pc):
     tree, _, github, built = pc
     oneshot_spec.saved("budget", oneshot={"stack": [{**o()["stack"][0], "choice": "WinUI 3"}]})   # another stack
@@ -518,7 +526,11 @@ def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_
     public(PYTHON, RUST, part="desktop.build", intent={"kind": "android", "kinds": ["android", "desktop"]}, device=DEVICE)
     setup, path = oneshot_pr.ci_steps(o())
     assert setup == RUST["setup"] and path["run"].startswith("foreach ($tool in @('python', 'cargo'))")
-    assert "Get-Command $tool -CommandType Application " in path["run"]   # an alias or a function is no program
+    # A program or a script file, as `shutil.which` finds it: an alias or a function is no tool.
+    assert "Get-Command $tool -CommandType Application,ExternalScript " in path["run"]
+    for given in (False, [], None, "x"):   # inputs that are no mapping, though nothing was confirmed for them
+        assert not oneshot_pr.matches({"uses": "owner/setup@v1", "with": given}, {"uses": "owner/setup@v1"})
+    assert oneshot_pr.matches({"uses": "owner/setup@v1"}, {"uses": "owner/setup@v1"})
     text = oneshot_pr.readme_text(spec())
     assert "`windows-latest`" in text and "actions/setup-java" in text and path["run"] in text
     assert "- uses: dtolnay/rust-toolchain@v1\n  with:\n    toolchain: stable\n" in text
