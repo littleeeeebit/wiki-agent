@@ -161,13 +161,10 @@ Every build turn ends on the measurement contract
 - `inputs`: what only the owner can give, each a secret or a plain value,
   with its guide.
 - `during`: what the owner does while it runs, such as finishing a Google
-  sign-in. To show the owner something while it runs, such as a device
-  code, the script writes `{out}/owner.json` (`{"text": …}`), whole each
-  time. A thread of the run reads it whole once a second, so a write still
-  under way shows nothing, masks it like the report's notes and keeps it for
-  the screen's `실측이 보여 주는 것` box (`oneshot_measure.watched`); it is
-  joined before the run's folder is dealt with. Nothing the script prints,
-  and no other file it writes, is in view before it ends.
+  sign-in. Nothing the script prints or writes is in view before it ends,
+  so what the owner must read meanwhile, such as a device code, the script
+  opens for them in the browser, on a page served on `127.0.0.1` (owner,
+  2026-11-24: the script shows it, wiki-agent reads nothing while it runs).
 - `metrics`: each with its requirements, the design's outside calls it
   reaches, and its threshold.
 

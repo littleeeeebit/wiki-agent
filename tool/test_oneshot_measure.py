@@ -10,7 +10,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -246,33 +245,6 @@ def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(a
                                           encoding="utf-8")
     found = json.dumps(measure.report_of(tmp_path, {"metrics": []}, measure.spelled({secret: "[K]"})))
     assert "uote" not in found and "[K]" in found
-
-
-def test_what_the_running_script_shows_the_owner_reaches_the_screen_whole_masked_and_only_while_it_runs(at_measure,
-                                                                                                         tmp_path):
-    given()
-    seen = []
-
-    def gate(cmd, *a, **k):   # the script shows a sign-in code the owner must read while it waits for them
-        raw = next((oneshot_spec.store("budget").folder / "measure").glob("m*.raw"))
-        (raw / "w.tmp").write_text(json.dumps({"text": f"기기 코드: AB-CD {KEY}"}), encoding="utf-8")
-        os.replace(raw / "w.tmp", raw / measure.SHOWN)   # written whole, as the contract asks
-        for _ in range(50):
-            if text := measure.shown(oneshot_spec.spec_of("budget"))["measure"]["told"]:
-                seen.append(text)
-                break
-            time.sleep(0.1)
-        return 1, "", ""
-    with patch.object(measure.specs, "gate", gate):
-        measure.measure("budget")
-    assert seen and seen[0].startswith("기기 코드: AB-CD") and KEY not in seen[0]
-    assert "budget" not in measure.LIVE and measure.shown(oneshot_spec.spec_of("budget"))["measure"]["told"] == ""
-    hide = measure.spelled({KEY: "[K]"})
-    for written in (b'{"text": "AB', b"[1]", b"x" * 9000,   # mid-write, not the shape, too long for a message
-                    b'{"text": "\\ud800"}', b"[" * 50_000):   # what the screen could not send, or not parse
-        (tmp_path / "o.json").write_bytes(written)
-        assert measure.told(tmp_path / "o.json", hide) == ""
-    assert measure.told(tmp_path / "none.json", hide) == ""
 
 
 def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_never_text(at_measure):

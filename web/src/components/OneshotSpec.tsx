@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Choices } from '@/components/Blocks'
@@ -93,27 +93,15 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   const [view, setView] = useState<SpecView | null>(null)
   const [fault, setFault] = useState('')
   const [busy, setBusy] = useState(false)
-  // One read at a time, and one more after any asked meanwhile or after an action's answer: the last view to land
-  // is always one the server made after every earlier answer, so a delayed one never stays on screen.
-  const reading = useRef(false)
-  const again = useRef(false)
-  const read = useCallback(function next() {
-    if (reading.current) { again.current = true; return }
-    reading.current = true
-    api.view(repo).then(setView).catch((err) => setFault(error(err))).finally(() => {
-      reading.current = false
-      if (again.current) { again.current = false; next() }
-    })
-  }, [repo])
 
-  useEffect(() => { read() }, [read])
+  useEffect(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, [repo])
   useEffect(() => { if (view) onView?.(view) }, [view, onView])
   const working = !!view?.working
   useEffect(() => {
     if (!working) return
-    const timer = window.setInterval(read, 1500)
+    const timer = window.setInterval(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, 1500)
     return () => window.clearInterval(timer)
-  }, [read, working])
+  }, [repo, working])
 
   /** Whether the server took it: a refused answer stays in its box to be sent again. */
   async function act(fn: () => Promise<SpecView>) {
@@ -121,7 +109,6 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
     setBusy(true)
     try {
       setView(await fn())
-      read()   // a view the server made after it, in case a read asked before it lands later
       return true
     } catch (err) {
       setFault(error(err))
