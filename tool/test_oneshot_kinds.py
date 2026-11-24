@@ -265,9 +265,9 @@ def test_several_kinds_board_takes_a_first_screen_for_each_kind_then_designs_the
     assert started[0][1]["frequency"] == frequency
 
 
-def test_several_kinds_with_desktop_wait_where_desktop_does(several):
+def test_several_kinds_with_or_without_desktop_wait_nowhere(several):
     assert oneshot_profile.waits_at({"intent": {"kinds": ["webapp", "android"]}}) is None   # runs to its PR
-    assert oneshot_profile.waits_at({"intent": {"kinds": ["android", "desktop"]}}) == "pr"   # plan 9e6a
+    assert oneshot_profile.waits_at({"intent": {"kinds": ["android", "desktop"]}}) is None   # plan 9e6c
 
 
 @pytest.mark.parametrize("stage", ["design", "tests", "split", "build-front"])

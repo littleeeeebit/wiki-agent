@@ -582,20 +582,11 @@ def test_a_saved_pc_app_spec_takes_no_turn_on_another_host(desktop):
                 call()
 
 
-def test_the_shared_start_refuses_a_move_into_the_held_stage(desktop):
-    # A PC app runs through its critique, the phone round, the owner's desktop round, R3 and S8's README turn, final
-    # gate and attachments, alone or among other kinds (9e6b), and is held before its pull request's text.
-    assert oneshot_profile.waits_at(o()) == "pr" and not oneshot_profile.held({**o(), "stage": "r3"})
-    oneshot_spec.saved("budget", oneshot={"stage": "critique",
-                                          "intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
-    assert oneshot_profile.waits_at(o()) == "pr" and not oneshot_profile.held(o())
-    at_pr = {**o(), "stage": "pr", "final_head": "h"}
-    assert not oneshot_profile.held(at_pr) and not oneshot_profile.held({**at_pr, "attached": "g"})
-    assert oneshot_profile.held({**at_pr, "attached": "h"})   # its files went up for the head the gate passed
-    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
-            pytest.raises(HTTPException, match="다음 버전"):
-        START("budget", "design", stage="done")
-    assert o()["stage"] == "critique"
+def test_a_pc_app_alone_or_among_other_kinds_waits_nowhere(desktop):
+    # A PC app runs to its first pull request, alone or among other kinds (9e6c).
+    assert oneshot_profile.waits_at(o()) is None and not oneshot_profile.held({**o(), "stage": "pr", "final_head": "h"})
+    oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kinds": ["webapp", "desktop"]}})
+    assert oneshot_profile.waits_at(o()) is None
 
 
 def frozen_in(tree, tmp_path) -> dict:
@@ -648,7 +639,6 @@ def test_several_kinds_an_earlier_versions_run_held_at_the_critique_is_resumable
     oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
                                           "stage": "critique", "stopped": {"reason": "kind", "detail": "다음 버전",
                                                                            "state": "critique"}})
-    assert oneshot_profile.waits_at(o()) == "pr" and not oneshot_profile.held(o())
     oneshot_spec.recover()
     assert o()["stopped"]["reason"] == "restart" and o()["stage"] == "critique"   # `[재개]` starts the critique
 
@@ -668,24 +658,6 @@ def test_an_earlier_versions_frozen_run_at_the_build_is_resumable(desktop, tmp_p
             patch.object(oneshot_build, "send", lambda repo, stage, text: sent.append(stage)):   # no S6 here
         oneshot_spec.resume("budget")
     assert sent == ["build-front"]
-
-
-def test_a_held_mixed_run_whose_stop_was_lost_starts_no_later_stage_nor_its_build_again(desktop, tmp_path):
-    # S8's files went up and the run waits before its pull request's text (9e6b): neither the hand-off nor a start
-    # moves it back.
-    stage = "pr"
-    oneshot_spec.saved("budget", oneshot={"intent": {**o()["intent"], "kind": "android", "kinds": ["android", "desktop"]},
-                                          "stage": stage, "working": None, "stopped": None, "features": [],
-                                          "final_head": "h", "attached": "h",
-                                          "desktop_build": frozen_in(desktop, tmp_path)})
-    with patch.object(oneshot, "start_worker", lambda *a, **k: pytest.fail("a held run starts nothing")), \
-            patch.object(oneshot_spec, "start", START):
-        SEND("budget", "build-front", "the build")   # the hand-off after R2: the stop is put back, nothing sent
-        assert o()["stopped"]["reason"] == "kind"
-        oneshot_spec.saved("budget", oneshot={"stopped": None})
-        with pytest.raises(HTTPException, match="다음 버전"):   # the shared start every stage goes through
-            START("budget", "build-front", stage="build-front")
-    assert o()["stopped"]["reason"] == "kind" and o()["stage"] == stage
 
 
 def test_a_pc_app_has_its_own_prompts_through_s4_and_no_web_fallback_for_later_stages():

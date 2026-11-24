@@ -1,7 +1,8 @@
-"""oneshot step 9e6b: S8 of a PC app — the README turn writes the PC app's section and its `[release.desktop]`
-table; after the final gate the server builds that table's installer once from a clean checkout, checks it as a
-release does and freezes it; one draft prerelease per head carries it (with the APK when an Android app is among
-the kinds), each file reused only for the same HEAD and digest; the run then waits before its pull request's text.
+"""oneshot steps 9e6b and 9e6c: S8 of a PC app — the README turn writes the PC app's section and its
+`[release.desktop]` table; after the final gate the server builds that table's installer once from a clean checkout,
+checks it as a release does and freezes it; one draft prerelease per head carries it (with the APK when an Android
+app is among the kinds), each file reused only for the same HEAD and digest; then the pull request's text is asked.
+With CI on, the workflow's job sets up each declared tool and checks them all on `PATH` before the gate (9e6c).
 
 See `docs/plans/oneshot/9-kinds.md` ("R3 and S8", "Steps and their stops") and `docs/plans/release/0-overview.md`
 (7b). Git and the gate run for real in a temporary worktree. The release build is a stand-in writing a synthetic NSIS
@@ -18,6 +19,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from main import github_release, oneshot_build, oneshot_needs, oneshot_pr, oneshot_spec, pr_text, release, \
     release_desktop as rd
@@ -35,7 +37,7 @@ DESKTOP = ('\n[release]\nversion_source = "version.json"\n\n[release.desktop]\nb
            'artifact = "nsis/r_{version}_x64-setup.exe"\nexe = "r.exe"\nproduct_name = "r"\npublisher = "o"\n')
 ANDROID = (f'\n[release.android]\nbuild = "gradlew.bat assembleRelease"\nartifact = "app/release.apk"\n'
            f'application_id = "{DEVICE["package"]}"\nabi = "none"\n')
-NOT_YET = "the pull request is the next step's"
+ASK = "Write the pull request's text."
 
 
 @pytest.fixture
@@ -119,11 +121,11 @@ def test_the_readme_turn_has_a_pc_section_and_its_release_table(pc):
     assert grant(spec()) and not grant({**spec(), "writing": {"head": "h", "asked": 1}})
 
 
-def test_the_release_tables_installer_goes_alone_to_the_prerelease_and_the_run_waits_before_its_pull_request(pc):
+def test_the_release_tables_installer_goes_alone_to_the_prerelease_then_the_pull_requests_text_is_asked(pc):
     tree, sent, github, built = pc
     tabled(tree, DESKTOP)
     asked = len(sent)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+    with patch.object(pr_text, "writing", lambda *a: ASK):
         check(tree, answer(report()))()
     head, approved = o()["final_head"], o()["desktop_build"]["head"]
     # Built once, from a clean checkout of the commit R3 approved, with the version a press would publish next,
@@ -139,33 +141,29 @@ def test_the_release_tables_installer_goes_alone_to_the_prerelease_and_the_run_w
     assert o()["installer"] == {"head": head, "name": name, "sha256": digests[name], "url": rel["html_url"],
                                 "tag": f"oneshot-{head[:12]}", "version": "0.1.1", "built": approved} and "apk" not in o()
     assert not staged()   # the copy it uploaded is gone
-    stop = o()["stopped"]
-    assert stop["reason"] == "kind" and "풀 리퀘스트는 다음 버전에서" in stop["detail"]
-    assert "설치 파일 — 초안 프리릴리스에 올렸다" in stop["detail"]
-    assert len(sent) == asked and not spec().get("writing")
+    assert not o().get("stopped") and len(sent) == asked + 1 and sent[-1][1:] == ("pr", sent[-1][2])
+    assert sent[-1][2].startswith(ASK) and spec()["writing"]["head"] == head   # its pull request is next (9e6c)
     body = "\n".join(pr_text.apk_section(spec()))
     assert f"- PC 앱 설치 파일: [{name}]({rel['html_url']})" in body and "버전 0.1.1" in body and "## APK" not in body
     assert f"빌드 커밋 `{approved[:12]}`" in body
-    # Held there through a restart, though the README turn's commit left the frozen build's HEAD: `[재개]` is refused.
+
+
+def test_an_earlier_versions_stop_before_the_pull_request_is_let_go_on_recovery(pc):
+    oneshot_spec.saved("budget", oneshot={"working": None, "stopped": {
+        "reason": "kind", "state": "pr", "detail": "README 와 최종 게이트를 마쳤다 — 풀 리퀘스트는 다음 버전에서 이어진다"}})
     oneshot_spec.recover()
-    assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "kind" and o()["desktop_build"]
-    with pytest.raises(Exception, match="다음 버전"):
-        oneshot_spec.resume("budget")
-    # A restart between the saved records and the stop: the stop rebuilt from them says what went up too.
-    oneshot_spec.saved("budget", oneshot={"stopped": None})
-    oneshot_spec.recover()
-    assert o()["stopped"]["reason"] == "kind" and "설치 파일 — 초안 프리릴리스에 올렸다" in o()["stopped"]["detail"]
+    assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "restart"   # `[재개]` goes on to the pull request
 
 
 def test_a_pc_app_with_no_installer_table_still_finishes_its_gate_and_says_why(pc):
     tree, _, github, built = pc
     oneshot_spec.saved("budget", oneshot={"stack": [{**o()["stack"][0], "choice": "WinUI 3"}]})   # another stack
     readme(tree)   # so no `[release]`
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+    with patch.object(pr_text, "writing", lambda *a: ASK):
         check(tree, answer(report()))()
     assert o()["final_head"] and not built and not github.calls
     assert o()["installer"]["error"] == oneshot_pr.NO_INSTALLER
-    assert "설치 파일 — 올리지 못했다" in o()["stopped"]["detail"] and o()["stopped"]["reason"] == "kind"
+    assert not o().get("stopped") and spec()["writing"]["head"] == o()["final_head"]   # the pull request goes on
     assert "PC 앱 설치 파일을 Release 에 올리지 못했다 — `[release.desktop]` 가 없다" in "\n".join(pr_text.apk_section(spec()))
 
 
@@ -242,7 +240,7 @@ def test_with_an_android_app_both_files_go_to_one_prerelease_and_a_resumed_uploa
     mixed(tree, monkeypatch)
     write(tree, "app/build.gradle.kts", 'android {}\nval versionName = System.getenv("RELEASE_VERSION")\n')   # its wiring
     tabled(tree, DESKTOP, ANDROID)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+    with patch.object(pr_text, "writing", lambda *a: ASK):
         check(tree, answer(report()))()
     head = o()["final_head"]
     # Each kind from its own checkout: the APK of the gate's HEAD, the installer of the commit R3 approved.
@@ -255,7 +253,7 @@ def test_with_an_android_app_both_files_go_to_one_prerelease_and_a_resumed_uploa
     assert o()["apk"]["url"] == o()["installer"]["url"] == rel["html_url"]
     assert len([c for c in github.calls if c[0] == "POST" and c[1] == "releases"]) == 1
     first, calls = (o()["apk"], o()["installer"]), len(github.calls)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+    with patch.object(pr_text, "writing", lambda *a: ASK):
         oneshot_pr.asked("budget")   # a resumed S8: the same head and digests, so nothing goes up again
     assert (o()["apk"], o()["installer"]) == first and not [c for c in github.calls[calls:] if c[0] != "GET"]
     body = "\n".join(pr_text.apk_section(spec()))
@@ -329,7 +327,7 @@ def test_with_an_android_app_a_change_after_the_approved_build_never_reaches_the
     write(tree, "app/build.gradle.kts", 'android {}\ndependencies { implementation("x:y:1") }\n')
     write(tree, "shared.py", "a change R3 never saw\n")
     tabled(tree, DESKTOP, ANDROID)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+    with patch.object(pr_text, "writing", lambda *a: ASK):
         check(tree, answer(report()))()
     approved = o()["desktop_build"]["head"]
     assert built[1][0] == approved and o()["installer"]["url"] and o()["installer"]["built"] == approved
@@ -351,7 +349,7 @@ def test_a_version_file_the_readme_turn_adds_is_s8s_own(pc):
     tree, _, _, built = pc
     write(tree, "app-version.json", '{"version": "0.1.0"}')
     tabled(tree, DESKTOP.replace('"version.json"', '"app-version.json"'))
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+    with patch.object(pr_text, "writing", lambda *a: ASK):
         check(tree, answer(report()))()
     assert o()["final_head"] and len(built) == 1 and o()["installer"]["url"]
 
@@ -368,18 +366,18 @@ def test_a_draft_published_between_two_uploads_gets_no_more_of_them(pc, monkeypa
         return made
 
     monkeypatch.setattr(github_release, "upload", published)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+    with patch.object(pr_text, "writing", lambda *a: ASK):
         check(tree, answer(report()))()
     assert o()["apk"]["url"] and "더는 초안 프리릴리스가 아니다" in o()["installer"]["error"]
     assert [a["name"] for a in github.rels[0]["assets"]] == [o()["apk"]["name"]] and not staged()
-    assert "설치 파일 — 올리지 못했다: 태그" in o()["stopped"]["detail"]
+    assert "PC 앱 설치 파일을 Release 에 올리지 못했다 — 태그" in "\n".join(pr_text.apk_section(spec()))
 
 
 def test_a_published_release_of_the_tag_is_left_untouched(pc):
     tree, _, github, _ = pc
     tabled(tree, DESKTOP)
     github.add(f"oneshot-{git(tree, 'rev-parse', 'HEAD')[:12]}", assets={"kept.txt": b"published"})   # not a draft
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+    with patch.object(pr_text, "writing", lambda *a: ASK):
         check(tree, answer(report()))()
     assert "초안 프리릴리스가 아니다" in o()["installer"]["error"] and "url" not in o()["installer"]
     assert not [c for c in github.calls if c[0] != "GET"] and [a["name"] for a in github.rels[0]["assets"]] == ["kept.txt"]
@@ -390,14 +388,15 @@ def test_an_asset_already_uploaded_with_these_bytes_is_not_sent_again(pc):
     # A restart after GitHub took the upload and before its record was saved: the next S8 finds it there.
     tree, _, github, _ = pc
     tabled(tree, DESKTOP)
-    with patch.object(pr_text, "writing", lambda *a: pytest.fail(NOT_YET)):
+    with patch.object(pr_text, "writing", lambda *a: ASK):
         check(tree, answer(report()))()
     [asset] = github.rels[0]["assets"]
     (again := tree.parent / "again.exe").write_bytes(github.blobs[asset["id"]])   # a same-head build's same bytes
     copy = oneshot_pr.froze(spec(), o()["final_head"], {}, "installer", again)
     oneshot_spec.saved("budget", oneshot={"installer": None, "installer_frozen": {**copy, "version": "0.1.1"}})
     calls = len(github.calls)
-    oneshot_pr.asked("budget")
+    with patch.object(pr_text, "writing", lambda *a: ASK):
+        oneshot_pr.asked("budget")
     assert o()["installer"]["url"] and o()["installer"]["sha256"] == copy["sha256"]
     assert not [c for c in github.calls[calls:] if c[0] != "GET"] and github.rels[0]["assets"] == [asset]
 
@@ -471,3 +470,76 @@ def test_a_refusal_before_the_upload_keeps_no_frozen_copy(pc, monkeypatch):
     assert staged()
     oneshot_pr.restart(spec())
     assert not staged()
+
+
+# -- The CI job (9e6c) ------------------------------------------------------------------------------
+
+RUST = {"name": "cargo", "setup": {"uses": "dtolnay/rust-toolchain@v1", "with": {"toolchain": "stable"}}}
+PYTHON = {"name": "python", "setup": "preinstalled"}   # the gate's one program, on the hosted image
+JAVA = ({"uses": "actions/setup-java@v4", "with": {"distribution": "temurin", "java-version": "17"}},
+        {"uses": "android-actions/setup-android@v3"})
+
+
+def public(*tools, part="build", **more):
+    oneshot_spec.saved("budget", oneshot={"profile": {**o()["profile"], "visibility": "public", "ci": "github-actions"},
+                                          "stack": [{**o()["stack"][0], "part": part, "tools": list(tools)}], **more})
+
+
+def flow(*steps, runs="windows-latest") -> str:
+    """`ci.yml` with one job: a checkout, `steps`, the gate's step and the skipped-test summary."""
+
+    return yaml.safe_dump({"name": "ci", "on": ["push", "pull_request"], "jobs": {"gate": {"runs-on": runs, "steps": [
+        {"uses": "actions/checkout@v4"}, *steps, {"shell": "pwsh", "run": oneshot_pr.ci_gate(GATE)},
+        oneshot_pr.SKIP_STEP]}}}, sort_keys=False, width=1000)
+
+
+def ci(tree) -> bool:
+    return oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), GATE, oneshot_pr.required(o()))
+
+
+def test_with_ci_off_no_workflow_is_asked_and_the_run_goes_on_to_its_pull_request(pc):
+    tree, _, _, _ = pc
+    oneshot_spec.saved("budget", oneshot={"stack": [{**o()["stack"][0], "tools": [PYTHON, RUST]}]})
+    text = oneshot_pr.readme_text(spec())
+    assert "Write no CI workflow" in text and "Declared tools on PATH" not in text and "dtolnay" not in text
+    tabled(tree, DESKTOP)
+    with patch.object(pr_text, "writing", lambda *a: ASK):
+        check(tree, answer(report()))()
+    assert spec()["writing"]["head"] == o()["final_head"]
+
+
+def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_the_gate(pc):
+    tree, _, _, _ = pc
+    public(PYTHON, RUST, part="desktop.build", intent={"kind": "android", "kinds": ["android", "desktop"]}, device=DEVICE)
+    setup, path = oneshot_pr.ci_steps(o())
+    assert setup == RUST["setup"] and path["run"].startswith("foreach ($tool in @('python', 'cargo'))")
+    text = oneshot_pr.readme_text(spec())
+    assert "`windows-latest`" in text and "actions/setup-java" in text and path["run"] in text
+    assert "- uses: dtolnay/rust-toolchain@v1\n  with:\n    toolchain: stable\n" in text
+    for steps, kept in [((*JAVA, setup, path), True), ((setup, *JAVA, path), True),
+                        ((*JAVA, path), False),   # the tool never set up
+                        ((*JAVA, setup), False),   # never checked on `PATH`
+                        ((*JAVA, path, setup), False),   # checked before it is set up
+                        ((setup, path), False),   # no JDK for the Android app
+                        ((*JAVA, {**setup, "with": {"toolchain": "nightly"}}, path), False),   # not as confirmed
+                        ((*JAVA, {**setup, "continue-on-error": True}, path), False),
+                        ((*JAVA, setup, {**path, "if": "always()"}), False)]:
+        readme(tree, (oneshot_pr.CI, flow(*steps)))
+        assert ci(tree) is kept, steps
+    readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, runs="ubuntu-latest")))
+    assert not ci(tree)
+
+
+def test_with_ci_on_a_preinstalled_tool_needs_only_its_path_check(pc):
+    tree, sent, _, _ = pc
+    public(PYTHON)
+    [path] = oneshot_pr.ci_steps(o())
+    assert path["run"].startswith("foreach ($tool in @('python'))") and path["run"] in oneshot_pr.readme_text(spec())
+    readme(tree, (oneshot_pr.CI, flow()))   # the gate with no check before it
+    check(tree, answer(report()))()
+    assert "도구가 모두 `PATH` 에 있는지" in sent[-1][2] and "final_head" not in o()
+    readme(tree, (oneshot_pr.CI, flow(path)),
+           (".wiki/adapter.toml", (tree / ".wiki/adapter.toml").read_text(encoding="utf-8") + DESKTOP))
+    with patch.object(pr_text, "writing", lambda *a: ASK):
+        check(tree, answer(report()))()
+    assert spec()["writing"]["head"] == o()["final_head"] and o()["installer"]["url"]

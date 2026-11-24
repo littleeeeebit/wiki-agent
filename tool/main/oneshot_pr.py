@@ -140,7 +140,13 @@ installer its release build makes, and how to run it.
             .replace("{installer}", (spec["oneshot"].get("desktop_build") or {}).get("installer") or "")
             + scope(spec["oneshot"]) if "desktop" in kinds else ""))
             .replace("{workflow}", f"Also write `.github/workflows/ci.yml`: `on: [push, pull_request]` and {job}"
-                     "That job has no `if` or `needs`, and that step no `if` or `background`. "
+                     + (f"Before that step, in the same job and after any other setup, add these steps exactly as "
+                        "written, in this order: each tool the PC app's build declared, set up as the owner confirmed "
+                        "(a tool the image already has needs none), then the check that every declared tool is on "
+                        f"`PATH`:\n\n```yaml\n{yaml.safe_dump(steps, sort_keys=False, allow_unicode=True, width=1000)}"
+                        "```\n\n"
+                        if (steps := ci_steps(spec["oneshot"])) else "")
+                     + "That job has no `if` or `needs`, and that step no `if` or `background`. "
                      "After that step, in the same job, add this step exactly as written; it lists in the run's "
                      f"summary the tests CI skipped for want of a secret:\n\n```yaml\n{SKIPS}```"
                      if public else "Write no CI workflow: this repository gets none, and the server refuses one."))
@@ -180,9 +186,49 @@ def ci_gate(gate: str) -> str:
     return shell.invoked(gate) if os.name == "nt" else gate
 
 
-def ci_file(path: Path, mode: str | None, gate: str) -> bool:
+def ci_steps(o: dict) -> list[dict]:
+    """A PC app's steps before its CI gate (plan 9e, "S8"): each declared tool's confirmed `setup` as written (none
+    for a `preinstalled` one), then a check that every declared tool is on `PATH`; none without a PC app."""
+
+    if (declared := oneshot_build.tools(o)) is None:
+        return []
+    names = ", ".join(f"'{t['name']}'" for t in declared)
+    check = (f"foreach ($tool in @({names})) {{ if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) "
+             '{ throw "$tool is not on PATH" } }')
+    return [dict(t["setup"]) for t in declared if isinstance(t.get("setup"), dict)] + [
+        {"name": "Declared tools on PATH", "shell": "pwsh", "run": check}]
+
+
+# An Android app's JDK and SDK setup the prompt names (`readme_text`), any version, required beside a PC app's steps.
+ANDROID_STEPS = [{"uses": "actions/setup-java"}, {"uses": "android-actions/setup-android"}]
+
+
+def required(o: dict) -> list[dict]:
+    """The steps S8 requires before the gate's in a PC app's CI job, the `PATH` check last; none without one."""
+
+    return (ANDROID_STEPS if "android" in kinds_of(o) else []) + steps if (steps := ci_steps(o)) else []
+
+
+def matches(step: dict, want: dict) -> bool:
+    """A step that is `want`, name aside: the same action and inputs or `run` lines and shell, no `if` to skip it nor
+    failure to go past. A `uses` without `@` is that action at any version, with any inputs."""
+
+    if step.get("if") is not None or step.get("continue-on-error") not in (None, False):
+        return False
+    if "run" in want:
+        lines = [[x.strip() for x in str(s.get("run") or "").splitlines() if x.strip()] for s in (step, want)]
+        return lines[0] == lines[1] and step.get("shell") == want.get("shell")
+    if "@" not in want["uses"]:
+        return str(step.get("uses") or "").startswith(want["uses"] + "@")
+    return step.get("uses") == want["uses"] and {   # an input as Actions reads it: text
+        k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in (step.get("with") or {}).items()
+    } == dict(want.get("with") or {})
+
+
+def ci_file(path: Path, mode: str | None, gate: str, before: list[dict] = ()) -> bool:
     """`ci.yml` committed as a plain file (a link points anywhere) whose workflow has a trigger and a
-    job step that runs the gate, followed in that job by `SKIPS`: a comment or an empty job is no CI."""
+    job step that runs the gate, followed in that job by `SKIPS`: a comment or an empty job is no CI. With `before`,
+    that job runs on `windows-latest` with each of those steps before the gate's, the last after the others."""
 
     if mode not in ("100644", "100755"):
         return False
@@ -211,6 +257,9 @@ def ci_file(path: Path, mode: str | None, gate: str) -> bool:
                 continue
             have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()]
             if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
+                found = [next((i for i, x in enumerate(steps[:at]) if matches(x, b)), None) for b in before]
+                if before and (job.get("runs-on") != "windows-latest" or None in found or found[-1] < max(found)):
+                    continue
                 if any(all(later.get(k) == SKIP_STEP[k] for k in ("if", "shell", "run")) for later in steps[at + 1:]):
                     return True
     return False
@@ -248,9 +297,12 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     public = o["profile"].get("visibility") == "public" and o["profile"].get("ci") == "github-actions"
     if flows and not public:
         return "이 저장소는 CI 워크플로를 두지 않는다 — " + ", ".join(flows[:5]) + " 를 지운다"
-    if public and not ci_file(path, held.get(CI), gate):
+    if public and not ci_file(path, held.get(CI), gate, before := required(o)):
         return (f"공개 저장소의 CI 워크플로(`{CI}`)가 없다 — 커밋된 보통 파일로, `on:` 트리거와 "
-                f"게이트(`{gate}`)를 `run` 하는 job step, 같은 job 에서 그 뒤에 README 턴이 준 건너뛴 테스트 요약 step 을 그대로 둔다")
+                f"게이트(`{gate}`)를 `run` 하는 job step, 같은 job 에서 그 뒤에 README 턴이 준 건너뛴 테스트 요약 step 을 그대로 둔다"
+                + ("; PC 앱이 있으면 그 job 은 `windows-latest` 에서 돌고, 게이트 step 앞에 선언한 도구마다의 `setup` step"
+                   + (", JDK 와 Android SDK 설정" if "android" in kinds_of(o) else "")
+                   + ", 그 뒤 도구가 모두 `PATH` 에 있는지 보는 step 을 README 턴이 준 그대로 둔다" if before else ""))
     if why := oneshot_build.pinned(path, o):
         return why
     # As at S7: the contract's command as the server stored it, then the adapter's gate, then each pinned case.
@@ -666,9 +718,7 @@ def asked(repo: str) -> None:
         unstaged(spec)   # a resume runs the final gate again, which freezes its own
         return oneshot_spec.store(repo).stop(STAGE, why) and None   # stopped: no next turn
     if keys := [key for key, (kind, *_) in ASSETS.items() if kind in kinds_of(spec["oneshot"])]:   # alone or among several
-        spec = oneshot_spec.saved(repo, oneshot={**released(spec, keys), "attached": spec["oneshot"]["final_head"]})
-    if oneshot_spec.held(spec["oneshot"]):   # a PC app's pull request is the next step's: the stop says what went up
-        return oneshot_spec.store(repo).stop("kind", oneshot_spec.kind_stop(STAGE, spec["oneshot"])["detail"]) and None
+        spec = oneshot_spec.saved(repo, oneshot=released(spec, keys))
     path, head = Path(spec["worktree"]), oneshot_spec.spec_of(repo)["oneshot"]["final_head"]
     spec = specs.update(repo, spec["id"], writing={"head": head, "asked": 1})
     said = decisions(spec["oneshot"])
