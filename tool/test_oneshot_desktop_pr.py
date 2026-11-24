@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from main import github_release, oneshot_build, oneshot_needs, oneshot_pr, oneshot_spec, pr_text, release, \
+from main import github_release, oneshot_build, oneshot_ci, oneshot_needs, oneshot_pr, oneshot_spec, pr_text, release, \
     release_desktop as rd
 from test_github_release import FakeGitHub
 from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -498,16 +498,17 @@ def public(*tools, part="build", **more):
                                           "stack": [{**o()["stack"][0], "part": part, "tools": list(tools)}], **more})
 
 
-def flow(*steps, runs="windows-latest") -> str:
-    """`ci.yml` with one job: a checkout, `steps`, the gate's step and the skipped-test summary."""
+def flow(*steps, runs="windows-latest", gate=None) -> str:
+    """`ci.yml` with one job: a checkout, `steps`, the gate's step (with `gate`'s fields) and the skipped-test
+    summary."""
 
     return yaml.safe_dump({"name": "ci", "on": ["push", "pull_request"], "jobs": {"gate": {"runs-on": runs, "steps": [
-        {"uses": "actions/checkout@v4"}, *steps, {"shell": "pwsh", "run": oneshot_pr.ci_gate(GATE)},
+        {"uses": "actions/checkout@v4"}, *steps, {"shell": "pwsh", "run": oneshot_pr.ci_gate(GATE), **(gate or {})},
         oneshot_pr.SKIP_STEP]}}}, sort_keys=False, width=1000)
 
 
 def ci(tree) -> bool:
-    return oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), GATE, oneshot_pr.required(o()))
+    return oneshot_pr.ci_file(tree, oneshot_pr.workflows(tree).get(oneshot_pr.CI), GATE, oneshot_ci.required(o()))
 
 
 def test_with_ci_off_no_workflow_is_asked_and_the_run_goes_on_to_its_pull_request(pc):
@@ -524,13 +525,13 @@ def test_with_ci_off_no_workflow_is_asked_and_the_run_goes_on_to_its_pull_reques
 def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_the_gate(pc):
     tree, _, _, _ = pc
     public(PYTHON, RUST, part="desktop.build", intent={"kind": "android", "kinds": ["android", "desktop"]}, device=DEVICE)
-    setup, path = oneshot_pr.ci_steps(o())
+    setup, path = oneshot_ci.ci_steps(o())
     assert setup == RUST["setup"] and path["run"].startswith("foreach ($tool in @('python', 'cargo'))")
     # A program or a script file, as `shutil.which` finds it: an alias or a function is no tool.
     assert "Get-Command $tool -CommandType Application,ExternalScript " in path["run"]
     for given in (False, [], None, "x"):   # inputs that are no mapping, though nothing was confirmed for them
-        assert not oneshot_pr.matches({"uses": "owner/setup@v1", "with": given}, {"uses": "owner/setup@v1"})
-    assert oneshot_pr.matches({"uses": "owner/setup@v1"}, {"uses": "owner/setup@v1"})
+        assert not oneshot_ci.matches({"uses": "owner/setup@v1", "with": given}, {"uses": "owner/setup@v1"})
+    assert oneshot_ci.matches({"uses": "owner/setup@v1"}, {"uses": "owner/setup@v1"})
     text = oneshot_pr.readme_text(spec())
     assert "`windows-latest`" in text and "actions/setup-java" in text and path["run"] in text
     assert "- uses: dtolnay/rust-toolchain@v1\n  with:\n    toolchain: stable\n" in text
@@ -544,9 +545,16 @@ def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_
                         ((*JAVA, {**setup, "continue-on-error": True}, path), False),
                         ((*JAVA, {**setup, "background": True}, path), False),   # still running at the gate
                         ((*JAVA, setup, {**path, "background": True}), False),
-                        ((*JAVA, setup, {**path, "if": "always()"}), False)]:
+                        ((*JAVA, setup, {**path, "if": "always()"}), False),
+                        (({**JAVA[0], "with": False}, JAVA[1], setup, path), False),   # the JDK's inputs unreadable
+                        (({**JAVA[0], "env": {"JAVA_OPTS": "-Xmx2g"}}, JAVA[1], setup, path), True),
+                        ((*JAVA, setup, {**path, "env": {"PATH": "C:\\tools"}}), False)]:   # another PATH checked
         readme(tree, (oneshot_pr.CI, flow(*steps)))
         assert ci(tree) is kept, steps
+    for gate, kept in [({"env": {"Path": "C:\\tools"}}, False),   # the gate on a PATH never checked
+                       ({"env": {"GRADLE_OPTS": "-Xmx2g"}}, True)]:
+        readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, gate=gate)))
+        assert ci(tree) is kept, gate
     readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, runs="ubuntu-latest")))
     assert not ci(tree)
 
@@ -554,7 +562,7 @@ def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_
 def test_with_ci_on_a_preinstalled_tool_needs_only_its_path_check(pc):
     tree, sent, _, _ = pc
     public(PYTHON)
-    [path] = oneshot_pr.ci_steps(o())
+    [path] = oneshot_ci.ci_steps(o())
     assert path["run"].startswith("foreach ($tool in @('python'))") and path["run"] in oneshot_pr.readme_text(spec())
     readme(tree, (oneshot_pr.CI, flow()))   # the gate with no check before it
     check(tree, answer(report()))()

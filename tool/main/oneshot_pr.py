@@ -28,7 +28,7 @@ import android_owned
 from common import errorlog, masked, shell
 from wiki import slots_for
 
-from . import github_release, oneshot_build, oneshot_calls, oneshot_device, oneshot_needs, oneshot_publish, oneshot_spec
+from . import github_release, oneshot_build, oneshot_calls, oneshot_ci, oneshot_device, oneshot_needs, oneshot_publish, oneshot_spec
 from . import pr_text, release, release_desktop, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
@@ -145,7 +145,7 @@ installer its release build makes, and how to run it.
                         "(a tool the image already has needs none), then the check that every declared tool is on "
                         f"`PATH`:\n\n```yaml\n{yaml.safe_dump(steps, sort_keys=False, allow_unicode=True, width=1000)}"
                         "```\n\n"
-                        if (steps := ci_steps(spec["oneshot"])) else "")
+                        if (steps := oneshot_ci.ci_steps(spec["oneshot"])) else "")
                      + "That job has no `if` or `needs`, and that step no `if` or `background`. "
                      "After that step, in the same job, add this step exactly as written; it lists in the run's "
                      f"summary the tests CI skipped for want of a secret:\n\n```yaml\n{SKIPS}```"
@@ -186,49 +186,11 @@ def ci_gate(gate: str) -> str:
     return shell.invoked(gate) if os.name == "nt" else gate
 
 
-def ci_steps(o: dict) -> list[dict]:
-    """A PC app's steps before its CI gate (plan 9e, "S8"): each declared tool's confirmed `setup` as written (none
-    for a `preinstalled` one), then a check that every declared tool is on `PATH`; none without a PC app."""
-
-    if (declared := oneshot_build.tools(o)) is None:
-        return []
-    names = ", ".join(f"'{t['name']}'" for t in declared)
-    check = (f"foreach ($tool in @({names})) {{ if (-not (Get-Command $tool -CommandType Application,ExternalScript "
-             '-ErrorAction SilentlyContinue)) { throw "$tool is not on PATH" } }')   # a file, as the gate finds it
-    return [dict(t["setup"]) for t in declared if isinstance(t.get("setup"), dict)] + [
-        {"name": "Declared tools on PATH", "shell": "pwsh", "run": check}]
-
-
-# An Android app's JDK and SDK setup the prompt names (`readme_text`), any version, required beside a PC app's steps.
-ANDROID_STEPS = [{"uses": "actions/setup-java"}, {"uses": "android-actions/setup-android"}]
-
-
-def required(o: dict) -> list[dict]:
-    """The steps S8 requires before the gate's in a PC app's CI job, the `PATH` check last; none without one."""
-
-    return (ANDROID_STEPS if "android" in kinds_of(o) else []) + steps if (steps := ci_steps(o)) else []
-
-
-def matches(step: dict, want: dict) -> bool:
-    """A step that is `want`, name aside: the same action and inputs or `run` lines and shell, no `if` to skip it nor
-    failure to go past. A `uses` without `@` is that action at any version, with any inputs."""
-
-    if step.get("if") is not None or any(step.get(k) not in (None, False) for k in ("continue-on-error", "background")):
-        return False   # skipped, gone past, or still running when the gate starts
-    if "run" in want:
-        lines = [[x.strip() for x in str(s.get("run") or "").splitlines() if x.strip()] for s in (step, want)]
-        return lines[0] == lines[1] and step.get("shell") == want.get("shell")
-    if "@" not in want["uses"]:
-        return str(step.get("uses") or "").startswith(want["uses"] + "@")
-    return step.get("uses") == want["uses"] and isinstance(step.get("with", {}), dict) and {   # inputs read as text
-        k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in (step.get("with") or {}).items()
-    } == dict(want.get("with") or {})
-
-
 def ci_file(path: Path, mode: str | None, gate: str, before: list[dict] = ()) -> bool:
     """`ci.yml` committed as a plain file (a link points anywhere) whose workflow has a trigger and a
     job step that runs the gate, followed in that job by `SKIPS`: a comment or an empty job is no CI. With `before`,
-    that job runs on `windows-latest` with each of those steps before the gate's, the last after the others."""
+    that job runs on `windows-latest` with each of those steps before the gate's, the last after the others, and
+    the gate's step sets no `PATH` of its own."""
 
     if mode not in ("100644", "100755"):
         return False
@@ -257,8 +219,9 @@ def ci_file(path: Path, mode: str | None, gate: str, before: list[dict] = ()) ->
                 continue
             have = [line.strip() for line in str(s.get("run") or "").splitlines() if line.strip()]
             if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
-                found = [next((i for i, x in enumerate(steps[:at]) if matches(x, b)), None) for b in before]
-                if before and (job.get("runs-on") != "windows-latest" or None in found or found[-1] < max(found)):
+                found = [next((i for i, x in enumerate(steps[:at]) if oneshot_ci.matches(x, b)), None) for b in before]
+                if before and (job.get("runs-on") != "windows-latest" or None in found or found[-1] < max(found)
+                               or "PATH" in {str(k).upper() for k in s.get("env") or {}}):   # the PATH checked
                     continue
                 if any(all(later.get(k) == SKIP_STEP[k] for k in ("if", "shell", "run")) for later in steps[at + 1:]):
                     return True
@@ -297,7 +260,7 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     public = o["profile"].get("visibility") == "public" and o["profile"].get("ci") == "github-actions"
     if flows and not public:
         return "이 저장소는 CI 워크플로를 두지 않는다 — " + ", ".join(flows[:5]) + " 를 지운다"
-    if public and not ci_file(path, held.get(CI), gate, before := required(o)):
+    if public and not ci_file(path, held.get(CI), gate, before := oneshot_ci.required(o)):
         return (f"공개 저장소의 CI 워크플로(`{CI}`)가 없다 — 커밋된 보통 파일로, `on:` 트리거와 "
                 f"게이트(`{gate}`)를 `run` 하는 job step, 같은 job 에서 그 뒤에 README 턴이 준 건너뛴 테스트 요약 step 을 그대로 둔다"
                 + ("; PC 앱이 있으면 그 job 은 `windows-latest` 에서 돌고, 게이트 step 앞에 선언한 도구마다의 `setup` step"
