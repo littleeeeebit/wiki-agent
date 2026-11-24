@@ -136,8 +136,7 @@ def word_of(part: str) -> tuple[str, str]:
 
 
 def links(command: str) -> list[str]:
-    """`command`'s chain parts, cut at each `&&` outside quoted text (a quoted label or the server's own report
-    path may hold one)."""
+    """`command`'s chain parts, cut at each `&&` outside quoted text (a quoted label or report path may hold one)."""
 
     bare, cuts, start = syntax(command)[0], [], 0
     for m in re.finditer("&&", bare):
@@ -185,10 +184,9 @@ def resolve_tools(repo: str, stage: str) -> bool:
 
 
 def run_as(command: str, o: dict, path: Path) -> str:
-    """`command` with every program it starts given as an explicit path: a declared tool's, found for this
-    stage (`resolve_tools`), or a worktree file's, read again now, so the shell looks nothing up and the program
-    checked is the program run. A program with neither is refused before anything runs. A run without a PC app
-    runs the command as it is."""
+    """`command` with every program it starts given as an explicit path: a declared tool's, found for this stage
+    (`resolve_tools`), or a worktree file's, read again now, so the shell looks nothing up and the program checked
+    is the program run. A program with neither is refused before anything runs; without a PC app, it runs as is."""
 
     if (declared_tools := tools(o)) is None:
         return command
@@ -205,8 +203,8 @@ def run_as(command: str, o: dict, path: Path) -> str:
 
 
 def send(repo: str, stage: str, text: str) -> None:
-    """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage, and
-    the instruction the person queued for the worktree goes then, as after a turn."""
+    """One work turn for `stage` in the spec's worktree, answering only the refusal its `text` was `composed` with;
+    a turn that cannot be sent stops the stage, and the instruction the person queued for the worktree goes then."""
 
     if stopped_for_kind(repo) or not resolve_tools(repo, stage):
         return
@@ -229,11 +227,13 @@ def send(repo: str, stage: str, text: str) -> None:
     release.held = held.held
     turn = None
     try:
+        due = getattr(text, "refusal", None)   # bound to this turn alone
         cfg = oneshot.role_config("build", store)
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
         store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
-                  inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token})
+                  inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
+                  sent_refusal=due and {**due, "turn": turn.token})
         if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
             oneshot_spec.saved(repo, adapter=True)
         work.begin(path, chat, text, release, turn)
@@ -261,8 +261,7 @@ TOOLCHAIN = ("JAVA_HOME", "ANDROID_HOME", "ANDROID_USER_HOME", "GRADLE_USER_HOME
 
 
 def toolchain(spec: dict) -> dict | None:
-    """The environment an Android run's tests and gate run in, or `None` for the server's own; either with the
-    owner's secrets for the outside calls."""
+    """An Android run's tests and gate environment, or `None` for the server's; either with the owner's secrets."""
 
     return oneshot_needs.gate_env(spec, oneshot_android.build_env() if shape(spec["oneshot"]) == "android" else None)
 
@@ -602,7 +601,6 @@ def snapshot(path: Path, names: list[str]) -> dict[str, bytes | None]:
 
 
 # -- The two checks --------------------------------------------------------------------
-
 def owns(spec: dict) -> bool:
     """Every turn in a oneshot spec's worktree until the oneshot publishes: none of them may reach the
     general path, which publishes a pull request, before that. After it the task is an ordinary one under
@@ -613,8 +611,7 @@ def owns(spec: dict) -> bool:
 
 
 def checked(path: Path, run, spec: dict, final: str):
-    """`specs._check`'s hand-over: the stage's check, then the next turn to send; a person's turn, or one in a
-    stage S4 does not own, changes nothing."""
+    """`specs._check`'s hand-over: the stage's check, then the next turn; a person's turn, or one S4 does not own, is left."""
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
     if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
@@ -645,9 +642,12 @@ def checked(path: Path, run, spec: dict, final: str):
     if attempts >= MAX_ATTEMPTS or run.halt.is_set():
         store.stop(stop, why)
         return None
-    return unless_stopped(run, repo, lambda: send(repo, stage, masked(   # as composed: a value can span the words
+    from . import oneshot_answers as sent   # it imports this module
+    due, more = sent.carried(was, run)   # the refusal this turn was sent, bound now while it holds the tree
+    text = sent.composed(masked(   # as composed: a value can span the words
         f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
-        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else "."), hide)))
+        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else "."), hide) + more, due)
+    return unless_stopped(run, repo, lambda: send(repo, stage, text))
 
 
 def unless_stopped(run, repo: str, then):
@@ -727,10 +727,10 @@ def built(path: Path, run, spec: dict, final: str) -> str:
 
     o = spec["oneshot"]
     from . import oneshot_answers as sent, oneshot_measure   # they import this module
-    if why := sent.unchanged(path, o) or reported(spec, final) or pinned(path, o):
+    if why := sent.unchanged(path, o, getattr(run, "token", None)) or reported(spec, final) or pinned(path, o):
         return why
     try:
-        answers = sent.answered(path, spec, final)
+        answers = sent.answered(path, spec, final, getattr(run, "token", None))
         gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
         oneshot_measure.planned(path, spec, "HEAD")   # committed, as the screen reads it: never an ignored file
     except ValueError as e:

@@ -523,10 +523,13 @@ def failure(record: dict) -> str:
 
 
 def fixing(spec: dict) -> str:
-    """The build turn after the measurement of the built HEAD failed, or the owner refused it; empty when no
-    such measurement stands."""
+    """The build turn after the committed plan no longer held, the measurement of the built HEAD failed, or the
+    owner refused it; empty when none of them stands. `[재개]` sends it again (`oneshot_review.build_turn`)."""
 
     o = spec["oneshot"]
+    if o.get("fix") == "plan":
+        return (f"The committed `{PLAN}` no longer holds: {o.get('broken')}\n\nFix it and end this turn on a new "
+                "commit; the measurement runs before any review.\n\n" + oneshot_build.build_text(spec))
     last = (o.get("measures") or [None])[-1]
     if not last or last["head"] != o.get("built_head"):
         return ""
@@ -638,10 +641,9 @@ def start(repo: str, body: Start) -> dict:
         if body.head != o.get("built_head"):
             raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
         if broken:   # the committed plan no longer holds: only the build agent can fix it
-            spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "fix": None, "attempts": 0, "working": "build",
-                                                     "stopped": None})
-            text = (f"The committed `{PLAN}` no longer holds: {broken}\n\nFix it and end this turn on a new commit; "
-                    "the measurement runs before any review.\n\n" + oneshot_build.build_text(spec))
+            spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "fix": "plan", "broken": broken, "attempts": 0,
+                                                     "working": "build", "stopped": None})
+            text = fixing(spec)
             then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
         elif (last := (o.get("measures") or [None])[-1]) and last["head"] == o["built_head"] \
                 and last["status"] == "failed":   # the capped failure goes to the build agent, never measured again

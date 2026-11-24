@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 from agent import read_tools
 
-from . import oneshot, oneshot_build, oneshot_desktop, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
+from . import oneshot, oneshot_answers, oneshot_build, oneshot_desktop, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
 from .oneshot_profile import environment, kinds_of, shape
 from .query import ROOT, _lock as work_lock, hold
 
@@ -621,20 +621,20 @@ def to_build(repo: str, o: dict, reviews: list[dict], found: dict, **fields):
 
     spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "reviews": reviews, "attempts": 0, "working": "build",
                                              "fix": "review", "later": later_of(o, found), **fields})
-    text = fixing(spec, found)
-    replacing(repo, spec["oneshot"], found)
+    text = oneshot_answers.composed(fixing(spec, found), replacing(repo, spec["oneshot"], found))
     return lambda: oneshot_build.send(repo, "build", text)
 
 
-def replacing(repo: str, o: dict, found: dict) -> None:
-    """The areas whose mechanism the build turn for `found`, the last of `o`'s reviews, is told to replace,
-    whichever path sends that turn: a refusal under the cap, or `[재개]` after the cap stopped it. They count as
-    replaced only once a build passes its checks (`oneshot_answers.passed`): a turn that never ran is told again."""
+def replacing(repo: str, o: dict, found: dict) -> dict:
+    """The areas the build turn for `found`, the last of `o`'s reviews, is told to replace, on either path (under
+    the cap, or `[재개]` after it), replaced once a build passes; returned: the refusal that turn's text carries."""
 
     serious = [f for f in blocking(found) if not ruled_out(o, f)]
     new = stuck_areas((o.get("reviews") or [])[:-1], serious, o.get("replaced") or [])
     if new != (o.get("replacing") or []):
         oneshot_spec.saved(repo, oneshot={"replacing": new or None})
+    return {"head": found["head"], "areas": sorted({area_of(f) for f in serious}),
+            "sent": [n for n, f in enumerate(found["findings"]) if f in serious]}   # each finding sent, by its index
 
 
 def later_of(o: dict, found: dict) -> list[dict]:
@@ -767,15 +767,14 @@ def build_turn(spec: dict) -> str:
     (`oneshot_measure.fixing`) or the review's refusal of the built HEAD."""
 
     o = spec["oneshot"]
-    if o.get("fix") == "measure":
+    if o.get("fix") in ("measure", "plan"):
         from . import oneshot_measure   # it imports this module
         if text := oneshot_measure.fixing(spec):
             return text
-    if not (last := standing(o)):
+    # Only a build the review sent back resends it; one saved before `fix` was kept is a plain build (owner).
+    if o.get("fix") != "review" or not (last := standing(o)):
         return oneshot_build.build_text(spec)
-    text = fixing(spec, last)
-    replacing(spec["repo"], o, last)
-    return text
+    return oneshot_answers.composed(fixing(spec, last), replacing(spec["repo"], o, last))
 
 
 def standing(o: dict) -> dict | None:

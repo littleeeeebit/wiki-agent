@@ -609,7 +609,7 @@ def test_an_answered_area_is_rebutted_or_left_out_and_two_answered_rounds_go_to_
 
 def test_a_build_resumed_at_the_cap_replaces_a_stuck_mechanism_once_and_remembers_it(reviewed):
     tree, head, _ = reviewed
-    oneshot_spec.saved("budget", oneshot={"stage": "build", "reviews": [
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "reviews": [   # as the capped `[재개]` saves it
         {"verdict": "refuse", "head": h, "findings": [P1]} for h in ("old1", "old2", head)]})
     assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
     assert o()["replacing"] == ["amount validation"] and not o().get("replaced")
@@ -735,36 +735,65 @@ def test_a_head_refused_in_an_earlier_round_is_never_built_on_again(reviewed):
 def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     tree, head, _ = reviewed
     from main import oneshot_answers
+
+    def answered(s, final):   # as the check of the turn `t` reads it
+        return oneshot_answers.answered(tree, s, final, "t")
+
     for name in ("test_pin.py", "test_other.py"):
         (tree / name).write_text("def test_old():\n    assert True\n", encoding="utf-8")
         git(tree, "add", name)
     git(tree, "commit", "-m", "pins")
     refused = git(tree, "rev-parse", "HEAD")
-    oneshot_spec.saved("budget", oneshot={"fix": "review", "reviews": [{"verdict": "refuse", "head": refused,
-                                                                         "findings": [P1]}]})
+    settled = {**P1, "area": "refund wording", "location": "budget_app.py:1"}   # the owner ruled it for the builder
+    twin = {**P1, "severity": "P0", "reason": "합계가 깨진다"}   # P1's spot; a ruling for the builder never drops a P0
+    ruled = {"refund wording": {"keep": "build"}, "amount validation": {"keep": "build"}}
+    oneshot_spec.saved("budget", oneshot={"built_head": refused, "rulings": ruled, "reviews": [
+        {"verdict": "refuse", "head": refused, "findings": [P1, settled, twin]}]})
+    s = specs.load("budget", oneshot.BRANCH)
+    with pytest.raises(ValueError, match="하나만"):   # no turn sent it yet, as for a plan-repair turn
+        answered(s, "```oneshot-answers\n[]\n```\n")
+    due = oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is composed
+    assert oneshot_answers.composed("the refusal's turn", due).refusal == due   # what `send` binds to the turn `t`
+    oneshot_spec.saved("budget", oneshot={"sent_refusal": {**due, "turn": "t"}})
+    assert oneshot_answers.carried(o(), SimpleNamespace(token="u")) == (None, "")   # a turn it was never sent to
+    assert oneshot_answers.carried(o(), SimpleNamespace(person=True)) == (None, "")   # a person's turn has none
+    kept, more = oneshot_answers.carried(o(), SimpleNamespace(token="t"))   # the retry or the guidance after `t`
+    assert kept["head"] == refused and "amount validation" in more and "refund wording" not in more
+    assert "합계가 깨진다" in more and "음수 금액을 받는다" not in more   # the P0 it was sent, never the P1 at its spot
+    # A turn that ends on the refused HEAD is offered the answer only when that refusal was sent to it.
+    assert "oneshot-answers" in oneshot_answers.unchanged(tree, o(), "t")
+    assert "oneshot-answers" not in oneshot_answers.unchanged(tree, o(), "u")
     (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\ndef test_refund():\n    pass\n", encoding="utf-8")
     git(tree, "commit", "-am", "a new pin")
     (tree / "test_other.py").write_text("def test_late():\n    pass\n", encoding="utf-8")   # never committed
 
-    def answer(test):
+    def answer(test, area="amount validation"):
         return "```oneshot-answers\n" + json.dumps([{
-            "area": "amount validation", "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
+            "area": area, "location": "budget_app.py:2", "evidence": "환불", "breaks": ["R1"],
             "test": test}]) + "\n```\n"
     s = specs.load("budget", oneshot.BRANCH)
     with pytest.raises(ValueError, match="새로 더한"):
-        oneshot_answers.answered(tree, s, answer("test_other.py::test_late"))
+        answered(s,answer("test_other.py::test_late"))
     git(tree, "rm", "-q", "--cached", "test_other.py")
     git(tree, "commit", "-m", "the other file deleted")
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # in the diff, but not in the commit the review reads
-        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
+        answered(s,answer("test_other.py::test_old"))
     (tree / "test_other.py").unlink()
     (tree / "test_other.py").mkdir()
     (tree / "test_other.py" / "test_in.py").write_text("def test_old():\n    pass\n", encoding="utf-8")
     git(tree, "add", "test_other.py/test_in.py")
     git(tree, "commit", "-m", "a folder where the file was")
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # a folder at that path is no test file
-        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
-    assert oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
+        answered(s,answer("test_other.py::test_old"))
+    with pytest.raises(ValueError, match="위치가 아니다"):   # its area was sent, but no finding at that location
+        answered(s, answer("test_pin.py::test_refund").replace("budget_app.py:2", "budget_app.py:9"))
+    with pytest.raises(ValueError, match="하나만"):   # another turn than the one it was sent to
+        oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"), "u")
+    assert answered(s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
+    with pytest.raises(ValueError, match="이번 거절의 영역이 아니다"):   # the settled area was never sent
+        answered(s,answer("test_pin.py::test_refund", "refund wording"))
+    # A build that passes ends what the refusal sent: a later turn for something else answers none of it.
+    assert oneshot_answers.passed(tree, s["oneshot"], [])["sent_refusal"] is None
 
 
 def test_a_replacement_counts_only_where_the_turn_changed_the_refused_lines_and_did_not_answer(reviewed):

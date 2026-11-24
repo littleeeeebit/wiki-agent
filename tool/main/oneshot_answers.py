@@ -22,13 +22,15 @@ class Again(str):
     that ended without a commit is a bug of the turn, never a stop (owner decision)."""
 
 
-def unchanged(path: Path, o: dict) -> str:
+def unchanged(path: Path, o: dict, turn: str | None = None) -> str:
     """Why the build ended on a HEAD the review refused, or one whose measurement failed or the owner refused, as
     an `Again`, or empty. Any such HEAD, the last or an earlier one gone back to, is never read again: the turn
-    commits its fix, or the tests that pin what it answered with evidence."""
+    commits its fix, or, when that refusal was sent to this `turn`, the tests that pin what it answered."""
 
-    now = oneshot_build.head(path)
+    now, sent = oneshot_build.head(path), o.get("sent_refusal") or {}
     if now in {r["head"] for r in o.get("reviews") or [] if r["verdict"] == "refuse"}:
+        if not sent.get("turn") or sent["turn"] != turn or sent.get("head") != now:
+            return Again(f"리뷰가 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 고친 코드를 커밋한다")
         return Again(f"리뷰가 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 고친 코드를 커밋하거나, 고치지 않고 "
                      "증거로 답한 발견마다 그 동작을 고정하는 테스트를 커밋하고 `oneshot-answers` 에 적는다")
     if now in {m["head"] for m in o.get("measures") or []
@@ -40,7 +42,7 @@ def unchanged(path: Path, o: dict) -> str:
 ANSWER = re.compile(r"^```oneshot-answers[ \t]*\r?\n(.*?)^```[ \t]*$", re.M | re.S)
 
 
-def answered(path: Path, spec: dict, final: str) -> list[dict]:
+def answered(path: Path, spec: dict, final: str, turn: str | None = None) -> list[dict]:
     """The turn's `oneshot-answers`: each finding of the standing refusal it answered with evidence instead of a
     change, the requirement a change would break, and the test committed since that refusal which pins the
     behaviour it defends. `ValueError` says what is wrong; a turn sent back by nothing answers nothing."""
@@ -51,14 +53,18 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
     found = ANSWER.findall(final)
     if not found:
         return []
-    last = (o.get("reviews") or [None])[-1]
-    if len(found) > 1 or o.get("fix") != "review" or not last or last["verdict"] != "refuse":
+    # Only the refusal this very `turn` was sent (`carried`, recorded as `send` began it), and only the areas it
+    # sent: never one the owner ruled for the builder, nor one another turn carried.
+    sent = o.get("sent_refusal") or {}
+    last = next((r for r in reversed(o.get("reviews") or [])
+                 if r["verdict"] == "refuse" and r["head"] == sent.get("head")), None)
+    if len(found) > 1 or not last or not sent.get("turn") or sent["turn"] != turn:
         raise ValueError("`oneshot-answers` 는 리뷰가 거절해 돌아온 빌드 턴에 하나만 적는다")
     try:
         value = json.loads(found[0])
     except ValueError as exc:
         raise ValueError(f"`oneshot-answers` 가 JSON 이 아니다 — {exc}") from None
-    areas = {oneshot_review.area_of(f) for f in oneshot_review.blocking(last)}
+    areas = set(sent["areas"])
     anchors, out, changed = oneshot_review.anchors(spec), [], None
     for n, a in enumerate(value if isinstance(value, list) else [None]):
         where = f"`oneshot-answers`[{n}]"
@@ -67,6 +73,9 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
             raise ValueError(f"{where}: area, location, evidence, breaks, test 를 적는다")
         if oneshot_review.area_of(a) not in areas:
             raise ValueError(f"{where}: `{a['area']}` 는 이번 거절의 영역이 아니다 — 발견의 `area` 를 그대로 적는다")
+        if spot(a) not in [spot(last["findings"][i]) for i in sent.get("sent", [])]:   # only a finding it was sent
+            raise ValueError(f"{where}: `{a['location']}` 는 이번 턴에 보낸 `{a['area']}` 발견의 위치가 아니다 — "
+                             "그 발견의 `location` 을 그대로 적는다")
         if not isinstance(a.get("breaks"), list) or not a["breaks"] or not all(isinstance(b, str) and b in anchors
                                                                               for b in a["breaks"]):
             raise ValueError(f"{where}: `breaks` 는 고치면 깨지는 설계 항목·요구 번호의 목록이다")
@@ -81,6 +90,55 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
         out.append({"round": len(o["reviews"]), "head": last["head"], "area": " ".join(a["area"].split()),
                     **{k: a[k].strip() for k in ("location", "evidence", "test")}, "breaks": a["breaks"]})
     return out
+
+
+class Composed(str):
+    """A turn's text with the refusal it was composed from: the permission travels with the prompt, so no other
+    turn, sent between its composing and its sending, can take it or clear it."""
+
+    refusal: dict | None = None
+
+
+def composed(text: str, refusal: dict | None) -> str:
+    out = Composed(text)
+    out.refusal = refusal
+    return out
+
+
+def carried(o: dict, carry) -> tuple[dict | None, str]:
+    """For a turn that carries on from the turn `carry` (the server's retry, the author's guidance), read while
+    `carry` still holds the tree: the refusal `carry` itself was sent, and its findings to add to the text; nothing
+    when `carry` was sent none, as a person's turn never is. The caller `composed`s its text with both."""
+
+    sent = o.get("sent_refusal") or {}
+    if not sent.get("turn") or sent["turn"] != getattr(carry, "token", None):
+        return None, ""
+    return sent, still(o)
+
+
+def spot(f: dict) -> list[str]:
+    """A finding, or an answer to one, by its area and location: an answer names a finding it was sent this way.
+    One that shares a sent finding's spot with a finding left out answers the sent one, as it was sent."""
+
+    from . import oneshot_review   # it imports `oneshot_build`, which imports this module
+
+    return [oneshot_review.area_of(f), " ".join(str(f.get("location") or "").split())]
+
+
+def still(o: dict) -> str:
+    """The refusal a build turn was sent (`sent_refusal`), again with its findings for a turn that carries on from
+    it: a conversation the provider had to start afresh reads them there too."""
+
+    sent = o.get("sent_refusal") or {}
+    last = next((r for r in reversed(o.get("reviews") or [])
+                 if r["verdict"] == "refuse" and r["head"] == sent.get("head")), None)
+    if not last:
+        return ""
+    findings = [last["findings"][i] for i in sent.get("sent", [])]   # exactly those its turn was sent
+    return (f"\n\nThe review's refusal of HEAD `{sent['head']}` still stands: fix the findings below where they "
+            "point, or answer them in one `oneshot-answers` block. The areas it may answer: "
+            + ", ".join(f"`{a}`" for a in sent["areas"]) + ".\n\n```json\n"
+            + json.dumps(findings, ensure_ascii=False, indent=2) + "\n```")
 
 
 def committed(path: Path, rev: str, file: str) -> str:
@@ -178,5 +236,6 @@ def passed(path: Path, o: dict, answers: list[dict]) -> dict:
     done = [area for area in asked if changed and area not in defended and any(
         oneshot_review.touched(f["location"], changed) for f in oneshot_review.blocking(last)
         if oneshot_review.area_of(f) == area)]
-    return {"answers": [*(o.get("answers") or []), *answers], "replacing": None, "run_cases": o.get("run_cases"),
+    return {"answers": [*(o.get("answers") or []), *answers], "replacing": None, "sent_refusal": None,
+            "run_cases": o.get("run_cases"),
             "replaced": sorted({*(o.get("replaced") or []), *done})}
