@@ -332,8 +332,12 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
     if not isinstance(value, dict):
         return {"error": "`report.json` 은 metrics 를 담은 객체다"}
     if isinstance(bad := value.get("input_error"), dict) and isinstance(bad.get("why"), str):
-        return {"input_error": {"input": masked(str(bad.get("input") or ""), hide)[:40], "why": masked(bad["why"], hide)[:MAX_TEXT],
-                                "checked": masked(c if isinstance(c := bad.get("checked"), str) else "", hide)[:MAX_TEXT]}}
+        if (x := next((x for x in plan["inputs"] if x["id"] == bad.get("input")), None)) is None:   # the build's to fix
+            return {"error": masked(f"`report.json` 의 input_error 가 실측 계획에 없는 입력을 가리킨다: {str(bad.get('input'))[:40]}", hide)}
+        checked = masked(c.strip() if isinstance(c := bad.get("checked"), str) else "", hide)[:MAX_TEXT]
+        return {"input_error": {"input": x["id"], "env": x["env"], "what": x["what"], "why": masked(bad["why"], hide)[:MAX_TEXT],
+                                "said": masked(f"실측 스크립트가 주인이 넣은 입력 {x['id']} 이 틀렸다고 했다 — 빌드가 프로그램부터 고친다", hide),
+                                "asked": checked and masked(f"입력 {x['id']} 이 틀렸다고 빌드가 확인했다 — {checked} — 고쳐 넣고 [실측 시작]을 누른다", hide)}}
     got = value.get("metrics") if isinstance(value.get("metrics"), dict) else {}
     rows = []
     for m in plan["metrics"]:
@@ -455,7 +459,7 @@ def decided(repo: str, store, record: dict, since: int):
 
 def result(repo: str, store, record: dict):
     """A measurement saved. One the owner must judge waits; a failure goes to the build agent, up to the review's
-    round cap. A wrong input is one too, the owner's stop only once the build was sent it and names a check (13e)."""
+    round cap; a wrong input is one too, the owner's only once the build was sent it and names a check (13e)."""
 
     from . import oneshot_review   # it imports this module
 
@@ -473,23 +477,22 @@ def result(repo: str, store, record: dict):
         oneshot_spec.saved(repo, oneshot={"measures": runs})
         store.stop("measure", record["error"])
         return None
-    disputed = None
+    sent, dispute = o.get("input_sent") or {}, {}
     if record["status"] == "input":   # the owner gave it: the build proves it wrong before the owner is asked
         bad = record["input_error"]
-        if o.get("input_sent") == bad["input"] and bad["checked"]:
+        if (same := all(sent.get(k) == bad[k] for k in ("input", "env", "what"))) and bad["asked"]:   # sent it, unchanged
             oneshot_spec.saved(repo, oneshot={"measures": runs, "input_sent": None})   # pressed again: the build's again
-            store.stop("measure-input", f"입력 {bad['input']} 이 틀렸다고 빌드가 확인했다 — {bad['checked']} — 고쳐 넣고 [실측 시작]을 누른다")
+            store.stop("measure-input", bad["asked"])
             return None
-        disputed = bad["input"]
-        runs[-1] = record = {**record, "status": "failed", "error": f"실측 스크립트가 주인이 넣은 입력 {disputed} 이 틀렸다고 했다. "
-                             f"서버는 그 말만 믿지 않고 빌드가 프로그램부터 고친다 — 프로그램이 남긴 이유: {bad['why']}"}
-    fails = int(o.get("measure_fails") or 0) + 1
+        dispute ={k: bad[k] for k in ("input", "env", "what")} | {"fails": (sent.get("fails") or 0) * same + 1}   # outlives a machine pass
+        runs[-1] = record = {**record, "status": "failed", "error": bad["said"]}
+    fails = max(int(o.get("measure_fails") or 0) + 1, dispute.get("fails", 0))
     if fails >= oneshot_review.cap():
-        oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails})
+        oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails, "input_sent": dispute or sent or None})
         store.stop("measure", f"실측이 {fails}번 실패했다 — {failure(record)}")
         return None
     spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails, "stage": "build", "fix": "measure",
-                                             "attempts": 0, "working": "build", "input_sent": disputed})
+                                             "attempts": 0, "working": "build", "input_sent": dispute or sent or None})
     text = fixing(spec)
     return lambda: oneshot_build.send(repo, "build", text)
 
@@ -522,12 +525,9 @@ def fixing(spec: dict) -> str:
     if last["status"] == "failed":
         auto, bad = last.get("mode") == "auto", last.get("input_error")
         why = (f"The {'server' + chr(39) + 's own ' if auto else ''}real measurement of HEAD `{last['head']}` failed: "
-               + (f"the measuring script reported the owner's input `{bad['input']}` as wrong: {bad['why']}\n\nThe owner "
-                  "gave that input and it stands: the cause is most likely the program. Check the input against the real "
-                  "service by a call outside the code that refused it (for a live broadcast, whether the platform says "
-                  "it is live now) and fix the program. Only if that check shows the input wrong, add `\"checked\": "
-                  "\"<Korean: the check and what the service answered>\"` to the `input_error`; the owner reads it.\n\n" if bad
-                  else f"{failure(last)}.\n\n")
+               + (f"the measuring script reported the owner's input `{bad['input']}` as wrong: {bad['why']}\n\nThe owner's "
+                  "input stands: check it against the real service outside the code that refused it and fix the program, "
+                  "or name that check in `checked` as the measurement contract below says.\n\n" if bad else f"{failure(last)}.\n\n")
                + ("Only the metrics that failed are below; those that need a person were not judged in this "
                   "measurement.\n\n" if auto else "")
                + f"The metrics {'that failed' if auto else 'as measured'}:\n\n```json\n"
@@ -585,8 +585,8 @@ def shown_input(spec: dict, plan: dict, iid: str, body: Value) -> dict:
 
 
 def plain_input(spec: dict, given: dict) -> dict:   # the same values again change nothing, a waiting result included
-    return spec if given == kept(spec) else retire(
-        spec, "입력이 바뀌었다 — 이 결과는 판정하지 않고 바뀐 입력으로 다시 잰다", measure_given=given)
+    return spec if given == kept(spec) else retire(   # a changed value is the build's to see first again (13e)
+        spec, "입력이 바뀌었다 — 이 결과는 판정하지 않고 바뀐 입력으로 다시 잰다", measure_given=given, input_sent=None)
 
 
 def retire(spec: dict, why: str, **fields) -> dict:
@@ -647,8 +647,8 @@ def start(repo: str, body: Start) -> dict:
             then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
         elif (last := (o.get("measures") or [None])[-1]) and last["head"] == o["built_head"] \
                 and last["status"] == "failed":   # the capped failure goes to the build agent, never measured again
-            spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "fix": "measure", "attempts": 0, "measure_fails": 0,
-                                                     "working": "build", "stopped": None})
+            spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "fix": "measure", "attempts": 0, "measure_fails": 0, "working": "build",
+                                                     "stopped": None, "input_sent": (s := o.get("input_sent")) and {**s, "fails": 0}})
             text = fixing(spec)
             then = lambda: oneshot_build.send(repo, "build", text)   # noqa: E731
         else:   # the same lock scope decides and launches: no other request's result slips in between
@@ -790,9 +790,9 @@ oneshot_spec.VIEWS.append(shown)
 def secret_changed(repo: str, env: str):   # the fields to put back if the store refuses, or `None`
     """A secret about to change by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran
     with it. A running one is set aside when it ends, by `oneshot_needs.CHANGES`, counted once the store changed."""
-    spec = oneshot_spec.spec_of(repo)
-    if retire(spec, "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다") is not spec:
-        return {"measures": spec["oneshot"]["measures"]}
+    o = (spec := oneshot_spec.spec_of(repo))["oneshot"]   # a changed value is the build's to see first again (13e)
+    if retire(spec, "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다", **({"input_sent": None} if o.get("input_sent") else {})) is not spec:
+        return {"measures": o.get("measures") or [], "input_sent": o.get("input_sent")}
 
 
 oneshot_needs.CHANGED.append(secret_changed)

@@ -132,15 +132,25 @@ as a wrong input, in English. Each new address the owner gave stopped the
 same way.
 
 The owner gave the input, so the script's `input_error` is not the owner's
-stop by itself. The server saves it as a failed measurement whose `error` is
-a Korean sentence of its own. The failure is counted like any other, and the
-build turn is told the input stands, to check it against the service by a
-call outside the program and to fix the program. It names the first such
-report's input in `input_sent`. The owner is stopped only when the next report on
-that input carries `checked`, the Korean account of the check made outside
-the program and what the service answered, and reads that text. Pressing
-`[실측 시작]` again with the same value sends the next such report to the build
-again.
+stop by itself. The rules:
+
+- A report whose `input_error` names no input the plan declares is a failed
+  report, the build's like any other.
+- Otherwise the server saves a failed measurement whose `error`, what the
+  card shows, is a Korean sentence of its own; the script's reason goes only
+  to the build turn. The build turn is told the input stands, to check it
+  against the service by a call outside the program and to fix the program.
+- `input_sent` names the input sent (its id, `env` and `what`) with its own
+  failure count. A machine pass leaves that count, so an input only the
+  owner's measurement uses still reaches the round cap; the cap's retry
+  resets it with `measure_fails`.
+- The owner is stopped only when a report on that same input carries a
+  non-blank `checked`, the Korean account of the check made outside the
+  program and what the service answered. The owner reads a sentence the
+  server writes around it, masked as a whole.
+- Any change of an input's value, and the owner's stop itself, clear
+  `input_sent`: the next such report goes to the build first. Pressing
+  `[실측 시작]` again with the same value is how the owner says it stands.
 
 A program that leaves the owner's screen empty, opens no window of its own,
 or plays no sound the owner can hear is the owner's to refuse; the note says
