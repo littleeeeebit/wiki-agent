@@ -31,10 +31,23 @@ def required(o: dict) -> list[dict]:
     return (ANDROID_STEPS if "android" in kinds_of(o) else []) + steps if (steps := ci_steps(o)) else []
 
 
+def placed(flow: dict, job: dict, gate: dict) -> bool:
+    """A PC app's CI job as S8 requires it around the steps: on `windows-latest`, its gate's step in `pwsh` (the
+    gate is written for PowerShell, `shell.invoked`) on the `PATH` the check saw, and every step run from the
+    repository root, as the confirmed setup and the gate were written."""
+
+    env = gate.get("env", {})
+    runs = [d.get("run") for d in (flow.get("defaults"), job.get("defaults")) if isinstance(d, dict)]
+    return (job.get("runs-on") == "windows-latest" and gate.get("shell") == "pwsh"
+            and gate.get("working-directory") is None and isinstance(env, dict)   # an environment Actions reads
+            and "PATH" not in {str(k).upper() for k in env}
+            and not any(isinstance(r, dict) and r.get("working-directory") is not None for r in runs))
+
+
 def matches(step: dict, want: dict) -> bool:
     """A step that is `want`, name aside: the same action and inputs or `run` lines and shell, no `if` to skip it nor
-    failure to go past, nor an `env` of its own (it would see another `PATH` than the gate's). A `uses` without `@`
-    is that action at any version, with any inputs and environment."""
+    failure to go past, nor an `env` (it would see another `PATH` than the gate's) or directory of its own. A `uses`
+    without `@` is that action at any version, with any inputs and environment."""
 
     if step.get("if") is not None or any(step.get(k) not in (None, False) for k in ("continue-on-error", "background")):
         return False   # skipped, gone past, or still running when the gate starts
@@ -42,7 +55,7 @@ def matches(step: dict, want: dict) -> bool:
         return False
     if "uses" in want and "@" not in want["uses"]:
         return str(step.get("uses") or "").startswith(want["uses"] + "@")
-    if step.get("env") is not None:
+    if step.get("env") is not None or step.get("working-directory") is not None:   # run as written, from the root
         return False
     if "run" in want:
         lines = [[x.strip() for x in str(s.get("run") or "").splitlines() if x.strip()] for s in (step, want)]
