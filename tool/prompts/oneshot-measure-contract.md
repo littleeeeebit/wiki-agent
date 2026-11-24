@@ -33,12 +33,8 @@ with these five parts, and the code each part names.
 4. `during`: the steps the owner takes while the script runs, such as
    choosing a Google account in the browser window it opens. Use the same
    step shape. The measurement screen shows nothing the script prints or
-   writes while it runs. A run whose result is saved keeps a masked tail of
-   what it printed. When that result stays on the measurement screen, the
-   screen shows the report's metrics and `notes` when there are any, an
-   `input_error`, the clips, and any error of the measurement itself; a
-   failed run that goes straight back to the build is not shown there, and
-   a stopped run saves no result. When a step needs the owner to read
+   writes while it runs, and the owner never reads its output: a saved
+   result keeps only a masked tail of it. When a step needs the owner to read
    something, such as a device code, the script opens it for them in the
    default browser, on a page the backend or the script serves on
    `127.0.0.1` that shows it. That step has no `url`, since the script
@@ -56,7 +52,7 @@ with these five parts, and the code each part names.
      "see": "새 탭에 Google 의 기기 연결 화면이 열리고, 코드를 넣는 칸이 보인다."},
     {"window": "브라우저 — Google 기기 연결", "url": "https://www.google.com/device",
      "do": "코드 칸에 앞 창의 기기 코드를 넣거나 붙여 넣고 「다음(Next)」을 누른다.",
-     "see": "연결할 Google 계정을 고르는 목록이 보인다."}]
+     "see": "이미 로그인했으면 연결할 Google 계정을 고르는 목록이, 아니면 Google 로그인 화면이 보인다."}]
    ```
 5. `metrics`: each
    `{"id": "live_delay_s", "what": "<Korean>", "unit": "초",
