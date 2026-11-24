@@ -77,8 +77,10 @@ SKIPS = r"""- name: Tests owed to the local gate
         skip = case.find("skipped")
         why = "" if skip is None else (skip.get("message") or "") + " " + (skip.text or "")
         if ids := sorted(set(re.findall(r"(?<![A-Za-z0-9_])N[1-9][0-9]*(?![A-Za-z0-9_])", why))):
-            name = f"{case.get('classname') or ''} {case.get('name') or ''}"
-            name = " ".join(name.split())   # literal in a code span, whose fence outruns any backtick run in it
+            name = " ".join(part for part in (case.get("classname"), case.get("name")) if part)
+            # Literal in a code span, whose fence outruns any backtick run in it. Only a line break, which would
+            # end the list item, becomes a space; the name's own spacing stays as it is.
+            name = re.sub("\r\n?|\n", " ", name)
             ticks = "`" * (max((len(run) for run in re.findall("`+", name)), default=0) + 1)
             rows.append(f"- {ticks} {name} {ticks}: {', '.join(ids)}")
     lines = ["## 로컬 게이트가 맡은 테스트", ""]

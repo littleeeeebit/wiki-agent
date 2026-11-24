@@ -222,6 +222,9 @@ SKIPPED = '<testsuite><testcase classname="t" name="{name}"><skipped message="{w
     ({"": SKIPPED.format(name="test_values[a\\|b]", why="N1")}, r"- ` t test_values[a\|b] `: N1"),
     ({"": SKIPPED.format(name="test_values[**fast**]", why="N1")}, "- ` t test_values[**fast**] `: N1"),
     ({"": SKIPPED.format(name="test_values[a`b]", why="N1")}, "- `` t test_values[a`b] ``: N1"),
+    # Spacing is the name's own; only a line break, which would end the item, becomes a space.
+    ({"": SKIPPED.format(name="test_values[a  b]", why="N1")}, "- ` t test_values[a  b] `: N1"),
+    ({"": SKIPPED.format(name="test_values[a&#13;&#10;b&#10;c]", why="N1")}, "- ` t test_values[a b c] `: N1"),
     # A need id before a Korean particle is still the id; a longer one is another.
     ({"": SKIPPED.format(name="test_rate", why="N1이 없다, N12 도, N2cache N3_fixture")}, "- ` t test_rate `: N1, N12"),
     # Two reports: which is the gate's is not known, so none is listed.
