@@ -157,7 +157,7 @@ def test_every_pinned_fake_is_named_in_the_stop(reviewed):
 
 def test_a_fake_names_the_file_of_the_checkout_however_its_location_spells_it(tmp_path):
     root = tmp_path / "seen"
-    for path in ("tests/test_budget.py", "tests/test_straße.py", "other/test_budget.py", "tests/test-contract"):
+    for path in ("tests/test_budget.py", "tests/test_straße.py", "other/test_budget.py", "tests/test-contract", " lead.py"):
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text("", encoding="utf-8")
     (tmp_path / "outside.py").write_text("", encoding="utf-8")
@@ -169,8 +169,17 @@ def test_a_fake_names_the_file_of_the_checkout_however_its_location_spells_it(tm
              # A name that only folds alike is another file; a real file's case is the checkout's own.
              "tests/test_strasse.py:3": "", "TESTS/TEST_BUDGET.PY:3": "tests/test_budget.py" if nt else "",
              "tests\\test_budget.py:3": "tests/test_budget.py" if nt else "",
-             "tests/test_budget.py:helper.py": "", "../outside.py:1": "", "tests:3": ""}
+             "tests/test_budget.py:helper.py": "", "../outside.py:1": "", "tests:3": "",
+             "./ lead.py:3": " lead.py"}   # a real name's own characters stay, as the tests stage saved its pins
     assert {loc: oneshot_review.located(root, loc) for loc in cases} == cases
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a Windows file name holds no colon")
+def test_a_location_that_reads_as_two_files_names_neither(tmp_path):
+    for path in ("tests/check", "tests/check:3"):   # line 3 of one, or the other file: the reviewer must say
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("", encoding="utf-8")
+    assert oneshot_review.located(tmp_path, "tests/check:3") == "" and oneshot_review.located(tmp_path, "tests/check") == "tests/check"
 
 
 @pytest.mark.parametrize("finding, said", [

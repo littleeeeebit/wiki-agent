@@ -255,19 +255,18 @@ def touched(location: str, changed: dict[str, list[tuple[int, int]]]) -> bool:
 
 
 def located(root: Path, location: str) -> str:
-    """The file `location` names in the checkout `root`, as Git spells it there, or "": the whole text first, then
-    with each trailing `:<line>`, `:<a>-<b>` or `:<column>` left off, so a file whose real name ends in one keeps it.
-    A code span, `./`, backslashes and an absolute path into `root` name the same file; the real path settles
-    letter case on Windows, so two names that only fold alike stay two files."""
+    """The one file `location` names in the checkout `root`, as its real path spells it there, or "": the text
+    itself and each form with trailing `:<line>`, `:<a>-<b>` or `:<column>` left off are read, and two of them
+    naming two files is no answer. A code span, `./`, an absolute path into `root` and, on Windows, backslashes
+    name the same file; the real path settles letter case, so two names that only fold alike stay two files."""
 
-    text, base = location.strip().strip("`").strip(), Path(os.path.realpath(root))
-    while True:
+    text, base, found = location.strip().strip("`").strip(), Path(os.path.realpath(root)), set()
+    while text:
         path = Path(os.path.realpath(Path(text) if Path(text).is_absolute() else root / text))
         if path.is_file() and path.is_relative_to(base):
-            return path.relative_to(base).as_posix()
-        if not (cut := re.fullmatch(r"(.+):\d+(-\d+)?", text)):
-            return ""
-        text = cut[1]
+            found.add(path.relative_to(base).as_posix())
+        text = cut[1] if (cut := re.fullmatch(r"(.+):\d+(-\d+)?", text)) else ""
+    return found.pop() if len(found) == 1 else ""
 
 
 def canonical(path: str) -> str:
@@ -443,7 +442,8 @@ def held(f: dict, rules: dict) -> None:
     if f.get("fake") and not set(breaks or ()) & rules.get("tests", set()):
         raise ValueError("`fake` 발견의 `breaks` 에는 그 가짜가 대신 서는 설계 테스트 번호(T…)를 적는다")
     if f.get("fake") and rules.get("seen") and not located(rules["seen"], f["location"]):
-        raise ValueError(f"`fake` 발견의 `location` 은 읽은 체크아웃 안의 테스트 파일을 짚는다 — {f['location']}")
+        raise ValueError(f"`fake` 발견의 `location` 은 읽은 체크아웃 안의 테스트 파일 하나를 짚는다 — {f['location']} "
+                         "는 그런 파일이 없거나, 줄 번호로도 다른 파일 이름으로도 읽혀 파일 이름만 따로 적어야 한다")
     if allowed and f["severity"] == "P1" and not breaks:
         raise ValueError("P1 발견마다 그것이 깨뜨리는 설계 항목·요구 번호를 `breaks` 에 적는다 — 아무것도 "
                          "깨뜨리지 않으면 P2 다")
@@ -568,8 +568,9 @@ def decided(repo: str, store, spec: dict, found: dict):
                                           "later": later_of(o, found), "working": "split"})
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
     # A fake in a pinned contract test is one no build turn may fix: the run stops, and the owner sees it.
-    # The verdict resolved each fake's `file` in the checkout the review read (`located`), as Git spells it.
-    if faked := [f for f in blocking(found) if f.get("fake") and f.get("file") in {canonical(c) for c in o.get("contract") or ()}]:
+    # The verdict resolved each fake's `file` in the checkout the review read (`located`); the pins are compared as
+    # saved, the names the tests stage committed and the build checks in Git.
+    if faked := [f for f in blocking(found) if f.get("fake") and f.get("file") in set(o.get("contract") or ())]:
         with oneshot._lock:
             store.put(reviews=reviews, working=None, later=later_of(o, found), stopped={
                 "reason": "fake", "state": store.get()[store.state], "detail": "고정한 계약 테스트에 가짜가 있어 빌드가 "

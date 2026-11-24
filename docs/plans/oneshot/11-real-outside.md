@@ -330,13 +330,17 @@ module wraps, is not one.
 
 A fake in a pinned contract test is one no build turn may fix, since the
 build may not change those files. A `fake` finding's location must name a
-file of the checkout the review read, and the verdict keeps that file as Git
-spells it (`oneshot_review.located`): the whole location first, then with a
-trailing line, range or column left off, so a real name ending in one keeps
-it. A code span, `./`, backslashes and an absolute path into the checkout
-name the same file, and the real path settles letter case, so two names that
-only fold alike stay two files. One whose location names no such file is
-refused and asked again. The run stops on a pinned file's fake (`fake`) before the round cap
+file of the checkout the review read, and the verdict keeps that file as its
+real path spells it (`oneshot_review.located`). The location is read as it
+is and with each trailing line, range or column left off; exactly one of
+those may name a file, so a location that reads both as a line of one file
+and as another file's name is refused, and the reviewer writes the file name
+alone. A code span, `./`, an absolute path into the checkout and, on
+Windows, backslashes name the same file, and the real path settles letter
+case, so two names that only fold alike stay two files. A location that names
+no file is refused and asked again. The resolved file is compared with the
+pins as saved, the names the tests stage committed. The run stops on a pinned
+file's fake (`fake`) before the round cap
 or any build turn, the card shows every such finding with what it stands in
 for, and `[재개]` is refused, since it would only send the
 build a test it may not change. A fake in a test file the build wrote goes
