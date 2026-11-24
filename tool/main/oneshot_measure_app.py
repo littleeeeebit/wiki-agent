@@ -11,6 +11,7 @@ next build. The program is told which measurement it is in by `ONESHOT_MEASURE`,
 
 from __future__ import annotations
 
+import codecs
 import os
 import shutil
 import socket
@@ -24,10 +25,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from common import masked, process, shell
+from common import _spans, masked, process, shell   # `_spans`: where `masked` would cut
 
 from . import oneshot_build, oneshot_desktop, oneshot_needs, oneshot_spec
-from .oneshot_kept import tail
+from .oneshot_kept import spelled, tail
 
 MODE = "ONESHOT_MEASURE"   # `auto`: the server's measurement, no person; `owner`: the owner's, on their screen
 END_SECONDS = 30
@@ -218,36 +219,61 @@ def environment(spec: dict, plan: dict, launch_env: dict, env: dict, mode: str) 
 
 class Captured:
     """The program's output, read off a pipe into memory and never written as it came: only its masked text
-    reaches the disk. The last `LIMIT` bytes are kept, and a cut drops the line it splits, so no part of a secret
-    is left at its edge unmasked."""
+    reaches the disk. Its line endings are read as a text-mode read reads them (`\\r\\n` and `\\r` to `\\n`) and
+    every spelling `oneshot_kept.spelled` gives a value is masked. Text is masked before any of it is let go: the
+    last `LIMIT` characters stay raw, a value running across the cut keeps all of itself raw, and the rest is masked
+    then trimmed. A look before the output has ended leaves out its last stretch, where a value may be half
+    written."""
 
     LIMIT = 1 << 20
 
-    def __init__(self):
+    def __init__(self, hide: dict):
         read, write = os.pipe()
         self.writer, self._read = os.fdopen(write, "wb", buffering=0), os.fdopen(read, "rb", buffering=0)
-        self.data, self.cut = bytearray(), False
+        self.hide = spelled(hide)
+        self.edge = 2 * max(map(len, self.hide), default=0) + 16   # longer than any value, in any casing
+        self.done, self.lock = "", threading.Lock()   # masked, and the raw text after it
+        self.raw, self.held = "", ""
         self.thread = threading.Thread(target=self._drain, daemon=True, name="oneshot-measure-app-output")
         self.thread.start()
 
     def _drain(self) -> None:
+        decode = codecs.getincrementaldecoder("utf-8")(errors="replace").decode
         with self._read:
             while chunk := self._read.read(65536):
-                self.data += chunk
-                if len(self.data) > 2 * self.LIMIT:
-                    del self.data[:-self.LIMIT]
-                    self.cut = True
+                self._add(decode(chunk))
+        self._add(decode(b"", final=True), last=True)   # a last lone `\\r` is a line end too
 
-    def text(self, hide: dict, wait: float = 0) -> str:
-        """What the program wrote so far, masked whole; with `wait`, once every end that writes is closed."""
+    def _add(self, text: str, last: bool = False) -> None:
+        text, self.held = self.held + text, ""
+        if text.endswith("\r") and not last:   # its `\\n` may be in the next chunk
+            text, self.held = text[:-1], "\r"
+        with self.lock:
+            self.raw += text.replace("\r\n", "\n").replace("\r", "\n")
+            if len(self.raw) > 2 * self.LIMIT:
+                head, cut = self._settled(max(self.LIMIT, self.edge))
+                self.done, self.raw = (self.done + head)[-self.LIMIT:], self.raw[cut:]
+
+    def _settled(self, keep: int) -> tuple[str, int]:
+        """The raw text but its last `keep` characters, masked, and where it ends: moved back to the start of a
+        value it would cut through."""
+
+        cut = max(0, len(self.raw) - keep)
+        for start, end, _ in _spans(self.raw, self.hide) if cut < len(self.raw) else ():
+            if start < cut < end:
+                cut = start
+        return masked(self.raw[:cut], self.hide), cut
+
+    def text(self, wait: float = 0) -> str:
+        """What the program wrote so far, masked; with `wait`, once every end that writes is closed. Output still
+        coming leaves out its last stretch."""
 
         if wait:
             self.writer.close()   # ours: the program's own copy closes when its job ends
             self.thread.join(wait)
-        data = bytes(self.data)
-        cut = self.cut or len(data) > self.LIMIT
-        text = data[-self.LIMIT:].decode("utf-8", errors="replace")
-        return masked(text.split("\n", 1)[-1] if cut else text, hide)
+        with self.lock:
+            head, _ = self._settled(0 if not self.thread.is_alive() else self.edge)
+            return (self.done + head)[-self.LIMIT:]
 
 
 def changed(build) -> str:
@@ -297,7 +323,7 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
     extra = environment(spec, plan, {k: v.replace(oneshot_desktop.DATA, str(data)) for k, v in launch["env"].items()},
                         env, mode)
     (root / "looks").mkdir(exist_ok=True)
-    output = Captured()   # the program's output stays in memory until it is masked
+    output = Captured(hide)   # the program's output stays in memory until it is masked
     try:
         with desktop_session.look(root / "looks", f"measure-{mode}-{uuid.uuid4().hex[:12]}", owned=mode == "auto",
                                   disposable=True) as look:
@@ -314,7 +340,7 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                     if halt.is_set():
                         raise ValueError("사람이 멈췄다")
                     if job.finished():
-                        raise ValueError(f"PC 프로그램이 떠 있지 않고 끝났다 — {output.text(hide, 5)[-1500:].strip() or '(출력 없음)'}")
+                        raise ValueError(f"PC 프로그램이 떠 있지 않고 끝났다 — {output.text(5)[-1500:].strip() or '(출력 없음)'}")
                     if answers(app["health"]) == 200:
                         pids = {m["pid"] for m in job.members()}
                         if not vouched(pids, app["health"]):
@@ -324,7 +350,7 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                             break
                     if time.monotonic() > deadline:
                         raise ValueError(f"PC 프로그램이 {app['seconds']}초 안에 `{app['health']}` 에 200 으로 답하지 "
-                                         f"않았다 — {output.text(hide)[-1500:].strip() or '(출력 없음)'}")
+                                         f"않았다 — {output.text()[-1500:].strip() or '(출력 없음)'}")
                     time.sleep(1)
                 yield build
             finally:
@@ -333,7 +359,7 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                 end = job.end(END_SECONDS) if job is not None else {"clean": True}
                 try:   # only the masked text is ever written, here, for the kept folder
                     log.parent.mkdir(parents=True, exist_ok=True)
-                    log.write_text(output.text(hide, 5), encoding="utf-8")
+                    log.write_text(output.text(5), encoding="utf-8")
                 except OSError:
                     pass   # no log is kept: the measurement says what it says without it
                 if not end["clean"]:

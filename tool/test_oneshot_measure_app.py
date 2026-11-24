@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import sys
+import time
 import types
 from pathlib import Path
 from unittest.mock import patch
@@ -460,3 +461,39 @@ def test_the_measurement_mode_is_never_a_design_secrets_name(at_measure):  # noq
     with patch.object(measure.oneshot_needs, "secret_needs", lambda s: [("N9", {"env": "ONESHOT_MEASURE", "kind": "secret"})]), \
             pytest.raises(ValueError, match="ONESHOT_MEASURE"):   # a design saved before: its plan names the clash
         measure.checked(plan, spec(), tree)
+
+
+def drained(captured, part):
+    """Wait until the reader has taken `part` in."""
+    deadline = time.monotonic() + 10
+    while part not in captured.raw + captured.done and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
+def test_a_value_the_program_prints_with_windows_line_endings_is_masked():
+    secret = "first-line-of-it\nsecond-line-of-it"
+    captured = product.Captured({secret: "[M3]"})
+    captured.writer.write(secret.replace("\n", "\r\n").encode() + b" done\r\n")
+    assert captured.text(5) == "[M3] done\n"
+
+
+def test_no_piece_of_a_value_survives_the_cut_that_trims_the_output():
+    secret = "AAAA-first-line\nBBBB-second-line"
+    for offset in range(0, 260, 11):
+        with patch.object(product.Captured, "LIMIT", 64):
+            captured = product.Captured({secret: "[M4]"})
+            data = ("x" * offset + secret + "y" * 300).encode()
+            for i in range(0, len(data), 7):   # chunks the cut can fall between
+                captured.writer.write(data[i:i + 7])
+            got = captured.text(5)
+        assert not any(piece in got for piece in ("AAAA", "BBBB", "first-line", "second-line")), (offset, got)
+
+
+def test_a_look_while_the_program_still_writes_leaves_out_a_half_written_value():
+    secret = "CCCC-half-written-value"
+    captured = product.Captured({secret: "[M5]"})
+    captured.writer.write(b"started " + secret[:12].encode())
+    drained(captured, "CCCC")
+    assert "CCCC" not in captured.text()   # the rest may still come
+    captured.writer.write(secret[12:].encode() + b" ok")
+    assert captured.text(5) == "started [M5] ok"
