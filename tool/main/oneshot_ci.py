@@ -37,11 +37,12 @@ def placed(flow: dict, job: dict, gate: dict) -> bool:
     repository root, as the confirmed setup and the gate were written."""
 
     env = gate.get("env", {})
-    runs = [d.get("run") for d in (flow.get("defaults"), job.get("defaults")) if isinstance(d, dict)]
+    runs = [d.get("run", {}) if isinstance(d, dict) else None for d in (flow.get("defaults", {}), job.get("defaults", {}))]
     return (job.get("runs-on") == "windows-latest" and gate.get("shell") == "pwsh"
+            and all(s.get("continue-on-error") in (None, False) for s in (job, gate))   # a red gate shows red
             and gate.get("working-directory") is None and isinstance(env, dict)   # an environment Actions reads
             and "PATH" not in {str(k).upper() for k in env}
-            and not any(isinstance(r, dict) and r.get("working-directory") is not None for r in runs))
+            and all(isinstance(r, dict) and r.get("working-directory") is None for r in runs))   # defaults Actions reads
 
 
 def matches(step: dict, want: dict) -> bool:

@@ -555,14 +555,17 @@ def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_
     for gate, kept in [({"env": {"Path": "C:\\tools"}}, False),   # the gate on a PATH never checked
                        ({"env": "tools"}, False), ({"env": True}, False),   # no environment Actions reads
                        ({"shell": "cmd"}, False), ({"shell": None}, False),   # the gate is written for PowerShell
-                       ({"working-directory": "desktop"}, False),
+                       ({"working-directory": "desktop"}, False), ({"continue-on-error": True}, False),
                        ({"env": {"GRADLE_OPTS": "-Xmx2g"}}, True)]:
         readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, gate=gate)))
         assert ci(tree) is kept, gate
     home = {"defaults": {"run": {"working-directory": "desktop"}}}   # every `run` from elsewhere than the root
-    for more in ({"job": home}, {"top": home}):
-        readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, **more)))
-        assert not ci(tree), more
+    for wrong in (home, {"defaults": {"run": "pwsh"}}, {"defaults": "pwsh"}):   # or defaults Actions cannot read
+        for more in ({"job": wrong}, {"top": wrong}):
+            readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, **more)))
+            assert not ci(tree), more
+    readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, job={"continue-on-error": True})))   # red shown green
+    assert not ci(tree)
     readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, job={"defaults": {"run": {"shell": "cmd"}}})))
     assert ci(tree)   # every step it requires names its shell
     readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, runs="ubuntu-latest")))
