@@ -193,8 +193,8 @@ def ci_steps(o: dict) -> list[dict]:
     if (declared := oneshot_build.tools(o)) is None:
         return []
     names = ", ".join(f"'{t['name']}'" for t in declared)
-    check = (f"foreach ($tool in @({names})) {{ if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) "
-             '{ throw "$tool is not on PATH" } }')
+    check = (f"foreach ($tool in @({names})) {{ if (-not (Get-Command $tool -CommandType Application "   # a program
+             '-ErrorAction SilentlyContinue)) { throw "$tool is not on PATH" } }')   # file, as the gate finds it
     return [dict(t["setup"]) for t in declared if isinstance(t.get("setup"), dict)] + [
         {"name": "Declared tools on PATH", "shell": "pwsh", "run": check}]
 
@@ -213,14 +213,14 @@ def matches(step: dict, want: dict) -> bool:
     """A step that is `want`, name aside: the same action and inputs or `run` lines and shell, no `if` to skip it nor
     failure to go past. A `uses` without `@` is that action at any version, with any inputs."""
 
-    if step.get("if") is not None or step.get("continue-on-error") not in (None, False):
-        return False
+    if step.get("if") is not None or any(step.get(k) not in (None, False) for k in ("continue-on-error", "background")):
+        return False   # skipped, gone past, or still running when the gate starts
     if "run" in want:
         lines = [[x.strip() for x in str(s.get("run") or "").splitlines() if x.strip()] for s in (step, want)]
         return lines[0] == lines[1] and step.get("shell") == want.get("shell")
     if "@" not in want["uses"]:
         return str(step.get("uses") or "").startswith(want["uses"] + "@")
-    return step.get("uses") == want["uses"] and {   # an input as Actions reads it: text
+    return step.get("uses") == want["uses"] and isinstance(step.get("with") or {}, dict) and {   # inputs read as text
         k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in (step.get("with") or {}).items()
     } == dict(want.get("with") or {})
 

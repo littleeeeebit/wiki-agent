@@ -148,11 +148,16 @@ def test_the_release_tables_installer_goes_alone_to_the_prerelease_then_the_pull
     assert f"빌드 커밋 `{approved[:12]}`" in body
 
 
-def test_an_earlier_versions_stop_before_the_pull_request_is_let_go_on_recovery(pc):
-    oneshot_spec.saved("budget", oneshot={"working": None, "stopped": {
-        "reason": "kind", "state": "pr", "detail": "README 와 최종 게이트를 마쳤다 — 풀 리퀘스트는 다음 버전에서 이어진다"}})
+@pytest.mark.parametrize("stop", [
+    {"reason": "kind", "state": "pr", "detail": "README 와 최종 게이트를 마쳤다 — 풀 리퀘스트는 다음 버전에서 이어진다"},
+    None])   # 9e6b's files went up and the server went down before its stop was saved
+def test_an_earlier_versions_stop_before_the_pull_request_is_let_go_on_recovery(pc, stop):
+    oneshot_spec.saved("budget", oneshot={"working": None, "stopped": stop, "final_head": "h", "attached": "h"})
     oneshot_spec.recover()
     assert o()["stage"] == "pr" and o()["stopped"]["reason"] == "restart"   # `[재개]` goes on to the pull request
+    oneshot_spec.saved("budget", oneshot={"stopped": None})
+    oneshot_spec.recover()   # once: a run S8 goes on with is never stopped for it again
+    assert not o()["stopped"]
 
 
 def test_a_pc_app_with_no_installer_table_still_finishes_its_gate_and_says_why(pc):
@@ -513,6 +518,7 @@ def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_
     public(PYTHON, RUST, part="desktop.build", intent={"kind": "android", "kinds": ["android", "desktop"]}, device=DEVICE)
     setup, path = oneshot_pr.ci_steps(o())
     assert setup == RUST["setup"] and path["run"].startswith("foreach ($tool in @('python', 'cargo'))")
+    assert "Get-Command $tool -CommandType Application " in path["run"]   # an alias or a function is no program
     text = oneshot_pr.readme_text(spec())
     assert "`windows-latest`" in text and "actions/setup-java" in text and path["run"] in text
     assert "- uses: dtolnay/rust-toolchain@v1\n  with:\n    toolchain: stable\n" in text
@@ -522,7 +528,10 @@ def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_
                         ((*JAVA, path, setup), False),   # checked before it is set up
                         ((setup, path), False),   # no JDK for the Android app
                         ((*JAVA, {**setup, "with": {"toolchain": "nightly"}}, path), False),   # not as confirmed
+                        ((*JAVA, {**setup, "with": True}, path), False),   # refused, never a crash
                         ((*JAVA, {**setup, "continue-on-error": True}, path), False),
+                        ((*JAVA, {**setup, "background": True}, path), False),   # still running at the gate
+                        ((*JAVA, setup, {**path, "background": True}), False),
                         ((*JAVA, setup, {**path, "if": "always()"}), False)]:
         readme(tree, (oneshot_pr.CI, flow(*steps)))
         assert ci(tree) is kept, steps
