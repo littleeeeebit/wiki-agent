@@ -426,5 +426,5 @@ knows the values, at commit time, rather than in the reviewer's reading.
 | 11b2a | The build agent's own turns carry the secrets under the server's leak check | Done — #424 |
 | 11b2b | The PC app's screen check and the Android device stages get the secrets | Done — #427 |
 | 11b2c | The CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Done — #428 |
-| 11c | The review refuses a fake inside a test file | In progress |
-| 11d | A real run of a product with a keyed outside call, end to end | Not started |
+| 11c | The review refuses a fake inside a test file | Done — #436 |
+| 11d | A real run of a product with a keyed outside call, end to end | Not started — the owner picks the product once 12e, the `vtuber-ko-dub` run, ends |
