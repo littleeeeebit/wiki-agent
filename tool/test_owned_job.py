@@ -1,6 +1,7 @@
 """The owned job: a process created inside it, every member followed to its exit, and a proof that holds
 whenever coverage or an exit is not proven (docs/research/oneshot-desktop-session.md)."""
 
+import ctypes
 import os
 import sys
 import time
@@ -160,12 +161,64 @@ def test_a_member_whose_join_and_exit_were_both_lost_leaves_the_proof_inconclusi
     assert any("counted" in reason for reason in proof["reasons"])
 
 
+def denied(*_):
+    """`OpenProcess` refusing as for a process that exists but cannot be opened: no proof it is gone."""
+    ctypes.set_last_error(5)
+    return None
+
+
+def test_a_member_already_gone_when_its_join_is_read_is_proven_exited_though_its_message_was_lost(job, monkeypatch):
+    queue = iter([[(owned_job.NEW, 101), (owned_job.NEW, 102)]])
+    monkeypatch.setattr(job, "_messages", lambda wait_ms: next(queue, []))
+    monkeypatch.setattr(job, "_count", lambda: owned_job._Accounting(total=2))
+
+    def opened(access, inherit, pid):
+        if pid == 101:   # no process has the pid any more
+            ctypes.set_last_error(owned_job.NO_PROCESS)
+            return None
+        return 7   # the pid is another process's now, outside this job
+
+    monkeypatch.setattr(job.k, "OpenProcess", opened)
+    monkeypatch.setattr(job.k, "IsProcessInJob", lambda handle, j, inside: 1)   # answered: not inside
+    monkeypatch.setattr(job.k, "CloseHandle", lambda handle: 1)
+    proof = job.end(0.5)
+
+    assert proof["clean"], proof["reasons"]
+
+
+def test_a_member_whose_job_membership_could_not_be_read_is_not_called_gone(job, monkeypatch):
+    queue = iter([[(owned_job.NEW, 103)]])
+    monkeypatch.setattr(job, "_messages", lambda wait_ms: next(queue, []))
+    monkeypatch.setattr(job, "_count", lambda: owned_job._Accounting(total=1))
+    monkeypatch.setattr(job.k, "OpenProcess", lambda *_: 7)
+    monkeypatch.setattr(job.k, "IsProcessInJob", lambda handle, j, inside: 0)   # the call failed: no answer
+    monkeypatch.setattr(job.k, "CloseHandle", lambda handle: 1)
+
+    assert "no exit proven for pid 103" in job.end(0.5)["reasons"]
+
+
+def test_a_late_exit_message_of_a_member_gone_at_its_join_is_never_handed_to_a_later_one(job, monkeypatch):
+    queue = iter([[(owned_job.NEW, 104)], [(owned_job.NEW, 104)], [(owned_job.EXIT, 104)]])
+    monkeypatch.setattr(job, "_messages", lambda wait_ms: next(queue, []))
+    monkeypatch.setattr(job, "_count", lambda: owned_job._Accounting(total=2))
+    first = iter([True])
+
+    def opened(*_):
+        ctypes.set_last_error(owned_job.NO_PROCESS if next(first, False) else 5)   # gone, then a member denied
+        return None
+
+    monkeypatch.setattr(job.k, "OpenProcess", opened)
+    proof = job.end(0.5)
+
+    assert "no exit proven for pid 104" in proof["reasons"] and not job.joined[1]["exited"]
+
+
 def fed(job, monkeypatch, *batches, total=None):
     """The job's port and count replaced: `batches` arrive one per pump, and the count reads `total`."""
 
     queue = iter(batches)
     monkeypatch.setattr(job, "_messages", lambda wait_ms: next(queue, []))
-    monkeypatch.setattr(job.k, "OpenProcess", lambda *_: None)
+    monkeypatch.setattr(job.k, "OpenProcess", denied)
     if total is not None:
         monkeypatch.setattr(job, "_count", lambda: owned_job._Accounting(total=total))
 
@@ -247,7 +300,7 @@ def test_a_root_whose_rollback_wait_ran_out_proves_its_join_by_its_own_handle_on
     read, wait = job._messages, job.k.WaitForSingleObject
     monkeypatch.setattr(job, "_messages", lambda wait_ms, most=64: [   # its exit message is lost
         (m, pid) for m, pid in read(wait_ms, most) if m not in (owned_job.EXIT, owned_job.ABNORMAL)])
-    monkeypatch.setattr(job.k, "OpenProcess", lambda *_: 0)   # and its join is never held
+    monkeypatch.setattr(job.k, "OpenProcess", denied)   # and its join is never held
     with monkeypatch.context() as patch:
         patch.setattr(job.k, "WaitForSingleObject", lambda handle, ms: 258 if ms == 5000 else wait(handle, ms))
         with pytest.raises(OSError):
