@@ -221,7 +221,8 @@ def ci_file(path: Path, mode: str | None, gate: str, before: list[dict] = ()) ->
             if want and any(have[i:i + len(want)] == want for i in range(len(have) - len(want) + 1)):
                 found = [next((i for i, x in enumerate(steps[:at]) if oneshot_ci.matches(x, b)), None) for b in before]
                 if before and (job.get("runs-on") != "windows-latest" or None in found or found[-1] < max(found)
-                               or "PATH" in {str(k).upper() for k in s.get("env") or {}}):   # the PATH checked
+                               or not isinstance(env := s.get("env", {}), dict)   # no environment Actions reads
+                               or "PATH" in {str(k).upper() for k in env}):   # the gate on the PATH checked
                     continue
                 if any(all(later.get(k) == SKIP_STEP[k] for k in ("if", "shell", "run")) for later in steps[at + 1:]):
                     return True

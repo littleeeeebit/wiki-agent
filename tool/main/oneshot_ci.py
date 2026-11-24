@@ -8,15 +8,16 @@ from .oneshot_profile import kinds_of
 
 
 def ci_steps(o: dict) -> list[dict]:
-    """Each declared tool's confirmed `setup` as written (none for a `preinstalled` one), then a check that every
-    declared tool is on `PATH`; none without a PC app."""
+    """Each declared tool's confirmed `setup` as written (none for a `preinstalled` one), a `run` in the runner's
+    own shell named outright (a job's `defaults` could pick another), then a check that every declared tool is on
+    `PATH`; none without a PC app."""
 
     if (declared := oneshot_build.tools(o)) is None:
         return []
     names = ", ".join(f"'{t['name']}'" for t in declared)
     check = (f"foreach ($tool in @({names})) {{ if (-not (Get-Command $tool -CommandType Application,ExternalScript "
              '-ErrorAction SilentlyContinue)) { throw "$tool is not on PATH" } }')   # a file, as the gate finds it
-    return [dict(t["setup"]) for t in declared if isinstance(t.get("setup"), dict)] + [
+    return [{**s, "shell": "pwsh"} if "run" in s else dict(s) for t in declared if isinstance(s := t.get("setup"), dict)] + [
         {"name": "Declared tools on PATH", "shell": "pwsh", "run": check}]
 
 

@@ -552,10 +552,23 @@ def test_with_ci_on_a_tool_the_image_lacks_is_set_up_and_checked_on_path_before_
         readme(tree, (oneshot_pr.CI, flow(*steps)))
         assert ci(tree) is kept, steps
     for gate, kept in [({"env": {"Path": "C:\\tools"}}, False),   # the gate on a PATH never checked
+                       ({"env": "tools"}, False), ({"env": True}, False),   # no environment Actions reads
                        ({"env": {"GRADLE_OPTS": "-Xmx2g"}}, True)]:
         readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, gate=gate)))
         assert ci(tree) is kept, gate
     readme(tree, (oneshot_pr.CI, flow(*JAVA, setup, path, runs="ubuntu-latest")))
+    assert not ci(tree)
+
+
+def test_a_run_setup_names_its_shell_so_no_job_default_picks_another(pc):
+    tree, _, _, _ = pc
+    public(PYTHON, {"name": "nasm", "setup": {"run": "choco install nasm -y"}})
+    setup, path = oneshot_ci.ci_steps(o())
+    assert setup == {"run": "choco install nasm -y", "shell": "pwsh"}
+    assert "- run: choco install nasm -y\n  shell: pwsh\n" in oneshot_pr.readme_text(spec())
+    readme(tree, (oneshot_pr.CI, flow(setup, path)))
+    assert ci(tree)
+    readme(tree, (oneshot_pr.CI, flow({"run": setup["run"]}, path)))   # a job's `defaults.run.shell` would pick it
     assert not ci(tree)
 
 
