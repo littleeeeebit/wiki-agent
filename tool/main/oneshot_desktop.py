@@ -135,6 +135,44 @@ def _reaches_out(setting: str, name: str = "") -> bool:
         or any(part.split(".")[0].upper() in DEVICE_NAMES for part in PARTS.split(s))
 
 
+def run_of(run, label: str) -> dict:
+    """A `run` block checked for shape, as `declared` reads it and the measurement's `app` (plan 13): its build
+    folder, its program inside it, the arguments, the working directory inside that folder, the environment, with
+    `{data}` named at least once and no setting that could name a place outside the copy (`OUTSIDE`)."""
+
+    if not isinstance(run, dict):
+        raise ValueError(f"`{label}` 의 run 은 folder, program, args, cwd, env 를 담은 객체다")
+    out = {"folder": _relative(run.get("folder"), "run.folder"), "program": _relative(run.get("program"), "run.program"),
+           "args": run.get("args", []), "cwd": run.get("cwd", "."), "env": run.get("env", {})}
+    if out["cwd"] != ".":
+        _relative(out["cwd"], "run.cwd")
+    if Path(out["program"]).suffix.lower() != ".exe":
+        raise ValueError(f"`{label}` 의 run.program 은 패키지하지 않은 디버그 빌드의 `.exe` 다 — MSIX 나 설치 파일은 "
+                         "띄우지 않는다")
+    if not isinstance(out["args"], list) or not all(isinstance(a, str) for a in out["args"]):
+        raise ValueError(f"`{label}` 의 run.args 는 문자열 목록이다")
+    if not isinstance(out["env"], dict) or not all(isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str)
+                                                    for k, v in out["env"].items()):
+        raise ValueError(f"`{label}` 의 run.env 는 환경 변수 이름과 문자열 값의 객체다")
+    if len({k.upper() for k in out["env"]}) != len(out["env"]):   # one variable to Windows
+        raise ValueError(f"`{label}` 의 run.env 에 대소문자만 다른 이름이 있다 — Windows 에는 한 변수다")
+    settings = [*out["args"], *out["env"].values()]
+    if named := sorted(k for k in out["env"] if k.upper() in LOOK_ENV):
+        raise ValueError(f"`{label}` 의 run.env 는 `{named[0]}` 를 정하지 않는다 — 화면 검사가 "
+                         f"{', '.join(sorted(LOOK_ENV))} 로 열 화면과 상태를 넘긴다")
+    if owned := sorted(k for k in out["env"] if k.upper() in OWNED_ENV):
+        raise ValueError(f"`{label}` 의 run.env 는 `{owned[0]}` 를 정하지 않는다 — look 이 {', '.join(sorted(OWNED_ENV))} 를 "
+                         f"자기 폴더로 둔다. 앱 데이터는 `{DATA}` 를 받는 다른 인자나 변수로 넘긴다")
+    if not any(DATA in s and not _remote(s) for s in settings):   # a local setting, never a URL's text
+        raise ValueError(f"`{label}` 의 run 은 앱의 데이터를 `{DATA}` 에 두는 인자나 환경 변수를 하나 이상 적는다")
+    named = [*(("", a) for a in out["args"]), *out["env"].items()]
+    if outside := [s for name, s in named if _reaches_out(s, name)]:
+        raise ValueError(f"`{label}` 의 run 설정 `{outside[0]}` 은 사본 밖을 가리킬 수 있다 — 실행은 얼린 사본과 "
+                         f"`{DATA}` 만 읽는다. 드라이브·UNC·파일 URI·루트부터의 경로·`..`·`%변수%` 없이, run.cwd 기준 "
+                         f"상대 경로나 `{DATA}` 나 원격 URL 로 적는다")
+    return out
+
+
 def declared(tree: Path, final: str) -> dict:
     """The build turn's `oneshot-desktop` block, checked for shape: `run`'s build folder, its program inside it,
     the arguments, the working directory inside that folder, the environment, with `{data}` named at least once
@@ -144,35 +182,7 @@ def declared(tree: Path, final: str) -> dict:
     value = oneshot.block(final, BLOCK)
     if not isinstance(value, dict) or not isinstance(value.get("run"), dict):
         raise ValueError(f"`{BLOCK}` 는 run{{folder, program, args, cwd, env}} 과 installer 를 담은 객체다")
-    run = value["run"]
-    out = {"folder": _relative(run.get("folder"), "run.folder"), "program": _relative(run.get("program"), "run.program"),
-           "args": run.get("args", []), "cwd": run.get("cwd", "."), "env": run.get("env", {})}
-    if out["cwd"] != ".":
-        _relative(out["cwd"], "run.cwd")
-    if Path(out["program"]).suffix.lower() != ".exe":
-        raise ValueError(f"`{BLOCK}` 의 run.program 은 패키지하지 않은 디버그 빌드의 `.exe` 다 — MSIX 나 설치 파일은 "
-                         "띄우지 않는다")
-    if not isinstance(out["args"], list) or not all(isinstance(a, str) for a in out["args"]):
-        raise ValueError(f"`{BLOCK}` 의 run.args 는 문자열 목록이다")
-    if not isinstance(out["env"], dict) or not all(isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str)
-                                                    for k, v in out["env"].items()):
-        raise ValueError(f"`{BLOCK}` 의 run.env 는 환경 변수 이름과 문자열 값의 객체다")
-    if len({k.upper() for k in out["env"]}) != len(out["env"]):   # one variable to Windows
-        raise ValueError(f"`{BLOCK}` 의 run.env 에 대소문자만 다른 이름이 있다 — Windows 에는 한 변수다")
-    settings = [*out["args"], *out["env"].values()]
-    if named := sorted(k for k in out["env"] if k.upper() in LOOK_ENV):
-        raise ValueError(f"`{BLOCK}` 의 run.env 는 `{named[0]}` 를 정하지 않는다 — 화면 검사가 "
-                         f"{', '.join(sorted(LOOK_ENV))} 로 열 화면과 상태를 넘긴다")
-    if owned := sorted(k for k in out["env"] if k.upper() in OWNED_ENV):
-        raise ValueError(f"`{BLOCK}` 의 run.env 는 `{owned[0]}` 를 정하지 않는다 — look 이 {', '.join(sorted(OWNED_ENV))} 를 "
-                         f"자기 폴더로 둔다. 앱 데이터는 `{DATA}` 를 받는 다른 인자나 변수로 넘긴다")
-    if not any(DATA in s and not _remote(s) for s in settings):   # a local setting, never a URL's text
-        raise ValueError(f"`{BLOCK}` 의 run 은 앱의 데이터를 `{DATA}` 에 두는 인자나 환경 변수를 하나 이상 적는다")
-    named = [*(("", a) for a in out["args"]), *out["env"].items()]
-    if outside := [s for name, s in named if _reaches_out(s, name)]:
-        raise ValueError(f"`{BLOCK}` 의 run 설정 `{outside[0]}` 은 사본 밖을 가리킬 수 있다 — 실행은 얼린 사본과 "
-                         f"`{DATA}` 만 읽는다. 드라이브·UNC·파일 URI·루트부터의 경로·`..`·`%변수%` 없이, run.cwd 기준 "
-                         f"상대 경로나 `{DATA}` 나 원격 URL 로 적는다")
+    out = run_of(value["run"], BLOCK)
     installer = _relative(value.get("installer"), "installer")
     if Path(installer).suffix.lower() not in INSTALLERS:
         raise ValueError(f"`{BLOCK}` 의 installer 는 S8 이 붙일 설치 파일(.exe, .msi, .msix)이다 — {installer}")

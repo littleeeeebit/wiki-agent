@@ -1,19 +1,49 @@
 ## The real measurement this build must be ready for
 
 After the gate passes, the server opens the run's first pull request as a
-draft. Then it runs the backend on the owner's PC against the real services,
+draft. Then it runs the product on the owner's PC against the real services,
 with the real accounts and addresses the owner gives. The review reads that
 measurement. A smoke test, a fake service or a recorded answer is not a
 measurement; nothing stands in for a real call. Commit `.wiki/measure.json`
 with these five parts, and the code each part names.
 
-1. `serve`: `{"command": "…", "health": "http://127.0.0.1:<port>/<path>",
-   "seconds": 120}`. The command starts the whole backend headless: its API
-   server, its workers, and the real sign-in flow. It keeps running until the
-   server stops it. It starts even when the owner has not given the inputs
-   yet, and `health` answers 200 once it can take requests. The server starts
-   it at the end of every build check. A backend that does not come up fails
-   the check.
+The server measures by itself first, as many times as it takes. Every metric
+that needs no person must pass in its own measurement, the live broadcast
+included; only the metrics that failed come back to you. Then the owner
+measures once, on their own screen, watching and listening. `ONESHOT_MEASURE`
+tells the script and the product whose measurement it is: `auto` for the
+server's, `owner` for the owner's.
+
+In a run that builds a PC app (`desktop`), the measurement runs the program
+the owner will install, never a headless server. So this turn also writes the
+program's first screen: an address box, start and stop, the video or
+broadcast playing with the converted sound, and the speakers found. It is the
+screen a person uses for the measured flow, nothing more; later stages build
+the other screens on it. The program's process serves the same local API the
+script drives, so the window shows what the script does.
+
+1. `serve`, or `app` in a `desktop` run (never both).
+   - `serve`: `{"command": "…", "health": "http://127.0.0.1:<port>/<path>",
+     "seconds": 120}`. The command starts the whole backend headless: its API
+     server, its workers, and the real sign-in flow. It keeps running until
+     the server stops it.
+   - `app`: `{"run": {"folder": "…", "program": "….exe", "args": […],
+     "cwd": ".", "env": {…}}, "health": "http://127.0.0.1:<port>/<path>",
+     "seconds": 120}`. `run` is the unpackaged debug build the gate makes,
+     shaped as the PC app's `run`: a folder inside the worktree, the program
+     inside it, and at least one argument or variable that puts the program's
+     data at `{data}`. Everything the program keeps goes under `{data}`: its
+     settings, a sign-in, and any runtime or model it downloads. The server
+     keeps that folder from one build to the next, so a download or a sign-in
+     is done once. The server freezes the folder and starts the program in a
+     job of its own: for `auto` on a desktop of its own that the owner never
+     sees, for `owner` on the owner's screen. With `ONESHOT_MEASURE=auto` the
+     program plays no sound through the speakers; what it would say goes to
+     the clips.
+
+   Either starts even when the owner has not given the inputs yet, and
+   `health` answers 200 once it can take requests. The server starts it at
+   the end of every build check. One that does not come up fails the check.
 2. `measure`: `{"command": "… {out} …", "minutes": 15}`. A script, committed
    here, that drives the running backend through the requirements as a person
    would, against the real services. It reads the inputs from their
@@ -21,7 +51,9 @@ with these five parts, and the code each part names.
    `{"metrics": {"<id>": <number or true/false>}, "notes": "<Korean>"}`, and,
    when `clips` is true, a few short converted samples under `{out}/clips/`
    (`.wav`, `.mp3`, `.m4a`, `.ogg`, `.mp4`, `.webm`) for the owner to listen
-   to. When an input itself is wrong, it writes
+   to. It never waits for a person when `ONESHOT_MEASURE` is `auto`: it uses
+   the sign-in `{data}` already holds, and a metric it cannot reach without a
+   person it leaves out of the report. When an input itself is wrong, it writes
    `{"input_error": {"input": "M2", "why": "<Korean>"}}` instead. Examples: a
    key the service refuses, a broadcast that is not live, a sign-in the owner
    did not finish. It never prints a secret.
@@ -32,7 +64,8 @@ with these five parts, and the code each part names.
    `env` is one of the design's needs shares that need's stored value.
 4. `during`: the steps the owner takes while the script runs, such as
    choosing a Google account in the browser window it opens. Use the same
-   step shape. The measurement screen shows nothing the script prints or
+   step shape, and name in each step's `metrics` the metrics that step is
+   needed for. The measurement screen shows nothing the script prints or
    writes while it runs, and the owner never needs to read its console
    output; a saved result keeps a masked tail of that output beside the
    report and the clips. When a step needs the owner to read
@@ -58,7 +91,11 @@ with these five parts, and the code each part names.
 5. `metrics`: each
    `{"id": "live_delay_s", "what": "<Korean>", "unit": "초",
    "requirements": ["R8"], "calls": ["X2"], "pass": {"op": "<=",
-   "value": 65}}`. Together they reach every outside call of the design
+   "value": 65}}`. A metric that needs a `during` step, directly or through
+   another (a sign-in, a link made by a device code, a setting changed on
+   the linked screen), carries `"person": true`; every other metric is
+   judged in the server's own measurement. Together they reach every outside
+   call of the design
    (`calls`), so a real Google sign-in or a real live broadcast is in the
    measurement, not beside it. Set `"clips": true` whenever the product makes
    something a person hears or sees.
@@ -104,8 +141,8 @@ the first time:
 
 5. `.wiki/measure.json` passes the server's check, which names what is
    missing.
-6. `serve.command` comes up and answers `health` with 200 on the committed
-   HEAD.
+6. `serve.command`, or the program `app` names, comes up and answers
+   `health` with 200 on the committed HEAD.
 
 ## When the review sent this build back
 

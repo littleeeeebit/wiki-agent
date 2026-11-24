@@ -116,24 +116,28 @@ export type PcRound = {
   results?: Record<string, PcResult>
 }
 /** One step the owner takes, in one window (`oneshot_measure.step_problem`); the build agent writes them. */
-export type Step = { window: string; do: string; see: string; url?: string; copy?: string }
+export type Step = { window: string; do: string; see: string; url?: string; copy?: string; metrics?: string[] }
 export type MeasureInput = { id: string; what: string; kind: 'secret' | 'text'; env: string; guide: Step[]; given: boolean }
 export type Metric = {
   id: string; what: string; unit: string; requirements: string[]; calls: string[]
-  pass: { op: string; value: number | boolean }
+  pass: { op: string; value: number | boolean }; person?: boolean
 }
-/** One real measurement (`oneshot_measure.measure`): `owner` waits for the owner's verdict, recorded in `owner`. */
+/** One real measurement (`oneshot_measure.measure`): the server's own (`auto`), `passed` once every metric that
+ *  needs no person passed, or the owner's, whose `owner` status waits for the verdict recorded in `owner`. */
 export type MeasureRun = {
-  n: number; head: string; ts: number; status: 'owner' | 'failed' | 'input' | 'stale'; code?: number | null
+  n: number; head: string; ts: number; status: 'owner' | 'passed' | 'failed' | 'input' | 'stale'; code?: number | null
+  mode?: 'auto' | 'owner'
   metrics?: (Metric & { value: number | boolean | null; ok: boolean })[]; notes?: string; error?: string
   input_error?: { input: string; why: string }; clips?: string[]; tail?: string
   owner?: { approve: boolean; note: string; ts: number }; comment_error?: string
 }
 /** The measurement stage (`oneshot_measure.shown`): the plan the build agent committed, or why it does not hold. */
 export type MeasureView = {
-  plan: { serve: { command: string; health: string }; measure: { command: string; minutes: number }; inputs: MeasureInput[]
-          during: Step[]; metrics: Metric[]; clips: boolean } | null
+  plan: { serve?: { command: string; health: string }; app?: { health: string }; measure: { command: string; minutes: number }
+          inputs: MeasureInput[]; during: Step[]; metrics: Metric[]; clips: boolean } | null
   error: string; runs: MeasureRun[]; pr: { number: number; url: string } | null; head: string
+  /** The measurement [실측 시작] runs next: the server's own until it passes, then the owner's once. */
+  next: 'auto' | 'owner'
 }
 /** An area the builder and the review could not both meet (`oneshot_review.conflicted`). */
 export type Conflict = {

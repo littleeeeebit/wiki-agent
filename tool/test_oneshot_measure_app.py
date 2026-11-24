@@ -1,0 +1,250 @@
+"""oneshot step 13: the server measures by itself until every machine metric passes, then the owner once; a run that
+builds a PC app measures its program, never a headless server.
+
+See `docs/plans/oneshot/13-measure-the-product.md`. The backend and script are `test_oneshot_measure`'s stand-ins;
+the program's desktop is replaced, since a look opens a real one.
+"""
+
+import json
+import shutil
+import sys
+import types
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from fastapi import HTTPException
+
+from main import oneshot_measure as measure, oneshot_measure_app as product, oneshot_publish, oneshot_spec
+from test_main import no_machine_settings  # noqa: F401 — the fixture is autouse
+from test_oneshot_build import APP, built_world, check, git, o, report, spec, to_build, write  # noqa: F401
+from test_oneshot_measure import ENV, KEY, SCRIPT, at_measure, given  # noqa: F401 — `at_measure` is a fixture
+from test_oneshot_spec import world  # noqa: F401 — `world` is a fixture
+
+# The stand-in script, also reporting a metric only a person reaches: the sign-in the owner's measurement makes.
+PERSON = SCRIPT.replace(
+    'report = {"metrics": {"total_ok": os.environ.get("BUDGET_URL") == "https://example.test/live"},',
+    'report = {"metrics": {"total_ok": os.environ.get("BUDGET_URL") == "https://example.test/live",\n'
+    '                      "signed_in": os.environ.get("ONESHOT_MEASURE") == "owner"},')
+STEP = {"window": "브라우저 — Google 로그인", "do": "계정을 고른다", "see": "연결됐다고 보인다"}
+
+
+@pytest.fixture
+def with_person(at_measure):  # noqa: F811 — the imported fixture, by its name
+    tree, sent = at_measure
+    assert PERSON != SCRIPT
+    write(tree, "measure.py", PERSON)
+    plan = json.loads((tree / ".wiki/measure.json").read_text(encoding="utf-8"))
+    plan["metrics"].append({"id": "signed_in", "what": "Google 로그인이 됐다", "requirements": ["R1"], "person": True,
+                            "pass": {"op": "==", "value": True}})
+    plan["during"] = [{**STEP, "metrics": ["signed_in"]}]
+    write(tree, ".wiki/measure.json", json.dumps(plan, ensure_ascii=False))
+    git(tree, "add", "-A")
+    git(tree, "commit", "-m", "person")
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "working": "build"})   # the build turn that wrote it
+    check(tree, "만들었다.\n" + report())
+    assert o()["stage"] == "measure" and o()["built_head"] == git(tree, "rev-parse", "HEAD")
+    oneshot_spec.saved("budget", oneshot={"working": None})
+    return tree, sent
+
+
+def started_once() -> None:
+    from main import oneshot
+    measure.start("budget", measure.Start(head=o()["built_head"]))
+    oneshot._workers["spec:budget"].join(120)
+
+
+def test_the_server_measures_first_and_calls_the_owner_once_every_machine_metric_passed(with_person):
+    given()
+    assert measure.shown(spec())["measure"]["next"] == "auto"
+    started_once()
+    run = o()["measures"][-1]
+    by = {m["id"]: m for m in run["metrics"]}
+    assert run["mode"] == "auto" and run["status"] == "passed" and not o().get("measure_fails")
+    assert by["total_ok"]["ok"] and not by["signed_in"]["ok"]   # the person metric is not judged without a person
+    assert o()["stage"] == "measure" and measure.shown(spec())["measure"]["next"] == "owner"
+    started_once()   # the owner's one measurement, on their screen
+    run = o()["measures"][-1]
+    assert run["mode"] == "owner" and run["status"] == "owner" and all(m["ok"] for m in run["metrics"])
+    with pytest.raises(HTTPException) as e:   # waits for the owner's verdict
+        measure.start("budget", measure.Start(head=o()["built_head"]))
+    assert e.value.status_code == 409
+
+
+def test_a_failed_machine_metric_goes_back_alone_and_the_server_measures_again(with_person):
+    tree, sent = with_person
+    given(url="https://example.test/other")
+    started_once()
+    run = o()["measures"][-1]
+    assert run["mode"] == "auto" and run["status"] == "failed" and o()["stage"] == "build" and o()["fix"] == "measure"
+    text = sent[-1][2]
+    assert "total_ok=False" in text and "signed_in" not in text   # only what failed, never the person metric
+    assert [m["id"] for m in measure.failed_metrics(run)] == ["total_ok"]
+    git(tree, "commit", "--allow-empty", "-m", "fix")
+    check(tree, "고쳤다.\n" + report())
+    oneshot_spec.saved("budget", oneshot={"working": None})
+    assert measure.shown(spec())["measure"]["next"] == "auto"   # a new build: the server's own again
+    given()
+    started_once()
+    assert o()["measures"][-1]["status"] == "passed" and not o().get("measure_fails")
+
+
+def test_each_person_metric_names_the_step_it_needs_and_each_step_its_metrics(with_person):
+    tree, _ = with_person
+    plan = json.loads((tree / ".wiki/measure.json").read_text(encoding="utf-8"))
+    s = spec()
+    assert measure.checked(plan, s, tree)["metrics"][1]["person"] is True
+    with pytest.raises(ValueError, match="metrics"):
+        measure.checked({**plan, "during": [STEP]}, s, tree)
+    with pytest.raises(ValueError, match="total_ok"):   # a step naming a metric any machine reaches
+        measure.checked({**plan, "during": [{**STEP, "metrics": ["signed_in", "total_ok"]}]}, s, tree)
+    alone = {**plan, "during": [], "metrics": plan["metrics"]}
+    with pytest.raises(ValueError, match="signed_in"):   # a person metric no step reaches
+        measure.checked(alone, s, tree)
+    with pytest.raises(ValueError, match="person"):
+        measure.checked({**plan, "metrics": [{**plan["metrics"][0], "person": "yes"}, plan["metrics"][1]]}, s, tree)
+
+
+def program(tree: Path) -> dict:
+    """A built program in the worktree, a real Windows executable the look could start, and its `app` block."""
+
+    (tree / "build").mkdir(exist_ok=True)
+    shutil.copyfile(sys.executable, tree / "build" / "app.exe")
+    return {"run": {"folder": "build", "program": "app.exe", "args": ["--data", "{data}"], "cwd": ".", "env": {}},
+            "health": "http://127.0.0.1:47999/api/link/info", "seconds": 20}
+
+
+def test_a_run_that_builds_a_pc_app_measures_its_program_never_a_server(at_measure):  # noqa: F811 — the imported fixture
+    tree, _ = at_measure
+    plan = json.loads((tree / ".wiki/measure.json").read_text(encoding="utf-8"))
+    s = spec()
+    app = program(tree)
+    with pytest.raises(ValueError, match="`app` 은 적지 않는다"):   # no PC app: the backend headless, as step 12
+        measure.checked({**plan, "app": app}, s, tree)
+    s["oneshot"]["intent"] = {"kinds": ["desktop"]}
+    with patch.object(measure.oneshot_build, "tools", lambda o: None):   # the PC app's toolchain is 9e's
+        with pytest.raises(ValueError, match="`serve` 는 적지 않는다"):
+            measure.checked({**plan, "app": app}, s, tree)
+        served = {k: v for k, v in plan.items() if k != "serve"}
+        assert measure.checked({**served, "app": app}, s, tree)["app"]["run"]["program"] == "app.exe"
+        with pytest.raises(ValueError, match="ONESHOT_MEASURE"):   # the server's to set
+            measure.checked({**served, "app": {**app, "run": {**app["run"], "env": {"ONESHOT_MEASURE": "owner"}}}}, s, tree)
+        with pytest.raises(ValueError, match="data"):   # the data it keeps goes under `{data}`
+            measure.checked({**served, "app": {**app, "run": {**app["run"], "args": []}}}, s, tree)
+        with pytest.raises(ValueError, match=r"\.exe"):
+            measure.checked({**served, "app": {**app, "run": {**app["run"], "program": "app.msix"}}}, s, tree)
+        with pytest.raises(ValueError, match="app.health"):
+            measure.checked({**served, "app": {**app, "health": "http://example.com/x"}}, s, tree)
+
+
+class Job:
+    def __init__(self, done=False):
+        self.done, self.ended = done, []
+
+    def finished(self):
+        return self.done
+
+    def members(self):
+        return [{"pid": 4242}]
+
+    def end(self, wait):
+        self.ended.append(wait)
+        return {"clean": True, "reasons": []}
+
+
+def session(tmp_path: Path, job: Job, seen: dict):
+    """A stand-in for `desktop_session`: its look records what it was asked to start, and starts nothing."""
+
+    class Look:
+        def __init__(self, root, name, owned, disposable):
+            self.folder, self.jobs = Path(root) / name, {}
+            (self.folder / "evidence").mkdir(parents=True)
+            seen.update(owned=owned, disposable=disposable)
+
+        def start(self, key, argv, cwd, extra, halt=None):
+            (self.folder / "evidence" / f"{key}.log").write_text("app started", encoding="utf-8")
+            seen.update(key=key, argv=argv, cwd=cwd, extra=extra)
+            self.jobs[key] = job
+
+        def observe(self):
+            pass
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def look(root, name, owned=True, disposable=False):
+        yield Look(root, name, owned, disposable)
+
+    return types.SimpleNamespace(look=look, Halted=type("Halted", (Exception,), {}),
+                                 Refused=type("Refused", (ValueError,), {}))
+
+
+def test_the_frozen_program_starts_with_its_data_the_inputs_and_whose_measurement_it_is(at_measure, tmp_path):  # noqa: F811 — the imported fixture
+    tree, _ = at_measure
+    s = spec()
+    plan = {"app": program(tree), "inputs": [{"env": "BUDGET_URL"}, {"env": ENV}]}
+    env = {"BUDGET_URL": "https://example.test/live", ENV.lower(): KEY, "OTHER": "x"}
+    halt, job, seen = measure.Halted(), Job(), {}
+    answers = iter([None, 200])
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, job, seen)), \
+            patch.object(product, "answers", lambda url: next(answers)), \
+            patch.object(product, "vouched", lambda pids, url: pids == {4242}):
+        with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "auto"):
+            assert not job.ended
+    data = product.folder(s) / "data"
+    assert seen["owned"] and seen["disposable"] and seen["key"] == "app"   # auto: the run's own desktop
+    assert Path(seen["argv"][0]).name == "app.exe" and product.folder(s) in Path(seen["argv"][0]).parents
+    assert seen["argv"][1:] == ["--data", str(data)] and data.is_dir()
+    assert seen["extra"]["ONESHOT_MEASURE"] == "auto" and seen["extra"]["BUDGET_URL"] == "https://example.test/live"
+    assert seen["extra"][ENV] == KEY and "OTHER" not in seen["extra"]   # the inputs, by their names, nothing else
+    assert job.ended == [product.END_SECONDS] and (tmp_path / "out" / "serve.log").read_text() == "app started"
+    (data / "kept.txt").write_text("sign-in", encoding="utf-8")
+    seen.clear()
+    answers = iter([None, 200])
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, Job(), seen)), \
+            patch.object(product, "answers", lambda url: next(answers)), \
+            patch.object(product, "vouched", lambda pids, url: True):
+        with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "owner"):
+            pass
+    assert not seen["owned"] and seen["extra"]["ONESHOT_MEASURE"] == "owner"   # the owner's own screen
+    assert (data / "kept.txt").read_text(encoding="utf-8") == "sign-in"   # one data folder for the whole run
+
+
+def test_the_program_must_answer_from_its_own_job_and_not_end(at_measure, tmp_path):  # noqa: F811 — the imported fixture
+    tree, _ = at_measure
+    s, plan = spec(), {"app": program(tree), "inputs": []}
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, Job(), {})), \
+            patch.object(product, "answers", lambda url: 200):
+        with pytest.raises(ValueError, match="이미 다른 프로그램"), \
+                product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "a.log", {}, "auto"):
+            pass
+    answers = iter([None, 200])
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, job := Job(), {})), \
+            patch.object(product, "answers", lambda url: next(answers)), \
+            patch.object(product, "vouched", lambda pids, url: False):
+        with pytest.raises(ValueError, match="띄운 PC 프로그램이 아니다"), \
+                product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "b.log", {}, "auto"):
+            pass
+    assert job.ended
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, Job(done=True), {})), \
+            patch.object(product, "answers", lambda url: None):
+        with pytest.raises(ValueError, match="떠 있지 않고 끝났다"), \
+                product.running(s, plan, tree, {}, measure.Halted(), tmp_path / "c.log", {}, "auto"):
+            pass
+
+
+def test_pull_request_one_starts_the_servers_own_measurement_at_once(at_measure):  # noqa: F811 — the imported fixture
+    pr = {"number": 1, "url": "https://github.test/pull/1"}
+    calls, notes = [], []
+    with patch.object(oneshot_publish, "published", lambda repo: pr), \
+            patch.object(measure, "start", lambda repo, s: calls.append((repo, s.head))), \
+            patch.object(oneshot_publish.work, "notice", lambda *a: notes.append(a)):
+        oneshot_publish.publish("budget")
+    assert calls == [("budget", o()["built_head"])] and not notes
+
+    def missing(repo, s):
+        raise HTTPException(400, "아직 넣지 않은 값: M1")
+    with patch.object(oneshot_publish, "published", lambda repo: pr), patch.object(measure, "start", missing), \
+            patch.object(oneshot_publish.work, "notice", lambda *a: notes.append(a)):
+        oneshot_publish.publish("budget")
+    assert "M1" in notes[-1][1]   # an input not given yet: the owner's press starts it

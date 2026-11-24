@@ -80,18 +80,19 @@ reach as not reached, never as passed.
 After every build turn whose gate passes, the server measures by itself.
 
 - It launches the frozen program on the run-owned desktop, so no window
-  covers the owner's screen. The program's audio sessions are muted for the
-  run (Windows' per-session volume, found by the program's job), and the
-  clips hold what it said.
+  covers the owner's screen. With `ONESHOT_MEASURE=auto` the program plays
+  no sound through the speakers, and the clips hold what it said. A program
+  that plays sound anyway is heard: an accepted limit, since the server sets
+  no per-program volume.
 - `{data}` is one folder kept for the whole run, not a fresh one per launch,
   so a sign-in the owner gave once is still there for the next build.
 - A failed metric that needs no person sends the run back to the build agent
   (`fix: measure`) with those metrics only: their values, thresholds, the
   report's notes and the end of the program's log. The build agent may run
   the same script itself while it fixes them.
-- A person metric not reached, while every other metric passed, calls the
-  owner for that step only: the card names the step, for example "Google
-  로그인 한 번이 필요하다", and the measurement starts again after it.
+- A person metric is not judged in the server's own measurement. Once
+  every other metric passed, the owner's one measurement covers every
+  `during` step and every person metric.
 - The round cap (`oneshot_review.cap()`) still stops the run for the owner
   after that many failed measurements in a row.
 
@@ -114,6 +115,6 @@ which.
 | # | Step | Status |
 | --- | --- | --- |
 | 13a | `.wiki/measure.json` takes `app` for a `desktop` run, frozen and health-checked like the PC app's `run`; metrics carry `person`; the build prompt asks for the first screen with the backend | In this pull request |
-| 13b | The server measures by itself after each passing build turn, on the run-owned desktop, muted, with one data folder per run; only failed metrics go back; a person step calls the owner for that step only | In this pull request |
+| 13b | The server measures by itself after each passing build turn, on the run-owned desktop, without sound, with one data folder per run; only failed metrics go back | In this pull request |
 | 13c | The owner's one measurement on their own screen, with sound, after every machine metric passed | In this pull request |
 | 13d | The `vtuber-ko-dub` run goes through 13a–13c: its build turn writes the first screen, the server measures until it passes, then the owner measures once | After the merge |

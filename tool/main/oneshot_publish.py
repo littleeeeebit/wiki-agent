@@ -94,7 +94,7 @@ def published(repo: str) -> dict:
 
 
 def begin(repo: str) -> None:
-    """After the build passed: the HEAD goes up to pull request #1, then the run waits for the owner's start."""
+    """After the build passed: the HEAD goes up to pull request #1, then the server measures it by itself."""
 
     try:
         oneshot.start_worker(oneshot_spec.store(repo), "publish", publish, (repo,), {})
@@ -108,8 +108,12 @@ def publish(repo: str) -> None:
     except ValueError as exc:
         oneshot_spec.store(repo).stop("measure", f"PR #1 을 올리지 못했다 — {exc} — [실측 시작]을 누르면 다시 올린다")
         return
-    oneshot_spec.saved(repo, oneshot={"working": None})
-    work.notice(f"PR #{pr['number']} 초안 · 실측을 기다린다", f"{repo} · 입력을 넣고 [실측 시작]을 누른다")
+    spec = oneshot_spec.saved(repo, oneshot={"working": None})
+    from . import oneshot_measure   # it imports this module
+    try:   # the server measures by itself at once (plan 13): the owner is called once a machine has nothing to find
+        oneshot_measure.start(repo, oneshot_measure.Start(head=spec["oneshot"]["built_head"]))
+    except HTTPException as exc:   # an input not given yet, or the run moved on: the owner's `[실측 시작]` starts it
+        work.notice(f"PR #{pr['number']} 초안 · 실측을 기다린다", f"{repo} · {exc.detail} — 입력을 넣고 [실측 시작]을 누른다")
 
 
 def commented(spec: dict, record: dict) -> str:

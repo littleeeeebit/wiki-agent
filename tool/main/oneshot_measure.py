@@ -2,16 +2,17 @@
 
 `docs/plans/oneshot/12-review-converges-on-measurement.md` is the design. The build agent commits
 `.wiki/measure.json` (`PLAN`):
-- how to start the backend headless (`serve`);
+- how to start the backend headless (`serve`), or, in a run that builds a PC app, the program itself (`app`, plan 13);
 - the script that measures it against the real services (`measure`);
 - what the owner gives it (`inputs`), each with the steps that get it, window by window;
 - what the owner does while it runs (`during`);
 - each metric with its threshold.
 
 The server checks the plan and opens pull request #1 as a draft (`published`). It starts the backend in a job of
-its own, runs the script with the owner's inputs, and keeps the report and the clips. Then the owner listens and
-decides. Approval sends the run to the review, which reads the measurement; a failed measurement, or the owner's
-refusal, sends it back to the build agent.
+its own, runs the script with the owner's inputs, and keeps the report and the clips. It measures by itself first
+(`auto`) until every metric that needs no person passes, each failure going back to the build agent; then the owner
+measures once (`owner`), listens and decides. Approval sends the run to the review, which reads the measurement; a
+failed measurement, or the owner's refusal, sends it back to the build agent.
 """
 
 from __future__ import annotations
@@ -21,25 +22,20 @@ import operator
 import os
 import re
 import shutil
-import socket
 import stat
-import subprocess
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
-from contextlib import contextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from common import masked, process, shell
+from common import masked
 
-from . import oneshot, oneshot_build, oneshot_needs, oneshot_publish, oneshot_spec, release, runtime, specs, work
+from . import (oneshot, oneshot_build, oneshot_measure_app as product, oneshot_needs, oneshot_profile, oneshot_publish,
+               oneshot_spec, release, runtime, specs, work)
 from .oneshot_kept import (CLIPS, LAUNCHER, MAX_CLIPS, clips_of, committed, fresh, kept_from, label_of,  # noqa: F401
                            launched, plain, spelled, strict, tail)
 from .oneshot_publish import commented
@@ -91,24 +87,32 @@ def checked(value, spec: dict, path: Path) -> dict:
 
     o = spec["oneshot"]
     if not isinstance(value, dict):
-        raise ValueError(f"`{PLAN}` 는 serve, measure, inputs, metrics 를 담은 객체다")
-    serve, measure = value.get("serve"), value.get("measure")
-    if not isinstance(serve, dict) or not isinstance(serve.get("command"), str) \
+        raise ValueError(f"`{PLAN}` 는 serve(또는 app), measure, inputs, metrics 를 담은 객체다")
+    desktop = "desktop" in oneshot_profile.kinds_of(o)   # the program the owner installs, never a headless server
+    part = "app" if desktop else "serve"
+    if ("serve" if desktop else "app") in value:
+        raise ValueError("PC 앱을 만드는 실행의 실측은 `app` 으로 그 프로그램을 띄운다 — `serve` 는 적지 않는다" if desktop
+                         else "PC 앱을 만들지 않는 실행의 실측은 `serve` 로 백엔드를 띄운다 — `app` 은 적지 않는다")
+    serve, measure = value.get(part), value.get("measure")
+    if desktop:
+        run = product.app_of(serve)
+    elif not isinstance(serve, dict) or not isinstance(serve.get("command"), str) \
             or not oneshot_build.chained(serve["command"]):
         raise ValueError(f"`serve.command` 는 백엔드를 화면 없이 띄우고 계속 도는 명령이고, {oneshot_build.CHAIN}")
     if not isinstance(serve.get("health"), str) or not HEALTH.fullmatch(serve["health"]):
-        raise ValueError("`serve.health` 는 떠 있는 백엔드가 200 으로 답하는 http://127.0.0.1:포트/경로 주소다")
+        raise ValueError(f"`{part}.health` 는 떠 있는 {'프로그램' if desktop else '백엔드'}가 200 으로 답하는 "
+                         "http://127.0.0.1:포트/경로 주소다")
     seconds = serve.get("seconds", 120)
     if not isinstance(seconds, int) or isinstance(seconds, bool) or not 5 <= seconds <= MAX_SERVE_SECONDS:
-        raise ValueError(f"`serve.seconds` 는 백엔드가 뜨기를 기다릴 초, 5–{MAX_SERVE_SECONDS} 다")
+        raise ValueError(f"`{part}.seconds` 는 {'프로그램' if desktop else '백엔드'}가 뜨기를 기다릴 초, 5–{MAX_SERVE_SECONDS} 다")
     if not isinstance(measure, dict) or not isinstance(measure.get("command"), str) \
             or measure["command"].count("{out}") != 1 or not oneshot_build.chained(measure["command"].replace("{out}", "x")):
         raise ValueError(f"`measure.command` 는 결과 폴더 자리 `{{out}}` 를 한 번 담은 실측 명령이고, {oneshot_build.CHAIN}")
     minutes = measure.get("minutes")
     if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= MAX_MINUTES:
         raise ValueError(f"`measure.minutes` 는 실측이 걸리는 분, 1–{MAX_MINUTES} 다")
-    if (tools := oneshot_build.tools(o)) is not None and (
-            bad := oneshot_build.undeclared(path, f"{serve['command']} && {measure['command'].replace('{out}', 'x')}", tools)):
+    started = measure["command"].replace("{out}", "x") if desktop else f"{serve['command']} && {measure['command'].replace('{out}', 'x')}"
+    if (tools := oneshot_build.tools(o)) is not None and (bad := oneshot_build.undeclared(path, started, tools)):
         raise ValueError(f"확정한 도구도 작업트리 안의 파일도 아닌 프로그램을 부른다: {', '.join(bad)}")
     for part in ("inputs", "during", "metrics"):
         if not isinstance(value.get(part) or [], list):
@@ -144,6 +148,9 @@ def checked(value, spec: dict, path: Path) -> dict:
     during = value.get("during") or []
     if not isinstance(during, list) or any(why := step_problem(s, f"during {m}단계") for m, s in enumerate(during, 1)):
         raise ValueError(why if isinstance(during, list) else "`during` 은 실측하는 동안 주인이 할 단계의 목록이다")
+    serving = [s.get("metrics") for s in during]
+    if not all(isinstance(ids, list) and ids and all(isinstance(i, str) for i in ids) for ids in serving):
+        raise ValueError("during 의 단계마다 `metrics` 에 그 단계가 있어야 잴 수 있는 측정값 id 를 적는다")
     reqs = {str(r["id"]) for r in spec.get("requirements") or []}
     calls = {x["id"] for x in (o.get("design") or {}).get("outside") or []}
     metrics, covered = [], set()
@@ -164,15 +171,24 @@ def checked(value, spec: dict, path: Path) -> dict:
                 or not isinstance(bound.get("value"), (int, float)) \
                 or isinstance(bound["value"], bool) and bound["op"] != "==":
             raise ValueError(f"{where} {m['id']}: `pass` 는 op({', '.join(OPS)})와 숫자 value, 또는 == 와 true/false 다")
+        if not isinstance(m.get("person", False), bool):
+            raise ValueError(f"{where} {m['id']}: `person` 은 사람이 during 단계를 해야 잴 수 있으면 true 다")
         covered |= set(map(str, cl))
         metrics.append({"id": m["id"], "what": " ".join(m["what"].split()), "unit": str(m.get("unit") or ""),
-                        "requirements": list(map(str, rq)), "calls": list(map(str, cl)), "pass": bound})
+                        "requirements": list(map(str, rq)), "calls": list(map(str, cl)), "pass": bound,
+                        "person": m.get("person", False)})
     if not metrics or len({m["id"] for m in metrics}) != len(metrics):
         raise ValueError("`metrics` 는 id 가 겹치지 않는 하나 이상의 측정값이다")
+    person = {m["id"] for m in metrics if m["person"]}
+    if stray := sorted({i for ids in serving for i in ids} - person):
+        raise ValueError(f"during 단계가 적은 측정값 {', '.join(stray)} 은 person: true 인 측정값이 아니다")
+    if unserved := sorted(person - {i for ids in serving for i in ids}):
+        raise ValueError(f"person: true 인 측정값 {', '.join(unserved)} 을 재게 하는 during 단계가 없다")
     if missing := sorted(calls - covered):
         raise ValueError(f"실측이 닿지 않는 바깥 호출이 있다: {', '.join(missing)} — 측정값의 `calls` 에 넣어 진짜로 부른다")
-    return {"serve": {"command": serve["command"].strip(), "health": serve["health"], "seconds": seconds},
-            "measure": {"command": measure["command"].strip(), "minutes": minutes},
+    launch = {"app": {"run": run, "health": serve["health"], "seconds": seconds}} if desktop else \
+        {"serve": {"command": serve["command"].strip(), "health": serve["health"], "seconds": seconds}}
+    return {**launch, "measure": {"command": measure["command"].strip(), "minutes": minutes},
             "inputs": inputs, "during": during, "metrics": metrics, "clips": bool(value.get("clips"))}
 
 
@@ -236,111 +252,7 @@ def env_of(spec: dict, plan: dict, base: dict | None = None) -> tuple[dict, dict
     return env, spelled(oneshot_needs.hidden(spec, env, secrets))   # every reader of the run's text masks the JSON-escaped spellings too
 
 
-# -- Starting the backend ---------------------------------------------------------------------------------
-
-@contextmanager
-def served(command: str, path: Path, env: dict, health: str, seconds: int, halt, log: Path, hide: dict):
-    """The backend started in a job of its own and answering `health` with 200, for the block; `ValueError` with
-    the end of its log when it exits, or does not answer in `seconds`. Killed with everything it started after."""
-
-    if answers(health):   # whatever answers now is not the backend about to start
-        raise ValueError(f"`{health}` 에 이미 다른 프로그램이 답한다 — 그 프로그램을 끄거나 `serve` 의 포트를 바꾼다")
-    argv, use_shell = shell.launch("gate", command=command)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("w+", encoding="utf-8", errors="replace") as output:
-        proc = subprocess.Popen(argv, shell=use_shell, cwd=path, env={**env, "PYTHONUNBUFFERED": "1"},
-                                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
-                                start_new_session=os.name != "nt",
-                                **{**process.background_options(), "creationflags":
-                                   process.background_options().get("creationflags", 0) | process.SUSPENDED})
-        job = process.contained(proc)
-        try:
-            if os.name == "nt" and not job:
-                proc.kill()
-                raise ValueError("백엔드 프로세스를 묶어 둘 수 없었다")
-            process.resumed(proc)
-            deadline = time.monotonic() + seconds
-            while True:
-                if halt.is_set():
-                    raise ValueError("사람이 멈췄다")
-                if proc.poll() is not None:
-                    raise ValueError(f"`serve.command` 가 떠 있지 않고 끝났다 (종료 코드 {proc.returncode}) — {tail(log, hide)}")
-                if answers(health) == 200:
-                    if not owned(proc, health):
-                        raise ValueError(f"`{health}` 에 답한 것이 띄운 백엔드가 아니다 — 같은 포트를 쓰는 다른 프로그램을 끈다")
-                    break
-                if time.monotonic() > deadline:
-                    raise ValueError(f"백엔드가 {seconds}초 안에 `{health}` 에 200 으로 답하지 않았다 — {tail(log, hide)}")
-                time.sleep(1)
-            yield
-        finally:
-            process.terminated(job) if job else proc.kill()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-
-
-def answers(health: str) -> int | None:
-    """The status `health` itself answers with, or `None` when nothing does. A redirect is its status, never
-    followed: whatever answers at the other end is not the backend being checked."""
-
-    try:
-        with NO_REDIRECT.open(health, timeout=3) as answer:
-            return answer.status
-    except urllib.error.HTTPError as exc:
-        return exc.code
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
-
-
-class Unfollowed(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
-        return None   # urllib then raises `HTTPError` with the redirect's own status
-
-
-NO_REDIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}), Unfollowed)   # loopback: never a proxy
-def owned(proc: subprocess.Popen, health: str) -> bool:
-    """Whether every process that accepts a connection to `health` (one connection to each address its host
-    resolves to) is `proc` or a process it started: read off the accepted socket itself, whose remote port is
-    the connection's own, so whichever listener the system picks is the one judged."""
-
-    try:
-        import psutil   # `requirements-chat.txt`; here, so a server without it still starts and refuses only this
-    except ImportError:
-        raise ValueError("psutil 이 설치되지 않았다 — `pip install -r requirements-chat.txt` 로 다시 설치한다") from None
-    url = urlsplit(health)
-    port, pids = url.port or 80, []
-    try:
-        tree = {proc.pid, *(c.pid for c in psutil.Process(proc.pid).children(recursive=True))}
-        for family, kind, _, _, address in socket.getaddrinfo(url.hostname, port, type=socket.SOCK_STREAM):
-            with socket.socket(family, kind) as s:
-                s.settimeout(3)
-                try:
-                    s.connect(address)
-                except OSError:
-                    continue   # nothing answers on this address: it cannot answer for the backend either
-                pids.append(accepted_by(psutil, s.getpeername()[:2], s.getsockname()[:2]))
-        return bool(pids) and all(p in tree for p in pids)
-    except (psutil.Error, OSError):
-        return False
-
-
-def accepted_by(psutil, server: tuple, client: tuple, seconds: float = 3.0) -> int | None:
-    """The process holding the server side of the connection `client` made to `server`, matched on both ends'
-    address and port (an IPv4-mapped address read as IPv4), or `None`. A connection still queued for `accept`
-    has no owner on Linux yet, so the table is read again until one shows or `seconds` pass."""
-
-    ip = lambda a: a.lower().removeprefix("::ffff:")   # noqa: E731
-    deadline = time.monotonic() + seconds
-    while True:
-        pid = next((c.pid for c in psutil.net_connections("tcp") if c.laddr and c.raddr
-                    and (ip(c.laddr.ip), c.laddr.port) == (ip(server[0]), server[1])
-                    and (ip(c.raddr.ip), c.raddr.port) == (ip(client[0]), client[1])), None)
-        if pid is not None or time.monotonic() > deadline:
-            return pid
-        time.sleep(0.1)
-
+# -- Starting what is measured: `oneshot_measure_app` ------------------------------------------------
 
 def serve_check(path: Path, run, spec: dict) -> str:
     """At the build's gate: the plan holds and the backend starts and answers its health address, or why not."""
@@ -350,8 +262,7 @@ def serve_check(path: Path, run, spec: dict) -> str:
         env, hide = env_of(spec, plan)
         log = Path(tempfile.mkdtemp(prefix="oneshot-serve-")) / "serve.log"
         try:
-            with served(oneshot_build.run_as(plan["serve"]["command"], spec["oneshot"], path), path, env,
-                        plan["serve"]["health"], plan["serve"]["seconds"], run.halt, log, hide):
+            with product.started(spec, plan, path, {**env, product.MODE: "auto"}, run.halt, log, hide, "auto"):
                 pass
         finally:
             shutil.rmtree(log.parent, ignore_errors=True)
@@ -359,8 +270,17 @@ def serve_check(path: Path, run, spec: dict) -> str:
         return masked(str(exc), hide) if "hide" in locals() else str(exc)
     if specs.dirty(path):   # the HEAD the build passed is the one measured, so the tree stays as committed
         return "백엔드를 띄우자 작업트리가 바뀌었다 — 백엔드가 쓰는 파일(데이터베이스, 로그)은 .gitignore 에 둔다"
-    specs.note(run, "백엔드가 화면 없이 떠서 상태 주소에 답했다")
+    specs.note(run, "PC 프로그램이 떠서 상태 주소에 답했다" if "app" in plan else "백엔드가 화면 없이 떠서 상태 주소에 답했다")
     return ""
+
+
+def next_mode(o: dict) -> str:
+    """`owner` once the server's own measurement of the built HEAD passed every metric that needs no person, and
+    nothing since; else `auto`: the owner is called only when a machine has nothing left to find."""
+
+    last = (o.get("measures") or [None])[-1]
+    return "owner" if last and last.get("mode") == "auto" and last["status"] == "passed" \
+        and last["head"] == o.get("built_head") else "auto"
 
 
 # -- One measurement ---------------------------------------------------------------------------------------
@@ -393,7 +313,10 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
     return {"metrics": rows, "notes": masked(str(value.get("notes") or ""), hide)[:MAX_TEXT]}
 
 
-def measure(repo: str) -> None:
+def measure(repo: str, mode: str | None = None) -> None:
+    """One measurement of the built HEAD: `mode` `auto` by the server, `owner` on the owner's screen; by default
+    the one the record calls for (`next_mode`)."""
+
     from . import oneshot_review   # it imports this module
 
     halt = HALTS.setdefault(repo, Halted())   # `start` made a fresh one: a stop pressed since still holds
@@ -409,7 +332,7 @@ def measure(repo: str) -> None:
         except ValueError as exc:
             store.stop("measure", str(exc))
             return None
-        n = len(o.get("measures") or []) + 1
+        n, how = len(o.get("measures") or []) + 1, mode or next_mode(o)
         out = store.folder / "measure" / f"m{n}-{o['built_head'][:12]}"
         raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept_from` copies leave it
         with oneshot._lock:   # every stored-value change counts under this lock: the values and the count agree
@@ -424,13 +347,13 @@ def measure(repo: str) -> None:
                 store.stop("measure", f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")   # no failure counted
                 return None
             since = oneshot_needs.CHANGES.get(repo, 0)
+            env[product.MODE] = how   # the script and the program both know whose measurement it is
         if why := fresh(out, raw):   # made only once the run goes ahead: an early stop leaves no folder
             store.stop("measure", why)
             return None
-        record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name}, None
+        record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name, "mode": how}, None
         try:
-            with served(oneshot_build.run_as(plan["serve"]["command"], o, tree), tree, env, plan["serve"]["health"],
-                        plan["serve"]["seconds"], halt, raw / "serve.log", hide):
+            with product.started(spec, plan, tree, env, halt, raw / "serve.log", hide, how):
                 limit = plan["measure"]["minutes"] * 60 + 300
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
                     "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
@@ -460,14 +383,16 @@ def measure(repo: str) -> None:
             return None
         found = found if not cut else {"error": cut}
         record |= found | {"clips": clips_of(out, hide), "code": code}
+        # The server's own measurement judges only what needs no person; the owner's judges every metric.
+        judged = [m for m in found.get("metrics") or [] if how == "owner" or not m["person"]]
         if "input_error" in found:
             record["status"] = "input"
-        elif found.get("error") or code or not all(m["ok"] for m in found["metrics"]) or plan["clips"] and not record["clips"]:
+        elif found.get("error") or code or not all(m["ok"] for m in judged) or plan["clips"] and not record["clips"]:
             record["status"] = "failed"
             if not found.get("error") and plan["clips"] and not record["clips"]:
                 record["error"] = "변환한 소리를 들어 볼 클립이 `{out}/clips` 에 없다"
         else:
-            record["status"] = "owner"
+            record["status"] = "owner" if how == "owner" else "passed"
         return lambda: decided(repo, store, record, since)
 
     oneshot_review.holding(repo, "실측", body)
@@ -494,6 +419,10 @@ def result(repo: str, store, record: dict):
     if record["status"] == "owner":
         oneshot_spec.saved(repo, oneshot={"measures": runs, "working": None})
         return None
+    if record["status"] == "passed":   # every machine metric passed: the owner measures once, on their own screen
+        oneshot_spec.saved(repo, oneshot={"measures": runs, "working": None, "measure_fails": 0})
+        work.notice("자동 실측 통과 · 주인 실측을 기다린다", f"{repo} · [실측 시작]을 누르면 프로그램이 이 화면에 뜨고 소리가 난다")
+        return None
     if record["status"] == "stale":   # an input changed while it ran: no fault of the build, measured again
         oneshot_spec.saved(repo, oneshot={"measures": runs})
         store.stop("measure", record["error"])
@@ -517,9 +446,15 @@ def result(repo: str, store, record: dict):
 def failure(record: dict) -> str:
     if record.get("error"):
         return record["error"]
-    bad = [f"{m['id']}={m['value']} (기준 {m['pass']['op']} {m['pass']['value']})" for m in record.get("metrics") or []
-           if not m["ok"]]
+    bad = [f"{m['id']}={m['value']} (기준 {m['pass']['op']} {m['pass']['value']})" for m in failed_metrics(record)]
     return ", ".join(bad) or f"실측 명령이 {record.get('code')} 로 끝났다"
+
+
+def failed_metrics(record: dict) -> list[dict]:
+    """The metrics that failed the measurement: in the server's own, only those that need no person."""
+
+    return [m for m in record.get("metrics") or [] if not m["ok"]
+            and (record.get("mode") != "auto" or not m.get("person"))]
 
 
 def fixing(spec: dict) -> str:
@@ -534,8 +469,13 @@ def fixing(spec: dict) -> str:
     if not last or last["head"] != o.get("built_head"):
         return ""
     if last["status"] == "failed":
-        why = (f"The real measurement of HEAD `{last['head']}` failed: {failure(last)}.\n\n"
-               f"The metrics as measured:\n\n```json\n{json.dumps(last.get('metrics') or [], ensure_ascii=False, indent=2)}\n```\n\n"
+        auto = last.get("mode") == "auto"
+        why = (f"The {'server' + chr(39) + 's own ' if auto else ''}real measurement of HEAD `{last['head']}` failed: "
+               f"{failure(last)}.\n\n"
+               + ("Only the metrics that failed are below; every other metric passed, and those that need a person "
+                  "were not judged in this measurement.\n\n" if auto else "")
+               + f"The metrics {'that failed' if auto else 'as measured'}:\n\n```json\n"
+               f"{json.dumps(failed_metrics(last) if auto else last.get('metrics') or [], ensure_ascii=False, indent=2)}\n```\n\n"
                f"The end of the measuring script's output:\n\n```\n{last.get('tail', '')[-1500:]}\n```\n")
     elif (last.get("owner") or {}).get("approve") is False:
         why = (f"The owner listened to the real measurement of HEAD `{last['head']}` and refused it. They wrote, in "
@@ -657,7 +597,7 @@ def start(repo: str, body: Start) -> dict:
             if last and last["head"] == o["built_head"] and last["status"] == "owner" and not last.get("owner"):
                 raise HTTPException(409, "이 빌드의 실측이 판정을 기다린다 — 듣고 승인하거나 거절한다")
             HALTS[repo] = Halted()   # before the worker: a stop pressed as it starts is kept
-            oneshot.start_worker(oneshot_spec.store(repo), "measure", measure, (repo,), {})
+            oneshot.start_worker(oneshot_spec.store(repo), "measure", measure, (repo, next_mode(o)), {})
             then = None
     if then:   # the build agent's turn goes after the lock is let go
         then()
@@ -780,7 +720,7 @@ def shown(spec: dict) -> dict:
     inputs = [{**x, "given": has(spec, x)} for x in (plan or {}).get("inputs") or []]
     runs = [{k: v for k, v in m.items() if k != "folder"} for m in o.get("measures") or []]
     return {"measure": {"plan": plan and {**plan, "inputs": inputs}, "error": error, "runs": runs,
-                        "pr": o.get("pr1"), "head": o["built_head"]}}
+                        "pr": o.get("pr1"), "head": o["built_head"], "next": next_mode(o)}}
 
 
 oneshot_spec.VIEWS.append(shown)
