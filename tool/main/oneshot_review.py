@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 from agent import read_tools
 
-from . import oneshot, oneshot_build, oneshot_desktop, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
+from . import oneshot, oneshot_answers, oneshot_build, oneshot_desktop, oneshot_front, oneshot_spec, runtime, specs, work  # noqa: F401 — `oneshot_front` registers `split`
 from .oneshot_profile import environment, kinds_of, shape
 from .query import ROOT, _lock as work_lock, hold
 
@@ -564,20 +564,19 @@ def to_build(repo: str, o: dict, reviews: list[dict], found: dict, **fields):
 
     spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "reviews": reviews, "attempts": 0, "working": "build",
                                              "fix": "review", "later": later_of(o, found), **fields})
-    text = fixing(spec, found)
-    replacing(repo, spec["oneshot"], found)
+    text = oneshot_answers.composed(fixing(spec, found), replacing(repo, spec["oneshot"], found))
     return lambda: oneshot_build.send(repo, "build", text)
 
 
-def replacing(repo: str, o: dict, found: dict) -> None:
+def replacing(repo: str, o: dict, found: dict) -> dict:
     """The areas the build turn for `found`, the last of `o`'s reviews, is told to replace, on either path (under
-    the cap, or `[재개]` after it): replaced once a build passes. `send` records `refusal_due` as what it may answer."""
+    the cap, or `[재개]` after it), replaced once a build passes; returned: the refusal that turn's text carries."""
 
     serious = [f for f in blocking(found) if not ruled_out(o, f)]
     new = stuck_areas((o.get("reviews") or [])[:-1], serious, o.get("replaced") or [])
-    sent = {"head": found["head"], "areas": sorted({area_of(f) for f in serious})}
-    if new != (o.get("replacing") or []) or sent != o.get("refusal_due"):
-        oneshot_spec.saved(repo, oneshot={"replacing": new or None, "refusal_due": sent})
+    if new != (o.get("replacing") or []):
+        oneshot_spec.saved(repo, oneshot={"replacing": new or None})
+    return {"head": found["head"], "areas": sorted({area_of(f) for f in serious})}
 
 
 def later_of(o: dict, found: dict) -> list[dict]:
@@ -713,11 +712,9 @@ def build_turn(spec: dict) -> str:
         from . import oneshot_measure   # it imports this module
         if text := oneshot_measure.fixing(spec):
             return text
-    if not (last := standing(o)):
+    if o.get("fix") != "review" or not (last := standing(o)):   # only a build the review sent back resends it
         return oneshot_build.build_text(spec)
-    text = fixing(spec, last)
-    replacing(spec["repo"], o, last)
-    return text
+    return oneshot_answers.composed(fixing(spec, last), replacing(spec["repo"], o, last))
 
 
 def standing(o: dict) -> dict | None:

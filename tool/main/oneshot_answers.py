@@ -87,14 +87,27 @@ def answered(path: Path, spec: dict, final: str, turn: str | None = None) -> lis
     return out
 
 
-def carried(o: dict, carry) -> tuple[dict | None, str]:
-    """The refusal a new build turn may answer, and what its text adds. A turn whose text `oneshot_review.replacing`
-    composed gets that refusal (`refusal_due`). A turn that carries on from the turn `carry` (the server's retry,
-    the author's guidance) gets the refusal `carry` itself was sent, with its findings again, and nothing when
-    `carry` was sent none: a person's turn never was. Any other turn answers nothing."""
+class Composed(str):
+    """A turn's text with the refusal it was composed from: the permission travels with the prompt, so no other
+    turn, sent between its composing and its sending, can take it or clear it."""
+
+    refusal: dict | None = None
+
+
+def composed(text: str, refusal: dict) -> str:
+    out = Composed(text)
+    out.refusal = refusal
+    return out
+
+
+def carried(o: dict, carry, text: str) -> tuple[dict | None, str]:
+    """The refusal a new build turn may answer, and what its text adds. A turn whose `text` was `composed` from a
+    refusal gets that refusal. A turn that carries on from the turn `carry` (the server's retry, the author's
+    guidance) gets the refusal `carry` itself was sent, with its findings again, and nothing when `carry` was
+    sent none: a person's turn never was. Any other turn answers nothing."""
 
     if carry is None:
-        return o.get("refusal_due"), ""
+        return getattr(text, "refusal", None), ""
     sent = o.get("sent_refusal") or {}
     if not sent.get("turn") or sent["turn"] != getattr(carry, "token", None):
         return None, ""
@@ -215,6 +228,6 @@ def passed(path: Path, o: dict, answers: list[dict]) -> dict:
     done = [area for area in asked if changed and area not in defended and any(
         oneshot_review.touched(f["location"], changed) for f in oneshot_review.blocking(last)
         if oneshot_review.area_of(f) == area)]
-    return {"answers": [*(o.get("answers") or []), *answers], "replacing": None, "sent_refusal": None, "refusal_due": None,
+    return {"answers": [*(o.get("answers") or []), *answers], "replacing": None, "sent_refusal": None,
             "run_cases": o.get("run_cases"),
             "replaced": sorted({*(o.get("replaced") or []), *done})}

@@ -505,7 +505,7 @@ def test_an_answered_area_is_rebutted_or_left_out_and_two_answered_rounds_go_to_
 
 def test_a_build_resumed_at_the_cap_replaces_a_stuck_mechanism_once_and_remembers_it(reviewed):
     tree, head, _ = reviewed
-    oneshot_spec.saved("budget", oneshot={"stage": "build", "reviews": [
+    oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "reviews": [   # as the capped `[재개]` saves it
         {"verdict": "refuse", "head": h, "findings": [P1]} for h in ("old1", "old2", head)]})
     assert "replace the mechanism" in oneshot_review.build_turn(specs.load("budget", oneshot.BRANCH))
     assert o()["replacing"] == ["amount validation"] and not o().get("replaced")
@@ -641,21 +641,19 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     git(tree, "commit", "-m", "pins")
     refused = git(tree, "rev-parse", "HEAD")
     settled = {**P1, "area": "refund wording", "location": "budget_app.py:1"}   # the owner ruled it for the builder
-    # No `fix`: the refusal as an earlier version recorded it. A turn that sends it may answer what it sent.
     oneshot_spec.saved("budget", oneshot={"built_head": refused, "rulings": {"refund wording": {"keep": "build"}},
                                           "reviews": [{"verdict": "refuse", "head": refused, "findings": [P1, settled]}]})
     s = specs.load("budget", oneshot.BRANCH)
     with pytest.raises(ValueError, match="하나만"):   # no turn sent it yet, as for a plan-repair turn
-        answered(s,"```oneshot-answers\n[]\n```\n")
-    oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is composed
-    with pytest.raises(ValueError, match="하나만"):   # due, but no turn has delivered it yet
-        oneshot_answers.answered(tree, specs.load("budget", oneshot.BRANCH), "```oneshot-answers\n[]\n```\n")
-    due, more = oneshot_answers.carried(o(), None)   # as `send` begins the turn `t` its text was composed for
-    assert due == o()["refusal_due"] and more == ""
-    oneshot_spec.saved("budget", oneshot={"sent_refusal": {**due, "turn": "t"}, "refusal_due": None})
-    assert oneshot_answers.carried(o(), SimpleNamespace(token="u")) == (None, "")   # a turn it was never sent to
-    assert oneshot_answers.carried(o(), SimpleNamespace(person=True)) == (None, "")   # a person's turn has none
-    kept, more = oneshot_answers.carried(o(), SimpleNamespace(token="t"))   # the retry or the guidance after `t`
+        answered(s, "```oneshot-answers\n[]\n```\n")
+    due = oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is composed
+    text = oneshot_answers.composed("the refusal's turn", due)
+    assert oneshot_answers.carried(o(), None, text) == (due, "")   # as `send` begins the turn `t` it was composed for
+    assert oneshot_answers.carried(o(), None, "another turn") == (None, "")   # a text composed from none
+    oneshot_spec.saved("budget", oneshot={"sent_refusal": {**due, "turn": "t"}})
+    assert oneshot_answers.carried(o(), SimpleNamespace(token="u"), "") == (None, "")   # a turn it was never sent to
+    assert oneshot_answers.carried(o(), SimpleNamespace(person=True), "") == (None, "")   # a person's turn has none
+    kept, more = oneshot_answers.carried(o(), SimpleNamespace(token="t"), "")   # the retry or the guidance after `t`
     assert kept["head"] == refused and "amount validation" in more and "refund wording" not in more
     (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\ndef test_refund():\n    pass\n", encoding="utf-8")
     git(tree, "commit", "-am", "a new pin")

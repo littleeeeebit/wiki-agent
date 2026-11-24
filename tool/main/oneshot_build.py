@@ -228,13 +228,13 @@ def send(repo: str, stage: str, text: str, carry=None) -> None:
     turn = None
     try:
         from . import oneshot_answers   # it imports this module
-        due, more = oneshot_answers.carried(spec["oneshot"], carry)   # the refusal it may answer, bound to it
+        due, more = oneshot_answers.carried(store.get(), carry, text)   # read with the tree held, bound to this turn
         cfg = oneshot.role_config("build", store)
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
         store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
                   inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
-                  sent_refusal=due and {**due, "turn": turn.token}, refusal_due=None)
+                  sent_refusal=due and {**due, "turn": turn.token})
         if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
             oneshot_spec.saved(repo, adapter=True)
         work.begin(path, chat, text + more, release, turn)
@@ -242,7 +242,6 @@ def send(repo: str, stage: str, text: str, carry=None) -> None:
         if turn is not None:
             turn.unsent()
         release()
-        store.put(refusal_due=None)   # an unsent turn delivered nothing: `[재개]` composes it again
         store.stop("restart" if runtime.stopping.is_set() else "block",
                    f"작업 턴을 보내지 못했다 — {getattr(exc, 'detail', exc)}")
         idle(path)

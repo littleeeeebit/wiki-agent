@@ -747,7 +747,10 @@ def test_a_plan_that_no_longer_holds_goes_back_to_the_build_agent(at_measure):
     assert o()["stage"] == "build" and sent[-1][1] == "build" and "no longer holds" in sent[-1][2]
     from main import oneshot_review
     again = oneshot_review.build_turn(spec())   # what `[재개]` sends after that turn stopped
-    assert "no longer holds" in again and "review refused HEAD" not in again and not o().get("refusal_due")
+    assert "no longer holds" in again and "review refused HEAD" not in again and not getattr(again, "refusal", None)
+    oneshot_spec.saved("budget", oneshot={"fix": None})   # a recheck of a moved tree, or an older plan repair
+    again = oneshot_review.build_turn(spec())
+    assert "review refused HEAD" not in again and not getattr(again, "refusal", None)   # only `fix: review` resends it
 
 
 def test_the_worker_measures_with_the_built_heads_plan_whatever_the_tree_holds(at_measure):
