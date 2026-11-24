@@ -363,6 +363,8 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
             and all(isinstance(f.get(k), str) and f[k].strip() for k in ("location", "reason", "evidence"))
             for f in findings):
         raise ValueError("`findings` 마다 `location`, `severity`(P0·P1·P2), `reason`, `evidence` 가 있어야 한다")
+    if any("fake" in f and not (f["severity"] == "P1" and isinstance(f["fake"], str) and f["fake"].strip()) for f in findings):
+        raise ValueError("`fake` 는 테스트 파일 안의 가짜를 짚은 P1 발견에만 붙고, 그 가짜가 대신하는 것을 적는다")
     if any("device" in f and "later" in f for f in findings):
         raise ValueError("발견 하나에 `device` 와 `later` 를 함께 붙이지 않는다")
     if any("later" in f and not later_ok(f, (rules or {}).get("kinds")) for f in findings):
@@ -390,7 +392,7 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
     return {"verdict": value["verdict"], "head": head,
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
                           **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
-                          **({k: f[k] for k in ("breaks", "repro", "rebuttal") if f.get(k)}),
+                          **({k: f[k] for k in ("breaks", "repro", "rebuttal", "fake") if f.get(k)}),
                           **({"later": {k: str(f["later"][k]).strip() for k in ("kind", "what")}} if "later" in f else {}),
                           **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source", "act", "expect", "observe")
                                          if k in f["device"]}}
@@ -540,6 +542,13 @@ def decided(repo: str, store, spec: dict, found: dict):
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "owed": owing(found),
                                           "later": later_of(o, found), "working": "split"})
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
+    # A fake in a pinned contract test is one no build turn may fix: the run stops, and the owner sees it.
+    if faked := [f for f in blocking(found) if f.get("fake") and f["location"].rsplit(":", 1)[0] in o.get("contract", ())]:
+        with oneshot._lock:
+            store.put(reviews=reviews, working=None, later=later_of(o, found), stopped={
+                "reason": "fake", "state": store.get()[store.state], "detail": "고정한 계약 테스트에 가짜가 있어 빌드가 "
+                "고칠 수 없다 — " + " / ".join(f"{f['location']} {f['fake']}: {f['reason']}" for f in faked[:5])})
+        return None
     refused = int(o.get("refused") or 0) + 1
     if conflicts := conflicted(o, found):   # a decision only the owner can make: no build turn, no round counted
         oneshot_spec.saved(repo, oneshot={"stage": "conflict", "reviews": reviews, "refused": refused - 1,

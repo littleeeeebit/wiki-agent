@@ -131,6 +131,11 @@
       "lines": 806,
       "reason": "PR #423, over 9e5a (#421): the design and the redesign save `design_author` with the design they wrote, and approval gives the build's spec its `task`, the committed design as `precedence` and that author, so the builder's escalations reach the model that designed it (six lines past the 800-line cap for a file without an entry)."
     },
+    "tool/main/oneshot_review.py": {
+      "dup": 0,
+      "lines": 809,
+      "reason": "Plan 11c: a review finding marked `fake` must be a P1 that says what it stands in for, and a fake in a pinned contract test stops the run for the owner instead of sending the build a test it may not change (nine lines; the stop sits beside the cap's, under the same lock)."
+    },
     "tool/main/oneshot.py": {
       "dup": 0,
       "lines": 969,

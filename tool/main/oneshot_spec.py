@@ -773,7 +773,7 @@ def resume(repo: str) -> dict:
             raise HTTPException(409, "멈춘 단계가 아니다")
         o = waiting(repo, o)
         # The kind's next stage is not in this version, or the owner kept a requirement the kind cannot meet.
-        if o["stopped"]["reason"] in ("kind", "rekind"):
+        if o["stopped"]["reason"] in ("kind", "rekind", "fake"):
             raise HTTPException(409, o["stopped"]["detail"])
         thread = oneshot._workers.get(store(repo).key)
         if (settle := brief.orphaned(o)) and not (thread and thread.is_alive()):   # no turn left to charge it

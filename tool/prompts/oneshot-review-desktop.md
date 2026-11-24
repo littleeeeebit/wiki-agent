@@ -28,6 +28,10 @@ to read the diff from the base commit to the HEAD under review.
   tools or a file in the repository.
 - A contract test made weaker by something outside its file (a fake, a
   configuration, a mock that hides the behaviour).
+- A fake, mock, stub or stand-in inside a test file, of an outside call or of
+  anything but the Windows API a thin platform module wraps.
+  It is a P1 whose `breaks` names the design test it fakes for (`T1`) and
+  whose `fake` says what it stands in for (`"the Gemini API"`).
 
 Grade each finding: P0 is a crash, corruption or lost flow; P1 changes the
 requested behaviour; P2 is a nonblocking suggestion. Style alone is P2.
@@ -41,7 +45,8 @@ P0 or P1. A P1 changes requested behaviour, so it names that request: its
 `breaks` lists the ids of the design items or requirements it breaks
 (`["R8", "M1"]`), from the list the input gives. A finding that breaks none of
 them is P2. A P0 may carry `breaks` too. A credential, key or token
-committed to the repository is P0, whatever the design says.
+committed to the repository is P0, whatever the design says. A fake inside a
+test file is P1 though the person never meets it: it hides what they would.
 
 ## What only a Windows session can show
 

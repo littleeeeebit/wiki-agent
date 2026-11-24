@@ -106,6 +106,42 @@ def test_a_verdict_its_findings_do_not_justify_is_refused(reviewed, kind, findin
         oneshot_review.verdict_of({"verdict": kind, "head": head, "findings": findings}, head)
 
 
+FAKE = {**P1, "location": "test_budget.py:3", "reason": "번역 API 를 부르지 않고 정해 둔 답을 돌려준다",
+        "evidence": "3행의 stub", "area": "faked translation", "breaks": ["T1"], "fake": "the translation API"}
+
+
+@pytest.mark.parametrize("location, stops", [("test_budget.py:3", True), ("tests/test_own.py:3", False)])
+def test_a_fake_in_a_pinned_contract_test_stops_for_the_owner_and_one_the_build_wrote_goes_to_it(reviewed, location, stops):
+    # A pinned contract test is one no build turn may change: its fake is the owner's to see, never a repair round.
+    _, head, sent = reviewed
+    _, asking = answers(verdict(head, "refuse", {**FAKE, "location": location}))
+    with asking:
+        oneshot_review.review("budget")
+    if not stops:
+        assert o()["stage"] == "build" and len(sent) == 1 and "the translation API" in sent[0][2]
+        return
+    stopped = o()["stopped"]
+    assert stopped["reason"] == "fake" and "test_budget.py:3 the translation API" in stopped["detail"] and not sent
+    assert o()["reviews"][-1]["findings"][0]["fake"] == "the translation API" and not o().get("refused")
+    with pytest.raises(HTTPException) as refused:   # `[재개]` would only send the build what it may not change
+        oneshot_spec.resume("budget")
+    assert refused.value.status_code == 409 and refused.value.detail == stopped["detail"]
+
+
+@pytest.mark.parametrize("finding", [{**FAKE, "severity": "P2"}, {**FAKE, "fake": " "}, {**FAKE, "fake": ["x"]}])
+def test_a_fake_mark_names_what_a_p1_finding_stands_in_for(reviewed, finding):
+    _, head, _ = reviewed
+    with pytest.raises(ValueError, match="`fake`"):
+        oneshot_review.verdict_of({"verdict": "refuse", "head": head, "findings": [finding, P1]}, head)
+
+
+@pytest.mark.parametrize("kind", ["webapp", "android", "desktop", "kinds"])
+def test_every_review_prompt_refuses_a_fake_inside_a_test_file(kind):
+    text = oneshot.prompt("review", kind)
+    assert "stand-in" in text and "inside a test file" in text and "whose `fake` says" in text
+    assert "P1 though the person never meets it" in text
+
+
 def test_a_refusal_goes_to_the_build_each_time_until_the_round_cap_stops_the_run(reviewed):
     tree, head, sent = reviewed
     with patch.object(loop, "settings", lambda: {"rounds": 3, "review_effort": "high"}):
