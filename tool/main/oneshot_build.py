@@ -184,10 +184,9 @@ def resolve_tools(repo: str, stage: str) -> bool:
 
 
 def run_as(command: str, o: dict, path: Path) -> str:
-    """`command` with every program it starts given as an explicit path: a declared tool's, found for this
-    stage (`resolve_tools`), or a worktree file's, read again now, so the shell looks nothing up and the program
-    checked is the program run. A program with neither is refused before anything runs. A run without a PC app
-    runs the command as it is."""
+    """`command` with every program it starts given as an explicit path: a declared tool's, found for this stage
+    (`resolve_tools`), or a worktree file's, read again now, so the shell looks nothing up and the program checked
+    is the program run. A program with neither is refused before anything runs; without a PC app, it runs as is."""
 
     if (declared_tools := tools(o)) is None:
         return command
@@ -203,10 +202,9 @@ def run_as(command: str, o: dict, path: Path) -> str:
     return "&&".join(parts)
 
 
-def send(repo: str, stage: str, text: str, carry: bool = False) -> None:
-    """One work turn for `stage` in the spec's worktree; a turn that cannot be sent stops the stage, and the
-    instruction the person queued for the worktree goes then, as after a turn. It may answer the refusal its own
-    text carries (`refusal_due`), or, when it `carry`s on that refusal's turn, the one already sent; nothing else."""
+def send(repo: str, stage: str, text: str, carry=None) -> None:
+    """One work turn for `stage` in the spec's worktree, carrying on from the turn `carry` if given; a turn that
+    cannot be sent stops the stage, and the instruction the person queued for the worktree goes then."""
 
     if stopped_for_kind(repo) or not resolve_tools(repo, stage):
         return
@@ -229,20 +227,22 @@ def send(repo: str, stage: str, text: str, carry: bool = False) -> None:
     release.held = held.held
     turn = None
     try:
+        from . import oneshot_answers   # it imports this module
+        due, more = oneshot_answers.carried(spec["oneshot"], carry)   # the refusal it may answer, bound to it
         cfg = oneshot.role_config("build", store)
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
         store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
                   inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
-                  sent_refusal=spec["oneshot"].get("sent_refusal" if carry else "refusal_due"), refusal_due=None)
+                  sent_refusal=due and {**due, "turn": turn.token}, refusal_due=None)
         if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
             oneshot_spec.saved(repo, adapter=True)
-        work.begin(path, chat, text, release, turn)
+        work.begin(path, chat, text + more, release, turn)
     except BaseException as exc:
         if turn is not None:
             turn.unsent()
         release()
-        store.put(sent_refusal=None, refusal_due=None)   # an unsent turn delivered no refusal
+        store.put(refusal_due=None)   # an unsent turn delivered nothing: `[재개]` composes it again
         store.stop("restart" if runtime.stopping.is_set() else "block",
                    f"작업 턴을 보내지 못했다 — {getattr(exc, 'detail', exc)}")
         idle(path)
@@ -614,7 +614,6 @@ def owns(spec: dict) -> bool:
 
 def checked(path: Path, run, spec: dict, final: str):
     """`specs._check`'s hand-over: the stage's check, then the next turn; a person's turn, or one S4 does not own, is left."""
-    from . import oneshot_answers as sent   # it imports this module
     repo, stage = spec["repo"], spec["oneshot"]["stage"]
     if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
@@ -647,7 +646,7 @@ def checked(path: Path, run, spec: dict, final: str):
         return None
     return unless_stopped(run, repo, lambda: send(repo, stage, masked(   # as composed: a value can span the words
         f"The server refused this {stage} turn: {why}\n\nFix it and finish the turn again"
-        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else ".") + sent.still(was), hide), True))
+        + (f" (attempt {attempts + 1} of {MAX_ATTEMPTS})." if type(why) is str else "."), hide), run))
 
 
 def unless_stopped(run, repo: str, then):
@@ -730,7 +729,7 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     if why := sent.unchanged(path, o) or reported(spec, final) or pinned(path, o):
         return why
     try:
-        answers = sent.answered(path, spec, final)
+        answers = sent.answered(path, spec, final, getattr(run, "token", None))
         gate = run_as(o["gate"], o, path)   # the worktree as it is now: a file the build moved out is refused
         oneshot_measure.planned(path, spec, "HEAD")   # committed, as the screen reads it: never an ignored file
     except ValueError as e:

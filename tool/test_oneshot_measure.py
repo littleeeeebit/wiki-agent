@@ -738,10 +738,16 @@ def test_a_plan_that_no_longer_holds_goes_back_to_the_build_agent(at_measure):
     tree, sent = at_measure
     write(tree, ".wiki/measure.json", "{")
     git(tree, "commit", "-am", "broken plan")
-    oneshot_spec.saved("budget", oneshot={"built_head": git(tree, "rev-parse", "HEAD")})
+    built = git(tree, "rev-parse", "HEAD")   # an older run's refusal of it still stands in the history
+    finding = {"location": "app.py:2", "severity": "P1", "reason": "음수", "evidence": "add(-1)", "area": "a"}
+    oneshot_spec.saved("budget", oneshot={"built_head": built,
+                                          "reviews": [{"verdict": "refuse", "head": built, "findings": [finding]}]})
     assert oneshot_spec.view(spec())["measure"]["plan"] is None
     measure.start("budget", measure.Start(head=o()["built_head"]))
     assert o()["stage"] == "build" and sent[-1][1] == "build" and "no longer holds" in sent[-1][2]
+    from main import oneshot_review
+    again = oneshot_review.build_turn(spec())   # what `[재개]` sends after that turn stopped
+    assert "no longer holds" in again and "review refused HEAD" not in again and not o().get("refusal_due")
 
 
 def test_the_worker_measures_with_the_built_heads_plan_whatever_the_tree_holds(at_measure):

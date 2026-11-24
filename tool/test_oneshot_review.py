@@ -631,6 +631,10 @@ def test_a_head_refused_in_an_earlier_round_is_never_built_on_again(reviewed):
 def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
     tree, head, _ = reviewed
     from main import oneshot_answers
+
+    def answered(s, final):   # as the check of the turn `t` reads it
+        return oneshot_answers.answered(tree, s, final, "t")
+
     for name in ("test_pin.py", "test_other.py"):
         (tree / name).write_text("def test_old():\n    assert True\n", encoding="utf-8")
         git(tree, "add", name)
@@ -642,11 +646,17 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
                                           "reviews": [{"verdict": "refuse", "head": refused, "findings": [P1, settled]}]})
     s = specs.load("budget", oneshot.BRANCH)
     with pytest.raises(ValueError, match="하나만"):   # no turn sent it yet, as for a plan-repair turn
-        oneshot_answers.answered(tree, s, "```oneshot-answers\n[]\n```\n")
+        answered(s,"```oneshot-answers\n[]\n```\n")
     oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is composed
     with pytest.raises(ValueError, match="하나만"):   # due, but no turn has delivered it yet
         oneshot_answers.answered(tree, specs.load("budget", oneshot.BRANCH), "```oneshot-answers\n[]\n```\n")
-    oneshot_spec.saved("budget", oneshot={"sent_refusal": o()["refusal_due"], "refusal_due": None})   # as `send` begins it
+    due, more = oneshot_answers.carried(o(), None)   # as `send` begins the turn `t` its text was composed for
+    assert due == o()["refusal_due"] and more == ""
+    oneshot_spec.saved("budget", oneshot={"sent_refusal": {**due, "turn": "t"}, "refusal_due": None})
+    assert oneshot_answers.carried(o(), SimpleNamespace(token="u")) == (None, "")   # a turn it was never sent to
+    assert oneshot_answers.carried(o(), SimpleNamespace(person=True)) == (None, "")   # a person's turn has none
+    kept, more = oneshot_answers.carried(o(), SimpleNamespace(token="t"))   # the retry or the guidance after `t`
+    assert kept["head"] == refused and "amount validation" in more and "refund wording" not in more
     (tree / "test_pin.py").write_text("def test_old():\n    assert True\n\ndef test_refund():\n    pass\n", encoding="utf-8")
     git(tree, "commit", "-am", "a new pin")
     (tree / "test_other.py").write_text("def test_late():\n    pass\n", encoding="utf-8")   # never committed
@@ -657,21 +667,23 @@ def test_an_answer_names_a_test_in_a_file_its_turn_committed(reviewed):
             "test": test}]) + "\n```\n"
     s = specs.load("budget", oneshot.BRANCH)
     with pytest.raises(ValueError, match="새로 더한"):
-        oneshot_answers.answered(tree, s, answer("test_other.py::test_late"))
+        answered(s,answer("test_other.py::test_late"))
     git(tree, "rm", "-q", "--cached", "test_other.py")
     git(tree, "commit", "-m", "the other file deleted")
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # in the diff, but not in the commit the review reads
-        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
+        answered(s,answer("test_other.py::test_old"))
     (tree / "test_other.py").unlink()
     (tree / "test_other.py").mkdir()
     (tree / "test_other.py" / "test_in.py").write_text("def test_old():\n    pass\n", encoding="utf-8")
     git(tree, "add", "test_other.py/test_in.py")
     git(tree, "commit", "-m", "a folder where the file was")
     with pytest.raises(ValueError, match="HEAD 에 없다"):   # a folder at that path is no test file
-        oneshot_answers.answered(tree, s, answer("test_other.py::test_old"))
-    assert oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
+        answered(s,answer("test_other.py::test_old"))
+    with pytest.raises(ValueError, match="하나만"):   # another turn than the one it was sent to
+        oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund"), "u")
+    assert answered(s, answer("test_pin.py::test_refund"))[0]["test"].endswith("test_refund")
     with pytest.raises(ValueError, match="이번 거절의 영역이 아니다"):   # the settled area was never sent
-        oneshot_answers.answered(tree, s, answer("test_pin.py::test_refund", "refund wording"))
+        answered(s,answer("test_pin.py::test_refund", "refund wording"))
     # A build that passes ends what the refusal sent: a later turn for something else answers none of it.
     assert oneshot_answers.passed(tree, s["oneshot"], [])["sent_refusal"] is None
 

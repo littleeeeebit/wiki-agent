@@ -45,7 +45,7 @@ def month(name):
 
 class Turn:
     def __init__(self, person=False):
-        self.events, self.halt, self.person = [], threading.Event(), person
+        self.events, self.halt, self.person, self.token = [], threading.Event(), person, "turn"
         self.chat = SimpleNamespace(id="c", parent_id=None)
 
     def put(self, payload):
@@ -420,7 +420,8 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     oneshot_spec.saved("budget", oneshot={"stage": "build", "fix": "review", "attempts": 0, "built_head": refused,
                                           "reviews": [{"verdict": "refuse", "head": refused, "findings": [finding]}]})
     oneshot_review.replacing("budget", o(), o()["reviews"][-1])   # as the turn's text is composed
-    oneshot_spec.saved("budget", oneshot={"sent_refusal": o()["refusal_due"], "refusal_due": None})   # as `send` begins it
+    oneshot_spec.saved("budget", oneshot={"sent_refusal": {**o()["refusal_due"], "turn": "turn"},   # as `send` begins it
+                                          "refusal_due": None})
     answer ={"area": "Amount validation", "location": "app.py:2", "evidence": "음수는 환불이다", "breaks": ["R1"],
               "test": "test_refund.py::test_a_refund_is_negative"}
     said = "답했다.\n" + report() + fenced("oneshot-answers", [answer])
@@ -433,8 +434,9 @@ def test_a_build_sent_back_by_the_review_commits_and_answers_with_a_test_it_comm
     git(tree, "commit", "-m", "pin the refund")
     check(tree, said.replace("test_a_refund_is_negative", "test_missing"))()
     assert "test_missing(돌지 않음)" in sent[-1][2]   # its file was committed; the test run has no such case
-    assert f"refusal of HEAD `{refused}`" in sent[-1][2] and "`amount validation`" in sent[-1][2]   # still answerable
-    assert "음수를 받는다" in sent[-1][2] and sent[-1][3] is True   # the findings again, and it carries on that refusal
+    from main import oneshot_answers
+    carried = oneshot_answers.carried(o(), sent[-1][3])   # as `send` reads it
+    assert carried[0]["head"] == refused and "음수를 받는다" in carried[1]   # the retry carries on that refusal, findings and all
     assert o()["attempts"] == 1   # HEAD moved, and the gate still refused it: counted
     # Turns that start on this HEAD (`send` records it), a resumed one included, and end on it without a commit.
     oneshot_spec.saved("budget", oneshot={"turn_head": git(tree, "rev-parse", "HEAD")})
@@ -667,7 +669,7 @@ def test_a_turn_that_cannot_be_begun_leaves_nothing_in_flight_and_charges_nothin
         oneshot_spec.saved("budget", oneshot={"refusal_due": {"head": "a", "areas": ["b"]}})
         SEND("budget", "tests", "x")
     assert o()["inflight"] is None and "보내지 못했다" in o()["stopped"]["detail"]
-    assert o().get("sent_refusal") is None and o().get("refusal_due") is None   # an unsent turn delivered no refusal
+    assert o().get("refusal_due") is None   # composed again by `[재개]`; what was bound names a turn that never ran
     assert not (o().get("spend") or {}).get("calls")   # no model ran
     assert str(tree) not in work._busy   # the worktree is free for the resumed turn
 
@@ -696,12 +698,14 @@ def test_a_work_turn_runs_on_the_build_model_the_run_fixed(built_world):
          patch.object(work, "begin", lambda path, chat, text, release, turn: release()), \
          patch.object(work, "session", session), \
          patch("main.query.config", lambda *a: {"model": "window", "effort": "e"}):
-        SEND("budget", "tests", "x")   # the turn its text carried: it may answer that refusal
-        assert o()["sent_refusal"] == due and o()["refusal_due"] is None
+        SEND("budget", "tests", "x")   # the turn its text carried: it may answer that refusal, and only it may
+        first = o()["sent_refusal"]
+        assert {**first, "turn": None} == {**due, "turn": None} and first["turn"] and o()["refusal_due"] is None
         oneshot_spec.saved("budget", oneshot={"refusal_due": {"head": "c", "areas": ["d"]}})
-        SEND("budget", "tests", "x", True)   # a retry carries on the refusal already sent, never one only due
-        assert o()["sent_refusal"] == due and o()["refusal_due"] is None
-        SEND("budget", "tests", "x")   # any other turn answers nothing
+        SEND("budget", "tests", "x", SimpleNamespace(token=first["turn"]))   # carries on that turn, never one only due
+        second = o()["sent_refusal"]
+        assert second["head"] == "a" and second["turn"] not in (None, first["turn"]) and o()["refusal_due"] is None
+        SEND("budget", "tests", "x", SimpleNamespace(token=first["turn"]))   # a turn that was not the last one sent it
         assert o()["sent_refusal"] is None
 
 

@@ -40,7 +40,7 @@ def unchanged(path: Path, o: dict) -> str:
 ANSWER = re.compile(r"^```oneshot-answers[ \t]*\r?\n(.*?)^```[ \t]*$", re.M | re.S)
 
 
-def answered(path: Path, spec: dict, final: str) -> list[dict]:
+def answered(path: Path, spec: dict, final: str, turn: str | None = None) -> list[dict]:
     """The turn's `oneshot-answers`: each finding of the standing refusal it answered with evidence instead of a
     change, the requirement a change would break, and the test committed since that refusal which pins the
     behaviour it defends. `ValueError` says what is wrong; a turn sent back by nothing answers nothing."""
@@ -51,12 +51,12 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
     found = ANSWER.findall(final)
     if not found:
         return []
-    # Only the refusal a turn's text sent since the last passed build (`oneshot_review.replacing` records it), and
-    # only the areas it sent: never one the owner ruled for the builder, nor one a turn for something else carried.
+    # Only the refusal this very `turn` was sent (`carried`, recorded as `send` began it), and only the areas it
+    # sent: never one the owner ruled for the builder, nor one another turn carried.
     sent = o.get("sent_refusal") or {}
     last = next((r for r in reversed(o.get("reviews") or [])
                  if r["verdict"] == "refuse" and r["head"] == sent.get("head")), None)
-    if len(found) > 1 or not last:
+    if len(found) > 1 or not last or not sent.get("turn") or sent["turn"] != turn:
         raise ValueError("`oneshot-answers` 는 리뷰가 거절해 돌아온 빌드 턴에 하나만 적는다")
     try:
         value = json.loads(found[0])
@@ -87,9 +87,23 @@ def answered(path: Path, spec: dict, final: str) -> list[dict]:
     return out
 
 
+def carried(o: dict, carry) -> tuple[dict | None, str]:
+    """The refusal a new build turn may answer, and what its text adds. A turn whose text `oneshot_review.replacing`
+    composed gets that refusal (`refusal_due`). A turn that carries on from the turn `carry` (the server's retry,
+    the author's guidance) gets the refusal `carry` itself was sent, with its findings again, and nothing when
+    `carry` was sent none: a person's turn never was. Any other turn answers nothing."""
+
+    if carry is None:
+        return o.get("refusal_due"), ""
+    sent = o.get("sent_refusal") or {}
+    if not sent.get("turn") or sent["turn"] != getattr(carry, "token", None):
+        return None, ""
+    return sent, still(o)
+
+
 def still(o: dict) -> str:
-    """The refusal a build turn was sent (`sent_refusal`), again with its findings when a turn carries on from it
-    (a retry, the author's guidance): a conversation the provider had to start afresh reads them here too."""
+    """The refusal a build turn was sent (`sent_refusal`), again with its findings for a turn that carries on from
+    it: a conversation the provider had to start afresh reads them there too."""
 
     from . import oneshot_review   # it imports `oneshot_build`, which imports this module
 

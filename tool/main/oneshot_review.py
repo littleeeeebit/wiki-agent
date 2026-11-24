@@ -709,7 +709,7 @@ def build_turn(spec: dict) -> str:
     (`oneshot_measure.fixing`) or the review's refusal of the built HEAD."""
 
     o = spec["oneshot"]
-    if o.get("fix") == "measure":
+    if o.get("fix") in ("measure", "plan"):
         from . import oneshot_measure   # it imports this module
         if text := oneshot_measure.fixing(spec):
             return text
