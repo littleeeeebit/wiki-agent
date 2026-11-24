@@ -86,6 +86,11 @@ After every build turn whose gate passes, the server measures by itself.
   no per-program volume.
 - `{data}` is one folder kept for the whole run, not a fresh one per launch,
   so a sign-in the owner gave once is still there for the next build.
+- The program gets only what it needs to run, the measurement's inputs, the
+  design's secrets and its own launch settings. The script keeps the gate's
+  environment, the toolchain it runs with, as in step 12. A value under a
+  credential's name is masked in what the script reports. A credential under
+  another name is not: an accepted limit.
 - A failed metric that needs no person sends the run back to the build agent
   (`fix: measure`) with those metrics only: their values, thresholds, the
   report's notes and the end of the program's log. The build agent may run
