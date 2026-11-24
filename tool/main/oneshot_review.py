@@ -270,10 +270,24 @@ def faked_file(root: Path, file) -> Path | None:
 
 def pinned(root: Path, file: str, pins) -> bool:
     """`file` is one of the pinned contract tests `pins`, each read in the same checkout: the same file on disk,
-    however either is spelled (`./`, letter case on Windows), and never another file that only looks alike."""
+    however either is spelled (`./`, letter case on Windows), and never another file that only looks alike. False
+    only once the file is known to differ from every pin: a lookup or comparison the disk will not settle raises
+    ValueError, so the verdict is asked again rather than a pinned fake passing to the build."""
 
-    target = faked_file(root, file)
-    return target is not None and any((p := faked_file(root, pin)) is not None and os.path.samefile(target, p) for pin in pins)
+    if (target := faked_file(root, file)) is None:
+        raise ValueError(f"`fake` 발견의 `file` {file!r} 을 읽은 체크아웃에서 다시 찾지 못했다")
+    unsettled = []
+    for pin in pins:
+        try:
+            if (path := faked_file(root, pin)) is not None and os.path.samefile(target, path):
+                return True
+        except OSError:
+            path = None
+        if path is None:
+            unsettled.append(pin)
+    if unsettled:
+        raise ValueError(f"고정한 계약 테스트 {unsettled!r} 를 읽은 체크아웃에서 읽지 못해 `fake` 발견이 그중 하나인지 가리지 못했다")
+    return False
 
 
 def canonical(path: str) -> str:

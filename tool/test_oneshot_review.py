@@ -166,8 +166,18 @@ def test_a_pinned_file_is_the_same_file_on_disk_however_either_is_spelled(tmp_pa
     assert pinned(str(tmp_path / "tests" / "test_budget.py"), "tests/test_budget.py")
     assert pinned("TESTS/test_budget.py", "tests/test_budget.py") is (os.name == "nt")   # the same file on Windows
     assert pinned(" lead.py", " lead.py") and not pinned(" lead.py", "lead.py") and not pinned("lead.py", " lead.py")
-    assert not pinned("other/test_budget.py", "tests/test_budget.py") and not pinned("tests/test_strasse.py", "tests/test_straße.py")
-    assert not pinned("tests/test_budget.py:3", "tests/test_budget.py") and not pinned("../outside.py", "../outside.py")
+    assert not pinned("other/test_budget.py", "tests/test_budget.py") and not pinned("tests/test_straße.py", "tests/test_budget.py")
+    for file in ("tests/test_budget.py:3", "../outside.py", "tests/test_strasse.py"):   # no file of the checkout
+        with pytest.raises(ValueError):
+            pinned(file, "tests/test_budget.py")
+    # A lookup or comparison the disk will not settle asks the verdict again; it never reads as "not pinned".
+    real = oneshot_review.faked_file
+    for fail in ("tests/test_budget.py", "./tests/test_budget.py"):   # the fake's own lookup, then the pin's
+        with patch.object(oneshot_review, "faked_file", lambda root, file: None if file == fail else real(root, file)),                 pytest.raises(ValueError):
+            pinned("tests/test_budget.py", "./tests/test_budget.py")
+    with patch.object(oneshot_review.os.path, "samefile", side_effect=PermissionError(13, "denied")), pytest.raises(ValueError):
+        pinned("tests/test_budget.py", "./tests/test_budget.py")
+    assert pinned("tests/test_budget.py", "nowhere.py", "tests/test_budget.py")   # a match settles it, whatever else
     assert oneshot_review.faked_file(tmp_path, "tests") is None and oneshot_review.faked_file(tmp_path, "") is None
     probed = []   # a path outside the checkout is refused unread; one the disk refuses to read is no file
     with patch.object(oneshot_review.os.path, "realpath", lambda p: probed.append(p) or str(p)):

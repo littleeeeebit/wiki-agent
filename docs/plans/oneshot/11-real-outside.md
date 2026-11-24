@@ -339,7 +339,9 @@ the disk will not read counts as none. The finding is pinned when that file and 
 pin, each read in the same checkout, are the same file on disk
 (`oneshot_review.pinned`), so `./`, an absolute path into the checkout or
 Windows letter case name the same pin, and a name that only looks alike
-never does. The run stops on a pinned file's fake (`fake`) before the round
+never does. It is unpinned only once that file is known to differ from every
+pin; a lookup or comparison the disk will not settle refuses the verdict and
+asks again, so a pinned fake never reaches the build. The run stops on a pinned file's fake (`fake`) before the round
 cap or any build turn, the card shows every such finding with its file, the
 reviewer's place for it and what it stands in for, and `[재개]` is refused, since it would only send the build a test it
 may not change. A fake in a test file the build wrote goes to the build like
