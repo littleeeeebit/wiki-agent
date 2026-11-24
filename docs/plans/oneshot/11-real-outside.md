@@ -291,7 +291,11 @@ reason names a need id, with those ids. An id counts before a Korean
 particle (`N1이`) but not inside an ASCII name (`N2cache`). Each test is
 a code span whose fence outruns any backtick run in it, so the name shows as
 it is, its spacing included; only a line break, which would end the item,
-becomes a space. A list item has no cell a `|` could split. No file says the report is missing; several say which they are and list nothing, since which
+becomes a space. A list item has no cell a `|` could split. Two names
+still show otherwise, both accepted limits: one made only of spaces keeps
+the span's two padding spaces, and one with 80 backticks in a row needs an
+81-backtick fence, past GitHub's limit of 80, so it shows without its span.
+Its row stays on one line either way. No file says the report is missing; several say which they are and list nothing, since which
 is the gate's is not known. A single file the gate did not write, when the
 gate failed before writing its own, reads as the gate's: the checkout
 ignores `artifacts/`, so only the job itself could have put it there. The server's CI check (`ci_file`) requires
@@ -315,7 +319,34 @@ owner's decision of 2026-11-23.
 The review prompts already refuse "a contract test made weaker by something
 outside its file (a fake, a configuration, a mock that hides the
 behaviour)". They gain a fake inside a test file too: a P1 whose `breaks`
-names the test.
+names the design test it fakes for and whose `fake` says what it stands in
+for. The server refuses a `fake` on anything else, one whose `breaks` names
+no design test, and one deferred to a device or a later build
+(`oneshot_review.verdict_of`, `held`), since it would then pass the review.
+It is P1 though the person never meets a test file, since it hides what
+they would.
+The one stand-in a kind's tests may keep, for the platform a thin platform
+module wraps, is not one.
+
+A fake in a pinned contract test is one no build turn may fix, since the
+build may not change those files. So a `fake` finding also names its test
+file in `file`: the path in the repository exactly, with no line number. Its
+`location` stays what it is for every finding: the pin match reads only
+`file`, while the changed-line rule for a narrowed review still reads
+`location` as it does for any finding. The verdict is refused, and the
+reviewer asked again, when `file` is no file of the checkout the review read
+(`oneshot_review.faked_file`): a path outside it is refused unread, and one
+the disk will not read counts as none. The finding is pinned when that file and a
+pin, each read in the same checkout, are the same file on disk
+(`oneshot_review.pinned`), so `./`, an absolute path into the checkout or
+Windows letter case name the same pin, and a name that only looks alike
+never does. It is unpinned only once that file is known to differ from every
+pin; a lookup or comparison the disk will not settle refuses the verdict and
+asks again, so a pinned fake never reaches the build. The run stops on a pinned file's fake (`fake`) before the round
+cap or any build turn, the card shows every such finding with its file, the
+reviewer's place for it and what it stands in for, and `[재개]` is refused, since it would only send the build a test it
+may not change. A fake in a test file the build wrote goes to the build like
+any refusal. Decided with the owner on 2026-11-24.
 
 ### What the agent holds, and what it costs
 
@@ -395,5 +426,5 @@ knows the values, at commit time, rather than in the reviewer's reading.
 | 11b2a | The build agent's own turns carry the secrets under the server's leak check | Done — #424 |
 | 11b2b | The PC app's screen check and the Android device stages get the secrets | Done — #427 |
 | 11b2c | The CI summary lists the skips owed to the local gate; the card counts the gate runs that reached each call | Done — #428 |
-| 11c | The review refuses a fake inside a test file | Not started |
+| 11c | The review refuses a fake inside a test file | In progress |
 | 11d | A real run of a product with a keyed outside call, end to end | Not started |

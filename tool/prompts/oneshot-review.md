@@ -21,6 +21,11 @@ and where to read the diff from the base commit to the HEAD under review.
   profile asks for and the code skips.
 - A contract test made weaker by something outside its file (a fixture, a
   configuration, a mock that hides the behaviour).
+- A fake, mock, stub or stand-in of anything inside a test file: a call that
+  leaves the server is made for real, with what the owner gave for it.
+  It is a P1 whose `breaks` names the design test it fakes for (`T1`) and
+  whose `fake` says what it stands in for (`"the Gemini API"`); its `file` is
+  that test file's path in the repository, exactly, with no line number.
 
 Grade each finding: P0 is a crash, corruption or lost flow; P1 changes the
 requested behaviour; P2 is a nonblocking suggestion. Style alone is P2.
@@ -34,7 +39,8 @@ P0 or P1. A P1 changes requested behaviour, so it names that request: its
 `breaks` lists the ids of the design items or requirements it breaks
 (`["R8", "M1"]`), from the list the input gives. A finding that breaks none of
 them is P2. A P0 may carry `breaks` too. A credential, key or token
-committed to the repository is P0, whatever the design says.
+committed to the repository is P0, whatever the design says. A fake inside a
+test file is P1 though the person never meets it: it hides what they would.
 
 ## Earlier rounds
 

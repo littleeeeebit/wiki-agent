@@ -14,6 +14,7 @@ review reads the real measurement the owner approved. Nothing here pushes.
 from __future__ import annotations
 
 import json
+import os
 import posixpath
 import re
 import shutil
@@ -253,6 +254,42 @@ def touched(location: str, changed: dict[str, list[tuple[int, int]]]) -> bool:
     return bool(m) and any(a <= int(m[2]) <= b for a, b in changed.get(canonical(m[1]), []))
 
 
+def faked_file(root: Path, file) -> Path | None:
+    """The test file a `fake` finding names in `file`, its path in the checkout `root` exactly as written, no line
+    or column and nothing trimmed, or None when that is no file inside `root`. A path outside `root` is never
+    probed, and one the disk refuses to read is no file: either way the reviewer is asked again."""
+
+    if not (isinstance(file, str) and file) or not Path(os.path.normpath(root / file)).is_relative_to(os.path.normpath(root)):
+        return None
+    try:
+        path = Path(os.path.realpath(root / file))
+        return path if path.is_relative_to(os.path.realpath(root)) and path.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
+def pinned(root: Path, file: str, pins) -> bool:
+    """`file` is one of the pinned contract tests `pins`, each read in the same checkout: the same file on disk,
+    however either is spelled (`./`, letter case on Windows), and never another file that only looks alike. False
+    only once the file is known to differ from every pin: a lookup or comparison the disk will not settle raises
+    ValueError, so the verdict is asked again rather than a pinned fake passing to the build."""
+
+    if (target := faked_file(root, file)) is None:
+        raise ValueError(f"`fake` 발견의 `file` {file!r} 을 읽은 체크아웃에서 다시 찾지 못했다")
+    unsettled = []
+    for pin in pins:
+        try:
+            if (path := faked_file(root, pin)) is not None and os.path.samefile(target, path):
+                return True
+        except OSError:
+            path = None
+        if path is None:
+            unsettled.append(pin)
+    if unsettled:
+        raise ValueError(f"고정한 계약 테스트 {unsettled!r} 를 읽은 체크아웃에서 읽지 못해 `fake` 발견이 그중 하나인지 가리지 못했다")
+    return False
+
+
 def canonical(path: str) -> str:
     """A worktree-relative path in one spelling: `./a\\b/../c` is `a/c`, as Git writes it."""
 
@@ -276,7 +313,8 @@ def ruled(spec: dict, tree: Path, head: str) -> dict:
     ruled = {a for a, r in (o.get("rulings") or {}).items() if r.get("keep") == "build"}
     return {"anchors": anchors(spec), "known": set(rounds), "repeated": {a for a, n in rounds.items() if len(n) >= 2},
             "changed": changed, "since": reviews[-1]["head"] if changed is not None else None,
-            "answered": answered, "ruled": ruled, "kinds": set(kinds_of(o))}
+            "answered": answered, "ruled": ruled, "kinds": set(kinds_of(o)),
+            "tests": {str(t["id"]) for t in o["design"].get("tests") or [] if isinstance(t, dict) and t.get("id")}}
 
 
 def rules_text(rules: dict) -> str:
@@ -363,6 +401,10 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
             and all(isinstance(f.get(k), str) and f[k].strip() for k in ("location", "reason", "evidence"))
             for f in findings):
         raise ValueError("`findings` 마다 `location`, `severity`(P0·P1·P2), `reason`, `evidence` 가 있어야 한다")
+    if any("fake" in f and not (f["severity"] == "P1" and isinstance(f["fake"], str) and f["fake"].strip()
+                                and "device" not in f and "later" not in f) for f in findings):
+        raise ValueError("`fake` 는 테스트 파일 안의 가짜를 짚은 P1 발견에만 붙고, 그 가짜가 대신하는 것을 적는다 — "
+                         "지금 고칠 것이라 `device` 나 `later` 로 미루지 못한다")
     if any("device" in f and "later" in f for f in findings):
         raise ValueError("발견 하나에 `device` 와 `later` 를 함께 붙이지 않는다")
     if any("later" in f and not later_ok(f, (rules or {}).get("kinds")) for f in findings):
@@ -390,7 +432,9 @@ def verdict_of(value, head: str, devices: dict[str, set[str]] | None = None, rul
     return {"verdict": value["verdict"], "head": head,
             "findings": [{**{k: f[k] for k in ("location", "severity", "reason", "evidence")},
                           **({"area": " ".join(str(f["area"]).split())} if area_of(f) else {}),
-                          **({k: f[k] for k in ("breaks", "repro", "rebuttal") if f.get(k)}),
+                          **({k: f[k] for k in ("breaks", "repro", "rebuttal", "fake") if f.get(k)}),
+                          **({"file": f["file"], "pinned": pinned(rules["seen"], f["file"], rules.get("contract") or ())}
+                             if f.get("fake") and (rules or {}).get("seen") else {}),
                           **({"later": {k: str(f["later"][k]).strip() for k in ("kind", "what")}} if "later" in f else {}),
                           **({"device": {k: f["device"][k] for k in ("kind", "requirement", "check", "source", "act", "expect", "observe")
                                          if k in f["device"]}}
@@ -417,6 +461,11 @@ def held(f: dict, rules: dict) -> None:
     allowed, breaks = rules.get("anchors") or set(), f.get("breaks")
     if breaks is not None and not (isinstance(breaks, list) and all(isinstance(b, str) and b in allowed for b in breaks)):
         raise ValueError(f"`breaks` 는 입력에 적힌 설계 항목·요구 번호의 목록이다 — 받은 값 {breaks}")
+    if f.get("fake") and not set(breaks or ()) & rules.get("tests", set()):
+        raise ValueError("`fake` 발견의 `breaks` 에는 그 가짜가 대신 서는 설계 테스트 번호(T…)를 적는다")
+    if f.get("fake") and rules.get("seen") and faked_file(rules["seen"], f.get("file")) is None:
+        raise ValueError("`fake` 발견은 `file` 에 그 테스트 파일의 저장소 안 경로를 줄 번호 없이 그대로 적는다 — "
+                         f"받은 값 {f.get('file')!r} 은 읽은 체크아웃의 파일이 아니다")
     if allowed and f["severity"] == "P1" and not breaks:
         raise ValueError("P1 발견마다 그것이 깨뜨리는 설계 항목·요구 번호를 `breaks` 에 적는다 — 아무것도 "
                          "깨뜨리지 않으면 P2 다")
@@ -540,6 +589,14 @@ def decided(repo: str, store, spec: dict, found: dict):
         oneshot_spec.saved(repo, oneshot={"stage": "split", "reviews": reviews, "owed": owing(found),
                                           "later": later_of(o, found), "working": "split"})
         return lambda: oneshot_spec.handoff(repo, "split") or True   # the split holds the tree itself
+    # A fake in a pinned contract test is one no build turn may fix: the run stops, and the owner sees it.
+    # The verdict read each fake's `file` and the pins in the checkout the review read, as files (`pinned`).
+    if faked := [f for f in blocking(found) if f.get("fake") and f.get("pinned")]:
+        with oneshot._lock:
+            store.put(reviews=reviews, working=None, later=later_of(o, found), stopped={
+                "reason": "fake", "state": store.get()[store.state], "detail": "고정한 계약 테스트에 가짜가 있어 빌드가 "
+                "고칠 수 없다 — " + " / ".join(f"{f['file']} ({f['location']}) {f['fake']}: {f['reason']}" for f in faked)})
+        return None
     refused = int(o.get("refused") or 0) + 1
     if conflicts := conflicted(o, found):   # a decision only the owner can make: no build turn, no round counted
         oneshot_spec.saved(repo, oneshot={"stage": "conflict", "reviews": reviews, "refused": refused - 1,
@@ -650,7 +707,8 @@ def verdict(store, spec: dict, tree: Path) -> dict | None:
             rules = ruled(spec, tree, head)
             found = oneshot.turned(store, "review", oneshot.prompt("review", shape(spec["oneshot"])),
                                    review_text(spec, head, how, rules), "oneshot-review",
-                                   lambda value: verdict_of(value, head, deferrable(spec), rules), seen)
+                                   lambda value: verdict_of(value, head, deferrable(spec),
+                                                            {**rules, "seen": seen, "contract": spec["oneshot"]["contract"]}), seen)
     except MovedError as exc:   # the approved HEAD is no longer the tree: the build checks it again
         rebuild(spec["repo"], store, f"리뷰 직전에 작업트리가 바뀌었다 — {exc}")
         return None

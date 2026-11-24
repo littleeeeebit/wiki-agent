@@ -263,7 +263,7 @@ export const STOP: Record<string, string> = {
   block: '모델 답을 쓸 수 없었다', restart: '서버가 다시 켜져 멈췄다', tests: '계약 테스트를 쓰지 못했다',
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',
   kind: '이 종류는 여기까지', rekind: '고른 종류로는 만들 수 없는 요구', toolchain: '쓰기로 한 도구가 이 PC 에 없다',
-  measure: '실측이 멈췄다', 'measure-input': '실측에 넣은 값이 틀렸다',
+  measure: '실측이 멈췄다', 'measure-input': '실측에 넣은 값이 틀렸다', fake: '고정한 계약 테스트에 가짜가 있다',
 }
 /** The kinds the owner picks on the start screen (`tool/main/oneshot.py` `Start.kinds`); `soon` ones are shown off,
  *  and a `host` one only once the server says this host builds it (`oneshot_profile.HOST_ONLY`). */

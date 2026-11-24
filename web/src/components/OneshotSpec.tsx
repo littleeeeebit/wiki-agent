@@ -123,7 +123,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   const android = ['android', 'desktop'].includes(o.intent?.kind ?? '')   // the six parts (`oneshot_profile.parts`)
   const idle = !view.working && !view.stopped
   // A `kind` stop waits for this kind's next stage to ship: no resume reaches it.
-  const resume = !['kind', 'rekind'].includes(view.stopped?.reason ?? '') && (
+  const resume = !['kind', 'rekind', 'fake'].includes(view.stopped?.reason ?? '') && (
     <Btn tone="wait" className={GO} disabled={busy} onClick={() => void act(() => api.resume(repo))}>재개</Btn>)
   const unposted = view.stage !== 'measure' && view.measure?.runs.at(-1)?.comment_error   // told past the measure screen
   const leaked = view.needs?.some((n) => n.leaked || n.unsure)
