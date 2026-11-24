@@ -332,8 +332,8 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
     if not isinstance(value, dict):
         return {"error": "`report.json` 은 metrics 를 담은 객체다"}
     if isinstance(bad := value.get("input_error"), dict) and isinstance(bad.get("why"), str):
-        return {"input_error": {"input": masked(str(bad.get("input") or ""), hide)[:40],
-                                "why": masked(bad["why"], hide)[:MAX_TEXT]}}
+        return {"input_error": {"input": masked(str(bad.get("input") or ""), hide)[:40], "why": masked(bad["why"], hide)[:MAX_TEXT],
+                                "checked": masked(c if isinstance(c := bad.get("checked"), str) else "", hide)[:MAX_TEXT]}}
     got = value.get("metrics") if isinstance(value.get("metrics"), dict) else {}
     rows = []
     for m in plan["metrics"]:
@@ -454,8 +454,8 @@ def decided(repo: str, store, record: dict, since: int):
 
 
 def result(repo: str, store, record: dict):
-    """A measurement saved. One the owner must judge waits; a wrong input stops for the owner; a failure goes to
-    the build agent, up to the review's round cap."""
+    """A measurement saved. One the owner must judge waits; a failure goes to the build agent, up to the review's
+    round cap. A wrong input is one too, the owner's stop only once the build was sent it and names a check (13e)."""
 
     from . import oneshot_review   # it imports this module
 
@@ -473,18 +473,23 @@ def result(repo: str, store, record: dict):
         oneshot_spec.saved(repo, oneshot={"measures": runs})
         store.stop("measure", record["error"])
         return None
-    if record["status"] == "input":
+    disputed = None
+    if record["status"] == "input":   # the owner gave it: the build proves it wrong before the owner is asked
         bad = record["input_error"]
-        oneshot_spec.saved(repo, oneshot={"measures": runs})
-        store.stop("measure-input", f"{bad['input'] or '입력'}: {bad['why']} — 그 입력을 고쳐 넣고 [실측 시작]을 누른다")
-        return None
+        if o.get("input_sent") == bad["input"] and bad["checked"]:
+            oneshot_spec.saved(repo, oneshot={"measures": runs, "input_sent": None})   # pressed again: the build's again
+            store.stop("measure-input", f"입력 {bad['input']} 이 틀렸다고 빌드가 확인했다 — {bad['checked']} — 고쳐 넣고 [실측 시작]을 누른다")
+            return None
+        disputed = bad["input"]
+        runs[-1] = record = {**record, "status": "failed", "error": f"실측 스크립트가 주인이 넣은 입력 {disputed} 이 틀렸다고 했다. "
+                             f"서버는 그 말만 믿지 않고 빌드가 프로그램부터 고친다 — 프로그램이 남긴 이유: {bad['why']}"}
     fails = int(o.get("measure_fails") or 0) + 1
     if fails >= oneshot_review.cap():
         oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails})
         store.stop("measure", f"실측이 {fails}번 실패했다 — {failure(record)}")
         return None
     spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails, "stage": "build", "fix": "measure",
-                                             "attempts": 0, "working": "build"})
+                                             "attempts": 0, "working": "build", "input_sent": disputed})
     text = fixing(spec)
     return lambda: oneshot_build.send(repo, "build", text)
 
@@ -515,9 +520,14 @@ def fixing(spec: dict) -> str:
     if not last or last["head"] != o.get("built_head"):
         return ""
     if last["status"] == "failed":
-        auto = last.get("mode") == "auto"
+        auto, bad = last.get("mode") == "auto", last.get("input_error")
         why = (f"The {'server' + chr(39) + 's own ' if auto else ''}real measurement of HEAD `{last['head']}` failed: "
-               f"{failure(last)}.\n\n"
+               + (f"the measuring script reported the owner's input `{bad['input']}` as wrong: {bad['why']}\n\nThe owner "
+                  "gave that input and it stands: the cause is most likely the program. Check the input against the real "
+                  "service by a call outside the code that refused it (for a live broadcast, whether the platform says "
+                  "it is live now) and fix the program. Only if that check shows the input wrong, add `\"checked\": "
+                  "\"<Korean: the check and what the service answered>\"` to the `input_error`; the owner reads it.\n\n" if bad
+                  else f"{failure(last)}.\n\n")
                + ("Only the metrics that failed are below; those that need a person were not judged in this "
                   "measurement.\n\n" if auto else "")
                + f"The metrics {'that failed' if auto else 'as measured'}:\n\n```json\n"

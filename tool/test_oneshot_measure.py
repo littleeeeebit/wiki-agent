@@ -27,8 +27,10 @@ SCRIPT = '''import json, os, pathlib, sys
 
 out = pathlib.Path(sys.argv[1])
 key = os.environ.get("ENV", "")'''.replace("ENV", ENV) + '''
-if key == "wrong":
-    report = {"input_error": {"input": "M2", "why": "서비스가 키 " + key + " 를 거절했다"}}
+if key.startswith("wrong"):
+    report = {"input_error": {"input": "M2", "why": "the service refused key " + key}}
+    if key.endswith("-checked"):
+        report["input_error"]["checked"] = "서비스에 직접 물었더니 키 " + key + " 를 모른다고 했다"
 else:
     report = {"metrics": {"total_ok": os.environ.get("BUDGET_URL") == "https://example.test/live"},
               "notes": "키 " + key + " 로 불렀다"}
@@ -38,6 +40,7 @@ else:
 print("used", key)
 '''
 KEY = "sk-measure-" + "7" * 20
+WRONG = "wrong-" + "8" * 16   # a key the stand-in's service refuses
 
 
 @pytest.fixture
@@ -198,11 +201,28 @@ def test_a_failed_measurement_or_a_refusal_goes_back_to_the_build_agent_which_mu
     assert o()["stage"] == "build" and "목소리가 끊긴다" in sent[-1][2]
 
 
-def test_an_input_the_script_calls_wrong_stops_for_the_owner_without_showing_it(at_measure):
-    given(key="wrong")
+def test_an_input_the_script_calls_wrong_goes_to_the_build_until_a_check_outside_the_program_shows_it(at_measure):
+    tree, sent = at_measure
+    given(key=WRONG)
     measure.measure("budget", "owner")
-    assert o()["stopped"]["reason"] == "measure-input" and o()["stage"] == "measure"
-    assert "M2" in o()["stopped"]["detail"] and f"[{ENV}]" in o()["stopped"]["detail"]
+    last = o()["measures"][-1]
+    assert o()["stage"] == "build" and o()["input_sent"] == "M2" and o()["measure_fails"] == 1   # never the owner's
+    assert last["status"] == "failed" and last["error"].startswith("실측 스크립트가 주인이 넣은 입력 M2")
+    assert "`M2`" in sent[-1][2] and '"checked"' in sent[-1][2] and WRONG not in sent[-1][2]
+    git(tree, "commit", "--allow-empty", "-m", "fix")
+    check(tree, "고쳤다.\n" + report())
+    oneshot_spec.saved("budget", oneshot={"working": None})
+    given(key=WRONG)   # the build changed nothing and names no check: its own again
+    measure.measure("budget", "owner")
+    assert o()["stage"] == "build" and o()["measure_fails"] == 2 and not o().get("stopped")
+    git(tree, "commit", "--allow-empty", "-m", "check")
+    check(tree, "확인했다.\n" + report())
+    oneshot_spec.saved("budget", oneshot={"working": None})
+    given(key=WRONG + "-checked")
+    measure.measure("budget", "owner")
+    assert o()["stopped"]["reason"] == "measure-input" and o()["stage"] == "measure" and not o()["input_sent"]
+    assert "M2" in o()["stopped"]["detail"] and "직접 물었더니" in o()["stopped"]["detail"]
+    assert f"[{ENV}]" in o()["stopped"]["detail"] and WRONG not in json.dumps(o(), ensure_ascii=False)
     given()
     measure.start("budget", measure.Start(head=o()["built_head"]))   # one press starts it again
     from main import oneshot

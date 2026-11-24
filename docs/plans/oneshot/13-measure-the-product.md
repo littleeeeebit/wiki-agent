@@ -32,6 +32,7 @@ in `raw/specs/vtuber-ko-dub/oneshot-initial.json` under `oneshot.measures`.
 | When the owner measures | Once, after every metric that needs no person has passed on one build. The program opens on the owner's own screen, plays the real broadcast and speaks Korean out loud |
 | A metric that never ran | A failure, like any other. A build turn cannot hand the owner a measurement whose live part never played |
 | How it ships | One pull request: this plan and all of 13a to 13c, never split. Once it is merged, the stopped `vtuber-ko-dub` run goes through it with no other change |
+| An input the script calls wrong (2026-11-25) | The owner's input stands. The build agent gets it as a failure and fixes the program, unless a check outside the program shows the input wrong; only then is the owner asked, in Korean written by the server. One pull request (13e) |
 
 ## Design
 
@@ -121,6 +122,26 @@ has no mode and never had the server's pass, so the server measures that HEAD
 first too. An approval the owner gave before this step stands: the owner
 already measured that HEAD in full and judged it, and the review reads it.
 
+### An input the script calls wrong is the build's to prove
+
+The `vtuber-ko-dub` run's third measurement (2026-11-25) stopped for the
+owner on `M5`, a live broadcast that was on air. Twitch now names the
+broadcast in `#EXT-X-SESSION-DATA` instead of `#EXT-X-TWITCH-INFO`, and the
+program read an empty id, refused every live, and its script reported that
+as a wrong input, in English. Each new address the owner gave stopped the
+same way.
+
+The owner gave the input, so the script's `input_error` is not the owner's
+stop by itself. The server saves it as a failed measurement whose `error` is
+a Korean sentence of its own. The failure is counted like any other, and the
+build turn is told the input stands, to check it against the service by a
+call outside the program and to fix the program. It names the first such
+report's input in `input_sent`. The owner is stopped only when the next report on
+that input carries `checked`, the Korean account of the check made outside
+the program and what the service answered, and reads that text. Pressing
+`[실측 시작]` again with the same value sends the next such report to the build
+again.
+
 A program that leaves the owner's screen empty, opens no window of its own,
 or plays no sound the owner can hear is the owner's to refuse; the note says
 which.
@@ -133,3 +154,4 @@ which.
 | 13b | The server measures by itself after each passing build turn, on the run-owned desktop, without sound, with one data folder per run; only failed metrics go back | In this pull request |
 | 13c | The owner's one measurement on their own screen, with sound, after every machine metric passed | In this pull request |
 | 13d | The `vtuber-ko-dub` run goes through 13a–13c: its build turn writes the first screen, the server measures until it passes, then the owner measures once | After the merge |
+| 13e | An input the script calls wrong goes to the build agent; the owner is asked only once a check outside the program shows it wrong | In this pull request |
