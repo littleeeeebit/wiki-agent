@@ -15,6 +15,7 @@ import native_process
 JOB_LIST, HANDLE_LIST = 0x0002000D, 0x00020002   # PROC_THREAD_ATTRIBUTE_JOB_LIST, _HANDLE_LIST
 NEW, EXIT, ABNORMAL = 6, 7, 8   # JOB_OBJECT_MSG_NEW_PROCESS, _EXIT_PROCESS, _ABNORMAL_EXIT_PROCESS
 OPEN = 0x1000 | 0x00100000 | 0x0001   # PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE | PROCESS_TERMINATE
+NO_PROCESS = 87   # ERROR_INVALID_PARAMETER: what `OpenProcess` answers for a pid no process has
 ELEVATION_REQUIRED = 740
 DRAIN = 64   # batches of 64 messages one read handles before it returns to its caller
 
@@ -108,7 +109,7 @@ class Job:
             error = ctypes.get_last_error()
             self.close()
             raise Refused(f"cannot prepare the job: {error}")
-        self.joined: list[dict] = []   # {"pid", "handle", "identity", "exited"}
+        self.joined: list[dict] = []   # {"pid", "handle", "identity", "exited", "left": its exit message came}
         # Roots whose rollback could not confirm their exit, as {"pid", "handle"}: `end` waits on each handle, and
         # once it signals it proves that root's join as a rolled-back root's does.
         self.stray: list[dict] = []
@@ -232,18 +233,25 @@ class Job:
         found = self._messages(wait_ms)
         for message, pid in found:
             if message == NEW:
-                entry = {"pid": pid, "handle": None, "identity": None, "exited": False}
+                entry = {"pid": pid, "handle": None, "identity": None, "exited": False, "left": False}
                 handle = self.k.OpenProcess(OPEN, False, pid)
+                error = 0 if handle else ctypes.get_last_error()
                 inside = w.BOOL()
-                if handle and self.k.IsProcessInJob(handle, self.job, ctypes.byref(inside)) and inside:
+                read = bool(handle) and bool(self.k.IsProcessInJob(handle, self.job, ctypes.byref(inside)))
+                if read and inside:
                     entry.update(handle=handle, identity=native_process.identity(pid, handle))
                 elif handle:
                     self.k.CloseHandle(handle)   # the pid is another process's now: never held
+                # Gone already as its join is read: no process has that pid, or the one that has it is outside
+                # this job, which no member ever leaves. Its exit is proven here; its message may never come.
+                entry["exited"] = error == NO_PROCESS or (read and not inside)
                 self.joined.append(entry)
             elif message in (EXIT, ABNORMAL):
-                entry = next((e for e in self.joined if e["pid"] == pid and not e["exited"]), None)
+                # The first member under that pid whose exit message has not come: one found gone at its join
+                # still takes its own late message, never handing it to a later member with the same pid.
+                entry = next((e for e in self.joined if e["pid"] == pid and not e.get("left")), None)
                 if entry:
-                    entry["exited"] = True
+                    entry["exited"] = entry["left"] = True
         return len(found)
 
     def finished(self) -> bool:
@@ -288,9 +296,10 @@ class Job:
 
     def _gone(self, entry: dict) -> bool:
         """A member has exited. A held member only by its signalled handle, which is bound to that process; an
-        exit message names a pid, which a later member may carry. A member never held, by its exit message, or,
-        when that message was lost, the first member with a root's pid by the root's own signalled handle: the
-        root joined first under its pid, so only a later member could carry it again."""
+        exit message names a pid, which a later member may carry. A member never held, by its exit message, by
+        having been gone already when its join was read (`_pump`), or, when that message was lost, the first
+        member with a root's pid by the root's own signalled handle: the root joined first under its pid, so only
+        a later member could carry it again."""
 
         if entry["handle"]:
             return self.k.WaitForSingleObject(entry["handle"], 0) == 0

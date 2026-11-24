@@ -135,7 +135,15 @@ any job and outside the record. 9d2 changes it:
   member that joined has a proven exit. A held member is proven only by its
   signalled handle, which is bound to that process; an exit message names a
   pid, which a later member may carry. A member that exits before the look can
-  open it is proven by its exit message. A failed `TerminateJobObject` is no
+  open it is proven by its exit message, or by being gone as its join is read:
+  `OpenProcess` finds no process with that pid, or `IsProcessInJob` answers
+  that the process now under it is outside the job, which no member ever
+  leaves. Windows can drop that exit message, and a program that starts
+  hundreds of short processes loses some (the `vtuber-ko-dub` measurement,
+  2026-11-24: 8 of 305). A failed `OpenProcess` for another reason, or an
+  `IsProcessInJob` that cannot answer, proves nothing. A member gone at its
+  join still takes its own late exit message, so that message is never
+  credited to a later member under the same pid. A failed `TerminateJobObject` is no
   proof, and late messages are waited for until the 30 seconds run out. `ActiveProcesses` reaching zero is recorded as an
   accounting observation, never as the proof: Windows can report zero before a
   terminated process has finished exiting. A member with neither proof leaves
