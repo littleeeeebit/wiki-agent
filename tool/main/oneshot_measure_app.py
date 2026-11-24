@@ -197,14 +197,16 @@ def accepted_by(psutil, server: tuple, client: tuple, seconds: float = 3.0) -> i
 # -- Starting the PC program, in a run that builds one ----------------------------------------------------
 
 def environment(spec: dict, plan: dict, launch_env: dict, env: dict, mode: str) -> dict:
-    """The program's environment over the server's, as `Look.start` reads it: the launch settings, then from the
-    measurement's environment only what a program needs to run (`RUNTIME`), the plan's inputs and the design's
-    secrets, then the mode, each name once to Windows. Every other name the server holds is dropped (`None`), so
+    """The program's environment over the server's, as `Look.start` reads it: from the measurement's environment
+    what a program needs to run (`RUNTIME`), under its launch settings, then the plan's inputs and the design's
+    secrets, which `oneshot_measure.checked` keeps apart from the launch settings, then the mode, each name once to
+    Windows. Every other name the server holds is dropped (`None`), so
     no credential the measurement does not name reaches the program, nor its log."""
 
-    named = RUNTIME | {x["env"].upper() for x in plan["inputs"]} | {n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)}
+    named = {x["env"].upper() for x in plan["inputs"]} | {n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)}
+    runtime = {k: v for k, v in env.items() if k.upper() in RUNTIME}   # defaults: a launch setting wins, `{data}` too
     merged: dict = {}
-    for part in (launch_env, {k: v for k, v in env.items() if k.upper() in named}, {MODE: mode}):
+    for part in (runtime, launch_env, {k: v for k, v in env.items() if k.upper() in named}, {MODE: mode}):
         for name, value in part.items():
             for old in [k for k in merged if k.upper() == name.upper()]:
                 del merged[old]
@@ -235,6 +237,7 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
     to see to, never the build's (`RuntimeError`)."""
 
     import desktop_session   # Windows only, as a PC app is
+    import owned_job
 
     app = plan["app"]
     if answers(app["health"]):   # whatever answers now is not the program about to start
@@ -266,7 +269,7 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
             try:
                 try:
                     look.start("app", argv, copy / launch["cwd"], extra, halt=halt)
-                except desktop_session.Refused as exc:   # Windows would not run this program: the build's to fix
+                except owned_job.Unrunnable as exc:   # Windows would not run this program: the build's to fix
                     raise ValueError(f"PC 프로그램을 띄우지 못했다 — {masked(str(exc), hide)}") from None
                 job = look.jobs["app"]
                 deadline = time.monotonic() + app["seconds"]
@@ -291,12 +294,24 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                 look.observe()
                 if (job := look.jobs.get("app")) is not None and not (end := job.end(END_SECONDS))["clean"]:
                     raise RuntimeError(f"PC 프로그램을 끝내지 못했다 — {'; '.join(end['reasons'])}")
-                try:   # masked before it is written: no copy of the program's output holds a secret
+                # Masked in place once the program has ended, before the look removes it: a log the cleanup leaves
+                # behind holds no secret either. The kept folder gets the same masked text.
+                text = masked(app_log.read_text(encoding="utf-8", errors="replace"), hide) if app_log.exists() else ""
+                try:
+                    app_log.write_text(text, encoding="utf-8")
+                except OSError as exc:
+                    raise RuntimeError(f"PC 프로그램의 로그 `{app_log}` 를 가리지 못했다 ({type(exc).__name__}) — 손으로 "
+                                       "지운 뒤 다시 시작한다") from None
+                try:
                     log.parent.mkdir(parents=True, exist_ok=True)
-                    log.write_text(masked(app_log.read_text(encoding="utf-8", errors="replace"), hide), encoding="utf-8")
+                    log.write_text(text, encoding="utf-8")
                 except OSError:
                     pass   # no log is kept: the measurement says what it says without it
-            if why := changed(build):   # it wrote beside itself: a pass would stand for a copy no longer there
+            try:
+                why = oneshot_desktop.altered(build)
+            except (OSError, ValueError) as exc:   # the host could not read the copy: never shown as changed
+                raise RuntimeError(f"PC 앱 사본을 다시 읽지 못했다 ({type(exc).__name__})") from None
+            if why:   # it wrote beside itself: a pass would stand for a copy no longer there
                 raise ValueError(f"PC 프로그램이 실행 중에 자기 사본을 바꿨다 — 쓰는 것은 모두 `{{data}}` 아래에 둔다 ({why})")
     except desktop_session.Halted:   # stopped before the program ran: never started
         raise ValueError("사람이 멈췄다") from None

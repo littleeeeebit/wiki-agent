@@ -48,6 +48,7 @@ MID = re.compile(r"[a-z][a-z0-9_]{0,40}")
 OPS = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge, "==": operator.eq}
 MAX_MINUTES, MAX_SERVE_SECONDS = 60, 600
 MAX_TEXT = 2_000   # an input's typed value, and the owner's note
+CREDENTIAL = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION", re.I)
 HEALTH = re.compile(r"http://(127\.0\.0\.1|localhost)(:\d{1,5})?(/\S*)?")
 
 
@@ -186,6 +187,10 @@ def checked(value, spec: dict, path: Path) -> dict:
         raise ValueError(f"person: true 인 측정값 {', '.join(unserved)} 을 재게 하는 during 단계가 없다")
     if missing := sorted(calls - covered):
         raise ValueError(f"실측이 닿지 않는 바깥 호출이 있다: {', '.join(missing)} — 측정값의 `calls` 에 넣어 진짜로 부른다")
+    if desktop and (clash := sorted(({x["env"].upper() for x in inputs} | {n["env"].upper() for _, n in
+                                     oneshot_needs.secret_needs(spec)}) & {k.upper() for k in run["env"]})):
+        raise ValueError(f"`app.run.env` 의 `{clash[0]}` 는 입력값이나 비밀값의 이름이다 — 실행 설정(`{{data}}` 자리)을 "
+                         "덮지 않게 다른 이름을 쓴다")
     launch = {"app": {"run": run, "health": serve["health"], "seconds": seconds}} if desktop else \
         {"serve": {"command": serve["command"].strip(), "health": serve["health"], "seconds": seconds}}
     return {**launch, "measure": {"command": measure["command"].strip(), "minutes": minutes},
@@ -249,7 +254,10 @@ def env_of(spec: dict, plan: dict, base: dict | None = None) -> tuple[dict, dict
                 env[x["env"]] = secrets[x["env"]] = value
         elif value := (kept(spec).get(x["env"]) or {}).get("value"):
             env[x["env"]] = value
-    return env, spelled(oneshot_needs.hidden(spec, env, secrets))   # every reader of the run's text masks the JSON-escaped spellings too
+    # A value the server holds under a credential's name is masked as well, though no input names it: a script
+    # that prints its environment shows none of them on the card.
+    named = {k: v for k, v in env.items() if CREDENTIAL.search(k) and len(v) >= 8 and k not in secrets}
+    return env, spelled(oneshot_needs.hidden(spec, env, {**named, **secrets}))   # every reader of the run's text masks the JSON-escaped spellings too
 
 
 # -- Starting what is measured: `oneshot_measure_app` ------------------------------------------------
@@ -422,6 +430,10 @@ def decided(repo: str, store, record: dict, since: int):
     stored-value change takes, so a change made at any moment of the run sets it aside."""
 
     with oneshot._lock:
+        if (halt := HALTS.get(repo)) is not None and halt.is_set():   # `stop` sets it under this lock too
+            store.stop("measure", "사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
+                       else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다")
+            return None
         if oneshot_needs.CHANGES.get(repo, 0) != since:
             record = {**record, "status": "stale", "error": "실측하는 동안 비밀 값이 바뀌었다 — [실측 시작]으로 다시 잰다"}
         return result(repo, store, record)
@@ -630,8 +642,9 @@ def start(repo: str, body: Start) -> dict:
 
 @router.post("/api/oneshot/spec/{repo}/measure/stop")
 def stop(repo: str) -> dict:
-    if halt := HALTS.get(repo):
-        halt.set()
+    with oneshot._lock:   # a stop accepted here is seen by `decided`, which saves the outcome under it
+        if halt := HALTS.get(repo):
+            halt.set()
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 
