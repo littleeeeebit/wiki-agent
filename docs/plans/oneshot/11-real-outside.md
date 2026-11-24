@@ -331,8 +331,9 @@ module wraps, is not one.
 A fake in a pinned contract test is one no build turn may fix, since the
 build may not change those files. So a `fake` finding also names its test
 file in `file`: the path in the repository exactly, with no line number. Its
-`location` stays what it is for every finding, a place for the owner to
-read, and nothing is parsed out of it. The verdict is refused, and the
+`location` stays what it is for every finding: the pin match reads only
+`file`, while the changed-line rule for a narrowed review still reads
+`location` as it does for any finding. The verdict is refused, and the
 reviewer asked again, when `file` is no file of the checkout the review read
 (`oneshot_review.faked_file`): a path outside it is refused unread, and one
 the disk will not read counts as none. The finding is pinned when that file and a
