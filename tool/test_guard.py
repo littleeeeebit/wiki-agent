@@ -237,8 +237,17 @@ def test_a_nested_shell_keeps_the_effects_it_wraps(repo):
 
 def test_files_that_decide_the_grant_are_never_granted(repo):
     for command in ("echo x > .git/config", "echo x > .wiki/adapter.toml", "echo x > .claude/settings.json",
-                    "echo x > verification.toml", "echo x > .wiki", "echo x > ."):
+                    "echo x > .wiki", "echo x > ."):
         assert "허가를 정하는 파일" in (call(repo, command) or ""), command
+
+
+def test_a_task_writes_and_commits_its_checks(repo):
+    """`verification.toml` names the checks, not the grant: a reviewer asked a task for a round check, and
+    refusing the file stopped the task until the person wrote and committed it."""
+    assert call(repo, tool="Write", file_path=str(repo / "verification.toml"), content="[verification]\n") is None
+    for command in ("echo x > verification.toml", "git add verification.toml", "rm verification.toml",
+                    "mkdir copy && cp verification.toml copy"):
+        assert call(repo, command) is None, command
 
 
 def test_every_ancestor_of_a_protected_path_is_judged_protected_for_every_path_kind(repo):
@@ -299,10 +308,10 @@ EXPLICIT_FORMS = {
     "wget-output": "wget -O ../outside/target.txt https://example.com/x",
     "curl-cluster": "curl -sSLo ../outside/target.txt https://example.com/x",
     "install-dir": "install -d ../outside/cache local-cache",
-    "made-folder": "mkdir copy && cp verification.toml copy",
+    "made-folder": "mkdir copy && cp -r .claude copy",
     "install-cluster": "install -dm755 ../outside/cache local-cache",
     "install-group": "install -gstaff a.txt ../outside/target.txt",
-    "install-parents": "install -D a.txt copy/a.txt && cp verification.toml copy",
+    "install-parents": "install -D a.txt copy/a.txt && cp -r .claude copy",
     "curl-header": "curl -D ../outside/headers.txt -o response.txt https://example.com/x",
     "wget-here": "cd .. && wget https://example.com/x.tgz",
     "wget-hsts": "wget --hsts-file ../outside/hsts -O response.txt https://example.com/x",
@@ -443,7 +452,7 @@ def test_windows_writes_inside_the_grant_pass(repo):
 
 def test_a_delete_reaches_every_protected_name_below_it(repo):
     # Another worktree's copy below a write root, or a `.wiki` folder a move would put an `adapter.toml` in.
-    for name in (".claude/settings.json", "verification.toml", ".wiki/adapter.toml", "nested/.git/HEAD"):
+    for name in (".claude/settings.json", ".codex/config.toml", ".wiki/adapter.toml", "nested/.git/HEAD"):
         (repo / "wt" / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / "wt" / name).write_text("x", encoding="utf-8")
         assert "허가를 정하는 파일" in (call(repo, "Remove-Item wt -Recurse", tool="PowerShell") or ""), name
@@ -609,7 +618,7 @@ def test_a_task_that_fills_the_slots_may_write_the_adapter_and_nothing_else_prot
     for denied in (call(repo, tool="Edit", file_path=adapter, old_string="a", new_string="b"),
                    call(repo, "git add .wiki/adapter.toml")):
         assert (denied is None) is fills, denied
-    for protected in (".claude/settings.json", "verification.toml", ".git/config"):
+    for protected in (".claude/settings.json", ".codex/config.toml", ".git/config"):
         assert "허가를 정하는 파일" in call(repo, tool="Write", file_path=str(repo / protected), content="")
     assert "허가를 정하는 파일" in call(repo, "rm .wiki/adapter.toml"), "열린 것은 쓰기뿐이다"
 
@@ -1185,7 +1194,7 @@ def test_git_does_not_write_while_its_hooks_are_writable(repo):
 def test_a_protected_name_is_protected_in_every_worktree(repo):
     """Another worktree's copy of a protected file, committed there, would reach the checkout by history."""
     wt = Path(os.environ["TEMP"]).as_posix() + "/wt"
-    for target in ("verification.toml", ".wiki/adapter.toml", ".claude/settings.json", ".codex/config.toml"):
+    for target in (".wiki/adapter.toml", ".claude/settings.json", ".codex/config.toml"):
         for command in (f"printf x > {wt}/{target}", f"echo x >> {wt}/{target}"):
             assert "허가를 정하는 파일" in (call(repo, command) or ""), command
     assert call(repo, f"printf x > {wt}/notes.md") is None
@@ -1204,7 +1213,7 @@ def test_a_linked_worktree_is_removed_with_its_copies_and_nothing_else(repo, mon
     admin.mkdir(parents=True)
     (admin / "commondir").write_text("../..\n", encoding="utf-8")
     (admin / "gitdir").write_text(f"{(wt / '.git').as_posix()}\n", encoding="utf-8")
-    for name in (".wiki/adapter.toml", "verification.toml", ".claude/settings.json"):
+    for name in (".wiki/adapter.toml", ".codex/config.toml", ".claude/settings.json"):
         (wt / name).parent.mkdir(parents=True, exist_ok=True)
         (wt / name).write_text("x", encoding="utf-8")
     (wt / ".git").write_text(f"gitdir: {admin.as_posix()}\n", encoding="utf-8")

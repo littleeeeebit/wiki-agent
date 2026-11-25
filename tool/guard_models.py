@@ -285,7 +285,7 @@ def lands(srcs: list, dests: list, folder: bool, ctx) -> set:
     """Where sources land. A folder destination (`-t`, a trailing separator, or one that exists now) takes each
     source's last name, so `cp x .` writes `./x`, not the checkout. Any other destination is written as named and,
     since an earlier command (`mkdir`, `cp -r`, `install -D`) may make it a folder, with each source's name below
-    it too: `cp verification.toml new` may write `new/verification.toml`."""
+    it too: `cp -r .claude new` may write `new/.claude`."""
     out = set()
     for d in dests:
         into = folder or not d.why and (re.search(r"[\\/]$", d.text) or any(

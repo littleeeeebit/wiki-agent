@@ -38,8 +38,10 @@ class Grant:
     adapter: str = ""                   # this checkout's adapter, when the task fills its slots
 
 
-# Inside a write root, but they decide the grant or what runs next: never granted.
-PROTECTED = (".git", ".claude", ".codex", ".wiki/adapter.toml", "verification.toml")
+# Inside a write root, but they decide the grant or what runs next: never granted. `verification.toml` is
+# not one: it names the checks, which a task may add to, and review and [Merge] judge the change; refusing
+# it stopped a task whose reviewer asked for a round check until the person wrote and committed the file.
+PROTECTED = (".git", ".claude", ".codex", ".wiki/adapter.toml")
 
 
 def temps() -> list[Path]:
@@ -230,7 +232,7 @@ def protected_below(target: str, roots: list) -> bool:
     for root in roots:
         if contained(target, [root]):
             parts = [p.rstrip(". ") or p for p in re.split(r"[\\/]", os.path.relpath(where, real_path(root)).lower())]
-            if {".git", ".claude", ".codex", "verification.toml"} & set(parts) or parts[-1] == ".wiki" \
+            if {".git", ".claude", ".codex"} & set(parts) or parts[-1] == ".wiki" \
                     or any(parts[i:i + 2] == [".wiki", "adapter.toml"] for i in range(len(parts))):
                 return True
     return False
@@ -264,7 +266,7 @@ def holds_protected(target: str, copies: bool = False) -> bool:
                 seen += 1
                 name = e.name.lower()
                 if seen > WALK or e.is_symlink() or (e.is_junction() if typed else is_junction(e.path)) or name == ".git" and not (copies and folder == top) \
-                        or not copies and (name in (".claude", ".codex", "verification.toml")
+                        or not copies and (name in (".claude", ".codex")
                                            or name == "adapter.toml" and os.path.basename(folder).lower() == ".wiki"):
                     return True
                 if e.is_dir(follow_symlinks=False):
