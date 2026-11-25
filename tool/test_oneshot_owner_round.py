@@ -27,11 +27,15 @@ def alone():
     import msvcrt
 
     with open(Path(tempfile.gettempdir()) / "wiki-owner-round-fixture.lock", "a+b") as held:
+        held.seek(0)   # the byte the release names, whatever the file holds
+        deadline = time.monotonic() + 600
         while True:
             try:
                 msvcrt.locking(held.fileno(), msvcrt.LK_NBLCK, 1)
                 break
             except OSError:
+                if time.monotonic() > deadline:
+                    raise
                 time.sleep(0.2)
         try:
             yield
@@ -393,7 +397,7 @@ u.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x413)                # no longer topmost, 
 u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x497)                 # hidden, past its guard
 import time; time.sleep(0.5)                               # what passed the guard, undone by the fixture at once
 after = state()
-# The marks, where the fixture paints them: read off the window on this desktop, which the test owns.
+# The marks, where the fixture paints them: read off the window on the owner's desktop, where the test shows it.
 box, origin = w.RECT(), w.POINT()
 u.GetWindowRect(hwnd, ctypes.byref(box))
 u.ClientToScreen(hwnd, ctypes.byref(origin))
@@ -459,7 +463,8 @@ def test_the_fixture_refuses_every_change_paints_its_marks_and_the_helper_reads_
                     "kept": (out / "surface.png").is_file()}
 
         # Both checks of the window pass after those requests. On the input desktop the blit holds every mark the
-        # fixture paints, where it paints it (topmost, so nothing covers it), and that frame is kept.
+        # fixture paints, where it paints it, and that frame is kept: the fixture is topmost, and no other topmost
+        # window covers it here (`oneshot_fixture.py`); one that did would leave the check pending instead.
         assert surface("surface") == {"read": True, "width": 640, "height": 360, "kept": True}
         # A window region set on the fixture, which its marks along the edges would not show: never undone by the
         # fixture, so the helper's check right after the blit always finds it.

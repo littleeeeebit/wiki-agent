@@ -410,7 +410,7 @@ try {
   $deadline = (Get-Date).AddSeconds([double]$ask.wait_seconds)
   do { $candidates = @(Candidates); if ($candidates.Count) { break }   # @(): a single window stays a list
        Start-Sleep -Milliseconds 200 } while ((Get-Date) -lt $deadline)
-  if ($candidates.Count -eq 0) { Refuse "the app showed no window on the owned desktop" }
+  if ($candidates.Count -eq 0) { Refuse "the app showed no window on the owner's desktop" }
   Settle
   Enter "choose"
   $candidates = @(Candidates)
