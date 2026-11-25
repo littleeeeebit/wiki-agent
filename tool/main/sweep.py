@@ -107,6 +107,8 @@ def held(path: Path, text: str, turn, report, stop, keep, owing: str = "") -> st
     if answer is not None:
         found = report(answer)
         keep({"cleanup_owed": "", **({"test_cleanup": found} if valid(found) else {})})
+    elif owed(path, before):   # stopped after committing code: a resume is measured from here, as after a raise
+        keep({"cleanup_owed": before})
     return answer
 
 

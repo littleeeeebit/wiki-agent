@@ -4,6 +4,7 @@
 
 import json
 import re
+import subprocess
 import threading
 from pathlib import Path
 from unittest.mock import patch
@@ -11,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from agent import Event
-from main import loop, specs, work
+from main import loop, specs, sweep, work
 from test_loop import (  # noqa: F401 -- shared fixtures and isolated Git/GitHub world
     Reviewer, Worker, allow, client, deny, git, no_machine_settings, pr_spec, template, waited, world,
     looped, mapped, allowed_spec, round_of, FINAL,
@@ -332,3 +333,152 @@ def test_external_implementer_keeps_its_branch_and_can_add_remote_review_rounds(
     third = specs.load("proj", original["id"])
     assert len(third["rounds"]) == 3 and third["rounds"][-1]["head"] == corrected
     assert third["state"] == "머지 가능" and not Worker.made
+
+
+def test_an_answered_escalation_ends_the_step_unless_the_turn_was_stopped(tmp_path):
+    """`handoff.applied` leaves the author's answer owed; the turn that escalated ends the step, and a new one
+    sends it (`handed`). A work pane's Stop on that turn stops the loop with the answer still owed."""
+    store = {"rev": 2, "handoff_owed": None}
+    halted = []
+
+    def begin(path, chat, text, release, run):
+        store["handoff_owed"] = {"kind": "spec-update", "rev": 2}   # this turn's check applied the author's revision
+        run.put({"kind": "done", "text": "escalated", "meta": {}, "session_id": "h", "parent_id": None})
+        if halted:
+            run.halt.set()
+        release()
+        run.finish()
+
+    where = tmp_path / "proj-worktrees" / "t1"
+    with patch.object(work, "session", lambda *a: Hangs()), patch.object(work, "begin", begin), \
+            patch.object(specs, "load", lambda *a: dict(store)), patch.object(loop, "stop", return_value=False) as stop:
+        with pytest.raises(loop.Revised):
+            loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1")
+        # An answer owed from before is not this turn's: a cleanup turn sent ahead of it finishes. A done-report
+        # it saved never carried the answer, so it becomes the baseline the delivery's report is measured from.
+        store["report_at"] = {"rev": 2, "turn": "cleanup", "head": "h"}
+        with patch.object(loop, "own", side_effect=lambda lp, **f: store.update(f) or dict(store)):
+            assert loop.turn(loop.Loop("proj", "t1"), {}, where, "cleanup") == "escalated" and not stop.called
+        assert store["handoff_owed"] == {"kind": "spec-update", "rev": 2, "report_at": store["report_at"]}
+        store.update(handoff_owed={"kind": "spec-update", "rev": 2}, report_at=None)
+        # A newer answer than the one being delivered: its text is stale before it is sent.
+        sending = loop.Loop("proj", "t1")
+        sending.handing = {"rev": 2, "owed": {"kind": "guidance", "rev": 2, "text": "older"}, "turns": []}
+        with pytest.raises(loop.Revised):
+            loop.turn(sending, {}, where, "the older answer")
+        halted.append(True)
+        store["handoff_owed"] = None
+        # Any turn the work pane stopped stops the loop: no answer of it is judged or retried. It is raised, so
+        # a repair that committed code keeps its cleanup baseline (`sweep.held`).
+        for _ in range(2):
+            with pytest.raises(loop.Halted):
+                loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1")
+        assert not stop.called and store["handoff_owed"]
+        with patch.object(loop, "stepped", side_effect=loop.Halted):
+            assert loop.step(loop.Loop("proj", "t1")) is False
+    assert stop.call_args[0][2:4] == ("t1", loop.Why.PERSON)
+    with patch.object(loop, "stepped", side_effect=loop.Revised):
+        assert loop.step(loop.Loop("proj", "t1")) is True
+
+
+def test_the_authors_answer_stays_owed_until_its_turn_passes_this_revision(tmp_path):
+    owed = {"kind": "spec-update", "rev": 2, "report_at": {"rev": 1, "turn": "old"}}
+    store = {"rev": 2, "done": ["x"], "report": [{"item": "x", "pass": True}], "report_at": owed["report_at"],
+             "handoff_owed": owed}
+    sent = []
+
+    def told(spot, spec, path, text):
+        sent.append(text)
+        spot.handing["turns"].append(f"t{len(sent)}")
+        # The first turn's report fails its item; the second passes it. A report of another turn never counts.
+        store["report"] = [{"item": "x", "pass": len(sent) == 2}]
+        store["report_at"] = {"rev": 2, "turn": f"t{len(sent)}", "head": "h2"}
+        return "answer"
+
+    spot, at, held = loop.Loop("proj", "t1"), subprocess.CompletedProcess([], 0, "h2\n", ""), []
+    with patch.object(loop, "told", told), patch.object(specs, "load", lambda *a: dict(store)), \
+            patch("main.handoff.turn_for", return_value="Revision 2 replaces the spec."), \
+            patch.object(specs, "sh", return_value=at), patch.object(loop, "change", return_value={}) as change, \
+            patch.object(loop, "wait_hold", side_effect=lambda *a: held.append(1) or (lambda: None)):
+        assert loop.handed(spot, dict(store), tmp_path, owed) is True
+        assert sent[0].startswith("Revision 2 replaces the spec.") and "revision 2" in sent[0]
+        assert sent[1] == specs.REPORT_AGAIN.format(rev=2) and change.call_args.kwargs == {"handoff_owed": None}
+        # The person finished the revision in their own turn while the loop stood: nothing is sent again.
+        mine = {**store, "report_at": {"rev": 2, "turn": "person", "head": "h2"}}
+        assert loop.handed(spot, mine, tmp_path, owed) is True and len(sent) == 2
+        # Not a report the checkout has moved past, nor one where two copies of an item stand for another.
+        with patch.object(loop, "told", return_value=None) as again:
+            assert loop.handed(spot, {**mine, "report_at": {**mine["report_at"], "head": "h1"}}, tmp_path, owed) is False
+            twice = {**mine, "done": ["x", "y"], "report": [{"item": "x", "pass": True}] * 2}
+            assert loop.handed(spot, twice, tmp_path, owed) is False and again.call_count == 2
+        # A newer answer saved meanwhile is the next step's to send, never cleared unsent.
+        store.update(report=mine["report"], report_at=mine["report_at"], handoff_owed={**owed, "rev": 3})
+        with pytest.raises(loop.Revised):
+            loop.handed(spot, dict(store), tmp_path, owed)
+
+        class Revising:   # a revision lands between the report's check and the lock the clear takes
+            def __enter__(self):
+                store.update(rev=3, report=None)
+
+            def __exit__(self, *exc):
+                return False
+
+        store.update(handoff_owed=owed)
+        with patch.object(specs, "_files", Revising()), pytest.raises(loop.Revised):
+            loop.handed(spot, dict(store), tmp_path, owed)
+    # Every clear is judged holding the worktree, so no other turn commits between its check and the clear.
+    assert change.call_count == 2 and len(held) == 4 and spot.handing is None
+
+
+def test_an_external_gate_cut_between_its_receipt_and_gate_is_rebuilt_from_the_receipt(tmp_path):
+    """A receipt without its `gate` was reused on resume while `gate` stayed empty, so every step ran again;
+    the receipt goes first, so a lone `gate` never passes for a base or environment it never ran on."""
+    lp = loop.Loop("proj", "t1")
+    with patch.object(loop, "wait_hold", return_value=lambda: None), patch.object(loop, "sync_review"), \
+            patch.object(specs, "for_round", return_value={}), patch.object(loop, "reusable", return_value=True), \
+            patch.object(specs, "rounded", return_value=({"ok": True, "head": "h"}, {"ok": True})) as rounded, \
+            patch.object(specs, "validate", return_value={}) as receipt, \
+            patch.object(loop, "change", side_effect=lambda *a, **k: {} if receipt.called else None) as change:
+        assert loop.external_shipped(lp, {"gate": {"head": "h", "ok": True}}, tmp_path, tmp_path, "h", "main")
+        assert not rounded.called   # receipt and `gate` both stand: reused
+        assert loop.external_shipped(lp, {}, tmp_path, tmp_path, "h", "main")   # `gate` only after the receipt
+        assert rounded.called and change.call_args.kwargs == {"gate": {"ok": True, "head": "h"}}
+        receipt.return_value = None   # made again under the ID: no `gate` for it
+        change.reset_mock()
+        assert loop.external_shipped(lp, {}, tmp_path, tmp_path, "h", "main") is False and not change.called
+
+
+def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path):
+    def stopped(spot, spec, path, text):
+        spot.halt.set()   # the Review Loop Stop lands after the repair committed code
+        return None
+
+    task = {"cleanup_owed": "base", "history": [{"ts": 1.0}], "worktree": "w"}
+    with patch.object(loop, "turn", stopped), patch.object(sweep, "owed", return_value=True), \
+            patch.object(specs, "load", side_effect=lambda *a: dict(task)), patch.object(specs, "update") as update:
+        assert loop.told(loop.Loop("proj", "t1"), dict(task), tmp_path, "fix R1") is None
+        update.assert_called_once_with("proj", "t1", cleanup_owed="base")   # on the stopped spec, its state untouched
+        chosen = dict(task)
+
+        def replaced(spot, spec, path, text):   # deleted and adopted again under the same ID meanwhile
+            task["history"] = [{"ts": 2.0}]
+            return stopped(spot, spec, path, text)
+
+        with patch.object(loop, "turn", replaced):
+            assert loop.told(loop.Loop("proj", "t1"), chosen, tmp_path, "fix R1") is None
+        # Replaced before the repair even looked: the snapshot that chose it still names the old task.
+        assert loop.told(loop.Loop("proj", "t1"), chosen, tmp_path, "fix R1") is None
+        # Handed the replacement itself (a lookup by ID after the swap): a loop that ran the old task sends nothing.
+        old = loop.Loop("proj", "t1")
+        old.born = 1.0
+        with patch.object(loop, "turn") as sent:
+            assert loop.told(old, dict(task), tmp_path, "fix R1") is None and not sent.called
+        task["state"] = "고치는 중 R1"
+        assert loop.stepped(old) is False   # nor does its next step run the replacement
+        # Nor does it write the replacement's gate or its round receipt (a stale pass would skip its gate).
+        with patch.object(specs, "save") as save:
+            assert loop.change(old, gate={"ok": True}) is None
+            assert specs.validate("proj", "t1", old.born, round={"ok": True}) is None and not save.called
+            assert loop.own(old, repaired="h") is None and not save.called
+            assert loop.stop(old, "proj", "t1", loop.Why.GATE) is False and not save.called
+    assert update.call_count == 1   # the replacement never takes the old checkout's baseline

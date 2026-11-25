@@ -259,7 +259,7 @@ def correcting(w, name: str, recovery_state: dict, rounds=None) -> tuple[SimpleN
     spec = pr_spec(w, name, 7)
     spec.update(state=f"고치는 중 R{len(rounds or FOUR)}", recovery=recovery_state, rounds=rounds or FOUR)
     specs.save(spec)
-    return SimpleNamespace(repo="proj", sid=name, halt=threading.Event(), run=None), spec
+    return SimpleNamespace(repo="proj", sid=name, halt=threading.Event(), run=None, born=None), spec
 
 
 def prepared(lp, spec) -> tuple[dict | None, dict]:

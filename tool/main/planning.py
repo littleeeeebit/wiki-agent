@@ -1144,9 +1144,9 @@ def revise(lp, spec: dict, path: Path, text: str) -> str | None:
         final, failed, _, _, _ = consume(path, run, f"{text}\n\nThe plan's documents are under `{root}/`.")
         if lp.halt.is_set():
             return None
-        if failed or run.halt.is_set():
-            # A turn stopped on its own (`/api/work/stop`) writes nothing, as a failed one. One the
-            # provider cut stops the loop (`corrected`) rather than asking that provider again.
+        if run.halt.is_set():   # stopped on its own (`/api/work/stop`): writes nothing, and the step stops the loop
+            raise loop.Halted()
+        if failed:   # writes nothing; one the provider cut stops the loop (`corrected`) rather than asking it again
             lp.refused = bool(work.REFUSED.search(failed))
             return ""
         try:

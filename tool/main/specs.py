@@ -1398,14 +1398,14 @@ def digest(repo: Path, path: Path, cmd: str) -> str:
     return verify.environment_digest(repo, path, cmd, LOCKS, adapter_path(repo.name, repo))
 
 
-def validate(repo: str, sid: str, **parts) -> dict | None:
-    """The spec's `validation`, the only place it is written: `round` (the
-    last targeted result), `final` (the full gate on an allowed head) and
-    `phase` (`final_running` while that runs)."""
+def validate(repo: str, sid: str, born: float | None = None, **parts) -> dict | None:
+    """The spec's `validation`, the only place it is written: `round` (the last targeted result), `final` (the
+    full gate on an allowed head) and `phase` (`final_running` while that runs). With `born` (`loop.born`), a
+    task made again under the ID since takes none."""
 
     with _files:
         spec = load(repo, sid)
-        if spec is None:
+        if spec is None or born is not None and (spec.get("history") or [{}])[0].get("ts") != born:
             return None
         spec["validation"] = {"version": 1, "round": None, "final": None, "phase": None,
                               **(spec.get("validation") or {}), **parts}

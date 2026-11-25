@@ -658,6 +658,8 @@ class Loop:
         self.run: work.Run | None = None        # the work cell's turn, while one runs
         self.report_at: dict | None = None      # the last work turn's identity, captured before release
         self.refused = False   # a response of the last turn was cut; the answer it went on to is kept
+        self.handing: dict | None = None   # the author's answer this step sends (`handed`), and its revision
+        self.born: float | None = None   # the task this loop runs, as its first step found it (`born`)
         self.thread: threading.Thread | None = None
 
     def stop(self) -> None:
@@ -688,7 +690,9 @@ def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
     if (old is not None and not old.halt.is_set()
             and (old.thread is None or old.thread.ident is None or old.thread.is_alive())):
         spec = specs.load(repo, sid)
-        if spec is not None and LOOPING.fullmatch(spec["state"]):
+        if spec is not None and old.born and born(spec) != old.born:
+            old.halt.set()   # that loop ran the task deleted before this one was made under the ID
+        elif spec is not None and LOOPING.fullmatch(spec["state"]):
             return
     if old is not None and old.thread is not None:
         if old.thread is threading.current_thread():
@@ -754,7 +758,8 @@ def drive(loop: Loop) -> None:
                 if fresh and fresh["state"] == "머지 가능" and not loop.halt.is_set():
                     requested_merge(channels.repo_for(loop.repo), fresh)
                 fresh = specs.load(loop.repo, loop.sid)
-                if not fresh or not LOOPING.fullmatch(fresh["state"]) or loop.halt.is_set():
+                if not fresh or not LOOPING.fullmatch(fresh["state"]) or loop.halt.is_set() \
+                        or loop.born and born(fresh) != loop.born:   # a replacement is its own loop's
                     break
         finally:
             with _seats:
@@ -781,6 +786,8 @@ def change(loop: Loop, state: str | None = None, **fields) -> dict | None:
         spec = specs.load(loop.repo, loop.sid)
         if spec is None or not (LOOPING.fullmatch(spec["state"]) or (state and spec["state"] == state)):
             return None
+        if loop.born and born(spec) != loop.born:   # another task made under this ID since
+            return None
         if state and state != spec["state"]:
             specs.moved(spec, state, **fields)
         else:
@@ -806,6 +813,8 @@ def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "", sou
         if loop is not None and loop.halt.is_set():
             return False
         spec = specs.load(repo, sid)
+        if spec is not None and loop is not None and loop.born and born(spec) != loop.born:
+            return False   # another task made under this ID: not this loop's to stop
         if spec is not None and source.fullmatch(spec["state"]):
             specs.save(specs.moved(spec, "멈춤", stopped={"reason": why.value, "detail": detail},
                                    merge_request=spec.get("merge_request") if why is Why.RESTART else None))
@@ -957,11 +966,27 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
     return final
 
 
+def born(spec: dict) -> float | None:
+    """A task's first moment: one deleted and made again under the same ID (a PR adopted again) has another."""
+    return (spec.get("history") or [{}])[0].get("ts")
+
+
+def own(loop: Loop, **fields) -> dict | None:
+    """`specs.update` on this loop's own task whatever its state; `None` for one made again under the ID."""
+    with specs._files:
+        now = specs.load(loop.repo, loop.sid)
+        if now is None or loop.born and born(now) != loop.born:
+            return None
+        return specs.update(loop.repo, loop.sid, **fields)
+
+
 def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     """A repair turn of the work cell (`turn`) — review, gate, merge conflict,
     local verification — held to its test cleanup (`sweep.held`)."""
 
     loop.refused = False
+    if loop.born and born(spec) != loop.born:   # another task made under this ID since: not this loop's to repair
+        return None
     if spec.get("planning"):    # a plan's revision writes documents only
         return turn(loop, spec, path, text)
 
@@ -973,8 +998,17 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
                                "nothing more is sent to that provider")
         return turn(loop, specs.load(loop.repo, loop.sid) or spec, path, t)
 
+    mine = loop.born or born(spec)
+
+    def keep(fields: dict):   # a Review Loop Stop's baseline lands on the stopped spec too, never reopening it
+        if (kept := change(loop, **fields)) is not None or not loop.halt.is_set():
+            return kept
+        with specs._files:
+            now = specs.load(loop.repo, loop.sid)
+            return own(loop, **fields) if now and mine and born(now) == mine else None
+
     return sweep.held(path, text, follow, lambda answer: block("test-cleanup", answer),
-                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), lambda fields: change(loop, **fields),
+                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), keep,
                       (specs.load(loop.repo, loop.sid) or spec).get("cleanup_owed", ""))
 
 
@@ -994,9 +1028,16 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     release = wait_hold(loop, path)
     if release is None:
         return None
+    now = specs.load(loop.repo, loop.sid) or {}
+    if loop.handing and (now.get("rev"), now.get("handoff_owed")) != (loop.handing["rev"], loop.handing["owed"]):
+        release()   # answered or revised again while the worktree was free: the text is no longer what is owed
+        raise Revised()
+    owed = now.get("handoff_owed")   # one this turn's own escalation leaves differs
     try:
         chosen = spec.get("cell") or {}
         run = work.Run(work.session(path, chosen.get("model", ""), chosen.get("effort", ""), chosen.get("fast", False)))
+        if loop.handing:
+            loop.handing["turns"].append(run.turn)   # the reports `handed` accepts are these turns'
         if getattr(run.chat, "hide", None):   # its push is refused (`secrets_held`); the server pushes
             text += "\n\nThis session carries the owner's secrets: commit only, never push. The server pushes the branch after its secret check."
         # Seen by `stop` before its thread starts. `stop` sets the halt, then
@@ -1025,8 +1066,15 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     finally:
         loop.run = None
         loop.report_at = run.report_at
+        if owed and not loop.handing:   # a turn that never carried the owed answer (cleanup): its report is no delivery
+            with specs._files:
+                fresh = specs.load(loop.repo, loop.sid) or {}
+                if fresh.get("handoff_owed") == owed and fresh.get("report_at") != owed.get("report_at"):
+                    own(loop, handoff_owed=(owed := {**owed, "report_at": fresh.get("report_at")}))
     if loop.halt.is_set():
         return None
+    if run.halt.is_set():   # the work pane stopped this turn: its answer is not judged, and nothing is retried
+        raise Halted()
     end = next((e for e in reversed(run.events) if e["kind"] in ("done", "error")), None)
     failure = next((e for e in run.events if e["kind"] == "error" or (e.get("meta") or {}).get("error")), None)
     answered = (failure.get("meta") or {}).get("answer") or "" if failure else ""
@@ -1039,6 +1087,8 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         raise RuntimeError(failure["text"] or "완료된 답이 없다")
     if not end or end["kind"] != "done" or not end["text"].strip():
         raise RuntimeError("완료된 답이 없다")
+    if (specs.load(loop.repo, loop.sid) or {}).get("handoff_owed") not in (None, owed):
+        raise Revised()   # this turn escalated and the author answered: a new step sends it (`handed`)
     return end["text"]
 
 
@@ -1160,7 +1210,9 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
             release()
         if change(loop, gate=verdict) is None:
             return False
-        spec = specs.validate(loop.repo, loop.sid, round=record)
+        spec = specs.validate(loop.repo, loop.sid, loop.born, round=record)
+        if spec is None:   # deleted, or made again under this ID: not this loop's
+            return False
         if verdict["ok"]:
             if pushed is not None and pushed.returncode:
                 return stop(loop, loop.repo, loop.sid, Why.GATE, f"push 실패 — {specs.said(pushed)}")
@@ -1200,13 +1252,13 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
         record = {"head": head, "base_oid": specs.current_merge_base(path, base, head), "command": cmd,
                   "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
                   "reason": "끝나지 않았다", "finished_at": None}
-        specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
+        specs.validate(loop.repo, loop.sid, loop.born, phase="final_running", final=record)
         settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
         with specs.gating(loop.repo, loop.sid, "final", cmd) as gated:
             verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
                 retry_reason=retry, again=again,
                 local_only=bool(review_contract.preservation_command(spec)),
-                noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
+                noted=lambda backend: specs.validate(loop.repo, loop.sid, loop.born, final={**record, "verification": {"backend": backend}}))
             gated["ok"] = verdict["ok"] and not (verdict.get("verification") or {}).get("carried_from")   # a carried pass ran nothing
         if verification.cloud(spec):
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
@@ -1219,7 +1271,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     record["pending"] = verdict.get("pending", False)
     if ok:
         record["verification"] = verdict["verification"]
-    specs.validate(loop.repo, loop.sid, phase=None, final=record)
+    specs.validate(loop.repo, loop.sid, loop.born, phase=None, final=record)
     return None if loop.halt.is_set() else {**record, "tail": verdict["tail"]}
 
 
@@ -1282,8 +1334,7 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | 
         return False
     if maintenance.repaired(path, specs.load(loop.repo, loop.sid) or spec) == head:
         if (specs.load(loop.repo, loop.sid) or spec).get("repaired") != head:   # it may have fixed what is outside the code
-            specs.update(loop.repo, loop.sid, repaired=head, continued=time.time())
-            return True
+            return change(loop, repaired=head, continued=time.time()) is not None
         return stop(loop, loop.repo, loop.sid, Why.GATE, f"최종 게이트 실패, 고친 커밋이 없다 — {final['reason']}")
     return True
 
@@ -1328,11 +1379,12 @@ def external_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, 
     try:
         sync_review(spec, path, head)
         chosen = specs.for_round(repo, path, spec, base)
-        if reusable(spec, head, chosen):
+        # The receipt is saved before `gate`: a gate cut between them is reused only once `gate` is back,
+        # which `rounded` rebuilds from that receipt, so no pass stands for a base or environment it never ran on.
+        if reusable(spec, head, chosen) and (spec.get("gate") or {}).get("head") == head:
             return True
         verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
-        specs.validate(loop.repo, loop.sid, round=record)
-        if change(loop, gate=verdict) is None:
+        if specs.validate(loop.repo, loop.sid, loop.born, round=record) is None or change(loop, gate=verdict) is None:
             return False
         if not verdict["ok"]:
             return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, verdict["reason"] + "\n" + verdict["tail"])
@@ -1362,8 +1414,9 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
             raise ValueError("인계를 읽는 동안 PR 이 바뀌었다 — 다시 시작한다")
         transfer = verification.handoff(view["body"], head)
         # Preserve the public PR handoff; runtime observations are redacted separately.
-        spec = specs.update(loop.repo, loop.sid, cloud_handoff=transfer,
-                            pr={**spec["pr"], "head": head, "base": base})
+        spec = own(loop, cloud_handoff=transfer, pr={**spec["pr"], "head": head, "base": base})
+        if spec is None:   # deleted, or made again under this ID: not this loop's
+            return False
         record = spec.get("local_verification") or {}
         if record.get("needs_research") and not record.get("research_note"):
             raise ValueError("재분석 원인·근거·다음 실험을 적고 로컬 검증을 재개한다")
@@ -1385,11 +1438,12 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
                                          sorted({issue for r in unresolved for issue in r["failures"]}), "unstable")
             raise ValueError(reason)
         chosen = specs.for_round(repo, path, spec, base)
-        if not reusable(spec, head, chosen):
+        if not reusable(spec, head, chosen) or (spec.get("gate") or {}).get("head") != head:   # as `external_shipped`
             settings = verification.redaction(verification.local(repo), path)
             verdict, check = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
-            specs.validate(loop.repo, loop.sid, round=check)
+            if specs.validate(loop.repo, loop.sid, loop.born, round=check) is None:
+                return False
             spec = change(loop, gate=verdict)
             if spec is None:
                 return False
@@ -1406,11 +1460,82 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         release()
 
 
+class Revised(Exception):
+    """The spec's author answered during this step's turn: the step ends, and the next starts from the spec as
+    it now stands (`handed`). Continued inside the old step, it mixed the new revision with the old rounds."""
+
+
+class Halted(Revised):
+    """The work pane stopped a loop turn: the step stops the loop. Raised, so a repair that committed code
+    keeps its cleanup baseline (`sweep.held`), and passing wherever `Revised` does."""
+
+
+def handed(loop: Loop, spec: dict, path: Path, owed: dict) -> bool:
+    """The author's answer to an escalation (`handoff.applied`) as this step's repair, built from the spec as it
+    stands. It stays owed until a passing done-report covering this revision is saved since the answer: by a
+    turn it sends (asked once more, then the loop stops), or by the person's own turn while the loop stood."""
+
+    from . import handoff
+
+    def complete(s: dict, turns: list | None = None) -> bool:
+        at, items = s.get("report_at") or {}, s.get("report") or []
+        # One passing entry per item of this revision's `done`, as written (`prompts/work-spec.md`): a count
+        # alone let two copies of one item stand for another (`shortfall`).
+        return bool(items) and at != owed.get("report_at") and at.get("rev") == s.get("rev") \
+            and (turns is None or at.get("turn") in turns) and at.get("head") == head() \
+            and sorted(i["item"].strip() for i in items) == sorted(d.strip() for d in s.get("done") or []) \
+            and not specs.shortfall(items, s)
+
+    def head() -> str:   # a report the checkout has moved past since is not this revision's evidence
+        return specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+
+    def clear(turns: list | None = None) -> bool:
+        # Judged again holding the worktree and the lock it is cleared in: a commit, a newer answer, or a
+        # revision that reset the report is the next step's to send.
+        release = wait_hold(loop, path)
+        if release is None:
+            return False
+        try:
+            with specs._files:
+                now = specs.load(loop.repo, loop.sid) or {}
+                if now.get("handoff_owed") != owed or not complete(now, turns):
+                    raise Revised()
+                return change(loop, handoff_owed=None) is not None
+        finally:
+            release()
+
+    if complete(spec):
+        return clear()
+    loop.handing = {"rev": spec["rev"], "owed": owed, "turns": []}
+    try:
+        for text in (f"{handoff.turn_for(path, spec, owed)}\n\nEnd with the `done-report` block for revision "
+                     f"{spec['rev']} once every completion condition holds.", specs.REPORT_AGAIN.format(rev=spec["rev"])):
+            if told(loop, spec, path, text) is None:
+                return False
+            if complete(specs.load(loop.repo, loop.sid) or {}, loop.handing["turns"]):
+                return clear(loop.handing["turns"])
+    finally:
+        loop.handing = None
+    return stop(loop, loop.repo, loop.sid, Why.FORMAT, f"명세 {spec['rev']}판의 완료 보고가 없다")
+
+
 def step(loop: Loop) -> bool:
     """One round. `True` when another follows."""
 
+    try:
+        return stepped(loop)
+    except Halted:
+        return stop(loop, loop.repo, loop.sid, Why.PERSON, "사람이 작업 칸에서 이 턴을 멈췄다")
+    except Revised:
+        return True
+
+
+def stepped(loop: Loop) -> bool:
     spec = specs.load(loop.repo, loop.sid)
     if spec is None or loop.halt.is_set() or not LOOPING.fullmatch(spec["state"]):
+        return False
+    loop.born = loop.born or born(spec)
+    if born(spec) != loop.born:   # another task made under this ID: its own loop runs it
         return False
     repo = channels.repo_for(spec["repo"])
     if repo is None:
@@ -1427,6 +1552,8 @@ def step(loop: Loop) -> bool:
         return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, "작업 브랜치를 다시 연 뒤 리뷰를 계속해라")
     if spec.get("cleanup_owed"):    # resumed from a missing cleanup report: nothing ships before it is given
         return told(loop, spec, path, sweep.RESUMED) is not None
+    if spec.get("handoff_owed"):    # the spec's author answered an escalation: sent before anything ships
+        return handed(loop, spec, path, spec["handoff_owed"])
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
     head, base = pr_head(repo, pr)
