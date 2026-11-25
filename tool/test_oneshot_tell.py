@@ -18,9 +18,9 @@ def o() -> dict:
 
 
 def at(stage: str, **more) -> None:
-    for release in oneshot_tell._reserved.values():   # the fixture's stand-in start runs no worker to take its hold
-        release()
-    oneshot_tell._reserved.clear()
+    for claim in oneshot_tell._claimed.values():   # the fixture's stand-in start runs no worker to take its hold
+        claim["held"] and claim["held"]()
+    oneshot_tell._claimed.clear()
     oneshot_spec.saved("budget", requirements=REQS, oneshot={
         "glossary": GLOSSARY, "stage": stage, "design": sheet.parsed(DESIGN), "design_head": "d" * 40, "working": None,
         **more})
@@ -168,6 +168,34 @@ def test_an_answer_given_as_the_asking_turn_closes_goes_in_once_it_lets_go_and_o
     assert dispatched == [Path(tree)] and tree not in work._busy   # the order queued meanwhile still goes
 
 
+def test_a_rewrite_claims_its_tree_from_its_start_to_its_follow_up_and_gives_it_back_on_any_failure(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import work
+    store, tree = oneshot_spec.store("budget"), str(specs.load("budget", oneshot.BRANCH)["worktree"])
+    at("measure")
+    with patch.object(oneshot_spec, "start", side_effect=OSError("disk")):   # the `working` save fails
+        oneshot_tell.start(store)
+    assert tree not in work._busy and not oneshot_tell._claimed and o()["stopped"]["reason"] == "block"
+    at("measure")
+    oneshot_tell.start(store)
+    assert tree in work._busy
+    with patch.object(oneshot_spec, "spec_of", side_effect=OSError("disk")), pytest.raises(OSError):
+        oneshot_tell.retell("budget")   # the worker's first read fails
+    assert tree not in work._busy and not oneshot_tell._claimed
+    at("build", working="retell")
+    order = MagicMock()
+
+    def send(repo: str, stage: str, text: str) -> None:   # a late callback lands before the follow-up holds the tree
+        work.dispatch(Path(tree), MagicMock(halt=threading.Event()))
+        assert work._queued[tree] is order and tree not in work._busy
+
+    with patch.dict(work._queued, {tree: order}), patch.object(work, "session"), patch.object(work, "begin") as begin, \
+         patch.object(oneshot_tell, "rewritten", lambda repo: ("build", "BUILD")), patch.object(oneshot_build, "send", send):
+        oneshot_tell.retell("budget")
+        assert begin.call_args[0][0] == Path(tree) and tree not in work._queued   # the order goes after it, once
+    begin.call_args[0][3]()
+    assert tree not in work._busy and not oneshot_tell._claimed
+
+
 def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name
     at("build")
 
@@ -273,7 +301,7 @@ def test_a_send_that_holds_the_tree_takes_words_said_by_then_first_and_a_rewrite
         oneshot_build.send("budget", "build", "BUILD")
     tree = specs.load("budget", oneshot.BRANCH)["worktree"]
     # the send let the tree go; the rewrite holds it from its start, so nothing comes between
-    assert started == ["retell"] and list(oneshot_tell._reserved) == [str(Path(tree))]
+    assert started == ["retell"] and list(oneshot_tell._claimed) == ["budget"]
     at("build", working="retell", tell_pending=[{"text": "소리를 줄여", "stage": "build"}])
     with patch.dict(work._busy, {str(tree): object()}), \
          patch.object(oneshot, "turned", side_effect=AssertionError("the design turn ran in a held tree")):
