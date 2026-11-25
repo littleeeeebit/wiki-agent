@@ -104,7 +104,7 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
   if (view.working !== 'measure') return <section aria-label="실측 중" className={BOX}><p>PR #1 초안을 올리는 중이다.</p></section>
   const minutes = plan?.measure.minutes ?? 0
   const gone = run ? Math.max(0, Math.floor(now / 1000 - run.ts)) : 0
-  const late = !!run && minutes > 0 && gone > minutes * 60
+  const late = !!run?.cut && now / 1000 > run.cut - 300   // the script past its planned minutes, by its own clock
   const measured = (plan?.metrics ?? []).filter((x) => owner || !x.person)
   return (
     <section aria-label="실측 중" className={BOX}>
@@ -116,11 +116,12 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
       {run ? (
         <p className="tabular-nums">
           {clock(run.ts)}에 시작 · {span(gone)} 지났다{minutes > 0 && <> · 보통 약 {minutes}분 걸린다</>}
-          {late && <span className="text-wait"> — 예상보다 오래 걸린다. {minutes + 5}분이 지나면 서버가 끊고 실패로 센다.</span>}
+          {run.cut ? '' : ' · 프로그램을 띄우는 중'}
+          {late && run.cut && <span className="text-wait"> — 예상보다 오래 걸린다. {clock(run.cut)}까지 끝나지 않으면 서버가 끊고 실패로 센다.</span>}
         </p>
-      ) : <p>PR #1 초안을 맞추고 프로그램을 띄우는 중이다. 곧 시작한다.</p>}
+      ) : <p>PR #1 초안과 넣은 값을 확인하는 중이다. 곧 시작한다.</p>}
       <p>{!owner ? (plan?.app
-        ? 'PC 프로그램은 보이지 않는 별도 바탕화면에서 돌고, 소리도 꺼져 있다. 창이 뜨지 않는 것이 정상이다. 할 일은 없다.'
+        ? 'PC 프로그램은 보이지 않는 별도 바탕화면에서 돈다. 창이 뜨지 않는 것이 정상이다. 프로그램에는 소리를 내지 말라고 알려 두었다. 할 일은 없다.'
         : '서버가 백엔드를 띄워 혼자 잰다. 할 일은 없다.')
         : plan?.app ? '화면에 뜬 프로그램을 보고 소리를 듣는다.' : '아래 단계를 한다.'}</p>
       {owner && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
@@ -133,8 +134,9 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
         </details>
       )}
       <p className="text-muted-foreground">{owner
-        ? '끝나면 결과와 클립이 이 화면에 뜬다. 보고 들은 뒤 승인하거나 거절한다.'
-        : '끝나면: 모두 통과하면 주인 실측을 부른다. 통과하지 못한 항목이 있으면 빌드 에이전트가 그 항목만 고치고, 서버가 다시 잰다. 누를 것은 없다.'}</p>
+        ? '끝나면: 모든 항목을 재면 결과와 클립이 이 화면에 뜨고, 보고 들은 뒤 승인하거나 거절한다. 사람이 필요 없는 항목이 실패하면 판정 없이 빌드 에이전트가 고친다.'
+        : '끝나면: 모두 통과하면 주인 실측을 부른다. 통과하지 못한 항목이 있으면 보통은 빌드 에이전트가 그 항목만 고치고 서버가 다시 잰다.'}
+        {' '}실패가 회차 한도에 닿거나 입력이 틀렸다고 확인되면 멈추고, 이 화면 위에 이유와 누를 버튼이 뜬다.</p>
     </section>
   )
 }

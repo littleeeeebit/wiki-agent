@@ -389,13 +389,15 @@ def measure(repo: str, mode: str | None = None) -> None:
             store.stop("measure", why)
             return None
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name, "mode": how}, None
-        RUNNING[repo] = record   # the card shows its number and start while it runs
+        # The card's while it runs, this worker's alone (`halt`, fresh per start): its cut-off once the script starts.
+        RUNNING[repo] = {"n": n, "head": o["built_head"], "mode": how, "ts": record["ts"], "cut": None, "halt": halt}
         try:
             with product.started(now, plan, tree, env, halt, raw / "serve.log", hide, how,
                                  (passed or {}).get("build")) as build:
                 if build:   # the frozen copy measured: the owner's measurement starts this one, never a new one
                     record["build"] = build
                 limit = plan["measure"]["minutes"] * 60 + 300
+                RUNNING[repo]["cut"] = time.time() + limit   # the script's own clock starts now, after the launch
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
                     "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
                     idle=limit, hide=hide)

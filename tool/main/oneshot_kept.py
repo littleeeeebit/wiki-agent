@@ -310,7 +310,7 @@ def shown(spec: dict) -> dict:
     """The measurement's plan and its inputs, given or not (never a secret's value), the runs, PR #1, and the
     measurement running now: its number, whose it is and when it started, or None while it is still being set up."""
 
-    from .oneshot_measure import has, next_mode, planned   # it imports this module
+    from .oneshot_measure import HALTS, has, next_mode, planned   # it imports this module
 
     o = spec["oneshot"]
     if not o.get("built_head") or not (o.get("measures") or o.get("stage") == "measure"):
@@ -323,8 +323,10 @@ def shown(spec: dict) -> dict:
             error = str(exc)
     inputs = [{**x, "given": has(spec, x)} for x in (plan or {}).get("inputs") or []]
     runs = [{k: v for k, v in m.items() if k != "folder"} for m in o.get("measures") or []]
-    r = RUNNING.get(spec["repo"]) or {}   # a record saved since, or another HEAD's, is not the one running
-    live = o.get("working") == "measure" and r.get("head") == o["built_head"] and r.get("n") == len(runs) + 1
+    # Only the worker running now: a retry's fresh `halt` sets an earlier attempt's aside, and so does a saved run.
+    r = RUNNING.get(spec["repo"]) or {}
+    live = (o.get("working") == "measure" and r.get("halt") is not None and r.get("halt") is HALTS.get(spec["repo"])
+            and r.get("head") == o["built_head"] and r.get("n") == len(runs) + 1)
     return {"measure": {"plan": plan and {**plan, "inputs": inputs}, "error": error, "runs": runs,
                         "pr": o.get("pr1"), "head": o["built_head"], "next": next_mode(o),
-                        "running": {k: r[k] for k in ("n", "mode", "ts")} if live else None}}
+                        "running": {k: r[k] for k in ("n", "mode", "ts", "cut")} if live else None}}
