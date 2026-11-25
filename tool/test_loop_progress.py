@@ -445,4 +445,11 @@ def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path)
             assert loop.told(loop.Loop("proj", "t1"), chosen, tmp_path, "fix R1") is None
         # Replaced before the repair even looked: the snapshot that chose it still names the old task.
         assert loop.told(loop.Loop("proj", "t1"), chosen, tmp_path, "fix R1") is None
+        # Handed the replacement itself (a lookup by ID after the swap): a loop that ran the old task sends nothing.
+        old = loop.Loop("proj", "t1")
+        old.born = 1.0
+        with patch.object(loop, "turn") as sent:
+            assert loop.told(old, dict(task), tmp_path, "fix R1") is None and not sent.called
+        task["state"] = "고치는 중 R1"
+        assert loop.stepped(old) is False   # nor does its next step run the replacement
     assert update.call_count == 1   # the replacement never takes the old checkout's baseline

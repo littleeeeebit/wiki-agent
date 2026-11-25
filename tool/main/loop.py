@@ -659,6 +659,7 @@ class Loop:
         self.report_at: dict | None = None      # the last work turn's identity, captured before release
         self.refused = False   # a response of the last turn was cut; the answer it went on to is kept
         self.handing: dict | None = None   # the author's answer this step sends (`handed`), and its revision
+        self.born: float | None = None   # the task this loop runs, as its first step found it (`born`)
         self.thread: threading.Thread | None = None
 
     def stop(self) -> None:
@@ -958,11 +959,18 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
     return final
 
 
+def born(spec: dict) -> float | None:
+    """A task's first moment: one deleted and made again under the same ID (a PR adopted again) has another."""
+    return (spec.get("history") or [{}])[0].get("ts")
+
+
 def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     """A repair turn of the work cell (`turn`) — review, gate, merge conflict,
     local verification — held to its test cleanup (`sweep.held`)."""
 
     loop.refused = False
+    if loop.born and born(spec) != loop.born:   # another task made under this ID since: not this loop's to repair
+        return None
     if spec.get("planning"):    # a plan's revision writes documents only
         return turn(loop, spec, path, text)
 
@@ -974,17 +982,14 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
                                "nothing more is sent to that provider")
         return turn(loop, specs.load(loop.repo, loop.sid) or spec, path, t)
 
-    def born(s: dict) -> tuple:   # a task made again under the same ID has another first moment or checkout
-        return (s.get("history") or [{}])[0].get("ts"), s.get("worktree")
-
-    mine = born(spec)   # the snapshot that chose this repair: a later lookup may already find a replacement
+    mine = loop.born or born(spec)
 
     def keep(fields: dict):   # a Review Loop Stop's baseline lands on the stopped spec too, never reopening it
         if (kept := change(loop, **fields)) is not None or not loop.halt.is_set():
             return kept
         with specs._files:
             now = specs.load(loop.repo, loop.sid)
-            return specs.update(loop.repo, loop.sid, **fields) if now and mine[0] and born(now) == mine else None
+            return specs.update(loop.repo, loop.sid, **fields) if now and mine and born(now) == mine else None
 
     return sweep.held(path, text, follow, lambda answer: block("test-cleanup", answer),
                       lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), keep,
@@ -1503,6 +1508,9 @@ def step(loop: Loop) -> bool:
 def stepped(loop: Loop) -> bool:
     spec = specs.load(loop.repo, loop.sid)
     if spec is None or loop.halt.is_set() or not LOOPING.fullmatch(spec["state"]):
+        return False
+    loop.born = loop.born or born(spec)
+    if born(spec) != loop.born:   # another task made under this ID: its own loop runs it
         return False
     repo = channels.repo_for(spec["repo"])
     if repo is None:
