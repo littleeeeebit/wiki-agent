@@ -532,6 +532,8 @@ def start(repo: str, body: Start) -> dict:
         o = spec["oneshot"]   # a measurement stopped (a wrong input, a restart) starts again from here
         if body.head != o.get("built_head"):
             raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
+        if o.get("fix"):   # a repair still owed: only `[재개]` sends it on; nothing is measured before its check
+            raise HTTPException(409, "빌드 에이전트의 수리가 끝나지 않았다 — 다시 불러와 [재개]로 이어 간다")
         last = (o.get("measures") or [None])[-1]
         if broken:   # the committed plan no longer holds: only the build agent can fix it
             then = repair(repo, {"broken": broken}, "plan")

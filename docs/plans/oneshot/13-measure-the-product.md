@@ -153,7 +153,9 @@ input, whatever the script says is wrong with it:
   program. The press names the measurement whose result the screen showed
   (`Start.n`). It sends a repair, of a kept input or a capped failure, only
   for that measurement, and a screen that never showed it is refused with
-  409.
+  409. While a repair is owed (`fix` set), every press is refused with 409:
+  only `[재개]` sends that repair on, and nothing is measured before its
+  build check.
 - `checked` is optional: `how`, the check made outside the program, and
   `answer`, what the service answered. `why`, `how` and `answer` are shown
   only when each has at least four Hangul syllables, Hangul at least half of

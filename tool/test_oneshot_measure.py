@@ -172,8 +172,9 @@ def test_a_failure_at_the_round_cap_goes_to_the_build_agent_when_the_owner_start
     assert o()["working"] == "build" and measure.oneshot_build.turn_stage(o()) == "build"
     assert sent[-1][1] == "build" and "total_ok=False" in sent[-1][2]
     # That failure still last and an input taken back: the one lock scope that would launch a worker reads the
-    # failure first, so Start hands it to the build agent and measures nothing.
-    oneshot_spec.saved("budget", oneshot={"working": None, "stopped": None})
+    # failure first, so Start hands it to the build agent and measures nothing. The run is put back at the cap's
+    # stop, no repair owed: one owed refuses every press (`[재개]` sends it on).
+    oneshot_spec.saved("budget", oneshot={"working": None, "stopped": None, "fix": None})
     measure.take_back("budget", "M1", head=o()["built_head"], env="BUDGET_URL", kind="text")   # an input taken back
     started = []
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)), \
@@ -204,6 +205,10 @@ def test_a_failed_measurement_or_a_refusal_is_repaired_by_the_build_agent_inside
     assert o()["stage"] == "measure" and o()["working"] == "build" and "목소리가 끊긴다" in sent[-1][2]
     # A repair stopped on the way (a restart) resumes as a build turn, still at the measurement.
     oneshot_spec.saved("budget", oneshot={"working": None, "stopped": {"reason": "restart", "detail": "x", "state": "measure"}})
+    runs = len(o()["measures"])   # another window's Start, of the pass before the refusal, measures nothing
+    with pytest.raises(HTTPException) as owed:
+        measure.start("budget", measure.Start(head=o()["built_head"], n=runs - 1))
+    assert owed.value.status_code == 409 and len(o()["measures"]) == runs and o()["fix"] == "measure"
     turns = len(sent)
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
         oneshot_spec.resume("budget")
