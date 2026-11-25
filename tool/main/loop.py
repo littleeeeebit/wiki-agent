@@ -658,6 +658,7 @@ class Loop:
         self.run: work.Run | None = None        # the work cell's turn, while one runs
         self.report_at: dict | None = None      # the last work turn's identity, captured before release
         self.refused = False   # a response of the last turn was cut; the answer it went on to is kept
+        self.handing: dict | None = None   # the author's answer this step sends (`handed`), and its revision
         self.thread: threading.Thread | None = None
 
     def stop(self) -> None:
@@ -987,8 +988,6 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     whose files the server writes (`planning.revise`), never by a write session."""
 
     loop.report_at = None
-    if (specs.load(loop.repo, loop.sid) or {}).get("handoff_told"):   # a reply a stopped loop never sent
-        specs.update(loop.repo, loop.sid, handoff_told=None)
     if spec.get("planning"):
         from . import planning  # `planning` imports this module
 
@@ -996,6 +995,9 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     release = wait_hold(loop, path)
     if release is None:
         return None
+    if loop.handing and (specs.load(loop.repo, loop.sid) or {}).get("rev") != loop.handing["rev"]:
+        release()   # revised again while the worktree was free: the text names a revision that no longer stands
+        raise Revised()
     try:
         chosen = spec.get("cell") or {}
         run = work.Run(work.session(path, chosen.get("model", ""), chosen.get("effort", ""), chosen.get("fast", False)))
@@ -1041,9 +1043,11 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         raise RuntimeError(failure["text"] or "완료된 답이 없다")
     if not end or end["kind"] != "done" or not end["text"].strip():
         raise RuntimeError("완료된 답이 없다")
-    if told := (specs.load(loop.repo, loop.sid) or spec).get("handoff_told"):   # the author's answer (`handoff`)
-        specs.update(loop.repo, loop.sid, handoff_told=None)
-        return turn(loop, spec, path, told)
+    if (owed := (specs.load(loop.repo, loop.sid) or {}).get("handoff_owed")) and owed != (loop.handing or {}).get("owed"):
+        if run.halt.is_set():   # the work pane stopped this turn: the author's answer waits for a resume
+            stop(loop, loop.repo, loop.sid, Why.PERSON, "사람이 멈춤 — 상위 모델의 답을 아직 보내지 않았다")
+            return None
+        raise Revised()   # this turn escalated and the author answered: a new step sends it (`handed`)
     return end["text"]
 
 
@@ -1411,9 +1415,41 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         release()
 
 
+class Revised(Exception):
+    """The spec's author answered during this step's turn: the step ends, and the next starts from the spec as
+    it now stands (`handed`). Continued inside the old step, it mixed the new revision with the old rounds."""
+
+
+def handed(loop: Loop, spec: dict, path: Path, owed: dict) -> bool:
+    """The author's answer to an escalation (`handoff.applied`) as this step's repair, built from the spec as it
+    stands. It stays owed until a done-report of this turn's is saved: asked once more, then the loop stops."""
+
+    from . import handoff
+    before = spec.get("report_at")
+    loop.handing = {"owed": owed, "rev": spec["rev"]}
+    try:
+        for text in (f"{handoff.turn_for(path, spec, owed)}\n\nEnd with the `done-report` block for revision "
+                     f"{spec['rev']} once every completion condition holds.", specs.REPORT_AGAIN.format(rev=spec["rev"])):
+            if told(loop, spec, path, text) is None:
+                return False
+            fresh = specs.load(loop.repo, loop.sid) or {}
+            if fresh.get("report") and fresh.get("report_at") != before:
+                return change(loop, handoff_owed=None) is not None
+    finally:
+        loop.handing = None
+    return stop(loop, loop.repo, loop.sid, Why.FORMAT, f"명세 {spec['rev']}판의 완료 보고가 없다")
+
+
 def step(loop: Loop) -> bool:
     """One round. `True` when another follows."""
 
+    try:
+        return stepped(loop)
+    except Revised:
+        return True
+
+
+def stepped(loop: Loop) -> bool:
     spec = specs.load(loop.repo, loop.sid)
     if spec is None or loop.halt.is_set() or not LOOPING.fullmatch(spec["state"]):
         return False
@@ -1432,6 +1468,8 @@ def step(loop: Loop) -> bool:
         return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, "작업 브랜치를 다시 연 뒤 리뷰를 계속해라")
     if spec.get("cleanup_owed"):    # resumed from a missing cleanup report: nothing ships before it is given
         return told(loop, spec, path, sweep.RESUMED) is not None
+    if spec.get("handoff_owed"):    # the spec's author answered an escalation: sent before anything ships
+        return handed(loop, spec, path, spec["handoff_owed"])
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
     head, base = pr_head(repo, pr)

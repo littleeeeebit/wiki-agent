@@ -334,22 +334,47 @@ def test_external_implementer_keeps_its_branch_and_can_add_remote_review_rounds(
     assert third["state"] == "머지 가능" and not Worker.made
 
 
-def test_the_loop_sends_the_authors_reply_as_its_next_turn(tmp_path):
-    """`handoff.applied` leaves the author's answer for the loop, the one sender of a repair's turns."""
-    store = {"handoff_told": None}
-    sent = []
+def test_an_answered_escalation_ends_the_step_unless_the_turn_was_stopped(tmp_path):
+    """`handoff.applied` leaves the author's answer owed; the turn that escalated ends the step, and a new one
+    sends it (`handed`). A work pane's Stop on that turn stops the loop with the answer still owed."""
+    store = {"rev": 2, "handoff_owed": None}
+    halted = []
 
     def begin(path, chat, text, release, run):
-        sent.append(text)
-        if len(sent) == 1:   # the escalating turn: its check applied the author's revision
-            store["handoff_told"] = "The spec's author revised it to revision 2."
-        run.put({"kind": "done", "text": f"answer {len(sent)}", "meta": {}, "session_id": "h", "parent_id": None})
+        store["handoff_owed"] = {"kind": "spec-update", "rev": 2}   # this turn's check applied the author's revision
+        run.put({"kind": "done", "text": "escalated", "meta": {}, "session_id": "h", "parent_id": None})
+        if halted:
+            run.halt.set()
         release()
         run.finish()
 
-    spot = loop.Loop("proj", "t1")
+    where = tmp_path / "proj-worktrees" / "t1"
     with patch.object(work, "session", lambda *a: Hangs()), patch.object(work, "begin", begin), \
-            patch.object(specs, "load", lambda *a: dict(store)), \
-            patch.object(specs, "update", lambda repo, sid, **f: store.update(f)):
-        assert loop.turn(spot, {}, tmp_path / "proj-worktrees" / "t1", "fix R1") == "answer 2"
-    assert sent == ["fix R1", "The spec's author revised it to revision 2."] and store["handoff_told"] is None
+            patch.object(specs, "load", lambda *a: dict(store)), patch.object(loop, "stop") as stop:
+        with pytest.raises(loop.Revised):
+            loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1")
+        halted.append(True)
+        assert loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1") is None
+    assert stop.call_args[0][2:4] == ("t1", loop.Why.PERSON) and store["handoff_owed"]
+    with patch.object(loop, "stepped", side_effect=loop.Revised):
+        assert loop.step(loop.Loop("proj", "t1")) is True
+
+
+def test_the_authors_answer_stays_owed_until_a_new_report(tmp_path):
+    store = {"rev": 2, "report": {"items": []}, "report_at": {"turn": "old"}}
+    sent = []
+
+    def told(spot, spec, path, text):
+        sent.append(text)
+        if len(sent) == 2:   # the second ask is answered with a report of its own turn
+            store["report_at"] = {"turn": "new"}
+        return "answer"
+
+    spot, owed = loop.Loop("proj", "t1"), {"kind": "spec-update", "rev": 2}
+    with patch.object(loop, "told", told), patch.object(specs, "load", lambda *a: dict(store)), \
+            patch("main.handoff.turn_for", return_value="Revision 2 replaces the spec."), \
+            patch.object(loop, "change", return_value={}) as change:
+        assert loop.handed(spot, dict(store), tmp_path, owed) is True
+    assert sent[0].startswith("Revision 2 replaces the spec.") and "revision 2" in sent[0]
+    assert sent[1] == specs.REPORT_AGAIN.format(rev=2) and change.call_args.kwargs == {"handoff_owed": None}
+    assert spot.handing is None
