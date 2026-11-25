@@ -452,4 +452,8 @@ def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path)
             assert loop.told(old, dict(task), tmp_path, "fix R1") is None and not sent.called
         task["state"] = "고치는 중 R1"
         assert loop.stepped(old) is False   # nor does its next step run the replacement
+        # Nor does it write the replacement's gate or its round receipt (a stale pass would skip its gate).
+        with patch.object(specs, "save") as save:
+            assert loop.change(old, gate={"ok": True}) is None
+            assert specs.validate("proj", "t1", old.born, round={"ok": True}) is None and not save.called
     assert update.call_count == 1   # the replacement never takes the old checkout's baseline

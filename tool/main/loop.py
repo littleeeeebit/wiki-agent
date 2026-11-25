@@ -783,6 +783,8 @@ def change(loop: Loop, state: str | None = None, **fields) -> dict | None:
         spec = specs.load(loop.repo, loop.sid)
         if spec is None or not (LOOPING.fullmatch(spec["state"]) or (state and spec["state"] == state)):
             return None
+        if loop.born and born(spec) != loop.born:   # another task made under this ID since
+            return None
         if state and state != spec["state"]:
             specs.moved(spec, state, **fields)
         else:
@@ -1189,7 +1191,9 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
             release()
         if change(loop, gate=verdict) is None:
             return False
-        spec = specs.validate(loop.repo, loop.sid, round=record)
+        spec = specs.validate(loop.repo, loop.sid, loop.born, round=record)
+        if spec is None:   # deleted, or made again under this ID: not this loop's
+            return False
         if verdict["ok"]:
             if pushed is not None and pushed.returncode:
                 return stop(loop, loop.repo, loop.sid, Why.GATE, f"push 실패 — {specs.said(pushed)}")
@@ -1229,13 +1233,13 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
         record = {"head": head, "base_oid": specs.current_merge_base(path, base, head), "command": cmd,
                   "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
                   "reason": "끝나지 않았다", "finished_at": None}
-        specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
+        specs.validate(loop.repo, loop.sid, loop.born, phase="final_running", final=record)
         settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
         with specs.gating(loop.repo, loop.sid, "final", cmd) as gated:
             verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
                 retry_reason=retry, again=again,
                 local_only=bool(review_contract.preservation_command(spec)),
-                noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
+                noted=lambda backend: specs.validate(loop.repo, loop.sid, loop.born, final={**record, "verification": {"backend": backend}}))
             gated["ok"] = verdict["ok"] and not (verdict.get("verification") or {}).get("carried_from")   # a carried pass ran nothing
         if verification.cloud(spec):
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
@@ -1248,7 +1252,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     record["pending"] = verdict.get("pending", False)
     if ok:
         record["verification"] = verdict["verification"]
-    specs.validate(loop.repo, loop.sid, phase=None, final=record)
+    specs.validate(loop.repo, loop.sid, loop.born, phase=None, final=record)
     return None if loop.halt.is_set() else {**record, "tail": verdict["tail"]}
 
 
@@ -1360,7 +1364,7 @@ def external_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, 
         if reusable(spec, head, chosen):
             return True
         verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
-        specs.validate(loop.repo, loop.sid, round=record)
+        specs.validate(loop.repo, loop.sid, loop.born, round=record)
         if change(loop, gate=verdict) is None:
             return False
         if not verdict["ok"]:
@@ -1418,7 +1422,7 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
             settings = verification.redaction(verification.local(repo), path)
             verdict, check = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
-            specs.validate(loop.repo, loop.sid, round=check)
+            specs.validate(loop.repo, loop.sid, loop.born, round=check)
             spec = change(loop, gate=verdict)
             if spec is None:
                 return False
