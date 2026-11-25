@@ -407,6 +407,16 @@ def halt_all(path: str, repo: Path) -> None:
 
 @router.post("/api/worktrees/remove")
 def clear(body: Removal) -> dict:
+    """Removing an unmerged task's worktree archives the task (`forsaken`): as a delete, only once nothing
+    still acts on it (`loop.deleting`)."""
+    from . import loop, specs  # both import this module
+
+    task = specs.owner(Path(body.path))
+    with loop.deleting(task["repo"], task) if task and task["state"] != "머지됨" else nullcontext():
+        return _clear(body)
+
+
+def _clear(body: Removal) -> dict:
     # The repository is read once and used to the end — for the check, the
     # stops, the hold and the removal. Read again later, a switch in between
     # handed it another repository, and a stop aimed at another project.

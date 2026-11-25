@@ -6,7 +6,9 @@ import json
 import re
 import subprocess
 import threading
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -536,14 +538,48 @@ def test_a_task_is_deleted_only_once_nothing_acts_on_it():
     """Its ID is its branch's folder: a loop, merge or cleanup still running would write the next task."""
     from fastapi import HTTPException
 
+    task, again = {"id": "t1", "state": "리뷰 대기", "history": [{"ts": 1.0}]}, {"id": "t1", "history": [{"ts": 2.0}]}
     busy = loop.Loop("proj", "t1")
+    busy.born = 1.0
     busy.thread = threading.Thread(target=threading.Event().wait, args=(5,), daemon=True)
     busy.thread.start()
-    with patch.dict(loop._loops, {("proj", "t1"): busy}), patch.object(work, "HALT_WAIT", 0.05):
+    with patch.dict(loop._loops, {("proj", "t1"): busy}), patch.object(work, "HALT_WAIT", 0.05), \
+            patch.object(specs, "load", return_value=task):
         with pytest.raises(HTTPException, match="리뷰 루프"):
-            with loop.deleting("proj", "t1"):
+            with loop.deleting("proj", task):
                 pass
-    assert busy.halt.is_set()
+    assert busy.halt.is_set() and not loop._deleting
+    # A delete that read a task made again since (a second delete, after a re-adoption) touches nothing.
+    other = loop.Loop("proj", "t1")
+    other.born = 2.0
+    with patch.dict(loop._loops, {("proj", "t1"): other}), patch.object(specs, "load", return_value=again):
+        with pytest.raises(HTTPException) as gone:
+            with loop.deleting("proj", task):
+                pass
+        assert gone.value.status_code == 410 and not other.halt.is_set()
+        # `aside_task` never archives the replacement, however the old task's record went.
+        with patch.object(specs, "aside") as aside:
+            specs.aside_task("proj", task)
+        assert not aside.called
+    # While one delete holds the task: a second is refused, `kick` registers no loop, and a removal
+    # inside it on the same thread passes through.
+    with patch.object(loop, "_landing", threading.RLock()), patch.object(specs, "load", return_value=task), \
+            patch.object(specs, "save"), patch.object(loop.oneshot_profile, "in_run", return_value=False):
+        with loop.deleting("proj", task):
+            with loop.deleting("proj", task):
+                pass
+            def second():
+                with loop.deleting("proj", task):
+                    pass
+            refused = []
+            worker = threading.Thread(target=lambda: refused.append(pytest.raises(HTTPException, second)))
+            worker.start()
+            worker.join(5)
+            assert refused[0].value.status_code == 409   # the lock this delete holds turns it away first
+            with pytest.raises(HTTPException, match="삭제하는 중"):
+                loop.kick("proj", "t1")
+            assert ("proj", "t1") not in loop._loops
+    assert not loop._deleting
     taken, done = threading.Event(), threading.Event()
 
     def merge():   # a merge holding the lock until the delete was refused
@@ -554,17 +590,64 @@ def test_a_task_is_deleted_only_once_nothing_acts_on_it():
     merging = threading.Thread(target=merge, daemon=True)
     merging.start()
     taken.wait(5)
-    try:
-        with pytest.raises(HTTPException, match="머지"):
-            with loop.deleting("proj", "t2"):
-                pass
+    reviewing = loop.Loop("proj", "t1")
+    reviewing.born = 1.0
+    try:   # a merge anywhere refuses the delete before the task's review is interrupted
+        with patch.dict(loop._loops, {("proj", "t1"): reviewing}), patch.object(specs, "load", return_value=task):
+            with pytest.raises(HTTPException, match="머지"):
+                with loop.deleting("proj", task):
+                    pass
+        assert not reviewing.halt.is_set()
     finally:
         done.set()
         merging.join(5)
-    with patch.object(loop, "_landing", threading.RLock()):
-        with loop.deleting("proj", "t3"):
+    with patch.object(loop, "_landing", threading.RLock()), patch.object(specs, "load", return_value=task):
+        with loop.deleting("proj", task):
             assert loop._landing.acquire(blocking=False)   # held by this delete (reentrant here)
             loop._landing.release()
+
+
+def test_requests_and_callbacks_that_read_a_deleted_task_leave_its_replacement(tmp_path):
+    """A resume, a reopen, a deferred re-review and the task list act only on the task they read."""
+    from fastapi import HTTPException
+
+    old, new = {"id": "t1", "history": [{"ts": 1.0}], "pr": {"number": 7}}, {"id": "t1", "history": [{"ts": 2.0}]}
+    with patch.object(specs, "load", return_value=new), patch.object(specs, "save") as save, \
+            patch.object(specs, "update") as update, patch.object(loop, "kick") as kicked:
+        for why in (loop.Why.DISPUTE, loop.Why.CAP, loop.Why.RECOVERY):
+            with pytest.raises(HTTPException) as gone:
+                loop.proceed(tmp_path, {**old, "stopped": {"reason": why.value}}, "noted")
+            assert gone.value.status_code == 410
+        with patch.object(loop, "mine", return_value=(tmp_path, {**old, "state": "멈춤", "merge": {},
+                                                                   "stopped": {"reason": loop.Why.WRONG_BASE.value}})), \
+                patch.object(specs, "approved", return_value=None):
+            with pytest.raises(HTTPException) as gone:
+                loop.settle("t1", loop.Settle(choice="reopen"))
+            assert gone.value.status_code == 410
+        loop.rereview("proj", old)
+    assert not save.called and not update.called and not kicked.called
+    merged = SimpleNamespace(returncode=0, stdout='{"state": "MERGED"}')
+    with patch.object(specs, "sh", return_value=merged), patch.object(specs, "load", return_value=new), \
+            patch.object(specs, "save") as save, patch.object(loop, "landed") as landed:
+        assert specs.noticed(tmp_path, {**old, "state": "작업 중"}) is new
+    assert not save.called and not landed.called
+    with patch.object(specs, "load", return_value=new), patch.object(specs, "save") as save:
+        with pytest.raises(HTTPException) as gone:
+            loop.kick("proj", "t1", of=old)
+    assert gone.value.status_code == 410 and not save.called and ("proj", "t1") not in loop._loops
+    # A stale resume makes no worktree for a deleted task: the identity is read inside the checkout hold.
+    with patch.object(specs, "load", return_value=new), patch.object(specs, "checkout_idle"), \
+            patch.object(loop, "adopt") as adopt:
+        with pytest.raises(HTTPException) as gone:
+            loop.adopted(tmp_path, "feature", "h", task=old)
+    assert gone.value.status_code == 410 and not adopt.called and not work._busy
+    # Removing an unmerged task's worktree archives it through the same boundary as a delete.
+    entered = []
+    with patch.object(specs, "owner", return_value={**old, "repo": "proj", "state": "작업 중"}), \
+            patch.object(loop, "deleting", side_effect=lambda repo, spec: entered.append(spec) or nullcontext()), \
+            patch.object(work, "_clear", return_value={"text": ""}):
+        work.clear(work.Removal(path=str(tmp_path / "t1")))
+    assert entered and entered[0]["history"] == old["history"]
 
 
 def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path):

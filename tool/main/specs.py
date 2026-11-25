@@ -869,10 +869,11 @@ def noticed(repo: Path, spec: dict) -> dict | None:
         state = ""
     if state != "MERGED":
         return spec
+    mine = born(spec)
     with _files:
         spec = load(repo.name, spec["id"])
-        if spec is None:
-            return None
+        if spec is None or born(spec) != mine:   # made again under this ID while the old PR was read: listed as it is
+            return spec
         if spec["state"] == "머지됨":
             return spec
         save(moved(spec, "머지 대기"))
@@ -1003,6 +1004,19 @@ def aside(repo: str, sid: str) -> None:
     file_of(repo, sid).replace(away)
 
 
+def born(spec: dict) -> float | None:
+    """A task's first moment: one deleted and made again under the same ID (a PR adopted again) has another."""
+    return (spec.get("history") or [{}])[0].get("ts")
+
+
+def aside_task(repo: str, spec: dict) -> None:
+    """`aside` only while `spec`'s task holds its ID: never the one adopted again under it since."""
+    with _files:
+        now = load(repo, spec["id"])
+        if now is not None and born(now) == born(spec):
+            aside(repo, spec["id"])
+
+
 def dismissed(repo: str, branch: str) -> bool:
     sid = folder_for(branch)
     return bool(sid and load(repo, sid) is None and any((SPECS / repo / "dropped").glob(f"{sid}.*.json")))
@@ -1031,28 +1045,24 @@ def delete_task(sid: str) -> dict:
             worker.thread.join(work.HALT_WAIT)
             if worker.thread.is_alive():
                 raise HTTPException(409, "계획 작업이 멈춘 뒤 삭제해라")
-    with loop.deleting(repo.name, sid):   # nothing still acting on it writes the task adopted next under this ID
+    # Nothing still acting on it writes the task adopted next under this ID; its loop is stopped there.
+    with loop.deleting(repo.name, spec):
         path = Path(spec["worktree"]) if spec.get("worktree") else None
         if path and spec.get("workspace_mode") != "branch" and path.resolve() != repo.resolve() and path.exists():
             work.clear(work.Removal(path=str(path), force=True))
         else:
-            loop.halt_loop(repo.name, sid)
             # An inactive task shares another task's checkout; never stop that owner.
             active = owner(path) if path and path.exists() else None
-            if active and active["id"] == sid:
+            if active and active["id"] == sid and born(active) == born(spec):
                 work.halt_all(str(path), repo)
                 with _lock:
                     release = hold(work._busy, _lock, str(path), "작업이 멈춘 뒤 삭제해라")
                 try:
                     work.forget(path)
-                    with _files:
-                        if load(repo.name, sid) is not None:
-                            aside(repo.name, sid)
+                    aside_task(repo.name, spec)
                 finally:
                     release()
-        with _files:
-            if load(repo.name, sid) is not None:
-                aside(repo.name, sid)
+        aside_task(repo.name, spec)   # the removal let go of the checkout: a task adopted there since stays
     work.feed.put({"kind": "sync"})
     return {"ok": True}
 
@@ -1062,12 +1072,15 @@ def drop(sid: str) -> dict:
     """A started spec has a worktree and maybe a pull request, and is not
     dropped until merged — or until a person deletes its worktree (`forsaken`)."""
 
+    from . import loop
+
     repo = current_repo()
     with _files:
         spec = editable_task(load(repo.name, sid))
-        if spec["state"] not in ("정리됨", "머지됨"):
-            raise HTTPException(409, "시작한 명세는 머지된 뒤에 버린다")
-        aside(repo.name, sid)
+    if spec["state"] not in ("정리됨", "머지됨"):
+        raise HTTPException(409, "시작한 명세는 머지된 뒤에 버린다")
+    with loop.deleting(repo.name, spec):   # a cleanup still running on it finishes first
+        aside_task(repo.name, spec)
     return {"ok": True}
 
 

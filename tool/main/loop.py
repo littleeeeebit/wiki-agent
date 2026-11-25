@@ -675,13 +675,15 @@ class Loop:
 
 
 _loops: dict[tuple[str, str], Loop] = {}
+_deleting: dict[tuple[str, str], int] = {}   # tasks being archived (`deleting`) → the thread archiving them
 _seats = threading.Condition()
 _seated = 0
 
 
-def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
+def kick(repo: str, sid: str, *, automatic: bool = False, of: dict | None = None) -> None:
     """Put the spec in `리뷰 대기` and start its loop, unless one runs or it is an unfinished oneshot run's,
-    whose review is its own. A loop that was stopped is waited for first, so two never drive one spec."""
+    whose review is its own. A loop that was stopped is waited for first, so two never drive one spec.
+    `of` is the task the caller read: one made again under its ID since gets no loop from it (410)."""
 
     if oneshot_profile.in_run(specs.load(repo, sid)):
         return
@@ -709,6 +711,8 @@ def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
         spec = specs.load(repo, sid)
         if spec is None:
             raise HTTPException(404, "그런 명세가 없다")
+        if of is not None and born(spec) != born(of):
+            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
         if spec.get("refreezing"):
             # The re-freeze has the card's worktree on the old code on purpose; a loop started then read the
             # detached checkout as a lost branch and stopped the card (ai-coding-wiki #162).
@@ -723,9 +727,14 @@ def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
             # A fault is the work stage's; in the loop it only misleads.
             specs.save(specs.moved(spec, "리뷰 대기", stopped=None, fault=None))
     loop = Loop(repo, sid)
+    loop.born = born(spec)   # the task this kick read: its first step never adopts a replacement's
     with _lock:
         if runtime.stopping.is_set():
             return  # Keep the accepted handoff queued for startup recovery.
+        if key in _deleting:   # registered under the lock `deleting` reserves it with
+            if automatic:
+                return
+            raise HTTPException(409, "삭제하는 중인 작업이다")
         if _loops.get(key) not in (None, old):
             return
         _loops[key] = loop
@@ -967,9 +976,7 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
     return final
 
 
-def born(spec: dict) -> float | None:
-    """A task's first moment: one deleted and made again under the same ID (a PR adopted again) has another."""
-    return (spec.get("history") or [{}])[0].get("ts")
+born = specs.born
 
 
 def own(loop: Loop, **fields) -> dict | None:
@@ -2608,9 +2615,11 @@ def settle(sid: str, body: Settle) -> dict:
         finish(repo, spec, actual, (spec.get("merge") or {}).get("commit", ""),
                f"검토하지 않은 base `{actual}` 로 머지됨 — 받아들임")
         return specs.view(repo, specs.load(repo.name, sid))
-    allowed = specs.approved(spec)
+    allowed, first = specs.approved(spec), born(spec)
     with specs._files:
         spec = specs.load(repo.name, sid)
+        if spec is None or born(spec) != first:   # the stop judged above was another task's
+            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
         # Rounds and their allow belong to one pull request.
         spec["history"].append({"ts": time.time(), "pr": n, "rounds": spec.get("rounds") or [],
                                 "closed": Why.WRONG_BASE.value})
@@ -2640,8 +2649,11 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
         from . import recovery
 
         with specs._files:
+            fresh = specs.load(repo.name, sid)
+            if fresh is None or born(fresh) != born(spec):
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
             try:
-                fields = recovery.resumed(specs.load(repo.name, sid) or spec, limits, note)
+                fields = recovery.resumed(fresh, limits, note)
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
             specs.update(repo.name, sid, **fields)
@@ -2662,9 +2674,9 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
     if why is Why.DISPUTE:
         if not note:
             raise HTTPException(400, "그 발견에 정한 것을 적어야 잇는다")
-        specs.update(repo.name, sid, rulings=[*(spec.get("rulings") or []), note])
+        resumed(repo, spec, rulings=[*(spec.get("rulings") or []), note])
     elif why is Why.CAP:
-        specs.update(repo.name, sid, extra=spec.get("extra", 0) + MORE)
+        resumed(repo, spec, extra=spec.get("extra", 0) + MORE)
     elif why is Why.NO_REPO and channels.repo_for(spec["repo"]) is None:
         raise HTTPException(409, f"`{spec['repo']}` 가 아직 작업 공간에 없다")
     elif why is Why.NO_WORKTREE:
@@ -2673,9 +2685,8 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
         else:
             view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "headRefName,headRefOid"])
             path = adopted(repo, view["headRefName"], view["headRefOid"],
-                           detached=spec.get("implementation_environment") not in (None, "local"))
-            if on_task(repo.name, spec, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]}) is None:
-                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
+                           detached=spec.get("implementation_environment") not in (None, "local"), task=spec)
+            resumed(repo, spec, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
     elif why is Why.LEFT_QUEUE:
         view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "state,headRefOid,baseRefName"])
         allowed = specs.approved(spec)
@@ -2693,9 +2704,15 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
         if view["state"] == "MERGED":
             landed(repo, fresh)
             return specs.view(repo, specs.load(repo.name, sid))
-    specs.update(repo.name, sid, continued=time.time())   # `finalized` runs a cut-short final gate once more after it
-    kick(repo.name, sid)
+    resumed(repo, spec, continued=time.time())   # `finalized` runs a cut-short final gate once more after it
+    kick(repo.name, sid, of=spec)
     return specs.view(repo, specs.load(repo.name, sid))
+
+
+def resumed(repo: Path, spec: dict, **fields) -> None:
+    """A resume's write, onto the task it judged (`on_task`): 410 once another was made under its ID."""
+    if on_task(repo.name, spec, **fields) is None:
+        raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
 
 
 def gh_or_502(repo: Path, args: list[str]) -> dict:
@@ -2705,14 +2722,17 @@ def gh_or_502(repo: Path, args: list[str]) -> dict:
         raise HTTPException(502, str(exc)) from exc
 
 
-def adopted(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
-    """`workspace.adopt`, held like making a worktree: the switch waits."""
+def adopted(repo: Path, branch: str, oid: str, detached: bool = False, task: dict | None = None) -> Path:
+    """`workspace.adopt`, held like making a worktree: the switch waits. `task`, a resume's, must still hold
+    its ID inside the hold: a deleted one gets no worktree that would block the next adoption's path."""
 
     release = hold(work._busy, _lock, str(repo), "이 저장소에서 작업이 실행 중이다")
     tree_release = held_release = None
     try:
         specs.checkout_idle(repo)
         tree_release = hold(work._busy, _lock, str(worktree_home(repo) / folder_for(branch)), "그 작업트리를 다른 요청이 쓰고 있다")
+        if task is not None and ((now := specs.load(repo.name, task["id"])) is None or born(now) != born(task)):
+            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
         # Another worktree holding the branch is let go (`adopt`): never one a spec owns or a turn runs in.
         held = None if detached else holder(repo, branch)
         if held is not None and held not in {Path(repo).resolve(), (worktree_home(repo) / folder_for(branch)).resolve()}:
@@ -2763,10 +2783,10 @@ def rereview(repo: str, spec: dict) -> None:
 
     if oneshot_profile.in_run(spec):
         return
-    with specs._files:
-        specs.update(repo, spec["id"], review_again=True,
-                     extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0))
-    kick(repo, spec["id"])
+    # A deferred callback (`specs.check`) may run after its task was deleted: only that task is reviewed.
+    if on_task(repo, spec, review_again=True,
+               extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0)) is not None:
+        kick(repo, spec["id"], of=spec)
 
 
 @router.post("/api/specs/{sid}/halt")
@@ -2785,24 +2805,46 @@ def halt(sid: str) -> dict:
 
 
 @contextlib.contextmanager
-def deleting(repo: str, sid: str):
-    """Hold off everything that acts on `sid` while it is archived. Its ID is its branch's folder, so a loop,
-    a merge or a cleanup still running on it would write the task adopted next under that ID: the loop is
-    stopped and waited for, and the merge and cleanup lock (`_landing`) is held, or the delete is refused."""
-    with _lock:
-        old = _loops.get((repo, sid))
-    if old is not None:
-        old.stop()
-        if old.thread is not None and old.thread is not threading.current_thread():
-            old.thread.join(work.HALT_WAIT)
-            if old.thread.is_alive():
-                raise HTTPException(409, "리뷰 루프가 멈춘 뒤 삭제해라")
+def deleting(repo: str, spec: dict):
+    """Hold off everything that acts on `spec`'s task while it is archived. Its ID is its branch's folder, so
+    a loop, a merge or a cleanup still running on it would write the task adopted next under that ID.
+    - The task is reserved (`_deleting`): `kick` registers no loop for it meanwhile, and a second delete
+      is refused.
+    - A busy merge or cleanup (`_landing`) refuses it before anything is stopped.
+    - The task must still hold its ID; its own loop is stopped and waited for, and `_landing` is held to
+      the end. A removal inside (`work.clear`) on the same thread passes through."""
+    key, mine = (repo, spec["id"]), born(spec)
+    if _deleting.get(key) == threading.get_ident():
+        yield
+        return
     if not _landing.acquire(blocking=False):   # a merge's GitHub reads can take minutes: refused, not waited on
         raise HTTPException(409, "이 저장소의 머지·정리가 끝난 뒤 삭제해라")
+    _landing.release()
+    with _lock:
+        if key in _deleting:
+            raise HTTPException(409, "이미 삭제하는 중이다")
+        _deleting[key] = threading.get_ident()
+        old = _loops.get(key)
     try:
-        yield
+        with specs._files:
+            now = specs.load(repo, spec["id"])
+        if now is None or born(now) != mine:
+            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
+        if old is not None and old.born in (None, mine):
+            old.stop()
+            if old.thread is not None and old.thread is not threading.current_thread():
+                old.thread.join(work.HALT_WAIT)
+                if old.thread.is_alive():
+                    raise HTTPException(409, "리뷰 루프가 멈춘 뒤 삭제해라")
+        if not _landing.acquire(blocking=False):   # taken while the loop stopped
+            raise HTTPException(409, "이 저장소의 머지·정리가 끝난 뒤 삭제해라")
+        try:
+            yield
+        finally:
+            _landing.release()
     finally:
-        _landing.release()
+        with _lock:
+            _deleting.pop(key, None)
 
 
 def halt_loop(repo: str, sid: str) -> None:
