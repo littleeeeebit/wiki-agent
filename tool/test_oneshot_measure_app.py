@@ -79,7 +79,7 @@ def test_a_failed_machine_metric_goes_back_alone_and_the_server_measures_again(w
     given(url="https://example.test/other")
     started_once()
     run = o()["measures"][-1]
-    assert run["mode"] == "auto" and run["status"] == "failed" and o()["stage"] == "build" and o()["fix"] == "measure"
+    assert run["mode"] == "auto" and run["status"] == "failed" and o()["stage"] == "measure" and o()["fix"] == "measure"
     text = sent[-1][2]
     assert "total_ok=False" in text and "signed_in" not in text   # only what failed, never the person metric
     assert [m["id"] for m in measure.failed_metrics(run)] == ["total_ok"]
@@ -163,10 +163,10 @@ def session(tmp_path: Path, job: Job, seen: dict):
     refused = owned_job.Refused
 
     class Look:
-        def __init__(self, root, name, owned, disposable):
+        def __init__(self, root, name, disposable):
             self.folder, self.jobs = Path(root) / name, {}
             (self.folder / "evidence").mkdir(parents=True)
-            seen.update(owned=owned, disposable=disposable)
+            seen.update(disposable=disposable)
 
         def start(self, key, argv, cwd, extra, halt=None, output=None):
             if seen.get("refuse"):
@@ -182,8 +182,8 @@ def session(tmp_path: Path, job: Job, seen: dict):
     from contextlib import contextmanager
 
     @contextmanager
-    def look(root, name, owned=True, disposable=False):
-        yield Look(root, name, owned, disposable)
+    def look(root, name, disposable=False):   # as `desktop_session.look`: no desktop of its own to ask for
+        yield Look(root, name, disposable)
 
     return types.SimpleNamespace(look=look, Halted=type("Halted", (Exception,), {}), Refused=refused)
 
@@ -202,7 +202,7 @@ def test_the_frozen_program_starts_with_its_data_the_inputs_and_whose_measuremen
         with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "auto") as build:
             assert not job.ended
     data = product.folder(s) / "data"
-    assert seen["owned"] and seen["disposable"] and seen["key"] == "app"   # auto: the run's own desktop
+    assert seen["disposable"] and seen["key"] == "app"   # auto too: on the owner's screen, never out of sight
     assert Path(seen["argv"][0]).name == "app.exe" and product.folder(s) in Path(seen["argv"][0]).parents
     assert seen["argv"][1:] == ["--data", str(data)] and data.is_dir()
     assert seen["extra"]["ONESHOT_MEASURE"] == "auto" and seen["extra"]["BUDGET_URL"] == "https://example.test/live"
@@ -219,7 +219,7 @@ def test_the_frozen_program_starts_with_its_data_the_inputs_and_whose_measuremen
             patch.object(product, "vouched", lambda pids, url, status=False: True):
         with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "owner", build) as same:
             assert same == build
-    assert not seen["owned"] and seen["extra"]["ONESHOT_MEASURE"] == "owner"   # the owner's own screen
+    assert seen["disposable"] and seen["extra"]["ONESHOT_MEASURE"] == "owner"   # the owner's own screen
     assert seen["argv"][0] == str(Path(build["folder"]) / "app.exe")   # the copy that passed
     assert (data / "kept.txt").read_text(encoding="utf-8") == "sign-in"   # one data folder for the whole run
     (Path(build["folder"]) / "app.exe").write_bytes(b"changed")   # the frozen copy itself changed

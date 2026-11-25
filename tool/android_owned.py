@@ -414,7 +414,8 @@ def _start(folder: Path, record: dict, image: Path, device: dict, renderer: str)
                        "ANDROID_EMULATOR_HOME": str(home / "emulator"), "ANDROID_USER_HOME": str(home / "user"),
                        "ANDROID_ADB_SERVER_PORT": str(record["server"]["port"])})
     proc = launched(folder, record, "emulator",
-                    [emulator, "-avd", AVD, "-port", str(console), "-wipe-data", "-no-snapshot", "-no-window",
+                    # Its window on the owner's screen: nothing a oneshot runs is out of the owner's sight.
+                    [emulator, "-avd", AVD, "-port", str(console), "-wipe-data", "-no-snapshot",
                      "-no-audio", "-no-boot-anim", "-no-metrics", "-feature", "-Vulkan",
                      *(["-gpu", renderer] if renderer != "auto" else [])], env, folder / "emulator.log")
     deadline = time.monotonic() + BOOT_SECONDS

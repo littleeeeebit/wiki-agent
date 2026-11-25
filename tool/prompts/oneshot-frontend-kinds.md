@@ -8,8 +8,8 @@ web screen's mock page and shoots it in a browser. For each native kind, the
 Android app and the PC app, it unpacks the repository's HEAD into a scratch
 folder of that kind's own, adds that kind's mock files, runs that kind's
 preview command there, and keeps only the pictures: the Android preview with
-no emulator, the PC preview on a desktop the run owns, out of the owner's
-sight.
+no emulator, the PC preview in a look on the owner's desktop, where they
+see it.
 
 ## What you receive
 

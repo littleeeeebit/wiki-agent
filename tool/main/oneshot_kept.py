@@ -256,46 +256,38 @@ def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
     return removed(raw) or why
 
 
-#: What names an input across a dispute (plan 13e): another plan's input under the same id is another input.
-DISPUTED = ("input", "env", "what", "kind")
+def korean(text: str) -> bool:
+    """Said mostly in Korean and no longer than `ACCOUNT`: a name or an address inside it is fine."""
 
-
-def handed(o: dict, record: dict) -> list[dict]:
-    """The inputs whose dispute the build agent was sent, `record`'s included: saved with the turn that sends it."""
-
-    sent = list(o.get("input_sent") or [])   # a report from before the input last changed is of another value
-    if (bad := record.get("input_error")) and record.get("n", 0) > (o.get("input_since") or 0) \
-            and (x := {k: bad[k] for k in DISPUTED}) not in sent:
-        sent.append(x)
-    return sent
+    hangul = sum("가" <= ch <= "힣" for ch in text)
+    return hangul >= 4 and 2 * hangul >= sum(ch.isalpha() for ch in text) and len(text) <= ACCOUNT
 
 
 def account(checked) -> str:
     """`checked` as the owner may read it: the check made (`how`) and the service's answer (`answer`), each said
     mostly in Korean, or ``""``. The server reads its shape and language, never whether it is true (13e)."""
 
-    def korean(text: str) -> bool:   # a name or an address inside it is fine; an account in another language is not
-        hangul = sum("가" <= ch <= "힣" for ch in text)
-        return hangul >= 4 and 2 * hangul >= sum(ch.isalpha() for ch in text) and len(text) <= ACCOUNT
-
     parts = [v.strip() if isinstance(v := (checked or {}).get(k) if isinstance(checked, dict) else None, str) else ""
              for k in ("how", "answer")]   # each bounded whole, never cut: the owner reads both
     return f"{parts[0]} — 서비스의 답: {parts[1]}" if all(map(korean, parts)) else ""
 
 
-ACCOUNT = 600   # the longest `how` or `answer` the owner is shown; a longer one goes back to the build
+ACCOUNT = 600   # the longest `why`, `how` or `answer` the owner is shown; a longer one is not shown
 
 
 def input_report(bad, plan: dict, hide: dict[str, str], limit: int) -> dict:
-    """A report's `input_error`, read against the plan (13e): `error` when it names no input the plan declares or
-    no reason, else the input's identity, the script's reason for the build, and the two sentences the owner may
-    read, written by the server and masked whole. `asked` is empty unless `checked` gives a Korean account."""
+    """A report's `input_error`, read against the plan: `error` when it names no input the plan declares or no
+    reason, else the input's identity, the script's reason for the build, and the question the owner is asked on
+    the measurement screen (plan 13), written by the server and masked whole: the reason and the build's check
+    when said in Korean, and what each answer does."""
 
     x = next((x for x in plan["inputs"] if isinstance(bad, dict) and x["id"] == bad.get("input")), None)
     if x is None or not (isinstance(why := bad.get("why"), str) and why.strip()):   # nothing the script wrote is repeated
         return {"error": masked("`report.json` 의 input_error 가 실측 계획의 입력과 이유(why)를 가리키지 않는다", hide)}
-    checked = masked(account(bad.get("checked")), hide)   # bounded by `ACCOUNT`, so never cut here
-    return {"input_error": {
-        "input": x["id"], "env": x["env"], "what": x["what"], "kind": x["kind"], "why": masked(why, hide)[:limit],
-        "said": masked(f"실측 스크립트가 주인이 넣은 입력 {x['id']} 이 틀렸다고 했다 — 빌드가 프로그램부터 고친다", hide),
-        "asked": checked and masked(f"입력 {x['id']} 이 틀렸다고 빌드가 확인했다 — {checked} — 고쳐 넣고 [실측 시작]을 누른다", hide)}}
+    checked = account(bad.get("checked"))   # bounded by `ACCOUNT`, so never cut here
+    said = f"스크립트가 적은 이유: {why.strip()}" if korean(why.strip()) else "스크립트가 이유를 한국어로 적지 않았다"
+    asked = (f"실측 스크립트가 주인이 넣은 입력 {x['id']}({x['what']})이 틀렸다고 했다 — {said}"
+             + (f" — 빌드가 확인한 것: {checked}" if checked else "")
+             + " — 새 값을 넣으면 바로 다시 잰다. 이 값이 맞으면 그대로 [실측 시작]을 누른다: 빌드가 프로그램을 고친다")
+    return {"input_error": {"input": x["id"], "env": x["env"], "what": x["what"], "kind": x["kind"],
+                            "why": masked(why, hide)[:limit], "asked": masked(asked, hide)}}

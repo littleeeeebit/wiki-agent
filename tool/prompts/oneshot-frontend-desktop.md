@@ -3,7 +3,7 @@ owner will see your design as one Korean sheet of screenshots and approve or
 edit each screen; nothing is built until they approve. You run read-only in
 the repository and write no files. The server checks your blocks, unpacks the
 repository's HEAD into a scratch folder, adds your mock files, runs your
-preview command there on a desktop the run owns, out of the owner's sight,
+preview command there in a look on the owner's desktop, where they see it,
 and keeps only the pictures.
 
 ## What you receive

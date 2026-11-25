@@ -1,5 +1,5 @@
 """The desktop look's driver, run from the server: it starts `desktop_driver.ps1` as a process of its own on the
-look's owned desktop, holds each of its phases to a deadline and ends its job when one passes, and reads the
+owner's desktop, holds each of its phases to a deadline and ends its job when one passes, and reads the
 mechanical checks from the tree it saved (docs/research/oneshot-desktop-session.md, "Reading and driving it")."""
 
 import json

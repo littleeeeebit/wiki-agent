@@ -12,6 +12,11 @@ of every connected repository, all confirmed by one digest of the whole plan.
 It is refused while the hub is off main, since it would write that branch's
 wiring onto the machine, and where a repository has its hooks switched off.
 
+The part of it that touches only a checkout's own untracked settings needs no
+click: `settle` writes it whenever `watch` starts or sees a change, the pages'
+deny rules included, so a drift the lint reports is never left for the
+person to find. The user-level move stays the person's to confirm.
+
 What reaches the screen is read by a person and stays Korean.
 """
 
@@ -48,29 +53,77 @@ def hub_branch() -> str:
 
 
 def mark() -> tuple:
-    """What the wiring verdict depends on outside the server: the hub's branch and every host's user settings."""
+    """What the wiring verdict depends on outside the server: the hub's branch, every host's user settings, and the
+    pages whose `enforce` a checkout's own settings carry (`apply.declared`)."""
 
     files = []
-    for host in connect.HOSTS:
-        for file in apply.user_files(host):
-            try:
-                stat = file.stat()
-                files.append((str(file), stat.st_mtime_ns, stat.st_size))
-            except OSError:
-                files.append((str(file), 0, 0))
+    pages = [p for scope in ("operator", "craft") for p in sorted((apply.WIKI / scope).glob("*.md"))]
+    for file in [*(f for host in connect.HOSTS for f in apply.user_files(host)), *pages]:
+        try:
+            stat = file.stat()
+            files.append((str(file), stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            files.append((str(file), 0, 0))
     return hub_branch(), tuple(files)
 
 
 def watch(halt: threading.Event, every: float = EVERY) -> None:
-    """Until `halt`: on any change of `mark`, the screens list the repositories again (`connect` on the feed)."""
+    """Until `halt`: once at the start and on any change of `mark`, every checkout's own settings are settled
+    (`settle`); on a change the screens list the repositories again (`connect` on the feed)."""
 
     seen = mark()
+    settle()
     while not halt.wait(every):
         now = mark()
         if now != seen:
             seen = now
             forget_hub()   # the routine reads' last check was of the wiring before this change
+            settle()
             work.feed.put({"kind": "connect", "repo": ""})
+
+
+def settle() -> list[str]:
+    """What `[모두 다시 연결]` writes into each connected checkout's own settings, written with no click, by host:
+    the old per-project hooks out and the pages' deny rules in (`connect.rewired`), so `apply.wiring_drift` finds
+    nothing. Only for a host wired at the user level, only a file git does not track, and never while the hub is off
+    main or where hooks are switched off: those stay on the screen for the person. What was written, as lines."""
+
+    if refused():
+        return []
+    done = []
+    for path in {p.resolve() for p in connected()}:
+        try:
+            plan = connect.pending(path)
+            if switched_off(plan):
+                continue
+            for file, settings, changes in plan:
+                host = "claude" if file.parent.name == ".claude" else "codex"
+                if changes and apply.user_wired(host) and not tracked(path, file):
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    file.write_text(connect.settled(settings), encoding="utf-8", newline="\n")
+                    done += [f"{file}: {change}" for change in changes]
+        except Exception:   # noqa: BLE001 — one checkout never stops the others or the watch; the screen names it
+            continue
+    return done
+
+
+def tracked(repo: Path, file: Path) -> bool:
+    """Whether git tracks `file` in `repo`: a committed settings file is the person's to change, never the watch's."""
+
+    import subprocess
+
+    done = subprocess.run(["git", "-C", str(repo), "ls-files", "--error-unmatch", "--", str(file)],
+                          capture_output=True, encoding="utf-8", errors="replace")
+    return done.returncode == 0
+
+
+def switched_off(plan: list[tuple[Path, dict, list[str]]]) -> list[Path]:
+    """The Claude settings files of `plan` with `disableAllHooks` on, a local one beside them included: as
+    `setup_agents.plan_global` refuses, it is the person's own switch, never one to clear for them."""
+
+    claude = [file for file, _s, _c in plan if file.parent.name == ".claude"]
+    return [file for file in [*claude, *(f.with_name("settings.local.json") for f in claude)]
+            if apply.read_json(file).get("disableAllHooks")]
 
 
 # The routine reads' answer (`hub_seen`): the last check that finished, so the project list and the settings line
@@ -117,11 +170,7 @@ def _survey() -> tuple[dict, list[tuple[Path, dict]]]:
         entry = {"name": path.name, "path": str(path), "unwire": [], "refused": ""}
         try:
             plan = connect.pending(path)
-            claude = [file for file, _s, _c in plan if file.parent.name == ".claude"]
-            # As `setup_agents.plan_global` refuses: Claude honours it from any layer,
-            # and it is the person's own switch, never one to clear for them.
-            off = [file for file in [*claude, *(f.with_name("settings.local.json") for f in claude)]
-                   if apply.read_json(file).get("disableAllHooks")]
+            off = switched_off(plan)
         except (OSError, ValueError) as exc:
             entry["refused"] = f"{path}: 설정을 읽을 수 없다 — {exc}"
         else:

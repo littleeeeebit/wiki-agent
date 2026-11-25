@@ -166,131 +166,84 @@ def test_a_failure_at_the_round_cap_goes_to_the_build_agent_when_the_owner_start
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
         measure.start("budget", measure.Start(head=o()["built_head"]))
     assert len(o()["measures"]) == runs, "the failed HEAD is never measured again as it is"
-    assert o()["stage"] == "build" and o()["fix"] == "measure" and o()["measure_fails"] == 0 and not o()["stopped"]
+    # The build repairs it inside the measurement: the stage, and so the owner's screen, never goes back (plan 13).
+    assert o()["stage"] == "measure" and o()["fix"] == "measure" and o()["measure_fails"] == 0 and not o()["stopped"]
+    assert o()["working"] == "build" and measure.oneshot_profile.turn_stage(o()) == "build"
     assert sent[-1][1] == "build" and "total_ok=False" in sent[-1][2]
-    # Back at the measurement with that failure still last and an input taken back: the one lock scope that would
-    # launch a worker reads the failure first, so Start hands it to the build agent and measures nothing.
-    oneshot_spec.saved("budget", oneshot={"stage": "measure", "working": None, "stopped": None})
+    # That failure still last and an input taken back: the one lock scope that would launch a worker reads the
+    # failure first, so Start hands it to the build agent and measures nothing.
+    oneshot_spec.saved("budget", oneshot={"working": None, "stopped": None})
     measure.take_back("budget", "M1", head=o()["built_head"], env="BUDGET_URL", kind="text")   # an input taken back
     started = []
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)), \
             patch.object(measure.oneshot, "start_worker", lambda *a, **k: started.append(a)):
         measure.start("budget", measure.Start(head=o()["built_head"]))
-    assert not started and o()["stage"] == "build"
+    assert not started and o()["stage"] == "measure" and o()["working"] == "build"
 
 
-def test_a_failed_measurement_or_a_refusal_goes_back_to_the_build_agent_which_must_commit(at_measure):
+def test_a_failed_measurement_or_a_refusal_is_repaired_by_the_build_agent_inside_the_measurement(at_measure):
     tree, sent = at_measure
     given(url="https://example.test/other")
     measure.measure("budget", "owner")
-    assert o()["stage"] == "build" and o()["fix"] == "measure" and o()["measures"][-1]["status"] == "failed"
+    assert o()["stage"] == "measure" and o()["fix"] == "measure" and o()["measures"][-1]["status"] == "failed"
     assert sent[-1][1] == "build" and "total_ok=False" in sent[-1][2] and "measure.json" in sent[-1][2]
-    # The same HEAD comes back with no commit: refused before any gate.
+    # The same HEAD comes back with no commit: refused before any gate, by the build's own check.
     then = check(tree, "고쳤다.\n" + report())
-    assert o()["stage"] == "build" and not o()["attempts"] and then is not None   # sent back, never counted
+    assert o()["stage"] == "measure" and not o()["attempts"] and then is not None   # sent back, never counted
     then()
     assert "커밋이 하나도 늘지 않았다" in sent[-1][2]
     git(tree, "commit", "--allow-empty", "-m", "fix")
     check(tree, "고쳤다.\n" + report())
-    assert o()["stage"] == "measure"
+    assert o()["stage"] == "measure" and o()["fix"] is None   # passed: the new HEAD is measured, no turn owed
     oneshot_spec.saved("budget", oneshot={"working": None})
     given()
     measure.measure("budget", "owner")
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
         measure.decide("budget", measure.Decision(head=o()["built_head"], n=o()["measures"][-1]["n"], note="목소리가 끊긴다"))
-    assert o()["stage"] == "build" and "목소리가 끊긴다" in sent[-1][2]
+    assert o()["stage"] == "measure" and o()["working"] == "build" and "목소리가 끊긴다" in sent[-1][2]
+    # A repair stopped on the way (a restart) resumes as a build turn, still at the measurement.
+    oneshot_spec.saved("budget", oneshot={"working": None, "stopped": {"reason": "restart", "detail": "x", "state": "measure"}})
+    with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
+        oneshot_spec.resume("budget")
+    assert o()["stage"] == "measure" and sent[-1][1] == "build" and "목소리가 끊긴다" in sent[-1][2]
 
 
-def test_an_input_the_script_calls_wrong_goes_to_the_build_until_a_check_outside_the_program_shows_it(at_measure):
+def test_an_input_the_script_calls_wrong_stops_for_the_owner_and_a_new_value_measures_again_at_once(at_measure):
+    from main import oneshot
+
     tree, sent = at_measure
     given(key=WRONG)
+    turns = len(sent)
     measure.measure("budget", "owner")
     last = o()["measures"][-1]
-    assert o()["stage"] == "build" and o()["measure_fails"] == o()["input_fails"] == 1   # never the owner's
-    assert o()["input_sent"] == [{"input": "M2", "env": ENV, "what": "서비스 키", "kind": "secret"}]
-    assert last["status"] == "failed" and last["error"].startswith("실측 스크립트가 주인이 넣은 입력 M2")
-    assert "refused" not in last["error"]   # the card shows the server's Korean; the script's reason is the build's
-    assert "the service refused" in sent[-1][2] and '"checked"' in sent[-1][2] and WRONG not in sent[-1][2]
-    git(tree, "commit", "--allow-empty", "-m", "fix")
-    check(tree, "고쳤다.\n" + report())
-    oneshot_spec.saved("budget", oneshot={"working": None})
-    given(key=WRONG + "9")   # a changed value is the build's to see first again
-    assert not o().get("input_sent") and not o()["input_fails"]
-    given(key=WRONG)
-    measure.measure("budget", "owner")
-    assert o()["stage"] == "build" and o()["measure_fails"] == 2 and not o().get("stopped")
+    # The owner's input: the measurement stops and asks them, on its own screen. No build turn, no failure counted.
+    assert o()["stage"] == "measure" and o()["stopped"]["reason"] == "measure-input" and len(sent) == turns
+    assert last["status"] == "input" and not o().get("measure_fails") and not o().get("fix")
+    detail = o()["stopped"]["detail"]
+    assert detail.startswith("실측 스크립트가 주인이 넣은 입력 M2(서비스 키)이 틀렸다고 했다")
+    assert "한국어로 적지 않았다" in detail and "새 값을 넣으면 바로 다시 잰다" in detail   # the reason was English
+    assert WRONG not in json.dumps(o(), ensure_ascii=False)
+    # The same value kept: `[실측 시작]` hands the report to the build, which repairs inside the measurement.
+    measure.start("budget", measure.Start(head=o()["built_head"]))
+    assert o()["stage"] == "measure" and o()["working"] == "build" and o()["fix"] == "measure"
+    assert "kept the input as it is" in sent[-1][2] and "the service refused" in sent[-1][2] and WRONG not in sent[-1][2]
     write(tree, "checked.txt", "")
     git(tree, "add", "-A")
     git(tree, "commit", "-m", "check")
     check(tree, "확인했다.\n" + report())
     oneshot_spec.saved("budget", oneshot={"working": None})
     measure.measure("budget", "owner")
-    assert o()["stopped"]["reason"] == "measure-input" and o()["stage"] == "measure" and not o()["input_sent"]
-    assert o()["measure_fails"] == 0   # the owner's press sends the next report to the build, never to the cap
-    assert o()["stopped"]["detail"].startswith("입력 M2 이 틀렸다고 빌드가 확인했다 — 서비스에 직접 물었다 — 서비스의 답: 키 [")
-    assert f"[{ENV}]" in o()["stopped"]["detail"] and WRONG not in json.dumps(o(), ensure_ascii=False)
-    given()
-    measure.start("budget", measure.Start(head=o()["built_head"]))   # one press starts it again
-    from main import oneshot
+    detail = o()["stopped"]["detail"]
+    assert o()["stopped"]["reason"] == "measure-input" and "빌드가 확인한 것: 서비스에 직접 물었다 — 서비스의 답: 키 [" in detail
+    assert f"[{ENV}]" in detail and WRONG not in json.dumps(o(), ensure_ascii=False)
+    # A new value: measured again at once, with no press and no build between.
+    turns = len(sent)
+    measure.give("budget", "M1", measure.Value(value="https://example.test/live", head=o()["built_head"],
+                                               env="BUDGET_URL", kind="text"))   # the same value: still a question
+    assert o()["stopped"]["reason"] == "measure-input" and not o().get("working")
+    measure.give("budget", "M2", measure.Value(value=KEY, head=o()["built_head"], env=ENV, kind="secret"))
     oneshot._workers["spec:budget"].join(60)
-    assert o()["measures"][-1]["status"] == "passed" and o()["measures"][-1]["mode"] == "auto"   # the server's own first
-
-
-def test_an_input_disputed_only_in_the_owners_measurement_reaches_the_cap_through_machine_passes(at_measure):
-    from main import oneshot_review
-
-    store, head = oneshot_spec.store("budget"), o()["built_head"]
-    bad = [{"input": i, "env": i, "what": "값", "kind": "text", "why": "no", "said": "말", "asked": ""} for i in ("M1", "M2")]
-
-    def owner(n):   # two inputs in turn: the count is every input's
-        return measure.result("budget", store, {"n": n, "head": head, "mode": "owner", "status": "input",
-                                                "input_error": bad[n % 2]})
-
-    for n in range(1, oneshot_review.cap()):
-        assert owner(n) is not None and o()["input_fails"] == o()["measure_fails"] == n
-        measure.result("budget", store, {"n": 50 + n, "head": head, "mode": "auto", "status": "passed"})
-        assert o()["measure_fails"] == 0 and o()["input_fails"] == n   # a machine pass leaves the disputes' count
-    assert owner(98) is None and o()["stopped"]["reason"] == "measure" and f"{oneshot_review.cap()}번" in o()["stopped"]["detail"]
-
-
-def test_a_dispute_stops_for_the_owner_only_once_its_own_input_was_handed_to_the_build(at_measure):
-    from main import oneshot_review
-
-    store, head = oneshot_spec.store("budget"), o()["built_head"]
-    sent = {"input": "M2", "env": ENV, "what": "서비스 키", "kind": "text"}   # a plan before, the same id as text
-    bad = {**sent, "kind": "secret", "why": "no", "said": "말", "asked": "주인에게 묻는 말"}
-    oneshot_spec.saved("budget", oneshot={"input_sent": [sent], "measure_fails": oneshot_review.cap() - 1})
-    assert measure.result("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "input",
-                                            "input_error": bad}) is None
-    assert o()["stopped"]["reason"] == "measure" and o()["input_sent"] == [sent]   # capped: not handed over yet
-    given(key=WRONG)   # a new value: the capped report is of the one before
-    measure.start("budget", measure.Start(head=head))
-    assert o()["stage"] == "build" and o()["input_sent"] == [] and "`M2`" in at_measure[1][-1][2]   # sent, not handed
-    oneshot_spec.saved("budget", oneshot={"stage": "measure", "working": None, "measure_fails": oneshot_review.cap() - 1})
-    assert measure.result("budget", store, {"n": 2, "head": head, "mode": "auto", "status": "input",
-                                            "input_error": bad}) is None
-    measure.start("budget", measure.Start(head=head))   # the retry sends a report of this value: handed over
-    assert o()["stage"] == "build" and o()["input_sent"] == [{k: bad[k] for k in measure.DISPUTED}]
-
-
-def test_after_the_owners_stop_the_next_report_goes_to_the_build_even_at_a_cap_of_one(at_measure, monkeypatch):
-    from main import oneshot_review
-
-    monkeypatch.setattr(oneshot_review, "cap", lambda: 1)
-    store, head = oneshot_spec.store("budget"), o()["built_head"]
-    bad = {"input": "M2", "env": ENV, "what": "서비스 키", "kind": "secret", "why": "no", "said": "말", "asked": "물음"}
-    oneshot_spec.saved("budget", oneshot={"input_sent": [{k: bad[k] for k in measure.DISPUTED}]})
-    assert measure.result("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "input", "input_error": bad}) is None
-    assert o()["stopped"]["reason"] == "measure-input" and o()["input_owed"]
-    then = measure.result("budget", store, {"n": 2, "head": head, "mode": "auto", "status": "failed",
-                                            "error": "`report.json` 의 input_error 가 ..."})   # even a malformed report
-    assert then is not None and o()["stage"] == "build" and not o()["input_owed"]   # one build turn, cap or not
-    oneshot_spec.saved("budget", oneshot={"stage": "measure", "working": None})
-    assert measure.result("budget", store, {"n": 3, "head": head, "mode": "auto", "status": "input",
-                                            "input_error": {**bad, "asked": ""}}) is None   # then the cap again
-    oneshot_spec.saved("budget", oneshot={"input_owed": True})
-    measure.result("budget", store, {"n": 4, "head": head, "mode": "owner", "status": "owner"})
-    assert not o()["input_owed"]   # an owner's measurement that ran through ends what the stop owed
+    assert len(sent) == turns and o()["measures"][-1]["status"] == "passed" and o()["measures"][-1]["mode"] == "auto"
 
 
 def test_a_stop_or_a_set_aside_result_shows_the_owner_its_sentence_masked_whole(at_measure, monkeypatch):
@@ -303,7 +256,7 @@ def test_a_stop_or_a_set_aside_result_shows_the_owner_its_sentence_masked_whole(
     assert "실측을 멈췄다" not in o()["stopped"]["detail"]
 
 
-def test_a_report_naming_no_declared_input_or_a_blank_check_is_never_the_owners(tmp_path):
+def test_a_report_naming_no_declared_input_is_failed_and_the_owner_reads_only_korean_accounts(tmp_path):
     plan = {"inputs": [{"id": "M2", "env": "K", "what": "키", "kind": "secret"}],
             "metrics": [{"id": "ok", "person": False, "pass": {"op": "==", "value": True}}]}
 
@@ -319,10 +272,14 @@ def test_a_report_naming_no_declared_input_or_a_blank_check_is_never_the_owners(
     for checked in ("서비스가 모른다고 했다", {"how": "  ", "answer": " "}, {"how": "asked the API 가", "answer": "no 나"},
                     {"how": "확인", "answer": "없다"}, {"how": told["how"]}, {**told, "how": "가나다라 サービスに直接問い合わせた"},
                     {**told, "how": "서비스에 직접 물었다" * 60}):   # no Korean account of a check and its answer, whole
-        assert read({"input": "M2", "why": "x", "checked": checked})["input_error"]["asked"] == ""
-    secret = "M2 이 틀렸다고"   # a secret spanning the server's words and the input's id
+        asked = read({"input": "M2", "why": "x", "checked": checked})["input_error"]["asked"]
+        assert "빌드가 확인한 것" not in asked and "한국어로 적지 않았다" in asked and "새 값을 넣으면" in asked
+    assert "스크립트가 적은 이유: 방송이 지금 켜져 있지 않다" in read({"input": "M2", "why": "방송이 지금 켜져 있지 않다"})[
+        "input_error"]["asked"]   # a Korean reason the owner reads as written
+    secret = "M2(키)이 틀렸다고"   # a secret spanning the server's words and the input's id
     shown = read({"input": "M2", "why": "x", "checked": told}, {secret: "[K]"})["input_error"]
-    assert secret not in shown["said"] + shown["asked"] and "[K]" in shown["asked"] and shown["kind"] == "secret"
+    assert secret not in shown["asked"] and "[K]" in shown["asked"] and shown["kind"] == "secret"
+    assert "빌드가 확인한 것: 서비스에 직접 물었다 — 서비스의 답: 그런 키는 없다고 했다" in shown["asked"]
 
 
 def test_the_backend_that_never_answers_fails_the_measurement(at_measure):
@@ -513,8 +470,8 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     write(tree, "stray.txt", "x")   # the tree moved since it was measured
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
         measure.decide("budget", measure.Decision(head=run["head"], n=run["n"], approve=True))
-    assert o()["stage"] == "build" and o()["measures"][-1]["status"] == "stale" and "moved" in sent[-1][2]
-    assert not o()["measures"][-1].get("owner")
+    assert o()["stage"] == "measure" and o()["fix"] == "moved" and o()["working"] == "build"   # never back a stage
+    assert o()["measures"][-1]["status"] == "stale" and "moved" in sent[-1][2] and not o()["measures"][-1].get("owner")
 
 
 def wrote(tmp_path, files: dict) -> Path:
@@ -849,7 +806,7 @@ def test_a_stop_pressed_before_the_worker_starts_still_stops_it(at_measure):
     assert not o().get("measures")
 
 
-def test_a_plan_that_no_longer_holds_goes_back_to_the_build_agent(at_measure):
+def test_a_plan_that_no_longer_holds_is_fixed_by_the_build_agent_inside_the_measurement(at_measure):
     tree, sent = at_measure
     write(tree, ".wiki/measure.json", "{")
     git(tree, "commit", "-am", "broken plan")
@@ -859,7 +816,7 @@ def test_a_plan_that_no_longer_holds_goes_back_to_the_build_agent(at_measure):
                                           "reviews": [{"verdict": "refuse", "head": built, "findings": [finding]}]})
     assert oneshot_spec.view(spec())["measure"]["plan"] is None
     measure.start("budget", measure.Start(head=o()["built_head"]))
-    assert o()["stage"] == "build" and sent[-1][1] == "build" and "no longer holds" in sent[-1][2]
+    assert o()["stage"] == "measure" and o()["fix"] == "plan" and sent[-1][1] == "build" and "no longer holds" in sent[-1][2]
     from main import oneshot_review
     again = oneshot_review.build_turn(spec())   # what `[재개]` sends after that turn stopped
     assert "no longer holds" in again and "review refused HEAD" not in again and not getattr(again, "refusal", None)
@@ -879,7 +836,7 @@ def test_the_worker_measures_with_the_built_heads_plan_whatever_the_tree_holds(a
     assert measure.committed(tree, "HEAD", ".wiki/no-such-file") is None
 
 
-def test_a_committed_plan_that_is_not_utf_8_goes_back_to_the_build_agent(at_measure):
+def test_a_committed_plan_that_is_not_utf_8_is_fixed_by_the_build_agent_inside_the_measurement(at_measure):
     tree, sent = at_measure   # a code-page byte in a step: never repaired into a plan the worker cannot read
     plan = tree / ".wiki/measure.json"
     plan.write_bytes(plan.read_bytes().replace(b'"what": "', b'"what": "\x97', 1))
@@ -887,4 +844,4 @@ def test_a_committed_plan_that_is_not_utf_8_goes_back_to_the_build_agent(at_meas
     oneshot_spec.saved("budget", oneshot={"built_head": git(tree, "rev-parse", "HEAD")})
     assert oneshot_spec.view(spec())["measure"]["plan"] is None
     measure.start("budget", measure.Start(head=o()["built_head"]))
-    assert o()["stage"] == "build" and sent[-1][1] == "build" and "no longer holds" in sent[-1][2]
+    assert o()["stage"] == "measure" and o()["fix"] == "plan" and sent[-1][1] == "build" and "no longer holds" in sent[-1][2]

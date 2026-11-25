@@ -324,7 +324,7 @@ SEEN_BY = {"report": "앱이 낸 보고", "window": "앱 창의 캡처를 비평
 
 
 def on_pc(o: dict, owed: list[dict], last: dict) -> list[str]:
-    """A PC app's deferred checks and where each passed: a `look` check in the look on the run's own desktop, an
+    """A PC app's deferred checks and where each passed: a `look` check in the server's look, an
     `owner` check in the owner's desktop round, which ran only when one was owed."""
 
     pc = o.get("pc") or {}

@@ -265,7 +265,7 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     if not blocks:
         return None
     from . import oneshot_build
-    if oneshot_build.owns(spec) and (getattr(run, "person", False) or spec["oneshot"]["stage"] not in oneshot_build.STAGES):
+    if oneshot_build.owns(spec) and (getattr(run, "person", False) or oneshot_build.turn_stage(spec["oneshot"]) not in oneshot_build.STAGES):
         # Only a turn its stage's check owns goes up: a person's turn, or one at an owner gate (R1, R2 …), is
         # left as that check leaves it, so no answer starts a build turn the owner has not let in.
         return oneshot_build.checked(path, run, spec, final)

@@ -408,7 +408,7 @@ def _looked(tree: Path, cmd: str, front: dict, frequency: dict, ops: list[str], 
     api, findings = api_paths(ops), []
     shown: dict[str, bool] = {f: False for f in frequency}
     with tempfile.TemporaryDirectory() as scratch, sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = p.chromium.launch(headless=False)   # on the owner's screen: nothing a oneshot runs is out of sight
         try:
             for data_state, states in (("empty", ["empty"]), ("full", ["full", "loading", "error"])):
                 data = Path(scratch) / data_state

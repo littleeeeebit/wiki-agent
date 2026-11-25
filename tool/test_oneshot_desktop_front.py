@@ -1,9 +1,9 @@
-"""oneshot 9e3a: a PC app's screens — S6 designs them with the stack's own preview, which runs on a desktop the run
-owns and is checked against the card's window, R2 shows and approves them with every other kind's, and the run
+"""oneshot 9e3a: a PC app's screens — S6 designs them with the stack's own preview, which runs on the owner's own
+desktop and is checked against the card's window, R2 shows and approves them with every other kind's, and the run
 waits at the frontend build.
 
 See `docs/plans/oneshot/9-kinds.md` ("Screens"). Model turns are stand-ins; each preview is a real stand-in script
-run by the real launcher, the PC one on a real owned desktop; the web mocks are shot by Playwright when it is
+run by the real launcher, the PC one in a real look on the owner's desktop; the web mocks are shot by Playwright when it is
 installed.
 """
 
@@ -39,16 +39,26 @@ FEATURES = [
 FREQUENCY = {"start-translation": "every", "history": "every", "seen-boxes": "never"}
 
 
+def desktop_name() -> str:
+    """The name of the desktop this process runs on."""
+
+    import ctypes
+
+    u, name = ctypes.windll.user32, ctypes.create_unicode_buffer(256)
+    u.GetUserObjectInformationW(u.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId()), 2, name, 512, None)
+    return name.value
+
+
 def drawer(ids, width: int, height: int) -> str:
     """A stand-in preview tool that writes each screen as a grey PNG. It says nothing of a window, and refuses to
-    draw anywhere but on a desktop the run owns."""
+    draw anywhere but on the desktop the server itself runs on: the owner's, where they can see it."""
 
     return ("import ctypes, pathlib, struct, zlib\n"
             "u = ctypes.windll.user32\n"
             "name = ctypes.create_unicode_buffer(256)\n"
             "u.GetUserObjectInformationW(u.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId()), 2, name,"
             " 512, None)\n"
-            "assert name.value.startswith('wiki-look-'), name.value\n"
+            f"assert name.value == {desktop_name()!r}, name.value\n"
             "assert not pathlib.Path('.git').exists() and pathlib.Path('README.md').is_file()\n"
             "def chunk(kind, data):\n"
             "    return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))\n"
@@ -103,7 +113,7 @@ def pc(android):  # noqa: F811 — the imported fixture, by its name
     return android
 
 
-def test_a_pc_apps_preview_runs_on_a_desktop_the_run_owns_and_r2_shows_its_window_shots(pc):
+def test_a_pc_apps_preview_runs_on_the_owners_desktop_and_r2_shows_its_window_shots(pc):
     heard, asking = replies(answer(pc_blocks()))
     with asking:
         front.frontend("budget")

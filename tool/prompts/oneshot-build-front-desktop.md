@@ -174,7 +174,7 @@ The server checks, in order:
    declared by, its case as stored on disk. The server then records every
    copied file's digest with the launch settings and names the build by
    them. A change to any file or setting is a new build.<!-- /shared -->
-6. <!-- shared:look -->The server starts the frozen copy on its own desktop
+6. <!-- shared:look -->The server starts the frozen copy on the owner's desktop
    once for each screen and state, as the conventions above describe, and
    shoots and reads its windows. It refuses: a program that does not start,
    that shows no main window or more than one at startup, or that changes a

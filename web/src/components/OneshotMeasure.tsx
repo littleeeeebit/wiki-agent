@@ -18,9 +18,10 @@ export function Owner({ repo, view, busy, act }: { repo: string; view: SpecView;
 
 /** The real measurement between the backend's build and its review (`tool/main/oneshot_measure.py`). The build
  *  agent wrote every step below; the owner follows them one window at a time and pastes what the last step names
- *  into its box. The server measures by itself until every metric that needs no person passes; then the owner
- *  measures once, the program on their own screen with its sound, and approves or refuses. A stop (a wrong input,
- *  the owner's stop) shows above and the button starts again. */
+ *  into its box. The server measures by itself, on this screen, until every metric that needs no person passes,
+ *  the build agent repairing a failure inside this stage; then the owner measures once, with the program's sound,
+ *  and approves or refuses. A stop (a wrong input, the owner's stop) shows above: a new value for a wrong input
+ *  measures again at once, and the button keeps it as it is. */
 function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy: boolean; act: Act }) {
   const m = view.measure
   if (!m) return null
@@ -28,6 +29,7 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
   const current = last && last.head === m.head ? last : undefined
   const waiting = !!current && verdictDue(current)
   const failed = current?.status === 'failed'   // stopped at the cap: the button hands it to the build agent, no input needed
+  const disputed = current?.status === 'input'   // a new value measures again at once; this button keeps the value
   const missing = failed ? [] : m.plan?.inputs.filter((x) => !x.given) ?? []
   const owner = m.next === 'owner'
   return (
@@ -65,16 +67,17 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
               : '이제 서버가 백엔드를 다시 띄우고, 사람이 필요한 항목까지 잰다. 끝나면 클립을 직접 듣는다.'}</p>
             {m.plan.during.length > 0 && <><p>[주인 실측 시작]을 누른 뒤, 도는 동안 이것을 한다:</p><Steps steps={m.plan.during} /></>}
           </> : (
-            <p>{m.plan.app ? '서버가 이 PC 에서 PC 프로그램을 띄워 사람이 필요 없는 항목을 혼자 잰다. 화면에 뜨지 않고 소리도 나지 않는다.'
-              : '서버가 이 PC 에서 백엔드를 띄워 사람이 필요 없는 항목을 혼자 잰다.'}
-              {' '}통과하지 못한 항목만 빌드 에이전트가 고치고, 서버가 다시 잰다. 모두 통과하면 주인 실측을 한 번 부른다.</p>
+            <p>{m.plan.app ? '서버가 이 PC 에서 PC 프로그램을 띄워 사람이 필요 없는 항목을 잰다. 프로그램은 이 화면에 뜬다. 소리는 내지 않고 클립으로 남긴다.'
+              : '서버가 이 PC 에서 백엔드를 띄워 사람이 필요 없는 항목을 잰다.'}
+              {' '}통과하지 못한 항목은 이 단계 안에서 빌드 에이전트가 고치고, 서버가 다시 잰다. 모두 통과하면 주인 실측을 한 번 부른다.</p>
           )}
           <p className="text-muted-foreground">한 번에 약 {m.plan.measure.minutes}분 걸린다. 진짜 서비스로 아래를 잰다.</p>
           <Metrics run={current} plan={m.plan.metrics} />
           <div className="flex flex-wrap items-center gap-3">
             <Btn tone="wait" disabled={busy || !!view.working || missing.length > 0 || waiting}
               onClick={() => void act(() => api.measureStart(repo, m.head))}>
-              {failed ? '빌드 에이전트에게 고치게 하기' : owner ? '주인 실측 시작' : '자동 실측 시작'}</Btn>
+              {failed ? '빌드 에이전트에게 고치게 하기' : disputed ? '이 값이 맞다 — 빌드 에이전트에게 고치게 하기'
+                : owner ? '주인 실측 시작' : '자동 실측 시작'}</Btn>
             {missing.length > 0 && <span className="text-wait">아직 넣지 않은 값: {missing.map((x) => x.id).join(', ')}</span>}
           </div>
         </section>
@@ -100,7 +103,9 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
     <section aria-label="실측 중" className={BOX}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p>{view.working === 'publish' ? 'PR #1 초안을 올리는 중이다.'
-          : !owner ? '서버가 혼자 실측하는 중이다. 할 일은 없다.'
+          : view.working === 'build' ? '실측에서 나온 문제를 빌드 에이전트가 이 단계 안에서 고치는 중이다. 고친 커밋이 빌드 검사를 통과하면 서버가 바로 다시 잰다.'
+          : !owner ? (view.measure?.plan?.app ? '서버가 실측하는 중이다. 화면에 뜬 프로그램이 서버가 돌리는 것이다. 할 일은 없다.'
+            : '서버가 실측하는 중이다. 할 일은 없다.')
             : view.measure?.plan?.app ? '주인 실측 중이다. 화면에 뜬 프로그램을 보고 소리를 듣는다.' : '주인 실측 중이다. 아래 단계를 한다.'}</p>
         {view.working === 'measure' && <Btn disabled={busy} onClick={() => void act(() => api.measureStop(repo))}>멈춤</Btn>}
       </div>
@@ -191,7 +196,7 @@ const verdictDue = (r: MeasureRun) => r.status === 'owner' && r.mode === 'owner'
 
 const said = (r: MeasureRun) => (r.owner ? (r.owner.approve ? '주인 승인' : '주인 거절')
   : r.status === 'owner' ? (r.mode === 'owner' ? '판정 기다림' : '판정하지 않음 — 자동 실측부터 다시') : r.status === 'passed' ? '자동 실측 통과 — 주인 실측 차례'
-    : r.status === 'input' ? '넣은 값이 틀림' : r.status === 'stale' ? '판정하지 않음'
+    : r.status === 'input' ? '넣은 값이 틀렸다고 함 — 주인에게 묻는다' : r.status === 'stale' ? '판정하지 않음'
       : r.mode === 'auto' ? '자동 실측 실패 — 빌드가 고친다' : '실패 — 빌드가 고친다') + (r.comment_error ? ` · ${r.comment_error}` : '')
 
 function Result({ repo, run, busy, act }: { repo: string; run: MeasureRun; busy: boolean; act: Act }) {

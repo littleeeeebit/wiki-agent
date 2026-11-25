@@ -1,6 +1,6 @@
 param([Parameter(Mandatory)][string]$Request)
 # The desktop look's driver (docs/research/oneshot-desktop-session.md, "Reading and driving it"). It runs as its own
-# Windows PowerShell 5.1 process on the look's owned desktop, in a job of its own, so the server can end it when a
+# Windows PowerShell 5.1 process on the owner's desktop, in a job of its own, so the server can end it when a
 # deadline passes. It chooses the app's main window once, sizes it without activation, and then for each state
 # shoots every visible top-level window of the app with PrintWindow and reads the UI Automation control view. It
 # acts only through patterns and sends no synthetic input, no window message and no clipboard.
@@ -35,7 +35,7 @@ public static class Desk {
   [DllImport("kernel32")] public static extern bool CloseHandle(IntPtr h);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
   public static IntPtr App = IntPtr.Zero;   // the app's job, opened for query only
-  public static List<IntPtr> Visible() {   // EnumWindows sees this thread's desktop only: the owned one
+  public static List<IntPtr> Visible() {   // EnumWindows sees this thread's desktop only: the owner's
     var found = new List<IntPtr>();
     EnumWindows((h, l) => { if (IsWindowVisible(h)) found.Add(h); return true; }, IntPtr.Zero);
     return found;
@@ -118,6 +118,8 @@ function Shoot($window, [string]$state) {   # the whole window, then cut to its 
     $g = [System.Drawing.Graphics]::FromImage($bmp); $dc = $g.GetHdc()
     try { $drawn = [Desk]::PrintWindow($h, $dc, 2) } finally { $g.ReleaseHdc($dc); $g.Dispose() }   # PW_RENDERFULLCONTENT
     if (-not $drawn) { return [ordered]@{ hwnd = $window.hwnd; drawn = $false; error = "PrintWindow drew nothing" } }
+    # On the owner's desktop a handle can be reused by another app's window while it is drawn: kept only if still the app's.
+    if (-not (Current $window)) { return [ordered]@{ hwnd = $window.hwnd; drawn = $false; error = "the window is gone or no longer the app's" } }
     $cut = New-Object System.Drawing.Rectangle ($frame[0] - $outer.L), ($frame[1] - $outer.T), $frame[2], $frame[3]
     $visible = $bmp.Clone($cut, $bmp.PixelFormat)
   } finally { $bmp.Dispose() }

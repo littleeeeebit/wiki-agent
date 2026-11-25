@@ -60,11 +60,13 @@ def test_a_change_of_branch_or_user_settings_tells_the_screens_once_each(tmp_pat
     settings.write_text("{}", encoding="utf-8")
     branch = ["main"]
     # `watch` runs on this thread, so a feed that drops other threads' events holds the exact count.
+    settled = []
     with patch.object(work, "feed", OwnFeed()), patch.object(wiring, "hub_branch", side_effect=lambda: branch[0]), \
-         patch.object(wiring.apply, "user_files", side_effect=lambda host: [settings] if host == "claude" else []):
+         patch.object(wiring.apply, "user_files", side_effect=lambda host: [settings] if host == "claude" else []), \
+         patch.object(wiring, "settle", side_effect=lambda: settled.append(1)):
         drained()
         wiring.watch(Ticks(1), every=0)
-        assert drained() == [], "바뀐 것이 없으면 알리지 않는다"
+        assert drained() == [] and settled == [1], "바뀐 것이 없으면 알리지 않고, 시작할 때 한 번 맞춘다"
 
         looks = iter([lambda: None, lambda: settings.write_text('{"hooks": {}}', encoding="utf-8"),
                       lambda: branch.__setitem__(0, "other"), lambda: None])
@@ -76,6 +78,38 @@ def test_a_change_of_branch_or_user_settings_tells_the_screens_once_each(tmp_pat
 
         wiring.watch(Changing(3), every=0)
         assert drained() == [{"kind": "connect", "repo": ""}] * 2, "설정 파일과 브랜치가 바뀔 때마다 한 번씩"
+        assert settled == [1, 1, 1, 1], "시작과 바뀔 때마다 체크아웃 설정을 맞춘다"
+
+
+def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leaves_the_rest(tmp_path):
+    def repo(name: str, text: str, track: bool = False) -> Path:
+        path = tmp_path / name
+        (path / ".claude").mkdir(parents=True)
+        (path / ".claude" / "settings.json").write_text(text, encoding="utf-8")
+        git(path, "init", "-q")
+        if track:
+            git(path, "add", ".claude/settings.json")
+        return path
+
+    loose, kept, off = repo("loose", "{}"), repo("kept", "{}", track=True), repo("off", '{"disableAllHooks": true}')
+    rows = [{"path": str(p), "state": "일부"} for p in (loose, kept, off)]
+    rule = "Bash(dos2unix*)"
+    with patch.object(connect, "hosts", return_value=["claude"]), \
+         patch.object(chat_channels, "projects", side_effect=lambda: list(rows)), \
+         patch.object(connect.apply, "declared", return_value=({rule: []}, {})), \
+         patch.object(wiring.apply, "user_wired", return_value=True):
+        with patch.object(wiring, "hub_branch", return_value="feature"):
+            assert wiring.settle() == [], "main 이 아닌 허브는 그 브랜치의 배선을 걸지 않는다"
+        with patch.object(wiring, "hub_branch", return_value="main"):
+            done = wiring.settle()
+            assert done == [f"{loose.resolve() / '.claude' / 'settings.json'}: deny 추가: {rule}"]
+            assert json.loads((loose / ".claude/settings.json").read_text(encoding="utf-8"))["permissions"]["deny"] == [rule]
+            assert wiring.settle() == [], "맞춘 뒤에는 쓸 것이 없다"
+            assert (kept / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "git 이 추적하는 파일은 사람의 것"
+            assert "permissions" not in json.loads((off / ".claude/settings.json").read_text(encoding="utf-8"))
+            with patch.object(wiring.apply, "user_wired", return_value=False):   # the checkout's own install governs
+                (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+                assert wiring.settle() == []
 
 
 def test_rewire_writes_exactly_the_confirmed_plan_or_nothing(tmp_path):
