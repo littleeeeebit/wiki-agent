@@ -175,16 +175,16 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
         forget={(env) => act(() => api.forget(repo, env))} />
     </div>
   ) : null
-  // A screen waiting on the owner (a measurement to judge, a round, a sheet): they can still speak to the build.
-  const tell = idle && TELLS.includes(view.stage) ? (
-    <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
-      <Tell view={view} post={(text) => act(() => api.tell(repo, text))} apply={() => act(() => api.applyTell(repo))} />
-    </div>
+  // A screen waiting on the owner (a measurement to judge, a round, a sheet), stopped or not: they can still speak
+  // to the build, and take waiting words in. Each answer installs the new view, so a started rewrite is followed.
+  const told = { post: (text: string) => act(() => api.tell(repo, text)), apply: () => act(() => api.applyTell(repo)) }
+  const tell = !view.working && TELLS.includes(view.stage) ? (
+    <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4"><Tell view={view} {...told} /></div>
   ) : null
   if (owns(view)) return <>{faulted}{needs}<Owner repo={repo} view={view} busy={busy} act={act} />{tell}</>
   if (view.stopped) {
     return (
-      <Track view={view} halt={<>
+      <Track view={view} {...told} halt={<>
         {view.phone_owned?.length || unposted || leaked ? faulted : <Fault text={fault} />}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
         {view.stage === 'r3' && o.pc?.results ? <PcResults title="주인 화면 회차 — 통과" results={o.pc.results} /> : null}

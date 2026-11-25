@@ -220,10 +220,10 @@ def retell(repo: str) -> None:
     try:
         release = hold(work._busy, work_lock, str(Path(oneshot_spec.spec_of(repo)["worktree"])),
                        "작업트리를 다른 턴이 쓰고 있다", kind="turn")
-    except HTTPException:   # another turn has it: that step's next start, or `[지금 반영]` once the run parks
+    except HTTPException:   # another turn has it: the run stops parked, so `[지금 반영]` or `[재개]` tries again
         with oneshot._lock:
             if store.get().get("working") == "retell":
-                store.put(working=None)
+                store.stop("block", "다른 턴이 작업트리를 쓰고 있어 주인의 말을 아직 반영하지 못했다 — 그 턴이 끝나면 [지금 반영]")
         return
     try:
         sent = rewritten(repo)

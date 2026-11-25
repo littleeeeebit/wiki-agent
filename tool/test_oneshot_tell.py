@@ -193,8 +193,10 @@ def test_a_send_that_holds_the_tree_takes_words_said_by_then_first_and_a_rewrite
     at("build", working="retell", tell_pending=[{"text": "소리를 줄여", "stage": "build"}])
     with patch.dict(work._busy, {str(tree): object()}), \
          patch.object(oneshot, "turned", side_effect=AssertionError("the design turn ran in a held tree")):
-        oneshot_tell.retell("budget")   # another turn has the tree: the words stay, the mark is let go
-    assert o()["working"] is None and o()["tell_pending"]
+        oneshot_tell.retell("budget")   # another turn has the tree: the words stay, and the run stops parked
+    assert o()["working"] is None and o()["tell_pending"] and o()["stopped"]["reason"] == "block"
+    oneshot_tell.apply("budget")   # once that turn let go, `[지금 반영]` tries again
+    assert o()["working"] == "retell"
 
 
 def test_a_build_send_that_finds_a_rewrite_started_before_it_held_the_tree_yields(world):  # noqa: F811 — the imported fixture, requested by name

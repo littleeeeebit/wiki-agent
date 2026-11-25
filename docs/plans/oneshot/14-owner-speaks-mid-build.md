@@ -73,8 +73,11 @@ turn asks again once it holds the worktree, and lets the tree go before it
 hands the step over. The measurement's start checks the request, then asks,
 then reads its old plan, so a word that drops an input is never held behind
 that input. The rewrite holds the worktree itself through its design turn,
-its commit and its save, as a work turn does; when another turn has it, the
-words stay waiting. The publication step asks too, so words
+its commit and its save, as a work turn does. When another turn has it, the
+words stay waiting and the run stops with a stop the owner may resume, so
+[지금 반영] or [재개] tries again once that turn lets go. The panel shows
+the button only for words a rewrite would take now, on a stopped screen
+too, and follows the run the button starts. The publication step asks too, so words
 said by R3 are never published past. A start that meets the rewrite
 already running (a turn's handoff after a word said at its very end) leaves
 it as it is; one the server refuses otherwise (it is going down) stops the

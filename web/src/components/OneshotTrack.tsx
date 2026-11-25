@@ -11,7 +11,9 @@ import { cn } from '@/lib/utils'
  *  how long, the run's work turns as they stream in its worktree, and beside them the stage's record — its tries
  *  against the server's caps, each review and critique with its findings, and what the run has spent. A stopped
  *  run shows the same, under its reason and `[재개]`, so why it stopped is read off what happened. */
-export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
+export function Track({ view, halt, post, apply }: {
+  view: SpecView; halt?: ReactNode; post?: (text: string) => Promise<boolean>; apply?: () => Promise<boolean>
+}) {
   const o = view.oneshot
   const kinds = o.intent?.kinds ?? (o.intent?.kind ? [o.intent.kind] : [])   // a record from before kinds has one
   return (
@@ -20,7 +22,7 @@ export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
         {halt}
         {o.inflight && <Now inflight={o.inflight} kinds={kinds} />}
         <Log path={view.worktree ?? ''} onSend={TELLS.includes(view.stage) ? (text) => void api.tell(view.repo, text) : undefined} />
-        {TELLS.includes(view.stage) && <Tell view={view} />}
+        {TELLS.includes(view.stage) && <Tell view={view} post={post} apply={apply} />}
       </div>
     </Split>
   )
@@ -32,6 +34,7 @@ export const TELLS = ['tests', 'build', 'measure', 'review', 'conflict', 'split'
   'build-front', 'critique', 'phone', 'pc', 'r3']
 const WAITS = ['split', 'board', 'frontend', 'r2']
 const PARKED = ['measure', 'conflict', 'phone', 'pc', 'r3']
+const FRONT = ['build-front', 'critique', 'phone', 'pc', 'r3', 'pr', 'done']
 const HARD = ['kind', 'rekind', 'fake']
 
 /** The owner's words to the build agent, any time it builds: said into the turn that runs, and the design rewritten
@@ -54,8 +57,10 @@ export function Tell({ view, post, apply }: {
   const send = () => text.trim() && run(() => (post ?? ((t: string) => api.tell(view.repo, t).then(() => true)))(text.trim()),
     () => setText(''))
   const waiting = o.tell_pending?.length ?? 0
-  // A parked run (`oneshot_tell.parked`) takes waiting words in only when the owner says so.
+  // A parked run (`oneshot_tell.parked`) takes waiting words in only when the owner says so, and only words a
+  // rewrite would take now (`oneshot_tell.taken`): those said while the screens are designed wait for their build.
   const parked = !view.working && (view.stopped ? !HARD.includes(view.stopped.reason) : PARKED.includes(view.stage))
+  const due = (o.tell_pending ?? []).some((w) => !WAITS.includes(w.stage) || FRONT.includes(view.stage))
   return (
     <section aria-label="구현 에이전트에게 말하기" className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3">
       <Title><span>구현 에이전트에게 말하기</span></Title>
@@ -69,7 +74,7 @@ export function Tell({ view, post, apply }: {
       <div className="flex flex-wrap items-center gap-3">
         <Btn disabled={busy || !text.trim()} onClick={send}>보내기</Btn>
         {waiting > 0 && <span className="text-[12.5px] text-muted-foreground">설계에 반영을 기다리는 말 {waiting}개</span>}
-        {waiting > 0 && parked && (
+        {due && parked && (
           <Btn disabled={busy} onClick={() => run(apply ?? (() => api.applyTell(view.repo).then(() => true)))}>지금 반영</Btn>
         )}
         {fault && <span role="alert" className="text-destructive">{fault}</span>}
