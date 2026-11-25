@@ -21,8 +21,9 @@ export function Track({ view, halt, post, apply }: {
       <div className="flex flex-col gap-5 px-10 pt-5 pb-8 max-[1500px]:px-7 max-[560px]:px-4">
         {halt}
         {o.inflight && <Now inflight={o.inflight} kinds={kinds} />}
-        <Log path={view.worktree ?? ''} onSend={TELLS.includes(view.stage)   // as the box sends: the pane follows the answer
-          ? (text) => void (post ?? ((t: string) => api.tell(view.repo, t)))(text) : undefined} />
+        {/* As the box sends, so the pane follows the answer; with its questions, since the design model never saw them. */}
+        <Log path={view.worktree ?? ''} onSend={TELLS.includes(view.stage)
+          ? (text, full) => void (post ?? ((t: string) => api.tell(view.repo, t)))(full ?? text) : undefined} />
         {TELLS.includes(view.stage) && <Tell view={view} post={post} apply={apply} />}
       </div>
     </Split>
@@ -135,7 +136,7 @@ function Now({ inflight, kinds }: { inflight: Inflight; kinds: readonly string[]
 const SHOWN = 6   // turns kept open; earlier ones fold behind one button
 
 /** The run's worktree turns, live: the same record and stream maintenance shows for a task, read-only here. */
-function Log({ path, onSend }: { path: string; onSend?: (text: string) => void }) {
+function Log({ path, onSend }: { path: string; onSend?: (text: string, full?: string) => void }) {
   // Its own record: a turn the server starts here (each attempt, a review's repair) reaches it on the feed.
   const work = useWork()
   const { load, forget } = work

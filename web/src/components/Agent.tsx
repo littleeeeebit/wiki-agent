@@ -207,8 +207,8 @@ export function Reply({ turn, on, progressOn = on, onAnswer, onPeek, onSend }: {
   /** None for another task's turn: its questions and approvals show, unanswerable here. */
   onAnswer?: Props['onAnswer']
   onPeek: Props['onPeek']
-  /** Only the latest turn's: a `choices` block answered sends the next instruction. */
-  onSend?: (text: string) => void
+  /** Only the latest turn's: a `choices` block answered sends the next instruction (`full`: with its questions). */
+  onSend?: (text: string, full?: string) => void
 }) {
   // Codex asks with a `choices` block at the end of a finished answer.
   const [body, asked] = turn.pending ? [turn.text, null] : choicesOf(turn.text)
@@ -249,7 +249,7 @@ export function Reply({ turn, on, progressOn = on, onAnswer, onPeek, onSend }: {
       {list(0, cut)}
       {body && <Answer text={text} korean={on} remote="" onPeek={onPeek} />}
       {asked && <div data-question-pending={onSend ? 'true' : undefined}>
-        <Choices value={asked} korean={on} busy={!onSend} onSay={(said) => onSend?.(said)} />
+        <Choices value={asked} korean={on} busy={!onSend} onSay={(said, full) => onSend?.(said, full)} />
       </div>}
       {list(cut, turn.steps.length)}
       {turn.latest !== 'step' && marker}
