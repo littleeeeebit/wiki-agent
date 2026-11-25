@@ -45,10 +45,12 @@ running turn, and to `tell_pending` with its stage.
 - A running measurement is halted with a mark (`told`); wherever the
   measurement notices the halt, it hands the words on to the rewrite once it
   lets go of the worktree, rather than stopping the run.
-- With nothing running, the rewrite starts at once, under the same lock as
-  the check, so two requests never both start it.
-- A turn that has saved its result but still holds the worktree is still
-  running: its handoff meets the words.
+- A run parked with nothing running (stopped, or resting at a screen that
+  waits for the owner: the measurement, the conflicts, the phone and PC
+  rounds, R3) starts the rewrite at once, under the same lock as the check,
+  so two requests never both start it. Anywhere else a step is between its
+  turns, and its next start meets the words; so does a stage that held the
+  worktree when it lets go.
 - Words said while the screens are designed with the owner (`split` to `r2`,
   `oneshot_tell.WAIT`) wait until the frontend build begins, across any
   backend rewrite before it; R2 is a conversation of its own. Words said

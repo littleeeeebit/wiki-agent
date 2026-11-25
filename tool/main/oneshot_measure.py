@@ -564,14 +564,20 @@ def fixing(spec: dict) -> str:
 
 # -- What the owner does ----------------------------------------------------------------------------------
 
-def measuring(repo: str, plan_needed: bool = True) -> tuple[dict, dict | None, str]:
-    """`(spec, plan, why the plan does not hold)` while the run is at the measurement with no worker running."""
+def at_measure(repo: str) -> dict:
+    """The spec while the run is at the measurement with no worker running; otherwise 409."""
 
-    spec = oneshot_spec.spec_of(repo)
-    o = spec["oneshot"]
+    o = (spec := oneshot_spec.spec_of(repo))["oneshot"]
     oneshot_spec.supported(o)
     if o.get("stage") != "measure" or o.get("working"):
         raise HTTPException(409, f"지금 할 수 없다 — {o.get('stage')}{' 진행 중' if o.get('working') else ''}")
+    return spec
+
+
+def measuring(repo: str, plan_needed: bool = True) -> tuple[dict, dict | None, str]:
+    """`(spec, plan, why the plan does not hold)` while the run is at the measurement with no worker running."""
+
+    o = (spec := at_measure(repo))["oneshot"]
     try:
         return spec, planned(Path(spec["worktree"]), spec, o.get("built_head")), ""
     except ValueError as exc:
@@ -653,13 +659,13 @@ class Start(BaseModel):
 
 @router.post("/api/oneshot/spec/{repo}/measure/start")
 def start(repo: str, body: Start) -> dict:
-    with oneshot._lock:   # the owner's waiting words first, before the old plan is checked (`oneshot_tell`)
+    with oneshot._lock:   # the request checked, then the owner's waiting words, then the old plan (`oneshot_tell`)
+        if body.head != at_measure(repo)["oneshot"].get("built_head"):
+            raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
         if oneshot.diverted(oneshot_spec.store(repo), "measure"):
             return oneshot_spec.view(oneshot_spec.spec_of(repo))
         spec, plan, broken = measuring(repo, plan_needed=False)
         o = spec["oneshot"]   # a measurement stopped (a wrong input, a restart) starts again from here
-        if body.head != o.get("built_head"):
-            raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
         if broken:   # the committed plan no longer holds: only the build agent can fix it
             spec = oneshot_spec.saved(repo, oneshot={"stage": "build", "fix": "plan", "broken": broken, "attempts": 0,
                                                      "working": "build", "stopped": None})

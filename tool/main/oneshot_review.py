@@ -520,7 +520,7 @@ def holding(repo: str, what: str, body, passed: str = "built_head", build: str =
     except HTTPException as exc:   # whoever holds it sends the queued instruction when it lets go
         store.stop("block", f"{exc.detail} — 끝난 뒤 [재개] 로 {what}을 다시 한다")
         return
-    passed_on = False
+    passed_on = failed = False
     try:
         following = None
         try:
@@ -538,9 +538,13 @@ def holding(repo: str, what: str, body, passed: str = "built_head", build: str =
             release()
         if callable(following):   # a save that only saves returns the spec
             passed_on = bool(following())
-        from . import oneshot_tell   # words the owner said while the tree was held, with nothing to take them in
-        passed_on = passed_on or oneshot_tell.settle(store)
+    except BaseException:   # the worker records the stop; no rewrite starts over it
+        failed = True
+        raise
     finally:   # an exception included: the worker records the stop, and the instruction still goes
+        if not passed_on and not failed:   # every other exit, an early stop too: the owner's words said meanwhile
+            from . import oneshot_tell
+            passed_on = oneshot_tell.settle(store)
         if not passed_on:   # a server going down drops it, as `dispatch` drops one after a stopped turn
             work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))
 

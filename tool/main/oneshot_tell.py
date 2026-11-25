@@ -30,6 +30,8 @@ OPEN = STAGE_ORDER[STAGE_ORDER.index("tests"):STAGE_ORDER.index("pr")]
 # While the screens are designed with the owner (R2 and what leads to it) the words wait for the frontend build.
 WAIT = STAGE_ORDER[STAGE_ORDER.index("split"):STAGE_ORDER.index("build-front")]
 FRONT = STAGE_ORDER[STAGE_ORDER.index("build-front"):]
+# Stages a run rests at with no worker, waiting for the owner: the measurement, the conflicts, the rounds, R3.
+PARKED = ("measure", "conflict", "phone", "pc", "r3")
 STEERED = ("The owner says this to you now, while you work, in their own words:\n\n{text}\n\nAct on it in this "
            "turn. Where it changes a requirement or the design (a behaviour, a component, the model a part runs), "
            "build toward what they said rather than the design you were given: when this turn ends the server "
@@ -98,9 +100,11 @@ def tell(repo: str, body: Tell) -> dict:
             if halt := oneshot_measure.HALTS.get(repo):
                 halt.told = True   # the measurement hands the words on rather than stopping (`oneshot_measure`)
                 halt.set()
-        # Nothing is running to reach a start: the words are taken in now. A turn that has saved its result but still
-        # holds the worktree is running: its handoff meets the words (`diverted`).
-        if not o.get("working") and due(o) and not any(Path(k) == Path(spec["worktree"]) for k in list(work._busy)):
+        # Only a parked run (stopped, or idle on a screen that waits for the owner) takes the words in now; nothing
+        # else would. Anywhere else a step is between its turns, and its next start meets them (`diverted`), as does
+        # a stage that held the worktree when it lets go (`settle`).
+        if not o.get("working") and due(o) and (o.get("stopped") or stage in PARKED) \
+                and not any(Path(k) == Path(spec["worktree"]) for k in list(work._busy)):
             start(oneshot_spec.store(repo))
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
@@ -139,12 +143,13 @@ def handoff(store: oneshot.Store) -> bool:
 
 
 def settle(store: oneshot.Store) -> bool:
-    """A stage let the worktree go with nothing following it: words said meanwhile, which found the tree held and
-    had no handoff to meet, are taken in now. True when the rewrite took the run."""
+    """A stage let the worktree go with nothing following it, a stop included: words said meanwhile, which found
+    the tree held and had no handoff to meet, are taken in now. True when the rewrite has the run."""
 
     with oneshot._lock:
         o = store.get()
-        return not o.get("working") and due(o) and handoff(store)
+        return o.get("working") == "retell" or (not o.get("working") and due(o) and not runtime.stopping.is_set()
+                                                 and handoff(store))
 
 
 def steered(spec: dict, text: str) -> bool:

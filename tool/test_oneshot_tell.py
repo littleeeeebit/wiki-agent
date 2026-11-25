@@ -158,6 +158,33 @@ def test_words_said_while_a_stage_held_the_tree_are_taken_in_once_it_lets_go(wor
     assert o()["working"] == "retell" and not dispatch.called and store.get()["tell_pending"]
 
 
+def test_only_a_parked_run_takes_the_words_in_at_once_and_a_stale_measure_start_never_diverts(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import oneshot_measure
+    at("build")   # between a tests turn and its build: the build's start meets the words, never a rival rewrite
+    say("소리를 줄여")
+    assert o()["working"] is None and o()["tell_pending"]
+    at("build", working="build", tell_pending=o()["tell_pending"])   # an earlier screen's start, a build running
+    with pytest.raises(HTTPException) as refused:
+        oneshot_measure.start("budget", oneshot_measure.Start(head="b" * 40))
+    assert refused.value.status_code == 409 and o()["working"] == "build"
+    at("build", stopped={"reason": "block", "detail": "x", "state": "build"})   # a stopped run is parked
+    say("소리를 줄여")
+    assert o()["working"] == "retell"
+
+
+def test_a_stage_that_stopped_while_it_held_the_tree_still_takes_the_words_in(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import oneshot_review, work
+    at("measure", working="measure", built_head="b" * 40)
+
+    def body(store, spec, tree):   # the owner speaks, then the old plan cannot be read and the stage stops
+        say("계획을 바꿔")
+        store.stop("measure", "계획을 읽지 못했다")
+        return None
+    with patch.object(oneshot_review, "moved", lambda *a: ""), patch.object(work, "dispatch") as dispatch:
+        oneshot_review.holding("budget", "실측", body)
+    assert o()["working"] == "retell" and not dispatch.called
+
+
 def test_a_build_send_that_finds_a_rewrite_started_before_it_held_the_tree_yields(world):  # noqa: F811 — the imported fixture, requested by name
     from main import work
     at("build", working="retell")
