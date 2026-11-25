@@ -1036,8 +1036,7 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     if loop.halt.is_set():
         return None
     if run.halt.is_set():   # the work pane stopped this turn: its answer is not judged, and nothing is retried
-        stop(loop, loop.repo, loop.sid, Why.PERSON, "사람이 작업 칸에서 이 턴을 멈췄다")
-        return None
+        raise Halted()
     end = next((e for e in reversed(run.events) if e["kind"] in ("done", "error")), None)
     failure = next((e for e in run.events if e["kind"] == "error" or (e.get("meta") or {}).get("error")), None)
     answered = (failure.get("meta") or {}).get("answer") or "" if failure else ""
@@ -1424,6 +1423,11 @@ class Revised(Exception):
     it now stands (`handed`). Continued inside the old step, it mixed the new revision with the old rounds."""
 
 
+class Halted(Revised):
+    """The work pane stopped a loop turn: the step stops the loop. Raised, so a repair that committed code
+    keeps its cleanup baseline (`sweep.held`), and passing wherever `Revised` does."""
+
+
 def handed(loop: Loop, spec: dict, path: Path, owed: dict) -> bool:
     """The author's answer to an escalation (`handoff.applied`) as this step's repair, built from the spec as it
     stands. It stays owed until a passing done-report covering this revision is saved since the answer: by a
@@ -1436,16 +1440,19 @@ def handed(loop: Loop, spec: dict, path: Path, owed: dict) -> bool:
         # One passing entry per item of this revision's `done`, as written (`prompts/work-spec.md`): a count
         # alone let two copies of one item stand for another (`shortfall`).
         return bool(items) and at != owed.get("report_at") and at.get("rev") == s.get("rev") \
-            and (turns is not None and at.get("turn") in turns or turns is None and at.get("head") == head()) \
+            and (turns is None or at.get("turn") in turns) and at.get("head") == head() \
             and sorted(i["item"].strip() for i in items) == sorted(d.strip() for d in s.get("done") or []) \
             and not specs.shortfall(items, s)
 
     def head() -> str:   # a report the checkout has moved past since is not this revision's evidence
         return specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
 
-    def clear() -> bool:   # only the answer that was sent: a newer one is sent by the next step
+    def clear(turns: list | None = None) -> bool:
+        # Judged again under the lock it is cleared in: a newer answer, or a revision that reset the report,
+        # is the next step's to send.
         with specs._files:
-            if (specs.load(loop.repo, loop.sid) or {}).get("handoff_owed") != owed:
+            now = specs.load(loop.repo, loop.sid) or {}
+            if now.get("handoff_owed") != owed or not complete(now, turns):
                 raise Revised()
             return change(loop, handoff_owed=None) is not None
 
@@ -1458,7 +1465,7 @@ def handed(loop: Loop, spec: dict, path: Path, owed: dict) -> bool:
             if told(loop, spec, path, text) is None:
                 return False
             if complete(specs.load(loop.repo, loop.sid) or {}, loop.handing["turns"]):
-                return clear()
+                return clear(loop.handing["turns"])
     finally:
         loop.handing = None
     return stop(loop, loop.repo, loop.sid, Why.FORMAT, f"명세 {spec['rev']}판의 완료 보고가 없다")
@@ -1469,6 +1476,8 @@ def step(loop: Loop) -> bool:
 
     try:
         return stepped(loop)
+    except Halted:
+        return stop(loop, loop.repo, loop.sid, Why.PERSON, "사람이 작업 칸에서 이 턴을 멈췄다")
     except Revised:
         return True
 

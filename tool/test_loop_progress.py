@@ -351,7 +351,7 @@ def test_an_answered_escalation_ends_the_step_unless_the_turn_was_stopped(tmp_pa
 
     where = tmp_path / "proj-worktrees" / "t1"
     with patch.object(work, "session", lambda *a: Hangs()), patch.object(work, "begin", begin), \
-            patch.object(specs, "load", lambda *a: dict(store)), patch.object(loop, "stop") as stop:
+            patch.object(specs, "load", lambda *a: dict(store)), patch.object(loop, "stop", return_value=False) as stop:
         with pytest.raises(loop.Revised):
             loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1")
         # An answer owed from before is not this turn's: a cleanup turn sent ahead of it finishes.
@@ -363,10 +363,15 @@ def test_an_answered_escalation_ends_the_step_unless_the_turn_was_stopped(tmp_pa
             loop.turn(sending, {}, where, "the older answer")
         halted.append(True)
         store["handoff_owed"] = None
-        assert loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1") is None
-        # Any turn the work pane stopped stops the loop: no answer of it is judged or retried.
-        assert loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1") is None
-    assert [c[0][2:4] for c in stop.call_args_list] == [("t1", loop.Why.PERSON)] * 2 and store["handoff_owed"]
+        # Any turn the work pane stopped stops the loop: no answer of it is judged or retried. It is raised, so
+        # a repair that committed code keeps its cleanup baseline (`sweep.held`).
+        for _ in range(2):
+            with pytest.raises(loop.Halted):
+                loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1")
+        assert not stop.called and store["handoff_owed"]
+        with patch.object(loop, "stepped", side_effect=loop.Halted):
+            assert loop.step(loop.Loop("proj", "t1")) is False
+    assert stop.call_args[0][2:4] == ("t1", loop.Why.PERSON)
     with patch.object(loop, "stepped", side_effect=loop.Revised):
         assert loop.step(loop.Loop("proj", "t1")) is True
 
@@ -382,7 +387,7 @@ def test_the_authors_answer_stays_owed_until_its_turn_passes_this_revision(tmp_p
         spot.handing["turns"].append(f"t{len(sent)}")
         # The first turn's report fails its item; the second passes it. A report of another turn never counts.
         store["report"] = [{"item": "x", "pass": len(sent) == 2}]
-        store["report_at"] = {"rev": 2, "turn": f"t{len(sent)}"}
+        store["report_at"] = {"rev": 2, "turn": f"t{len(sent)}", "head": "h2"}
         return "answer"
 
     spot, at = loop.Loop("proj", "t1"), subprocess.CompletedProcess([], 0, "h2\n", "")
@@ -403,5 +408,16 @@ def test_the_authors_answer_stays_owed_until_its_turn_passes_this_revision(tmp_p
         # A newer answer saved meanwhile is the next step's to send, never cleared unsent.
         store.update(report=mine["report"], report_at=mine["report_at"], handoff_owed={**owed, "rev": 3})
         with pytest.raises(loop.Revised):
+            loop.handed(spot, dict(store), tmp_path, owed)
+
+        class Revising:   # a revision lands between the report's check and the lock the clear takes
+            def __enter__(self):
+                store.update(rev=3, report=None)
+
+            def __exit__(self, *exc):
+                return False
+
+        store.update(handoff_owed=owed)
+        with patch.object(specs, "_files", Revising()), pytest.raises(loop.Revised):
             loop.handed(spot, dict(store), tmp_path, owed)
     assert change.call_count == 2 and spot.handing is None
