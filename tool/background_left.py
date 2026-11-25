@@ -15,7 +15,8 @@ call stopped (`Scan`, kept in a file of its own), so a moved command is never
 lost however long the session grows. A decision whose own result came back as
 an error decides nothing. A command still counts as running only while its
 output file is held open: one a process that has since ended left behind, as
-a resumed session's are, holds nothing.
+a resumed session's are, holds nothing. Only Windows shows a held file, so
+elsewhere nothing is held.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from pathlib import Path
 DECIDING = frozenset({"Yield", "Monitor", "TaskStop", "TaskOutput", "Read"})
 WRITTEN_TO = re.compile(r"Output is being written to: (.+?\.output)")
 STATE = Path(tempfile.gettempdir()) / "wiki-agent-background-left"
+LIVENESS = os.name == "nt"   # where a running command's held output file can be seen (`running`)
 REASON = """명령 {ids} 이(가) 시간 제한을 넘어 백그라운드로 넘어갔는데, 아직 기다리지도 멈추지도 않았다.
 이대로 다음 일로 넘어가면 아무도 결과를 읽지 않는 채로 계속 돈다.
 
@@ -41,16 +43,24 @@ REASON = """명령 {ids} 이(가) 시간 제한을 넘어 백그라운드로 넘
 
 @dataclass
 class Scan:
-    """What a transcript's first `offset` bytes say: moved tasks not yet decided (id -> output file, "" when
-    unnamed), and decisions waiting on their own result (tool use id -> the tasks they would decide)."""
+    """What a transcript's first `offset` bytes say (`mark`: a hash of the bytes just before `offset`, so a
+    rewritten transcript is read again from its start). `tasks`: each moved task not yet over, by id, with its
+    output file ("" when unnamed), whether a deciding call on it succeeded, and how many deciding calls on it
+    still wait for their result. `deciding`: those calls, by tool use id, with the tasks each one names."""
 
     offset: int = 0
-    pending: dict[str, str] = field(default_factory=dict)
-    deciding: dict[str, dict[str, str]] = field(default_factory=dict)
+    mark: str = ""
+    tasks: dict[str, dict] = field(default_factory=dict)
+    deciding: dict[str, list[str]] = field(default_factory=dict)
+
+    def undecided(self) -> dict[str, str]:
+        """Tasks no deciding call has succeeded on or is still waiting on, with their output files."""
+
+        return {t: s["output"] for t, s in self.tasks.items() if not s["decided"] and not s["open"]}
 
     def read(self, line: str) -> None:
-        for task in [t for t in self.pending if f"<task-id>{t}</task-id>" in line]:
-            del self.pending[task]   # its notice: the task is over
+        for task in [t for t in self.tasks if f"<task-id>{t}</task-id>" in line]:
+            del self.tasks[task]   # its notice: the task is over, whatever a call on it still says
         if '"backgroundTaskId"' not in line and '"tool_use' not in line:
             return
         try:
@@ -58,7 +68,9 @@ class Scan:
         except ValueError:
             return
         result = entry.get("toolUseResult")
-        moved = isinstance(result, dict) and result.get("backgroundTaskId") and result.get("timedOutAfterMs")
+        moved = str(result["backgroundTaskId"]) if isinstance(result, dict) and result.get("backgroundTaskId") \
+            and result.get("timedOutAfterMs") else ""
+        output = ""
         content = (entry.get("message") or {}).get("content")
         for block in content if isinstance(content, list) else []:
             if not isinstance(block, dict):
@@ -66,24 +78,26 @@ class Scan:
             if block.get("type") == "tool_use" and entry.get("type") == "assistant":
                 self.decide(block)
             elif block.get("type") == "tool_result":
-                if moved:
-                    named = WRITTEN_TO.search(_text(block.get("content")))
-                    self.pending[str(result["backgroundTaskId"])] = named.group(1) if named else ""
-                if (held := self.deciding.pop(str(block.get("tool_use_id")), None)) and block.get("is_error"):
-                    self.pending.update(held)   # the call failed or was refused: nothing was decided
-        if moved and str(result["backgroundTaskId"]) not in self.pending:
-            self.pending[str(result["backgroundTaskId"])] = ""
+                if moved and (named := WRITTEN_TO.search(_text(block.get("content")))):
+                    output = named.group(1)
+                for task in self.deciding.pop(str(block.get("tool_use_id")), []):
+                    if state := self.tasks.get(task):
+                        state["open"] -= 1
+                        # A call that failed or was refused decided nothing; one that went through decided it.
+                        state["decided"] = state["decided"] or not block.get("is_error")
+        if moved:
+            self.tasks[moved] = {"output": output, "decided": False, "open": 0}
 
     def decide(self, block: dict) -> None:
         name, given = block.get("name"), json.dumps(block.get("input") or {})
         if name not in DECIDING:
             return
-        decided = {t: p for t, p in self.pending.items()
-                   if name in ("Yield", "Monitor") or t in given}   # a wait covers whatever is running
-        for task in decided:
-            del self.pending[task]
-        if decided:
-            self.deciding[str(block.get("id"))] = decided
+        named = [t for t, s in self.tasks.items()
+                 if not s["decided"] and (name in ("Yield", "Monitor") or t in given)]   # a wait covers all
+        for task in named:
+            self.tasks[task]["open"] += 1
+        if named:
+            self.deciding[str(block.get("id"))] = named
 
 
 def _text(content) -> str:
@@ -92,6 +106,13 @@ def _text(content) -> str:
     if isinstance(content, list):
         return "\n".join(str(b.get("text") or "") for b in content if isinstance(b, dict))
     return str(content or "")
+
+
+def _mark(fh, offset: int) -> str:
+    """A hash of the 4 KB before `offset`: what the scan read last, to tell the same history from a new one."""
+
+    fh.seek(max(0, offset - 4096))
+    return hashlib.sha256(fh.read(offset - max(0, offset - 4096))).hexdigest()
 
 
 def _saved(transcript: Path) -> Path:
@@ -106,15 +127,16 @@ def scanned(transcript: Path) -> Scan:
         scan = Scan(**json.loads(saved.read_text(encoding="utf-8")))
     except (OSError, ValueError, TypeError):
         scan = Scan()
-    if scan.offset > size:   # rewritten from the start
-        scan = Scan()
     with transcript.open("rb") as fh:
+        if scan.offset > size or _mark(fh, scan.offset) != scan.mark:   # rewritten: another history
+            scan = Scan(mark=_mark(fh, 0))
         fh.seek(scan.offset)
         data = fh.read()
-    end = data.rfind(b"\n") + 1   # a line still being written waits for the next call
-    for line in data[:end].decode("utf-8", "replace").splitlines():
-        scan.read(line)
-    scan.offset += end
+        end = data.rfind(b"\n") + 1   # a line still being written waits for the next call
+        for line in data[:end].decode("utf-8", "replace").splitlines():
+            scan.read(line)
+        scan.offset += end
+        scan.mark = _mark(fh, scan.offset)
     try:
         STATE.mkdir(parents=True, exist_ok=True)
         part = saved.with_suffix(f".{os.getpid()}.part")
@@ -126,11 +148,12 @@ def scanned(transcript: Path) -> Scan:
 
 
 def running(output: str) -> bool:
-    """Whether a task's output file is still held open by the command writing it. A file that is gone is not;
-    an unnamed one, or one on a system without share modes, counts as running."""
+    """Whether a task's output file is shown held open by the command writing it. Only Windows share modes show
+    that: elsewhere, or for an unnamed file, nothing is shown, and nothing is held, since a hold for a task whose
+    process may have ended (a resumed session's) would stop the session on a guess."""
 
-    if not output or os.name != "nt":
-        return True
+    if not output or not LIVENESS:
+        return False
     if not os.path.exists(output):
         return False
     import ctypes
@@ -151,7 +174,7 @@ def left(transcript: Path) -> list[str]:
     """Tasks a timeout moved to the background, still running, that the session has neither waited on, read,
     nor stopped, oldest first."""
 
-    return [task for task, output in scanned(transcript).pending.items() if running(output)]
+    return [task for task, output in scanned(transcript).undecided().items() if running(output)]
 
 
 def verdict(payload: dict) -> dict | None:

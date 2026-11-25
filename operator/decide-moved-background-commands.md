@@ -36,9 +36,12 @@ is left on the list, only those deciding tools go through.
 
 The first call reads the whole transcript; later calls read only what was
 added, from a scan kept under the temporary folder, so a command moved long
-ago stays on the list. On Windows a command counts only while its output file
-is still held open. A command whose process has ended holds nothing, as when a
-resumed session's earlier process ended without a notice.
+ago stays on the list. A rewritten transcript is read again from its start.
+Parallel decisions and notices settle by task: a failed call undoes nothing
+another call decided. A command counts only while its output file is seen
+held open, which Windows shows. A command whose process has ended holds
+nothing, as when a resumed session's earlier process ended without a notice.
+Elsewhere nothing shows a held file, so nothing is held.
 
 ## What it does not do
 

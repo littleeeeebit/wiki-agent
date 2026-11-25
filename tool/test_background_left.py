@@ -16,9 +16,16 @@ import background_left  # noqa: E402
 from background_left import left, verdict  # noqa: E402
 
 
+SHOWN_RUNNING = background_left.running
+
+
 @pytest.fixture(autouse=True)
 def own_state(tmp_path, monkeypatch):
+    """Each test keeps its own saved scan, and its moved commands count as running unless it asks for the
+    output-file check itself."""
+
     monkeypatch.setattr(background_left, "STATE", tmp_path / "state")
+    monkeypatch.setattr(background_left, "running", lambda output: True)
 
 
 def moved(task: str, timed_out: bool = True, output: str = "") -> dict:
@@ -143,8 +150,47 @@ def test_a_line_still_being_written_waits_for_the_next_call(tmp_path):
     assert left(path) == ["task1"]
 
 
+def test_parallel_decisions_on_one_task_settle_by_what_each_returned(tmp_path):
+    target = {"file_path": "tasks/task1.output"}
+    path = transcript(tmp_path, moved("task1"), used("Read", use="r1", **target), used("Read", use="r2", **target),
+                      answered("r1", error=True), answered("r2", error=False))
+    assert not denied(path)
+    path = transcript(tmp_path, moved("task1"), used("Read", use="r1", **target), used("Read", use="r2", **target),
+                      answered("r1", error=False), answered("r2", error=True))
+    assert not denied(path)
+    path = transcript(tmp_path, moved("task1"), used("Read", use="r1", **target), used("Read", use="r2", **target),
+                      answered("r1", error=True), answered("r2", error=True))
+    assert denied(path)
+
+
+def test_a_notice_while_a_decision_is_out_ends_the_task_whatever_the_decision_returns(tmp_path):
+    path = transcript(tmp_path, moved("task1"), used("Read", use="r1", file_path="tasks/task1.output"),
+                      notice("task1"), answered("r1", error=True))
+    assert not denied(path)
+
+
+def test_a_transcript_rewritten_to_the_same_size_is_read_again_from_its_start(tmp_path):
+    path = transcript(tmp_path, moved("old1"))
+    assert left(path) == ["old1"]
+    size = path.stat().st_size
+    transcript(tmp_path, moved("new1"))
+    assert path.stat().st_size == size
+    assert left(path) == ["new1"]
+
+
+def test_where_a_held_output_file_cannot_be_seen_nothing_is_held(tmp_path, monkeypatch):
+    monkeypatch.setattr(background_left, "running", SHOWN_RUNNING)
+    monkeypatch.setattr(background_left, "LIVENESS", False)
+    output = tmp_path / "task1.output"
+    with output.open("a", encoding="utf-8"):
+        assert not denied(transcript(tmp_path, moved("task1", output=str(output))))
+    monkeypatch.setattr(background_left, "LIVENESS", os.name == "nt")
+    assert not denied(transcript(tmp_path, moved("task2")))   # an unnamed output file shows nothing either
+
+
 @pytest.mark.skipif(os.name != "nt", reason="share modes tell a held output file only on Windows")
-def test_a_command_counts_as_running_only_while_its_output_file_is_held_open(tmp_path):
+def test_a_command_counts_as_running_only_while_its_output_file_is_held_open(tmp_path, monkeypatch):
+    monkeypatch.setattr(background_left, "running", SHOWN_RUNNING)
     output = tmp_path / "task1.output"
     output.write_text("", encoding="utf-8")
     path = transcript(tmp_path, moved("task1", output=str(output)))
