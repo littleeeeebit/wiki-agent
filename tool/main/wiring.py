@@ -133,8 +133,8 @@ def raw(file: Path) -> bytes | None:
 def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bool:
     """`settings` staged in the folder `own` checked and swapped in whole, only if, once the staging is written,
     that folder is still the same one, the file still the checkout's own and untracked and still `source`, the
-    bytes the plan was made from (`None`: absent), with `disableAllHooks` off in both files, and the server is not
-    going down. An edit or removal the person made since writes nothing.
+    bytes the plan was made from (`None`: absent), with `disableAllHooks` off in both files, the hub still on main,
+    and the server not going down. An edit or removal the person made since writes nothing.
 
     Accepted limits: the final checks read the folder, the index (one `git ls-files`), both files' opt-out and the
     bytes once each, in that order, and no lock holds them still; an action that lands after the check that would
@@ -150,7 +150,8 @@ def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bo
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
             out.write(connect.settled(settings))
         plan = connect.pending(repo)   # the slow read first: what the person does meanwhile, the checks below see
-        if runtime.stopping.is_set() or file.parent.resolve() != where or not os.path.samestat(before, os.stat(where)) \
+        if runtime.stopping.is_set() or refused() or file.parent.resolve() != where \
+                or not os.path.samestat(before, os.stat(where)) \
                 or not own(repo, file) or switched_off(plan) or raw(file) != source:   # the bytes last
             return False
         os.replace(partial, where / file.name)
@@ -166,13 +167,15 @@ def own(repo: Path, file: Path) -> bool:
 
     if file.is_symlink() or file.resolve() != repo / file.relative_to(repo):
         return False
+    # The folder alone names the checkout and its index: no inherited `GIT_DIR`, `GIT_INDEX_FILE` or pathspec mode.
+    plain = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
     if file.parent.is_dir():   # the checkout its folder belongs to, which must be this one
         top = subprocess.run(["git", "-C", str(file.parent), "rev-parse", "--show-toplevel"],
-                             capture_output=True, encoding="utf-8", errors="replace")
+                             capture_output=True, encoding="utf-8", errors="replace", env=plain)
         if top.returncode or Path(top.stdout.strip()).resolve() != repo.resolve():
             return False
     done = subprocess.run(["git", "-C", str(repo), "ls-files", "--", f":(icase){file.relative_to(repo).as_posix()}"],
-                          capture_output=True, encoding="utf-8", errors="replace")
+                          capture_output=True, encoding="utf-8", errors="replace", env=plain)
     return done.returncode == 0 and not done.stdout.strip()
 
 

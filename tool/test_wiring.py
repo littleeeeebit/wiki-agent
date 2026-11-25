@@ -121,6 +121,14 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
          patch.object(wiring.apply, "user_wired", return_value=True):
         with patch.object(wiring, "hub_branch", return_value="feature"):
             assert wiring.settle() == [], "main 이 아닌 허브는 그 브랜치의 배선을 걸지 않는다"
+        branches = iter(["main"])   # the hub leaves main while the sweep plans: nothing of the new branch lands
+        with patch.object(wiring, "hub_branch", side_effect=lambda: next(branches, "feature")):
+            assert wiring.settle() == [] and (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+        index = tmp_path / "empty-index"   # an index the server's environment names, and a literal pathspec mode
+        with patch.object(wiring, "hub_branch", return_value="main"), \
+                patch.dict(os.environ, {"GIT_INDEX_FILE": str(index), "GIT_LITERAL_PATHSPECS": "1"}):
+            assert wiring.own(kept.resolve(), kept.resolve() / ".claude/settings.json") is False
+            assert wiring.own(cased.resolve(), cased.resolve() / ".claude/settings.json") is False
         with patch.object(wiring, "hub_branch", return_value="main"):
             done = wiring.settle()
             assert done == [f"{loose.resolve() / '.claude' / 'settings.json'}: deny 추가: {rule}"]
