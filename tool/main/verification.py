@@ -416,11 +416,16 @@ def status(repo: Path, head: str, state: str, description: str) -> dict:
                   {"state": state, "context": CONTEXT, "description": description[:140]})
 
 
+class Replaced(RuntimeError):
+    """The task this record was read from is gone, or another one was made under its ID."""
+
+
 def keep(spec: dict, **fields) -> dict:
+    born = (spec.get("history") or [{}])[0].get("ts")   # as `loop.born`: a task made again has another
     with specs._files:
         fresh = specs.load(spec["repo"], spec["id"])
-        if fresh is None:
-            raise RuntimeError("검증 명세가 없어졌다")
+        if fresh is None or born is not None and (fresh.get("history") or [{}])[0].get("ts") != born:
+            raise Replaced("검증 명세가 없어졌다")
         fresh["local_verification"] = {"version": 1, **fresh.get("local_verification", {}), **fields}
         specs.save(fresh)
         return fresh

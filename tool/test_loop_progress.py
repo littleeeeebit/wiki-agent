@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from agent import Event
-from main import loop, specs, sweep, work
+from main import loop, specs, sweep, verification, work
 from test_loop import (  # noqa: F401 -- shared fixtures and isolated Git/GitHub world
     Reviewer, Worker, allow, client, deny, git, no_machine_settings, pr_spec, template, waited, world,
     looped, mapped, allowed_spec, round_of, FINAL,
@@ -339,10 +339,12 @@ def test_an_answered_escalation_ends_the_step_unless_the_turn_was_stopped(tmp_pa
     """`handoff.applied` leaves the author's answer owed; the turn that escalated ends the step, and a new one
     sends it (`handed`). A work pane's Stop on that turn stops the loop with the answer still owed."""
     store = {"rev": 2, "handoff_owed": None}
-    halted = []
+    halted, reporting = [], []
 
     def begin(path, chat, text, release, run):
         store["handoff_owed"] = {"kind": "spec-update", "rev": 2}   # this turn's check applied the author's revision
+        if reporting:   # this turn saves a done-report of its own
+            store["report_at"] = {"rev": 2, "turn": run.turn, "head": "h"}
         run.put({"kind": "done", "text": "escalated", "meta": {}, "session_id": "h", "parent_id": None})
         if halted:
             run.halt.set()
@@ -356,10 +358,16 @@ def test_an_answered_escalation_ends_the_step_unless_the_turn_was_stopped(tmp_pa
             loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1")
         # An answer owed from before is not this turn's: a cleanup turn sent ahead of it finishes. A done-report
         # it saved never carried the answer, so it becomes the baseline the delivery's report is measured from.
-        store["report_at"] = {"rev": 2, "turn": "cleanup", "head": "h"}
+        # The owner's report from their own turn, saved while the loop was stopped, is not moved: it still counts.
+        store["report_at"] = {"rev": 2, "turn": "owner", "head": "h"}
         with patch.object(loop, "own", side_effect=lambda lp, **f: store.update(f) or dict(store)):
             assert loop.turn(loop.Loop("proj", "t1"), {}, where, "cleanup") == "escalated" and not stop.called
+            assert store["handoff_owed"] == {"kind": "spec-update", "rev": 2}
+            reporting.append(True)
+            assert loop.turn(loop.Loop("proj", "t1"), {}, where, "cleanup") == "escalated" and not stop.called
         assert store["handoff_owed"] == {"kind": "spec-update", "rev": 2, "report_at": store["report_at"]}
+        assert store["report_at"]["turn"] not in (None, "owner")
+        reporting.clear()
         store.update(handoff_owed={"kind": "spec-update", "rev": 2}, report_at=None)
         # A newer answer than the one being delivered: its text is stale before it is sent.
         sending = loop.Loop("proj", "t1")
@@ -441,8 +449,11 @@ def test_an_external_gate_cut_between_its_receipt_and_gate_is_rebuilt_from_the_r
             patch.object(loop, "change", side_effect=lambda *a, **k: {} if receipt.called else None) as change:
         assert loop.external_shipped(lp, {"gate": {"head": "h", "ok": True}}, tmp_path, tmp_path, "h", "main")
         assert not rounded.called   # receipt and `gate` both stand: reused
+        # An older failed `gate` at this head, cut before the passing receipt's `gate` was saved: rebuilt.
+        assert loop.external_shipped(lp, {"gate": {"head": "h", "ok": False}}, tmp_path, tmp_path, "h", "main")
+        assert rounded.call_count == 1 and change.call_args.kwargs == {"gate": {"ok": True, "head": "h"}}
         assert loop.external_shipped(lp, {}, tmp_path, tmp_path, "h", "main")   # `gate` only after the receipt
-        assert rounded.called and change.call_args.kwargs == {"gate": {"ok": True, "head": "h"}}
+        assert rounded.call_count == 2 and change.call_args.kwargs == {"gate": {"ok": True, "head": "h"}}
         receipt.return_value = None   # made again under the ID: no `gate` for it
         change.reset_mock()
         assert loop.external_shipped(lp, {}, tmp_path, tmp_path, "h", "main") is False and not change.called
@@ -481,4 +492,12 @@ def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path)
             assert specs.validate("proj", "t1", old.born, round={"ok": True}) is None and not save.called
             assert loop.own(old, repaired="h") is None and not save.called
             assert loop.stop(old, "proj", "t1", loop.Why.GATE) is False and not save.called
+            # Nor its local-verification record: an old cloud failure (`return_to_cloud`) goes through `keep`.
+            with pytest.raises(verification.Replaced):
+                verification.keep({"repo": "proj", "id": "t1", "history": [{"ts": 1.0}]}, failure_attempts=["old"])
+            assert not save.called
+            verification.keep({"repo": "proj", "id": "t1", "history": [{"ts": 2.0}]}, state="failed")
+            assert save.call_args[0][0]["local_verification"]["state"] == "failed"   # its own task is written
+            with patch.object(loop, "stepped", side_effect=verification.Replaced("gone")):
+                assert loop.step(old) is False   # the old loop leaves; the replacement's own loop runs it
     assert update.call_count == 1   # the replacement never takes the old checkout's baseline
