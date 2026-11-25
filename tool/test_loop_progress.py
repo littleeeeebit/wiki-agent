@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from agent import Event
-from main import loop, specs, work
+from main import loop, specs, sweep, work
 from test_loop import (  # noqa: F401 -- shared fixtures and isolated Git/GitHub world
     Reviewer, Worker, allow, client, deny, git, no_machine_settings, pr_spec, template, waited, world,
     looped, mapped, allowed_spec, round_of, FINAL,
@@ -390,10 +390,11 @@ def test_the_authors_answer_stays_owed_until_its_turn_passes_this_revision(tmp_p
         store["report_at"] = {"rev": 2, "turn": f"t{len(sent)}", "head": "h2"}
         return "answer"
 
-    spot, at = loop.Loop("proj", "t1"), subprocess.CompletedProcess([], 0, "h2\n", "")
+    spot, at, held = loop.Loop("proj", "t1"), subprocess.CompletedProcess([], 0, "h2\n", ""), []
     with patch.object(loop, "told", told), patch.object(specs, "load", lambda *a: dict(store)), \
             patch("main.handoff.turn_for", return_value="Revision 2 replaces the spec."), \
-            patch.object(specs, "sh", return_value=at), patch.object(loop, "change", return_value={}) as change:
+            patch.object(specs, "sh", return_value=at), patch.object(loop, "change", return_value={}) as change, \
+            patch.object(loop, "wait_hold", side_effect=lambda *a: held.append(1) or (lambda: None)):
         assert loop.handed(spot, dict(store), tmp_path, owed) is True
         assert sent[0].startswith("Revision 2 replaces the spec.") and "revision 2" in sent[0]
         assert sent[1] == specs.REPORT_AGAIN.format(rev=2) and change.call_args.kwargs == {"handoff_owed": None}
@@ -420,4 +421,16 @@ def test_the_authors_answer_stays_owed_until_its_turn_passes_this_revision(tmp_p
         store.update(handoff_owed=owed)
         with patch.object(specs, "_files", Revising()), pytest.raises(loop.Revised):
             loop.handed(spot, dict(store), tmp_path, owed)
-    assert change.call_count == 2 and spot.handing is None
+    # Every clear is judged holding the worktree, so no other turn commits between its check and the clear.
+    assert change.call_count == 2 and len(held) == 4 and spot.handing is None
+
+
+def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path):
+    def stopped(spot, spec, path, text):
+        spot.halt.set()   # the Review Loop Stop lands after the repair committed code
+        return None
+
+    with patch.object(loop, "turn", stopped), patch.object(sweep, "owed", return_value=True), \
+            patch.object(specs, "load", return_value={"cleanup_owed": "base"}), patch.object(specs, "update") as update:
+        assert loop.told(loop.Loop("proj", "t1"), {}, tmp_path, "fix R1") is None
+    update.assert_called_once_with("proj", "t1", cleanup_owed="base")   # on the stopped spec, its state untouched

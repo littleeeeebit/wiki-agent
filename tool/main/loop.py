@@ -974,8 +974,11 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
                                "nothing more is sent to that provider")
         return turn(loop, specs.load(loop.repo, loop.sid) or spec, path, t)
 
+    def keep(fields: dict):   # a Review Loop Stop's baseline lands on the stopped spec too, never reopening it
+        return change(loop, **fields) or (loop.halt.is_set() and specs.update(loop.repo, loop.sid, **fields))
+
     return sweep.held(path, text, follow, lambda answer: block("test-cleanup", answer),
-                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), lambda fields: change(loop, **fields),
+                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), keep,
                       (specs.load(loop.repo, loop.sid) or spec).get("cleanup_owed", ""))
 
 
@@ -1448,13 +1451,19 @@ def handed(loop: Loop, spec: dict, path: Path, owed: dict) -> bool:
         return specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
 
     def clear(turns: list | None = None) -> bool:
-        # Judged again under the lock it is cleared in: a newer answer, or a revision that reset the report,
-        # is the next step's to send.
-        with specs._files:
-            now = specs.load(loop.repo, loop.sid) or {}
-            if now.get("handoff_owed") != owed or not complete(now, turns):
-                raise Revised()
-            return change(loop, handoff_owed=None) is not None
+        # Judged again holding the worktree and the lock it is cleared in: a commit, a newer answer, or a
+        # revision that reset the report is the next step's to send.
+        release = wait_hold(loop, path)
+        if release is None:
+            return False
+        try:
+            with specs._files:
+                now = specs.load(loop.repo, loop.sid) or {}
+                if now.get("handoff_owed") != owed or not complete(now, turns):
+                    raise Revised()
+                return change(loop, handoff_owed=None) is not None
+        finally:
+            release()
 
     if complete(spec):
         return clear()
