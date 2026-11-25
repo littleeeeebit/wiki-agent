@@ -273,6 +273,23 @@ def test_a_dispute_stops_for_the_owner_only_once_its_own_input_was_handed_to_the
     assert o()["stage"] == "build" and o()["input_sent"] == [{k: bad[k] for k in measure.DISPUTED}]
 
 
+def test_after_the_owners_stop_the_next_report_goes_to_the_build_even_at_a_cap_of_one(at_measure, monkeypatch):
+    from main import oneshot_review
+
+    monkeypatch.setattr(oneshot_review, "cap", lambda: 1)
+    store, head = oneshot_spec.store("budget"), o()["built_head"]
+    bad = {"input": "M2", "env": ENV, "what": "서비스 키", "kind": "secret", "why": "no", "said": "말", "asked": "물음"}
+    oneshot_spec.saved("budget", oneshot={"input_sent": [{k: bad[k] for k in measure.DISPUTED}]})
+    assert measure.result("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "input", "input_error": bad}) is None
+    assert o()["stopped"]["reason"] == "measure-input" and o()["input_owed"]
+    then = measure.result("budget", store, {"n": 2, "head": head, "mode": "auto", "status": "input",
+                                            "input_error": {**bad, "asked": ""}})
+    assert then is not None and o()["stage"] == "build" and not o()["input_owed"]   # one build turn, cap or not
+    oneshot_spec.saved("budget", oneshot={"stage": "measure", "working": None})
+    assert measure.result("budget", store, {"n": 3, "head": head, "mode": "auto", "status": "input",
+                                            "input_error": {**bad, "asked": ""}}) is None   # then the cap again
+
+
 def test_a_stop_or_a_set_aside_result_shows_the_owner_its_sentence_masked_whole(at_measure, monkeypatch):
     store, head, hide = oneshot_spec.store("budget"), o()["built_head"], {"비밀 값이": "[K]"}
     measure.decided("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "passed"}, -1, hide)

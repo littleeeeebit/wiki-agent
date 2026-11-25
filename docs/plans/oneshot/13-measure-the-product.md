@@ -159,10 +159,16 @@ stop by itself. The rules:
   characters. A name or an address inside it passes; an account in another
   language, or a longer one, goes back to the build. The owner reads both
   parts whole, in a sentence the server writes around them. Every sentence
-  a measurement's card or stop shows, the owner's stop, a set-aside result
-  and a halt included, is masked as a whole with the report's mask.
-- The owner's stop also resets `measure_fails`: their press sends the next
-  report to the build, never straight to the round cap.
+  that carries text from the report (the card's `error`, the owner's stop,
+  the round cap's stop) is masked as a whole with the report's mask, and so
+  are the worker's own halt and set-aside sentences where it holds that mask.
+- A fixed sentence the server writes with no text from the report, such as
+  a result set aside by a later input change, is shown as written. A secret
+  that is itself a phrase of such a sentence is an accepted limit: it was
+  never the report's, and the sentence says nothing of it.
+- The owner's stop also resets `measure_fails` and sets `input_owed`: their
+  press sends the next report to the build, even at a round cap of one,
+  before the cap applies again.
 - The server reads `checked` by its shape and language, never by whether it
   is true. That is an accepted limit: the owner reads the account, and a
   press with the same value sends the next report to the build again.

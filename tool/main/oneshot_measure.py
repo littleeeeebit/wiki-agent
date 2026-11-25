@@ -418,8 +418,8 @@ def measure(repo: str, mode: str | None = None) -> None:
             return None
         record["tail"] = (text or "").strip()[-3000:]
         if halt.is_set():
-            store.stop("measure", "사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
-                       else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다")
+            store.stop("measure", masked("사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
+                                         else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다", hide))
             return None
         found = found if not cut else {"error": cut}
         record |= found | {"clips": clips_of(out, hide), "code": code}
@@ -477,18 +477,20 @@ def result(repo: str, store, record: dict, hide: dict[str, str] | None = None): 
         bad = record["input_error"]
         # The build was sent it: the owner's. Their press sends the next report to the build, all counts from zero.
         if bad["asked"] and {k: bad[k] for k in DISPUTED} in (o.get("input_sent") or []):
-            oneshot_spec.saved(repo, oneshot={"measures": runs, "input_sent": None, "input_fails": 0, "measure_fails": 0})
+            oneshot_spec.saved(repo, oneshot={"measures": runs, "input_sent": None, "input_fails": 0, "measure_fails": 0,
+                                              "input_owed": True})   # whatever the cap, the next report is the build's
             store.stop("measure-input", masked(bad["asked"], hide))
             return None
         disputes += 1   # every input's, kept through a machine pass: one only the owner's measurement uses reaches the cap
         fails = max(fails, disputes)
         runs[-1] = record = {**record, "status": "failed", "error": masked(bad["said"], hide)}
-    if fails >= oneshot_review.cap():   # handed to the build only when the owner's retry sends it (`start`)
+    if fails >= oneshot_review.cap() and not (record.get("input_error") and o.get("input_owed")):   # sent by `start`
         oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails, "input_fails": disputes})
         store.stop("measure", masked(f"실측이 {fails}번 실패했다 — {failure(record)}", hide))   # masked whole, as shown
         return None
     spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails, "stage": "build", "fix": "measure",
-                                             "attempts": 0, "working": "build", "input_fails": disputes, "input_sent": handed(o, record)})
+                                             "attempts": 0, "working": "build", "input_fails": disputes, "input_sent": handed(o, record),
+                                             "input_owed": None})
     text = fixing(spec)
     return lambda: oneshot_build.send(repo, "build", text)
 
