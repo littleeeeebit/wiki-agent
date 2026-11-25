@@ -37,7 +37,7 @@ from common import masked
 from . import (oneshot, oneshot_build, oneshot_measure_app as product, oneshot_needs, oneshot_profile, oneshot_publish,
                oneshot_spec, release, runtime, specs, work)
 from .oneshot_kept import (CLIPS, DISPUTED, LAUNCHER, MAX_CLIPS, clips_of, committed, fresh, handed,  # noqa: F401
-                           input_report, kept_from, label_of, launched, plain, spelled, strict, tail)
+                           RUNNING, input_report, kept_from, label_of, launched, plain, shown, spelled, strict, tail)
 from .oneshot_publish import commented
 from .query import _lock as work_lock, hold
 
@@ -389,15 +389,22 @@ def measure(repo: str, mode: str | None = None) -> None:
             store.stop("measure", why)
             return None
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name, "mode": how}, None
+        # The card's while it runs, this worker's alone (`halt`, fresh per start): its cut-off once the script starts.
+        RUNNING[repo] = {"n": n, "head": o["built_head"], "mode": how, "ts": record["ts"], "cut": None, "ended": False,
+                         "halt": halt}
         try:
             with product.started(now, plan, tree, env, halt, raw / "serve.log", hide, how,
                                  (passed or {}).get("build")) as build:
                 if build:   # the frozen copy measured: the owner's measurement starts this one, never a new one
                     record["build"] = build
                 limit = plan["measure"]["minutes"] * 60 + 300
-                code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
-                    "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
-                    idle=limit, hide=hide)
+                RUNNING[repo]["cut"] = time.time() + limit   # the script's own clock starts now, after the launch
+                try:
+                    code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
+                        "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
+                        idle=limit, hide=hide)
+                finally:   # returned or raised, before the teardown: what is left is closing and the report
+                    RUNNING[repo].update(cut=None, ended=True)
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
         except Exception as exc:   # unforeseen: a masked owner stop once the folder is dealt with
@@ -764,27 +771,7 @@ def clip(repo: str, n: int, name: str) -> FileResponse:
     return FileResponse(file, media_type=CLIPS[file.suffix.lower()])
 
 
-# -- The screen -------------------------------------------------------------------------------------------
-
-def shown(spec: dict) -> dict:
-    """The measurement's plan and its inputs, given or not (never a secret's value), the runs, and PR #1."""
-
-    o = spec["oneshot"]
-    if not o.get("built_head") or not (o.get("measures") or o.get("stage") == "measure"):
-        return {}
-    plan, error = None, ""
-    if o.get("stage") == "measure":
-        try:
-            plan = planned(Path(spec["worktree"]), spec, o["built_head"])
-        except ValueError as exc:
-            error = str(exc)
-    inputs = [{**x, "given": has(spec, x)} for x in (plan or {}).get("inputs") or []]
-    runs = [{k: v for k, v in m.items() if k != "folder"} for m in o.get("measures") or []]
-    return {"measure": {"plan": plan and {**plan, "inputs": inputs}, "error": error, "runs": runs,
-                        "pr": o.get("pr1"), "head": o["built_head"], "next": next_mode(o)}}
-
-
-oneshot_spec.VIEWS.append(shown)
+oneshot_spec.VIEWS.append(shown)   # the screen's fields, in `oneshot_kept`
 
 
 def secret_changed(repo: str, env: str):   # the fields to put back if the store refuses

@@ -1044,6 +1044,8 @@ def measurement():
                     v["measure"]["plan"]["inputs"][0]["given"] = True
                 if act == "measure/start":
                     v["working"] = "measure"
+                    v["measure"]["running"] = {"n": 1, "mode": "owner", "ts": time.time() - 75, "cut": time.time() + 900,
+                                                 "ended": False}
                 if act == "measure/stop":
                     v["working"] = None
                     v["measure"]["runs"] = [{"n": 1, "head": head, "ts": 0, "status": "owner", "mode": "owner", "clips": ["s1.wav"],
@@ -1087,6 +1089,10 @@ def measurement():
         assert posted[-1] == ("measure/start", {"head": head}), posted
         running = page.get_by_role("region", name="실측 중")
         expect(running).to_contain_text("「허용」")
+        expect(running).to_contain_text("1회차 주인 실측 중")   # which one, since when, and what follows
+        expect(running).to_contain_text(re.compile(r"에 시작 · 1분 1\d초 지났다 · 보통 약 15분 걸린다"))
+        expect(running).not_to_contain_text("프로그램을 띄우는 중")   # its script started: the cut-off is known
+        expect(running).to_contain_text("결과와 클립이 이 화면에 뜨고")
         expect(page.get_by_role("button", name="OLD_KEY 지우기")).to_be_visible()   # while it runs as well
         with posting(page):
             running.get_by_role("button", name="멈춤").click()
