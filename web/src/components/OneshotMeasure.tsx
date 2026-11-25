@@ -124,7 +124,8 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
         ? 'PC 프로그램은 보이지 않는 별도 바탕화면에서 돈다. 창이 뜨지 않는 것이 정상이다. 프로그램에는 소리를 내지 말라고 알려 두었다. 할 일은 없다.'
         : '서버가 백엔드를 띄워 혼자 잰다. 할 일은 없다.')
         : run?.ended ? '재기는 끝났다. 더 할 일은 없다. 결과가 뜨기를 기다린다.'
-          : plan?.app ? '화면에 뜬 프로그램을 보고 소리를 듣는다.' : '아래 단계를 한다.'}</p>
+          : !run?.cut ? '아직 할 일은 없다. 실측이 시작되면 이 줄이 바뀐다.'
+            : plan?.app ? '화면에 뜬 프로그램을 보고 소리를 듣는다.' : '아래 단계를 한다.'}</p>
       {owner && !run?.ended && during.length > 0 && <>   {/* now only once the script runs, which opens what they need */}
         <p>{run?.cut ? '지금 할 일:' : '프로그램이 뜨고 실측이 시작되면 할 일:'}</p><Steps steps={during} /></>}
       {measured.length > 0 && (
