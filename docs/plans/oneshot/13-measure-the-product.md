@@ -32,6 +32,7 @@ in `raw/specs/vtuber-ko-dub/oneshot-initial.json` under `oneshot.measures`.
 | When the owner measures | Once, after every metric that needs no person has passed on one build. The program opens on the owner's own screen, plays the real broadcast and speaks Korean out loud |
 | A metric that never ran | A failure, like any other. A build turn cannot hand the owner a measurement whose live part never played |
 | How it ships | One pull request: this plan and all of 13a to 13c, never split. Once it is merged, the stopped `vtuber-ko-dub` run goes through it with no other change |
+| An input the script calls wrong (2026-11-25) | The owner's input stands. The build agent gets it as a failure and fixes the program, unless a check outside the program shows the input wrong; only then is the owner asked, in Korean written by the server. One pull request (13e) |
 
 ## Design
 
@@ -121,6 +122,63 @@ has no mode and never had the server's pass, so the server measures that HEAD
 first too. An approval the owner gave before this step stands: the owner
 already measured that HEAD in full and judged it, and the review reads it.
 
+### An input the script calls wrong is the build's to prove
+
+The `vtuber-ko-dub` run's third measurement (2026-11-25) stopped for the
+owner on `M5`, a live broadcast that was on air. Twitch now names the
+broadcast in `#EXT-X-SESSION-DATA` instead of `#EXT-X-TWITCH-INFO`, and the
+program read an empty id, refused every live, and its script reported that
+as a wrong input, in English. Each new address the owner gave stopped the
+same way.
+
+The owner gave the input, so the script's `input_error` is not the owner's
+stop by itself. The rules:
+
+- A report with an `input_error` that names no input the plan declares, or
+  a blank reason, is a failed report, the build's like any other. Its error
+  is a fixed sentence: nothing the script wrote is repeated.
+- Otherwise the server saves a failed measurement whose `error` is a Korean
+  sentence of its own. The card and every stop show only server sentences;
+  the script's reason stays in the record for the build turn. The build turn
+  is told the input stands, to check it against the service by a call
+  outside the program and to fix the program.
+- `input_sent` lists the inputs whose dispute a build turn was actually sent,
+  each by id, `env`, `what` and `kind`: the same id in a rebuilt plan is
+  another input. A dispute stopped at the round cap joins it only when the
+  owner's retry sends it to the build, and only if no input changed since
+  that measurement (`input_since`): a report of an earlier value still goes
+  to the build, but hands nothing over.
+- `input_fails` counts every input's disputes. A machine pass leaves it, so
+  inputs only the owner's measurement uses still reach the round cap; the
+  cap's retry resets it with `measure_fails`, and an owner's measurement that
+  ran through every input clears it.
+- The owner is stopped only when a report on an input in `input_sent`
+  carries `checked`: `how`, the check made outside the program, and
+  `answer`, what the service answered, each at least four Hangul syllables,
+  Hangul at least half of its letters in any script, and at most 600
+  characters. A name or an address inside it passes; an account in another
+  language, or a longer one, goes back to the build. The owner reads both
+  parts whole, in a sentence the server writes around them. Every sentence
+  that carries text from the report (the card's `error`, the owner's stop,
+  the round cap's stop) is masked as a whole with the report's mask, and so
+  are the worker's own halt and set-aside sentences where it holds that mask.
+- A fixed sentence the server writes with no text from the report, such as
+  a result set aside by a later input change, is shown as written. A secret
+  that is itself a phrase of such a sentence is an accepted limit: it was
+  never the report's, and the sentence says nothing of it.
+- The owner's stop also resets `measure_fails` and sets `input_owed`: their
+  press sends the next failed report of any kind, a malformed one included,
+  to the build even at a round cap of one, before the cap applies again. An
+  owner's measurement that runs through every input clears `input_owed`
+  with the rest of the dispute.
+- The server reads `checked` by its shape and language, never by whether it
+  is true. That is an accepted limit: the owner reads the account, and a
+  press with the same value sends the next report to the build again.
+- Any change of an input's value, and the owner's stop itself, clear
+  `input_sent` and `input_fails`, and a value change sets `input_since`: the
+  next such report goes to the build first. Pressing `[실측 시작]` again with the same value is how the owner
+  says it stands.
+
 A program that leaves the owner's screen empty, opens no window of its own,
 or plays no sound the owner can hear is the owner's to refuse; the note says
 which.
@@ -133,3 +191,4 @@ which.
 | 13b | The server measures by itself after each passing build turn, on the run-owned desktop, without sound, with one data folder per run; only failed metrics go back | In this pull request |
 | 13c | The owner's one measurement on their own screen, with sound, after every machine metric passed | In this pull request |
 | 13d | The `vtuber-ko-dub` run goes through 13a–13c: its build turn writes the first screen, the server measures until it passes, then the owner measures once | After the merge |
+| 13e | An input the script calls wrong goes to the build agent; the owner is asked only once a check outside the program shows it wrong | In this pull request |
