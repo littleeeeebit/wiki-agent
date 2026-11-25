@@ -242,8 +242,7 @@ def test_files_that_decide_the_grant_are_never_granted(repo):
 
 
 def test_a_task_writes_and_commits_its_checks(repo):
-    """`verification.toml` names the checks, not the grant: a reviewer asked a task for a round check, and
-    refusing the file stopped the task until the person wrote and committed it."""
+    """`verification.toml` names the checks, not the grant: refusing it stopped a task asked for a round check."""
     assert call(repo, tool="Write", file_path=str(repo / "verification.toml"), content="[verification]\n") is None
     for command in ("echo x > verification.toml", "git add verification.toml", "rm verification.toml",
                     "mkdir copy && cp verification.toml copy"):
