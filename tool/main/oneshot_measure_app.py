@@ -3,8 +3,8 @@ run, the program the owner installs (`running`), never a headless server.
 
 `docs/plans/oneshot/13-measure-the-product.md` is the design. `.wiki/measure.json` names the program in `app`: its
 `run` block, shaped as the PC app's (`oneshot_desktop.run_of`), and the local `health` address the program's own
-process answers once it is ready. The built copy is frozen (`oneshot_desktop.frozen`) and started in a job of its own,
-on the run-owned desktop for the server's own measurement (`auto`) and on the owner's desktop for theirs (`owner`).
+process answers once it is ready. The built copy is frozen (`oneshot_desktop.frozen`) and started in a job of its own
+on the owner's desktop, for the server's own measurement (`auto`) as for theirs (`owner`): the owner sees its window.
 Its `{data}` is one folder kept for the whole run, so a sign-in or a download the program kept is still there for the
 next build. The program is told which measurement it is in by `ONESHOT_MEASURE`, as the script is.
 """
@@ -311,7 +311,7 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
     (root / "looks").mkdir(exist_ok=True)
     output = Captured(hide)   # the program's output stays in memory until it is masked
     try:
-        with desktop_session.look(root / "looks", f"measure-{mode}-{uuid.uuid4().hex[:12]}", owned=mode == "auto",
+        with desktop_session.look(root / "looks", f"measure-{mode}-{uuid.uuid4().hex[:12]}", owned=False,
                                   disposable=True) as look:
             try:
                 try:

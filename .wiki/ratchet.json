@@ -193,8 +193,8 @@
     },
     "tool/search/daemon.py": {
       "dup": 10,
-      "lines": 1224,
-      "reason": "baseline at adoption"
+      "lines": 1225,
+      "reason": "the detached daemon imports common.process to start its console children without a window"
     },
     "tool/search/evidence.py": {
       "dup": 6,

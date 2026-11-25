@@ -42,6 +42,29 @@ def background_options() -> dict:
     return {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 
+def hide_child_consoles() -> None:
+    """From now on every child this process starts on Windows gets a hidden console, unless its caller asked for
+    a console of its own (`CREATE_NEW_CONSOLE`) or for none (`DETACHED_PROCESS`).
+
+    `background_options` covers one call; this covers the ones nobody passed it to. A test worker with no console
+    of its own flashed a window on the owner's screen for every `powershell` and `git` it started. A window
+    program still shows its window: the flag only hides consoles. Called once, by the server, the search daemon
+    and the tests, before they start anything.
+    """
+
+    if os.name != "nt" or getattr(subprocess.Popen, "hides_consoles", False):
+        return
+    start = subprocess.Popen.__init__
+    own = subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS
+
+    def hidden(self, *args, creationflags=0, **kwargs):
+        start(self, *args, creationflags=creationflags if creationflags & own else
+              creationflags | subprocess.CREATE_NO_WINDOW, **kwargs)
+
+    subprocess.Popen.__init__ = hidden
+    subprocess.Popen.hides_consoles = True
+
+
 def resumed(proc: subprocess.Popen) -> None:
     """Let a child started with `SUSPENDED` run; `OSError` when it cannot."""
 

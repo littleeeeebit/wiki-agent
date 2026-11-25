@@ -212,7 +212,7 @@ def test_the_frozen_program_starts_with_its_data_the_inputs_and_whose_measuremen
         with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "auto") as build:
             assert not job.ended
     data = product.folder(s) / "data"
-    assert seen["owned"] and seen["disposable"] and seen["key"] == "app"   # auto: the run's own desktop
+    assert not seen["owned"] and seen["disposable"] and seen["key"] == "app"   # auto too: the owner's own screen
     assert Path(seen["argv"][0]).name == "app.exe" and product.folder(s) in Path(seen["argv"][0]).parents
     assert seen["argv"][1:] == ["--data", str(data)] and data.is_dir()
     assert seen["extra"]["ONESHOT_MEASURE"] == "auto" and seen["extra"]["BUDGET_URL"] == "https://example.test/live"

@@ -10,6 +10,11 @@ from pathlib import Path
 
 import pytest
 
+from common import process
+
+# A test worker has no console of its own: every console child it started flashed a window on the owner's screen.
+process.hide_child_consoles()
+
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_xdist_auto_num_workers(config):

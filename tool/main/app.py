@@ -36,7 +36,7 @@ from fastapi.exceptions import RequestValidationError
 
 import translate
 import agent
-from common import errorlog
+from common import errorlog, process
 from common import settings as settings_file
 
 from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_needs, oneshot_pc, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, release_api, runtime, specs, suite, survey, update, verification, wiring, work
@@ -630,6 +630,7 @@ def main() -> int:
     # Every agent, gate and oneshot build this server starts inherits it. Agents build one worktree with many
     # flag sets, and the incremental cache never shrinks: one oneshot worktree's `target` reached 24 GB.
     os.environ.setdefault("CARGO_INCREMENTAL", "0")
+    process.hide_child_consoles()   # no console window of a gate, agent or build reaches the owner's screen
     previous_exception, previous_thread_exception = sys.excepthook, threading.excepthook
     def exception(kind, value, trace):
         errorlog.record("uncaught", value)

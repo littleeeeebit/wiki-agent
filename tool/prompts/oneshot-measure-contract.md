@@ -36,10 +36,12 @@ script drives, so the window shows what the script does.
      settings, a sign-in, and any runtime or model it downloads. The server
      keeps that folder from one build to the next, so a download or a sign-in
      is done once. The server freezes the folder and starts the program in a
-     job of its own: for `auto` on a desktop of its own that the owner never
-     sees, for `owner` on the owner's screen. With `ONESHOT_MEASURE=auto` the
-     program plays no sound through the speakers; what it would say goes to
-     the clips.
+     job of its own, on the owner's screen, for `auto` as for `owner`: the
+     owner sees its window and hears its sound in every measurement, so the
+     program plays through the speakers as it would for them, and what it
+     says also goes to the clips. Nothing else the measurement starts opens
+     a window: the script and every helper it starts run without a console
+     window, and only the program's own window is seen.
 
    Either starts even when the owner has not given the inputs yet, and
    `health` answers 200 once it can take requests. The server starts it at
@@ -48,7 +50,15 @@ script drives, so the window shows what the script does.
    here, that drives the running backend through the requirements as a person
    would, against the real services. It reads the inputs from their
    environment variables. It writes `{out}/report.json`:
-   `{"metrics": {"<id>": <number or true/false>}, "notes": "<Korean>"}`, and,
+   `{"metrics": {"<id>": <number or true/false>}, "notes": "<Korean>"}`. A
+   metric is read from what the product actually put out, never from the
+   product's account of what it did: the sound it played or recorded, the
+   text on its screen, the file it wrote. A share of speech converted into
+   Korean is measured by recognising the language of the recorded output,
+   not by subtracting the spans the program listed as unconverted; a program
+   that played the original and listed nothing would otherwise pass at 1.
+   A metric with nothing to measure (no speech heard, no speaker found) is
+   a failure, never a pass. And,
    when `clips` is true, a few short converted samples under `{out}/clips/`
    (`.wav`, `.mp3`, `.m4a`, `.ogg`, `.mp4`, `.webm`) for the owner to listen
    to. It never waits for a person when `ONESHOT_MEASURE` is `auto`: it uses

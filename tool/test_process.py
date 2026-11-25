@@ -35,3 +35,25 @@ def test_a_child_that_leads_no_group_is_not_contained_elsewhere():
         process.resumed(child)
         child.wait(timeout=10)
         process.terminated(job)
+
+
+# A parent with no console (as a test worker or the search daemon has none) starts a console child that reports
+# whether its console window is visible.
+NO_CONSOLE_PARENT = """
+import subprocess, sys
+sys.path.insert(0, sys.argv[1])
+from common import process
+process.hide_child_consoles()
+probe = "import ctypes; w = ctypes.windll.kernel32.GetConsoleWindow(); print(int(bool(w and ctypes.windll.user32.IsWindowVisible(w))))"
+seen = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60)
+open(sys.argv[2], "w").write(seen.stdout.strip() or seen.stderr)
+"""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="consoles open windows only on Windows")
+def test_a_console_child_of_a_parent_without_a_console_opens_no_window(tmp_path):
+    seen = tmp_path / "seen.txt"
+    tool = os.path.dirname(os.path.abspath(__file__))
+    subprocess.run([sys.executable, "-c", NO_CONSOLE_PARENT, tool, str(seen)], timeout=90,
+                   creationflags=subprocess.DETACHED_PROCESS, check=True)
+    assert seen.read_text() == "0"
