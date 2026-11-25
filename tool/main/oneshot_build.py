@@ -313,8 +313,8 @@ def reclaimed(path: Path, run=None) -> None:
     holds the tree, so no turn of the run is starting. Raise when the record cannot be read or saved: nothing
     is opened on a guess."""
 
-    if ending(path) and work._runs.get(str(path)) is not run:
-        raise HTTPException(409, "앞선 빌드 턴이 아직 끝나는 중이다 — 끝나면 기다리던 지시가 이어 간다")
+    if ending(path) and work._runs.get(str(path)) is not run:   # its end dispatches the queue
+        raise work.Deferred(409, "앞선 빌드 턴이 아직 끝나는 중이다 — 끝나면 기다리던 지시가 이어 간다")
     mine = getattr(run, "token", None)
     with oneshot._lock:   # `Turn.finish` writes its marks under it
         if not (found := record(path)):
@@ -326,6 +326,10 @@ def reclaimed(path: Path, run=None) -> None:
         fields = {"adapter": False} if isinstance(grant, str) and grant != mine and guard_grant.live(spec) else {}
         if flight.get("turn") and flight["turn"] != mine and not o.get("working"):
             fields["oneshot"] = oneshot.settled(o)
+        elif flight.get("turn") and flight["turn"] != mine and o["working"] == flight.get("role"):
+            fields["oneshot"] = {**oneshot.settled(o), "working": None, "stopped": {   # its end failed before its stop
+                "reason": "block", "detail": "작업 턴이 끝났지만 그 끝을 기록하지 못했다 — [재개]로 다시 보낸다",
+                "state": o.get("stage")}}
         if fields:
             oneshot_spec.saved(repo, **fields)
 
@@ -358,6 +362,7 @@ def unstuck(repo: str) -> None:
         errorlog.record("oneshot-grant", exc, repo=repo)
     finally:
         release()
+        work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))   # a queued order its hold kept waiting
 
 
 def idle(path: Path) -> None:

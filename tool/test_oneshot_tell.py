@@ -431,6 +431,20 @@ def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_opens_nothing_o
             oneshot_spec.store("budget").stop("asked", "묻는다", turn="t1")
             oneshot_build.unstuck("budget")   # `[재개]` and the owner's answer clear them too, holding the tree
             assert not live() and not o().get("inflight") and tree not in work._busy
+            # A build turn that ended on an error, its end's save failing too: its stage is still `working`.
+            real("budget", adapter=turn.token, oneshot={"inflight": stale, "working": "build", "stopped": None})
+            oneshot_build.admitted(Path(tree), work.Run(MagicMock()))
+            assert not live() and not o().get("inflight") and o()["working"] is None
+            assert o()["stopped"]["reason"] == "block"   # a stop `[재개]` takes on
+            with patch.object(work, "dispatch") as dispatched:   # the repair's hold hands the queue on as it goes
+                oneshot_build.unstuck("budget")
+            assert dispatched.call_args[0][0] == Path(tree)
+            still, seen = MagicMock(spec=oneshot_build.Turn, over=False, done=True), iter([False])
+            # The hook looked before a newer build turn let the tree go, and that turn is still ending.
+            with patch.dict(work._runs, {tree: still}), patch.dict(work._queued, {tree: order}), \
+                 patch.object(work, "RELEASED", [lambda p: next(seen, None) is None and oneshot_build.ending(p)]):
+                work.dispatch(Path(tree), MagicMock(halt=threading.Event()))
+                assert work._queued[tree] is order and tree not in work._busy   # kept for that turn's end
             broken[0] = True
         with patch.object(work, "begin", side_effect=RuntimeError("refused")):
             oneshot_build.send("budget", "build", "BUILD")   # refused at launch, its clearing failing too

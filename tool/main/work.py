@@ -62,6 +62,10 @@ _turns: dict[threading.Thread, "Run"] = {}  # includes completed turns still run
 _queued: dict[str, "Order"] = {}   # worktree path -> the instruction waiting for it to be let go
 RELEASED: list = []   # `f(path)` once any turn let a worktree go (`dispatch`): the owner's answer that waited (`oneshot_tell`)
 ADMITS: list = []   # `f(path, run)` before any turn starts (`begin`); raises to refuse it (`oneshot_build.admitted`)
+
+
+class Deferred(HTTPException):
+    """An `ADMITS` refusal only until a turn still ending in the tree has ended; its end dispatches the queue."""
 READABLE: list = []   # `fn(path) -> bool`: worktrees a later module recorded (a oneshot run's), in any project
 _provider_usage: dict = {}
 _provider_usage_lock = threading.Lock()
@@ -948,6 +952,11 @@ def dispatch(path: Path, ended: Run) -> None:
     try:
         chat = session(path, order.model, order.effort, order.fast)
         begin(path, chat, order.text, release, Run(chat, person=True))   # a queued order is a person's
+    except Deferred:   # kept for the end of the turn still ending there; one that ended meanwhile found no order,
+        release()      # so it is looked at again
+        with _lock:
+            _queued.setdefault(key, order)
+        dispatch(path, ended)
     except Exception as exc:
         # Nobody's request is waiting on this thread: the failure and the
         # instruction itself go on record, and screens read it again.
