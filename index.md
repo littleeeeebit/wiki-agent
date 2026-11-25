@@ -32,6 +32,7 @@ python tool/intersect.py raw/census-*.jsonl
 | [Ask as options](operator/ask-with-arrow-key-options.md) | `contract` |
 | [Do not multiply subagents](operator/agent-delegation.md) | `contract` |
 | [Compact before stepping away](operator/compact-before-idle.md) | `contract` |
+| [A command its timeout moved is waited on or stopped](operator/decide-moved-background-commands.md) | `landmine` |
 
 ## craft — follows the technique
 
