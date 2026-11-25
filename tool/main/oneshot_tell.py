@@ -98,18 +98,19 @@ def tell(repo: str, body: Tell) -> dict:
             if halt := oneshot_measure.HALTS.get(repo):
                 halt.told = True   # the measurement hands the words on rather than stopping (`oneshot_measure`)
                 halt.set()
-        if not o.get("working") and due(o):   # nothing is running to reach a start: the words are taken in now
+        # Nothing is running to reach a start: the words are taken in now. A turn that has saved its result but still
+        # holds the worktree is running: its handoff meets the words (`diverted`).
+        if not o.get("working") and due(o) and not any(Path(k) == Path(spec["worktree"]) for k in list(work._busy)):
             start(oneshot_spec.store(repo))
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 
 def taken(o: dict) -> list[dict]:
-    """The waiting words a rewrite takes in now: all of them, but while the screens are designed with the owner,
-    only those said before it (a backend review's, which the screens must not be designed past). The others wait
-    for the frontend build."""
+    """The waiting words a rewrite takes in now. Words said while the screens are designed with the owner wait for
+    the frontend build, across any backend rewrite before it; every other word is taken at once (a backend
+    review's, which the screens must not be designed past, included)."""
 
-    pending = o.get("tell_pending") or []
-    return [w for w in pending if w["stage"] not in WAIT] if o.get("stage") in WAIT else pending
+    return [w for w in o.get("tell_pending") or [] if w["stage"] not in WAIT or o.get("stage") in FRONT]
 
 
 def due(o: dict) -> bool:
@@ -159,7 +160,10 @@ def diverted(store: oneshot.Store, what: str) -> bool:
     if what == "retell" or not store.key.startswith("spec:"):
         return False
     with oneshot._lock:   # the check and the start as one step
-        if not due(store.get()):
+        o = store.get()
+        if o.get("working") == "retell":   # a rewrite took the run: it sends the next step itself
+            return True
+        if not due(o):
             return False
         start(store)
     return True

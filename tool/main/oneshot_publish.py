@@ -109,6 +109,8 @@ def publish(repo: str) -> None:
         oneshot_spec.store(repo).stop("measure", f"PR #1 을 올리지 못했다 — {exc} — [실측 시작]을 누르면 다시 올린다")
         return
     spec = oneshot_spec.saved(repo, oneshot={"working": None})
+    if oneshot.diverted(oneshot_spec.store(repo), "measure"):   # the owner's words first, before the old plan's checks
+        return
     from . import oneshot_measure   # it imports this module
     try:   # the server measures by itself at once (plan 13): the owner is called once a machine has nothing to find
         oneshot_measure.start(repo, oneshot_measure.Start(head=spec["oneshot"]["built_head"]))

@@ -115,6 +115,32 @@ def test_words_said_while_the_screens_are_designed_wait_out_a_backend_rewrite(wo
         {"text": "검토 때 한 말", "stage": "review"}, {"text": "화면 이야기", "stage": "split"}])
     assert "검토 때 한 말" in asked[0]["text"] and "화면 이야기" not in asked[0]["text"]
     assert [w["text"] for w in o()["tell_pending"]] == ["화면 이야기"] and sent[0][:2] == ("budget", "build")
+    store = oneshot_spec.store("budget")
+    assert not oneshot.diverted(store, "build")   # across the backend's rebuild it still waits
+    at("build-front", tell_pending=o()["tell_pending"])
+    assert oneshot.diverted(store, "build-front") and o()["working"] == "retell"   # the frontend build takes it
+
+
+def test_a_handoff_a_rewrite_took_yields_and_a_turn_holding_the_tree_is_not_idle(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import work
+    store = oneshot_spec.store("budget")
+    at("build", working="retell")   # the rewrite has taken the words already: the old turn's handoff yields
+    assert oneshot.diverted(store, "build") and o()["working"] == "retell"
+    at("build")   # the tests turn saved its result but still holds the worktree
+    tree = specs.load("budget", oneshot.BRANCH)["worktree"]
+    with patch.dict(work._busy, {str(tree): object()}):
+        say("소리를 줄여")
+    assert o()["working"] is None and o()["tell_pending"]   # its handoff meets the words
+    assert oneshot.diverted(store, "build") and o()["working"] == "retell"
+
+
+def test_a_published_draft_takes_the_owners_words_before_the_old_measurement_plan(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import oneshot_measure, oneshot_publish
+    at("measure", working="publish", built_head="b" * 40, tell_pending=[{"text": "입력 하나를 빼", "stage": "measure"}])
+    with patch.object(oneshot_publish, "published", lambda repo: {"number": 1}), \
+         patch.object(oneshot_measure, "start", side_effect=AssertionError("the old plan was checked first")):
+        oneshot_publish.publish("budget")
+    assert o()["working"] == "retell"
 
 
 def test_a_measurement_the_owner_spoke_into_hands_on_only_once_the_tree_is_let_go(world):  # noqa: F811 — the imported fixture, requested by name

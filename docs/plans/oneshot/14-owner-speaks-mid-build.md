@@ -47,10 +47,13 @@ running turn, and to `tell_pending` with its stage.
   lets go of the worktree, rather than stopping the run.
 - With nothing running, the rewrite starts at once, under the same lock as
   the check, so two requests never both start it.
+- A turn that has saved its result but still holds the worktree is still
+  running: its handoff meets the words.
 - Words said while the screens are designed with the owner (`split` to `r2`,
-  `oneshot_tell.WAIT`) wait until the frontend build begins; R2 is a
-  conversation of its own. Words said before it, during the backend's review
-  for instance, are taken in before the screens are designed past them.
+  `oneshot_tell.WAIT`) wait until the frontend build begins, across any
+  backend rewrite before it; R2 is a conversation of its own. Words said
+  before it, during the backend's review for instance, are taken in before
+  the screens are designed past them.
 
 ### Turning aside
 
@@ -59,7 +62,11 @@ for a stage's worker and `oneshot_build.send` for a work turn. Both ask
 `oneshot.diverted` first. With words waiting, `oneshot_tell.diverted` starts
 the `retell` worker in that step's place, and the step's own text is
 dropped: the rewritten design leads to a fresh build turn, and a review or
-measurement runs again after it. The publication step asks too, so words
+measurement runs again after it. A step whose run a rewrite has already
+taken yields to it, since the rewrite sends the next step itself. The draft
+pull request's upload asks before the measurement checks its old plan, so a
+word that drops an input is never held behind that input. The publication
+step asks too, so words
 said by R3 are never published past. A start that meets the rewrite
 already running (a turn's handoff after a word said at its very end) leaves
 it as it is; one the server refuses otherwise (it is going down) stops the
