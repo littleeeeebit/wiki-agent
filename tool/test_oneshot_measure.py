@@ -282,12 +282,15 @@ def test_after_the_owners_stop_the_next_report_goes_to_the_build_even_at_a_cap_o
     oneshot_spec.saved("budget", oneshot={"input_sent": [{k: bad[k] for k in measure.DISPUTED}]})
     assert measure.result("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "input", "input_error": bad}) is None
     assert o()["stopped"]["reason"] == "measure-input" and o()["input_owed"]
-    then = measure.result("budget", store, {"n": 2, "head": head, "mode": "auto", "status": "input",
-                                            "input_error": {**bad, "asked": ""}})
+    then = measure.result("budget", store, {"n": 2, "head": head, "mode": "auto", "status": "failed",
+                                            "error": "`report.json` 의 input_error 가 ..."})   # even a malformed report
     assert then is not None and o()["stage"] == "build" and not o()["input_owed"]   # one build turn, cap or not
     oneshot_spec.saved("budget", oneshot={"stage": "measure", "working": None})
     assert measure.result("budget", store, {"n": 3, "head": head, "mode": "auto", "status": "input",
                                             "input_error": {**bad, "asked": ""}}) is None   # then the cap again
+    oneshot_spec.saved("budget", oneshot={"input_owed": True})
+    measure.result("budget", store, {"n": 4, "head": head, "mode": "owner", "status": "owner"})
+    assert not o()["input_owed"]   # an owner's measurement that ran through ends what the stop owed
 
 
 def test_a_stop_or_a_set_aside_result_shows_the_owner_its_sentence_masked_whole(at_measure, monkeypatch):

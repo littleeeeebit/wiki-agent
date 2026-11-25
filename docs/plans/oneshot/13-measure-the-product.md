@@ -167,8 +167,10 @@ stop by itself. The rules:
   that is itself a phrase of such a sentence is an accepted limit: it was
   never the report's, and the sentence says nothing of it.
 - The owner's stop also resets `measure_fails` and sets `input_owed`: their
-  press sends the next report to the build, even at a round cap of one,
-  before the cap applies again.
+  press sends the next failed report of any kind, a malformed one included,
+  to the build even at a round cap of one, before the cap applies again. An
+  owner's measurement that runs through every input clears `input_owed`
+  with the rest of the dispute.
 - The server reads `checked` by its shape and language, never by whether it
   is true. That is an accepted limit: the owner reads the account, and a
   press with the same value sends the next report to the build again.

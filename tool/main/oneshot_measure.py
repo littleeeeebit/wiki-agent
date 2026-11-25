@@ -461,7 +461,8 @@ def result(repo: str, store, record: dict, hide: dict[str, str] | None = None): 
     o = store.get()
     runs = [*(o.get("measures") or []), record]
     if record["status"] == "owner":   # it ran through every input: no dispute stands
-        oneshot_spec.saved(repo, oneshot={"measures": runs, "working": None, "input_sent": None, "input_fails": 0})
+        oneshot_spec.saved(repo, oneshot={"measures": runs, "working": None, "input_sent": None, "input_fails": 0,
+                                          "input_owed": None})
         return None
     if record["status"] == "passed":   # every machine metric passed: the owner measures once, on their own screen
         oneshot_spec.saved(repo, oneshot={"measures": runs, "working": None, "measure_fails": 0})
@@ -484,7 +485,7 @@ def result(repo: str, store, record: dict, hide: dict[str, str] | None = None): 
         disputes += 1   # every input's, kept through a machine pass: one only the owner's measurement uses reaches the cap
         fails = max(fails, disputes)
         runs[-1] = record = {**record, "status": "failed", "error": masked(bad["said"], hide)}
-    if fails >= oneshot_review.cap() and not (record.get("input_error") and o.get("input_owed")):   # sent by `start`
+    if fails >= oneshot_review.cap() and not o.get("input_owed"):   # else sent by `start`, the owner's retry
         oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails, "input_fails": disputes})
         store.stop("measure", masked(f"실측이 {fails}번 실패했다 — {failure(record)}", hide))   # masked whole, as shown
         return None
