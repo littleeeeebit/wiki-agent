@@ -1,7 +1,7 @@
 """The owner speaks to a run while it is built (`docs/plans/oneshot/14-owner-speaks-mid-build.md`)."""
 
 import copy
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -108,6 +108,22 @@ def test_a_design_that_could_not_be_committed_leaves_the_record_as_the_files_are
     with patch.object(oneshot_spec, "saved", cut), pytest.raises(OSError):
         retold(sheet.parsed(DESIGN), changed_reqs())
     assert specs.load("budget", oneshot.BRANCH)["requirements"] == REQS and o()["design_head"] == "d" * 40
+
+
+def test_a_design_commit_retried_after_it_landed_returns_head_past_an_untracked_app_file(tmp_path):
+    import subprocess
+    run = lambda *a: subprocess.run(["git", *a], cwd=tmp_path, capture_output=True, text=True, check=True)  # noqa: E731
+    run("init", "-q")
+    run("config", "user.email", "t@example.invalid")
+    run("config", "user.name", "t")
+    (tmp_path / "core.md").write_text("design\n", encoding="utf-8")
+    run("add", "core.md")
+    run("commit", "-qm", "design")
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")   # the build's own file, left untracked
+    stopped = MagicMock()
+    with patch.object(oneshot_spec, "store", lambda repo: stopped):
+        assert oneshot_spec.commit("budget", tmp_path, ["core.md"], "again") == run("rev-parse", "HEAD").stdout.strip()
+    assert not stopped.stop.called
 
 
 def test_words_said_while_the_screens_are_designed_wait_out_a_backend_rewrite(world):  # noqa: F811 — the imported fixture, requested by name

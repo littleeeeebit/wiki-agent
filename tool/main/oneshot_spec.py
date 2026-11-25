@@ -432,6 +432,8 @@ def commit(repo: str, tree: Path, files: list[str], message: str) -> str | None:
     """Exactly `files` committed, whatever else is staged: the new HEAD, or `None` after stopping with `folder`."""
 
     for args in (["add", "--", *files], ["commit", "-m", message, "--", *files]):
+        if args[0] == "commit" and not specs.sh(["git", "diff", "--cached", "--quiet", "--", *files], tree, 60).returncode:
+            break   # every file matches HEAD (a rewrite retried after its commit): HEAD holds the design
         done = specs.sh(["git", *args], tree, 60)
         if done.returncode and not re.search("nothing to commit|no changes added", done.stdout + done.stderr):
             store(repo).stop("folder", f"설계 문서를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")

@@ -21,7 +21,8 @@ export function Track({ view, halt, post, apply }: {
       <div className="flex flex-col gap-5 px-10 pt-5 pb-8 max-[1500px]:px-7 max-[560px]:px-4">
         {halt}
         {o.inflight && <Now inflight={o.inflight} kinds={kinds} />}
-        <Log path={view.worktree ?? ''} onSend={TELLS.includes(view.stage) ? (text) => void api.tell(view.repo, text) : undefined} />
+        <Log path={view.worktree ?? ''} onSend={TELLS.includes(view.stage)   // as the box sends: the pane follows the answer
+          ? (text) => void (post ?? ((t: string) => api.tell(view.repo, t)))(text) : undefined} />
         {TELLS.includes(view.stage) && <Tell view={view} post={post} apply={apply} />}
       </div>
     </Split>

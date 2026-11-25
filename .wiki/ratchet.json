@@ -138,8 +138,8 @@
     },
     "tool/main/oneshot_spec.py": {
       "dup": 0,
-      "lines": 822,
-      "reason": "Oneshot plan 14a: R1's approval writes and commits the design files through `design_committed` and `design_files`, which the owner's mid-build rewrite (`oneshot_tell.retell`) commits with too (sixteen lines). Before that: PR #423, over 9e5a (#421): the design and the redesign save `design_author` with the design they wrote, and approval gives the build's spec its `task`, the committed design as `precedence` and that author, so the builder's escalations reach the model that designed it (six lines past the 800-line cap for a file without an entry)."
+      "lines": 824,
+      "reason": "PR #450 round 9: a design commit whose files already match HEAD (a rewrite retried after its commit landed) returns HEAD rather than stopping on git's untracked-files no-op (two lines). Oneshot plan 14a: R1's approval writes and commits the design files through `design_committed` and `design_files`, which the owner's mid-build rewrite (`oneshot_tell.retell`) commits with too (sixteen lines). Before that: PR #423, over 9e5a (#421): the design and the redesign save `design_author` with the design they wrote, and approval gives the build's spec its `task`, the committed design as `precedence` and that author, so the builder's escalations reach the model that designed it (six lines past the 800-line cap for a file without an entry)."
     },
     "tool/main/oneshot_review.py": {
       "dup": 0,
