@@ -158,15 +158,19 @@ def test_the_person_decides_past_the_rounds_or_without_an_author(task):
     with patch.object(handoff, "ask") as ask:
         assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
     assert not ask.called and "기록돼 있지 않다" in specs.load("proj", sid)["fault"]
-    # An unfinished oneshot approved before its approval kept the author asks the spec model its run fixed.
-    specs.update("proj", sid, oneshot={"stage": "build", "working": "build"}, fault=None)
+    # An unfinished oneshot approved before its approval kept the author asks the spec model its run pinned.
     fixed = {"model": "fable", "effort": "high"}
-    with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})) as ask, \
-         patch("main.oneshot.role_config", return_value=fixed) as role, patch("main.oneshot_spec.store"), \
-         patch("main.oneshot_needs.leaked", return_value=""), \
-         patch("main.oneshot_build.send"), patch("main.oneshot_build.checked", return_value=None):
-        specs._check(repo, Run(), block("escalation", ESCALATION))
-    assert ask.call_args[0][1] == fixed and role.call_args[0][0] == "design"
+    for o, asked in (({"stage": "build", "design_head": "abc", "models": {"spec": fixed}}, fixed),
+                     ({"stage": "r1", "models": {"spec": fixed}}, None),   # no design approved yet: no build turn
+                     ({"stage": "build", "design_head": "abc", "models": {"spec": {"model": "", "effort": ""}}},
+                      None)):   # a CLI default names no model that wrote it
+        specs.update("proj", sid, oneshot={**o, "working": o["stage"]}, escalations=[], fault=None)
+        with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})) as ask, \
+             patch("main.oneshot_spec.store"), patch("main.oneshot_needs.leaked", return_value=""), \
+             patch("main.oneshot_build.send"), patch("main.oneshot_build.checked", return_value=None):
+            specs._check(repo, Run(), block("escalation", ESCALATION))
+        assert (ask.call_args[0][1] if ask.called else None) == asked
+        assert asked or "기록돼 있지 않다" in specs.load("proj", sid)["fault"]
 
 
 def test_an_answer_outside_the_three_goes_to_the_person(task):

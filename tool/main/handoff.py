@@ -200,16 +200,17 @@ def found(blocks: list[dict]) -> list[dict]:
 
 
 def author_of(spec: dict) -> dict:
-    """Who wrote the spec. An unfinished oneshot whose design was approved before the approval kept it asks
-    what that approval keeps: the design's author, else the spec model the run fixed at its start."""
+    """Who wrote the spec. An unfinished oneshot whose design was approved (`design_head`) before the approval
+    kept it asks the design's author, else the spec model the run pinned at its start by name. A CLI default
+    names no model that wrote it: the person decides, as for a card with no author."""
 
     if got := spec.get("author") or (spec.get("source") or {}).get("author"):
         return got
     o = spec.get("oneshot") or {}
-    if o.get("stage") in (None, "done"):
+    if o.get("stage") in (None, "done") or not o.get("design_head"):
         return {}
-    from . import oneshot, oneshot_spec
-    return o.get("design_author") or oneshot.role_config("design", oneshot_spec.store(spec["repo"]))
+    pinned = o.get("design_author") or (o.get("models") or {}).get("spec") or {}
+    return pinned if pinned.get("model") else {}
 
 
 def question(spec: dict, escalation: dict) -> str:
