@@ -171,6 +171,19 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
             with patch.object(wiring.connect, "pending", saving):
                 assert wiring.settle() == [], "a save during the last read writes nothing"
             assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == '{"x": 1}'
+            reads.clear()
+
+            def staging(at: Path):   # the person stages the file while the writer's last read of the plan runs
+                reads.append(at)
+                if at == loose.resolve() and reads.count(at) == 2:
+                    git(loose, "add", ".claude/settings.json")
+                return planned(at)
+
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            with patch.object(wiring.connect, "pending", staging):
+                assert wiring.settle() == [], "a file staged during the last read is the person's"
+            assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            git(loose, "rm", "-q", "--cached", ".claude/settings.json")
             with patch.object(wiring.subprocess, "run", unreadable):
                 (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
                 assert wiring.settle() == [], "git 이 색인을 읽지 못하면 추적 여부를 모르니 쓰지 않는다"

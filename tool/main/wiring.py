@@ -138,10 +138,9 @@ def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bo
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
             out.write(connect.settled(settings))
+        plan = connect.pending(repo)   # the slow read first: what the person does meanwhile, the checks below see
         if runtime.stopping.is_set() or file.parent.resolve() != where or not os.path.samestat(before, os.stat(where)) \
-                or not own(repo, file):
-            return False
-        if switched_off(connect.pending(repo)) or raw(file) != source:   # the bytes last, right before the swap
+                or not own(repo, file) or switched_off(plan) or raw(file) != source:   # the bytes last
             return False
         os.replace(partial, where / file.name)
         return True
