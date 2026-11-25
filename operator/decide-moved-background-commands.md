@@ -30,8 +30,15 @@ Until then it was an orphan that no step was going to read.
 session's own transcript and lists commands a timeout moved
 (`backgroundTaskId` with `timedOutAfterMs`). A command drops off the list when
 the session waits (`Yield`, `Monitor`), reads it (`TaskOutput`, or a `Read`
-naming it), or stops it (`TaskStop`), or when its task notice arrives. While
-any command is left on the list, only those deciding tools go through.
+naming it), or stops it (`TaskStop`), or when its task notice arrives. A
+deciding call whose own result is an error decides nothing. While any command
+is left on the list, only those deciding tools go through.
+
+The first call reads the whole transcript; later calls read only what was
+added, from a scan kept under the temporary folder, so a command moved long
+ago stays on the list. On Windows a command counts only while its output file
+is still held open. A command whose process has ended holds nothing, as when a
+resumed session's earlier process ended without a notice.
 
 ## What it does not do
 

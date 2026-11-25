@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -11,16 +12,32 @@ import pytest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import background_left  # noqa: E402
 from background_left import left, verdict  # noqa: E402
 
 
-def moved(task: str, timed_out: bool = True) -> dict:
+@pytest.fixture(autouse=True)
+def own_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(background_left, "STATE", tmp_path / "state")
+
+
+def moved(task: str, timed_out: bool = True, output: str = "") -> dict:
     result = {"stdout": "", "backgroundTaskId": task, **({"timedOutAfterMs": 120000} if timed_out else {})}
-    return {"type": "user", "toolUseResult": result, "message": {"role": "user", "content": []}}
+    text = "Command did not complete within its 120s timeout and was moved to the background " \
+           f"(ID: {task}). Output is being written to: {output}. You will be notified." if output else ""
+    return {"type": "user", "toolUseResult": result,
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"run-{task}",
+                                                     "content": text}]}}
 
 
-def used(name: str, **given) -> dict:
-    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": given}]}}
+def used(name: str, use: str = "", **given) -> dict:
+    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": use or f"use-{name}",
+                                                          "name": name, "input": given}]}}
+
+
+def answered(use: str, error: bool) -> dict:
+    return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": use,
+                                                     "is_error": error, "content": "failed" if error else "ok"}]}}
 
 
 def notice(task: str) -> dict:
@@ -30,8 +47,13 @@ def notice(task: str) -> dict:
 
 def transcript(tmp_path: Path, *entries: dict) -> Path:
     path = tmp_path / "session.jsonl"
-    # A first line the tail read may cut in half is skipped, as in a long transcript.
-    path.write_text("\n".join(["{}"] + [json.dumps(e) for e in entries]) + "\n", encoding="utf-8")
+    path.write_text("".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8")
+    return path
+
+
+def appended(path: Path, *entries: dict) -> Path:
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("".join(json.dumps(e) + "\n" for e in entries))
     return path
 
 
@@ -80,6 +102,58 @@ def test_a_command_started_in_the_background_on_purpose_is_left_alone(tmp_path):
 def test_a_command_moved_after_an_earlier_wait_is_held_again(tmp_path):
     path = transcript(tmp_path, moved("first1"), used("Yield"), moved("second2"))
     assert left(path) == ["second2"]
+
+
+@pytest.mark.parametrize("tool,given", [("TaskOutput", {"task_id": "task1"}), ("TaskStop", {"task_id": "task1"}),
+                                        ("Read", {"file_path": "C:/tasks/task1.output"}), ("Yield", {})])
+def test_a_decision_whose_result_is_an_error_decides_nothing(tmp_path, tool, given):
+    path = transcript(tmp_path, moved("task1"), used(tool, use="d1", **given))
+    assert left(path) == []   # decided while its result is still to come
+    assert denied(appended(path, answered("d1", error=True)))
+    assert left(appended(path, used(tool, use="d2", **given), answered("d2", error=False))) == []
+
+
+def test_a_failed_decision_for_one_task_leaves_another_decided(tmp_path):
+    path = transcript(tmp_path, moved("task1"), moved("task2"), used("TaskStop", use="s1", task_id="task1"),
+                      used("TaskStop", use="s2", task_id="task2"), answered("s1", error=False),
+                      answered("s2", error=True))
+    assert left(path) == ["task2"]
+
+
+def test_a_moved_command_far_back_in_a_long_transcript_is_still_held(tmp_path):
+    later = [{"type": "user", "message": {"content": "x" * (1 << 20)}} for _ in range(3)]
+    assert denied(transcript(tmp_path, moved("task1"), *later))
+
+
+def test_the_first_record_is_read_and_later_calls_read_only_what_was_added(tmp_path):
+    path = transcript(tmp_path, moved("task1"))
+    assert left(path) == ["task1"]
+    offset = json.loads(next((tmp_path / "state").glob("*.json")).read_text(encoding="utf-8"))["offset"]
+    assert offset == path.stat().st_size
+    assert left(appended(path, moved("task2"))) == ["task1", "task2"]
+    assert left(appended(path, notice("task1"))) == ["task2"]
+
+
+def test_a_line_still_being_written_waits_for_the_next_call(tmp_path):
+    path = transcript(tmp_path)
+    whole = json.dumps(moved("task1")) + "\n"
+    path.write_text(whole[:40], encoding="utf-8")
+    assert left(path) == []
+    path.write_text(whole, encoding="utf-8")
+    assert left(path) == ["task1"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="share modes tell a held output file only on Windows")
+def test_a_command_counts_as_running_only_while_its_output_file_is_held_open(tmp_path):
+    output = tmp_path / "task1.output"
+    output.write_text("", encoding="utf-8")
+    path = transcript(tmp_path, moved("task1", output=str(output)))
+    with output.open("a", encoding="utf-8"):   # the command still writing it, as across a compaction
+        assert denied(path)
+    # Its process ended without a notice, as a resumed session's earlier process did: nothing holds it.
+    assert not denied(appended(path, {"type": "user", "message": {"content": "resumed"}}))
+    output.unlink()
+    assert left(path) == []
 
 
 def test_no_transcript_or_one_it_cannot_read_lets_the_call_through(tmp_path):
