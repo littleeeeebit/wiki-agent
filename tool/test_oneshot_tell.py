@@ -222,7 +222,10 @@ def test_a_choice_answers_only_the_turn_that_asked_and_the_words_are_kept_before
             oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t0"))
         assert refused.value.status_code == 409 and not o().get("tell_pending") and o()["stopped"]["reason"] == "asked"
     oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t1"))   # the one that asked
-    assert o()["tell_pending"][-1]["answers"]
+    assert o()["tell_pending"][-1]["answers"] == "t1" and o()["stopped"]["reason"] == "asked"   # waits for the tree
+    with pytest.raises(HTTPException) as twice:   # a second choice for it meanwhile, from either window
+        oneshot_tell.tell("budget", oneshot_tell.Tell(text="제외", asked=[choice], turn="t1"))
+    assert twice.value.status_code == 409 and len(o()["tell_pending"]) == 1
     oneshot_spec.saved("budget", oneshot={"stopped": None, "working": "retell"})   # answered: the rewrite took it
     with pytest.raises(HTTPException) as again:   # the same form sent twice, or from a second window
         oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t1"))
@@ -386,19 +389,40 @@ def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_opens_nothing_o
          patch.object(oneshot_build, "resolve_tools", lambda *a: True), patch.object(work, "session"):
         with patch.object(work, "begin") as begin:
             oneshot_build.send("budget", "build", "BUILD")
+        turn = begin.call_args[0][4]
         assert live()   # the turn's own grant, while it is the run's turn
+        oneshot_build.admitted(Path(tree), turn)   # never refused to itself
         begin.call_args[0][3]()   # the turn ends, and clearing its grant fails: the tree still goes
         assert tree not in work._busy and live()   # until its end clears its mark, no other turn starts there
-        with pytest.raises(HTTPException) as refused:
-            work.begin(Path(tree), MagicMock(), "다른 일", lambda: None, work.Run(MagicMock()))
-        assert refused.value.status_code == 409
         order = MagicMock()
-        with patch.dict(work._queued, {tree: order}):
-            work.dispatch(Path(tree), MagicMock(halt=threading.Event()))
-            assert work._queued[tree] is order   # a queued order waits, kept
-        begin.call_args[0][4].finish()   # its end clears its mark, and its heartbeat stops
-        assert tree not in work._busy and granted() and not live()   # left on record, opening nothing to any turn
-        oneshot_build.admitted(Path(tree), work.Run(MagicMock()))   # any turn may start again
+        with patch.dict(work._runs, {tree: turn}), patch.object(oneshot_build, "RETRY", 0.01):
+            with pytest.raises(HTTPException) as refused:
+                work.begin(Path(tree), MagicMock(), "다른 일", lambda: None, work.Run(MagicMock()))
+            assert refused.value.status_code == 409
+            with patch.dict(work._queued, {tree: order}):
+                work.dispatch(Path(tree), MagicMock(halt=threading.Event()))
+                assert work._queued[tree] is order   # a queued order waits, kept
+            turn.finish()   # its end clears its mark, and its heartbeat stops
+            assert tree not in work._busy and granted() and not live()   # left on record, opening nothing to any turn
+            oneshot_build.admitted(Path(tree), work.Run(MagicMock()))   # any turn may start again
+            # Its end failed to clear the mark too: the grant opens on, and its turn is gone.
+            real("budget", oneshot={"inflight": {**(o().get("inflight") or {}), "turn": turn.token}})
+            assert live()
+            with pytest.raises(HTTPException):   # its clearing fails again: refused, never opened to this turn
+                oneshot_build.admitted(Path(tree), work.Run(MagicMock()))
+            with patch.dict(work._queued, {tree: order}):
+                work.dispatch(Path(tree), MagicMock(halt=threading.Event()))
+                assert work._queued[tree] is order   # waits, and is tried again shortly
+            broken[0] = False
+            oneshot_build.admitted(Path(tree), work.Run(MagicMock()))   # cleared now: no restart needed
+            assert not granted() and not live()
+            real("budget", adapter=turn.token)
+            with patch.object(oneshot_build.json, "loads", side_effect=ValueError("mid-write")), \
+                    pytest.raises(HTTPException):   # a record that cannot be read never opens the tree
+                oneshot_build.admitted(Path(tree), work.Run(MagicMock()))
+            oneshot_build.admitted(Path(tree), work.Run(MagicMock()))
+            real("budget", oneshot={"inflight": None})
+            broken[0] = True
         with patch.object(work, "begin", side_effect=RuntimeError("refused")):
             oneshot_build.send("budget", "build", "BUILD")   # refused at launch, its clearing failing too
         assert tree not in work._busy and not o().get("inflight") and o()["stopped"]["reason"] == "block"

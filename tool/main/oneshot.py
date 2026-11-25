@@ -765,11 +765,19 @@ def restarted(store: Store) -> None:
 
     with _lock:
         current = store.get()
-        if inflight := current.get("inflight"):
-            sent = float(inflight.get("sent") or time.time())
-            elapsed, lived = max(0.0, time.time() - sent), max(0.0, float(inflight.get("seen") or sent) - sent)
-            store.put(inflight=None, spend=cut(current.get("spend"), inflight["role"], inflight["codex"], elapsed, lived))
+        if current.get("inflight"):
+            store.put(**settled(current))
         store.stop("restart", "서버가 다시 켜졌다")
+
+
+def settled(current: dict) -> dict:
+    """The fields that charge a turn left in flight with nothing running it once, as cut (its cost unreported),
+    and clear its mark."""
+
+    inflight = current["inflight"]
+    sent = float(inflight.get("sent") or time.time())
+    elapsed, lived = max(0.0, time.time() - sent), max(0.0, float(inflight.get("seen") or sent) - sent)
+    return {"inflight": None, "spend": cut(current.get("spend"), inflight["role"], inflight["codex"], elapsed, lived)}
 
 
 def card_errors(run: dict, profile: dict) -> tuple[list[str], list[str]]:

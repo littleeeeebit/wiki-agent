@@ -128,9 +128,11 @@ def tell(repo: str, body: Tell) -> dict:
         said, stop = {"text": text, "ts": time.time(), "stage": stage, "into_turn": False}, o.get("stopped") or {}
         if asked and (stop.get("reason") != "asked" or body.turn != stop.get("turn")):   # never past the question:
             raise HTTPException(409, "지금 답할 질문이 아니다 — 작업 기록의 지금 질문에 답하라")   # answered, or another's
+        if asked and any(w.get("asked") and w.get("answers") == body.turn for w in o.get("tell_pending") or []):
+            raise HTTPException(409, "이 질문의 답은 이미 받았다 — 설계에 반영되는 중이다")   # one choice per question
         word = {"text": text, "stage": stage, "ts": said["ts"], **({"asked": asked} if asked else {}),
-                # said to a run stopped on its question: the answer, which `answered` hands on as the turn lets go;
-                **({"answers": True} if stop.get("reason") == "asked" else {})}
+                # said to a run stopped on its question: the answer (naming that turn), which `answered` hands on
+                **({"answers": stop.get("turn") or True} if stop.get("reason") == "asked" else {})}   # as it lets go
         o = oneshot_spec.saved(repo, oneshot={"told": [*(o.get("told") or []), said],   # kept for the rewrite first:
                                               "tell_pending": [*(o.get("tell_pending") or []), word]})["oneshot"]
         if steered(spec, text, asked):   # a save that fails never leaves the turn told and the design not

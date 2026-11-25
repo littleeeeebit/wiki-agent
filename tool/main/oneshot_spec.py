@@ -491,6 +491,8 @@ def recover() -> None:
             o = specs.load(folder.name, oneshot.BRANCH)["oneshot"]
         if o and (repair := brief.recovered(o)):   # a brief the server went down writing, or its orphaned turn
             o = saved(folder.name, oneshot=repair)["oneshot"]
+        if o and o.get("inflight") and not o.get("working"):   # a stopped run's turn whose end failed to clear it
+            o = saved(folder.name, oneshot=oneshot.settled(o))["oneshot"]   # nothing runs at start: charged as cut
         o = waiting(folder.name, o) if o else o
         if o and o.get("stage") == "pr" and "desktop" in kinds_of(o) and o.get("attached") == o.get("final_head") \
                 and o.get("attached") and not o.get("working"):   # 9e6b held this run: its stop, kept or lost

@@ -268,26 +268,55 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
         idle(path)
 
 
-def foreign(path: Path, run=None) -> bool:
-    """A oneshot turn's adapter grant still open on `path` that `run` is not: its clearing failed and its mark is
-    not cleared yet. Read from the record each time, so nothing kept in memory can go stale."""
+def opened(path: Path, run=None) -> str:
+    """A oneshot build turn's adapter grant the guard would open on `path` to a turn that is not `run`:
+    `"running"` while that turn is still the tree's, `"unsure"` when the record cannot be read or a grant left
+    by a turn that is gone cannot be cleared, `""` otherwise. A grant left by a gone turn is cleared here, so
+    nothing waits on it. Read from the record each time: nothing kept in memory can go stale."""
 
     import guard_grant   # the guard's own rule for what is open
-    try:   # the run whose worktree this is, however its folder is named
-        spec = next((s for f in specs.SPECS.glob("*") if f.is_dir() and (s := specs.load(f.name, oneshot.BRANCH))
-                     and s.get("worktree") and Path(s["worktree"]).resolve() == path.resolve()), {})
-    except Exception as exc:   # a record the guard cannot read either opens nothing there
-        errorlog.record("oneshot-grant", exc, path=str(path))
-        return False
-    grant = spec.get("adapter")
-    return isinstance(grant, str) and guard_grant.live(spec) and getattr(run, "token", None) != grant
+    key = path.resolve()
+    try:
+        with specs._files:   # every run's record, however its folder is named; a refused read is never "none"
+            found = [(f.name, s) for f in specs.SPECS.glob("*") if (f / f"{oneshot.BRANCH}.json").is_file()
+                     and isinstance(s := json.loads((f / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8")), dict)
+                     and s.get("worktree") and Path(s["worktree"]).resolve() == key]
+    except (OSError, ValueError) as exc:
+        errorlog.record("oneshot-grant", exc, path=str(key))
+        return "unsure"
+    for repo, spec in found:
+        grant = spec.get("adapter")
+        if not (isinstance(grant, str) and guard_grant.live(spec)) or getattr(run, "token", None) == grant:
+            continue
+        mine = work._runs.get(str(path))
+        if getattr(mine, "token", None) == grant and not mine.done:
+            return "running"   # between its release and its end, which clears its mark
+        try:
+            oneshot_spec.saved(repo, adapter=False)
+        except Exception as exc:
+            errorlog.record("oneshot-grant", exc, repo=repo)
+            return "unsure"
+    return ""
 
 
 def admitted(path: Path, run) -> None:
     """`work.ADMITS`: no other turn starts in a tree while a build turn's grant there is still open."""
 
-    if foreign(path, run):
-        raise HTTPException(409, "앞선 빌드 턴의 어댑터 쓰기 권한이 아직 열려 있다 — 그 턴이 끝나면 다시 보낸다")
+    if opened(path, run):
+        raise HTTPException(409, "앞선 빌드 턴의 어댑터 쓰기 권한이 아직 열려 있다 — 잠시 뒤 다시 보낸다")
+
+
+def waits(path: Path) -> bool:
+    """`work.RELEASED`: the tree's queued instruction waits while a build turn's grant there is open. The
+    turn's end dispatches it again; a record that could not be read or cleared is tried again shortly."""
+
+    if (why := opened(path)) == "unsure":
+        threading.Timer(RETRY, lambda: str(path) in work._queued and work.dispatch(
+            path, SimpleNamespace(halt=runtime.stopping, turn=""))).start()
+    return bool(why)
+
+
+RETRY = 2.0   # seconds before a queued instruction is tried again after an unreadable or uncleared grant
 
 
 def idle(path: Path) -> None:
@@ -866,4 +895,4 @@ STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, (s := o
                                                                   owner().next_build(s))),
           "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}
 work.ADMITS.append(admitted)
-work.RELEASED.append(foreign)   # the tree's queued instruction waits while a grant there is still open
+work.RELEASED.append(waits)
