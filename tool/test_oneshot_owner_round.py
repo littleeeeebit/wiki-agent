@@ -1,20 +1,43 @@
 """The owner's desktop round's Windows side (`owner_round.py`, plan 9e5b): bindings proven before every read, the
 window-bound read's order (item, proof, frame pool), the fixture's words. The capture helper runs as a stand-in;
-the two real runs here never touch the owner's desktop: the helper is built and asked `--check`, and the fixture
-shows on a desktop the test owns."""
+the two real runs here touch no app of the owner's: the helper is built and asked `--check`, and the fixture shows
+on the owner's desktop, where every run is seen (plan 13f), one fixture at a time across the test workers (`alone`)."""
 
 from __future__ import annotations
 
 import json
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 import owner_round
+
+
+@contextmanager
+def alone():
+    """One fixture window on the shared desktop at a time, across the test workers: the round itself refuses a second
+    window by the fixture's title (`owner_round.fixture`), so two tests showing theirs at once would see each other."""
+
+    import msvcrt
+
+    with open(Path(tempfile.gettempdir()) / "wiki-owner-round-fixture.lock", "a+b") as held:
+        while True:
+            try:
+                msvcrt.locking(held.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                time.sleep(0.2)
+        try:
+            yield
+        finally:
+            held.seek(0)
+            msvcrt.locking(held.fileno(), msvcrt.LK_UNLCK, 1)
 
 APP = {"hwnd": 101, "pid": 7, "class": "AppWindow", "title": "App", "rect": [0, 0, 800, 600]}
 PROCESS = {"pid": 7, "created": 1, "exe": "c:\\app\\app.exe"}
@@ -313,7 +336,7 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
     import desktop_session
 
     page = owner_round.words()
-    with desktop_session.look(tmp_path, "fixture") as session:   # a desktop the test owns, never the owner's
+    with alone(), desktop_session.look(tmp_path, "fixture") as session:   # on the owner's desktop, seen
         folder = session.reserve("files")
         (folder / "words.txt").write_text(" ".join(page), encoding="utf-8")
         (folder / "marks.txt").write_text("\n".join(owner_round.marks(640, 360)), encoding="utf-8")
@@ -321,7 +344,7 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
                                    "--words", str(folder / "words.txt"), "--marks", str(folder / "marks.txt"),
                                    "--rect", "40", "40", "640", "360", "--out", str(folder / "window.json")], folder)
         named = owner_round._waited(folder / "window.json", owner_round.FIXTURE_SECONDS, threading.Event())
-        # A handle is read only from its own desktop: the round's server shares the owner's, so a probe there reads it.
+        # A handle is read only from its own desktop: the probe runs on the owner's, as the round's server does.
         probe = (f"import json, owner_round; seen = owner_round.window({named['hwnd']}); print(json.dumps({{**seen, "
                  f"'titled': owner_round.fixtures(), 'none': sorted(owner_round.shown([])), "
                  f"'shown': sorted(owner_round.shown([{{'pid': seen['pid']}}]))}}))")
@@ -331,7 +354,7 @@ def test_the_fixture_shows_its_page_and_is_bound_by_its_job_and_title(tmp_path):
         session.observe()
         members = session.record["jobs"]["fixture1"]["members"]
         assert code == 0 and seen["title"] == owner_round.FIXTURE and seen["pid"] in {m["pid"] for m in members}
-        assert seen["titled"] == [named["hwnd"]]   # found by its title, the only window by it on that desktop
+        assert seen["titled"] == [named["hwnd"]]   # found by its title, the only window by it (`alone`)
         assert named["hwnd"] in seen["shown"] and seen["none"] == []   # its process's visible windows, no other's
         # Its frame is placed at the rect's corner; what it reports is its client area, inside that frame.
         (fx, fy, fw, fh), (cx, cy, cw, ch) = seen["rect"], named["rect"]
@@ -401,7 +424,7 @@ def test_the_fixture_refuses_every_change_paints_its_marks_and_the_helper_reads_
     if not (owner_round.FRAMEWORK / "csc.exe").is_file():
         pytest.skip("no .NET Framework compiler here")
     exe, here = owner_round.helper(tmp_path / "tools"), Path(owner_round.__file__).parent
-    with desktop_session.look(tmp_path, "guard") as session:   # a desktop the test owns, never the owner's
+    with alone(), desktop_session.look(tmp_path, "guard") as session:   # on the owner's desktop, seen
         folder = session.reserve("files")
         (folder / "words.txt").write_text(" ".join(owner_round.words()), encoding="utf-8")
         (folder / "marks.txt").write_text("\n".join(owner_round.marks(640, 360)), encoding="utf-8")
@@ -435,9 +458,9 @@ def test_the_fixture_refuses_every_change_paints_its_marks_and_the_helper_reads_
             return {**owner_round._waited(out / "result.json", 30, threading.Event()),
                     "kept": (out / "surface.png").is_file()}
 
-        # Both checks of the window pass after those requests. A desktop that is not the input one gives the blit no
-        # pixels, which leaves the check pending; nothing is kept and every resource is let go.
-        assert surface("surface") == {"read": False, "unavailable": True, "why": "BitBlt failed", "kept": False}
+        # Both checks of the window pass after those requests. On the input desktop the blit holds every mark the
+        # fixture paints, where it paints it (topmost, so nothing covers it), and that frame is kept.
+        assert surface("surface") == {"read": True, "width": 640, "height": 360, "kept": True}
         # A window region set on the fixture, which its marks along the edges would not show: never undone by the
         # fixture, so the helper's check right after the blit always finds it.
         shape = ("import ctypes; u, g = ctypes.windll.user32, ctypes.windll.gdi32; "
