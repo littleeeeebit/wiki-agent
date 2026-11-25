@@ -126,15 +126,18 @@ def tell(repo: str, body: Tell) -> dict:
             raise HTTPException(409, "설계를 승인한 뒤부터 주인 화면 회차(R3)까지 구현 에이전트에게 말할 수 있다")
         stage = o["stage"]
         said, stop = {"text": text, "ts": time.time(), "stage": stage, "into_turn": False}, o.get("stopped") or {}
+        if asked and stop.get("reason") == "asked" and body.turn != stop.get("turn"):   # never past the question
+            raise HTTPException(409, "지난 턴의 질문에 대한 답이다 — 작업 기록의 지금 질문에 답하라")
         word = {"text": text, "stage": stage, "ts": said["ts"], **({"asked": asked} if asked else {}),
                 # said to a run stopped on its question: the answer, which `answered` hands on as the turn lets go;
-                # a choice answers it only from the turn that asked, never another turn's question
-                **({"answers": True} if stop.get("reason") == "asked" and (not asked or body.turn == stop.get("turn"))
-                   else {})}
+                **({"answers": True} if stop.get("reason") == "asked" else {})}
         o = oneshot_spec.saved(repo, oneshot={"told": [*(o.get("told") or []), said],   # kept for the rewrite first:
                                               "tell_pending": [*(o.get("tell_pending") or []), word]})["oneshot"]
         if steered(spec, text, asked):   # a save that fails never leaves the turn told and the design not
-            o = oneshot_spec.saved(repo, oneshot={"told": [*o["told"][:-1], {**said, "into_turn": True}]})["oneshot"]
+            try:   # accepted and heard either way: only the mark may be missing, never a second copy on a retry
+                o = oneshot_spec.saved(repo, oneshot={"told": [*o["told"][:-1], {**said, "into_turn": True}]})["oneshot"]
+            except Exception as exc:
+                errorlog.record("tell-heard", exc, repo=repo)
         if o.get("working") == "measure":   # the build goes back to work at once: the measurement stops
             from . import oneshot_measure   # it imports this module's neighbours
             if halt := oneshot_measure.HALTS.get(repo):

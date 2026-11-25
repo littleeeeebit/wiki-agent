@@ -237,9 +237,9 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
             if turn is not None:
                 turn.settle()
             if stage in GRANTS:
-                ungrant(repo, path)   # one it cannot clear holds back every turn without it (`admitted`)
-        except Exception as exc:   # the tree still goes and the turn still ends
-            errorlog.record("oneshot-grant", exc, repo=repo)
+                oneshot_spec.saved(repo, adapter=False)
+        except Exception as exc:   # the tree still goes and the turn still ends; a grant it could not clear names
+            errorlog.record("oneshot-grant", exc, repo=repo)   # this turn, and opens nothing once it is gone
         finally:
             held()
 
@@ -253,10 +253,9 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
         store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
                   inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
                   sent_refusal=due and {**due, "turn": turn.token})
-        turn.grant = stage in GRANTS and GRANTS[stage](spec)   # set as the turn starts, a resumed one included;
-        if turn.grant or spec.get("adapter"):   # its end clears it, and one a failed clearing left goes first
-            oneshot_spec.saved(repo, adapter=bool(turn.grant))
-            _stale.pop(str(path), None)
+        grant = stage in GRANTS and GRANTS[stage](spec)   # set as the turn starts, a resumed one included, naming
+        if grant or spec.get("adapter"):   # the turn: it opens the adapter only while that turn is `inflight`
+            oneshot_spec.saved(repo, adapter=turn.token if grant else False)   # (`guard_grant.live`); its end clears it
         work.begin(path, chat, text, release, turn)
     except BaseException as exc:
         try:
@@ -267,36 +266,6 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
         store.stop("restart" if runtime.stopping.is_set() else "block",
                    f"작업 턴을 보내지 못했다 — {getattr(exc, 'detail', exc)}")
         idle(path)
-
-
-_stale: dict[str, str] = {}   # worktree -> the repo whose adapter grant a turn's end could not clear
-
-
-def ungrant(repo: str, path: Path) -> bool:
-    """The adapter grant cleared. One that cannot be is kept: no turn without the grant starts in `path`
-    (`admitted`) and its queued instruction waits (`regranted`) until a retry clears it."""
-
-    try:
-        oneshot_spec.saved(repo, adapter=False)
-    except Exception as exc:
-        _stale[str(path)] = repo
-        errorlog.record("oneshot-grant", exc, repo=repo)
-        return False
-    _stale.pop(str(path), None)
-    return True
-
-
-def regranted(path: Path) -> bool:
-    """`work.RELEASED`: a grant left set is cleared before the tree's queued instruction goes; true keeps it queued."""
-
-    return (repo := _stale.get(str(path))) is not None and str(path) not in work._busy and not ungrant(repo, path)
-
-
-def admitted(path: Path, run) -> None:
-    """`work.ADMITS`: a turn without the grant never starts while one is left set."""
-
-    if (repo := _stale.get(str(path))) is not None and not getattr(run, "grant", False) and not ungrant(repo, path):
-        raise HTTPException(409, "앞선 턴의 어댑터 쓰기 권한을 아직 거두지 못했다 — 잠시 뒤 다시 보낸다")
 
 
 def idle(path: Path) -> None:
@@ -874,5 +843,3 @@ def reviewed(repo: str) -> None:
 STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, (s := oneshot_spec.spec_of(repo))["oneshot"]["stage"],
                                                                   owner().next_build(s))),
           "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}
-work.RELEASED.append(regranted)
-work.ADMITS.append(admitted)

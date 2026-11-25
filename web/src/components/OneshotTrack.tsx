@@ -199,8 +199,9 @@ function Log({ path, asking, onSend }: {
       ) : (
         <div key={t.key} className="rounded-md border border-border bg-card px-3 py-2.5">
           <Reply turn={t} on={mode !== 'off'} progressOn={mode === 'full'} onPeek={() => {}}
-            onSend={onSend && (asking ? t.turn === asking : t === turns.at(-1))   // a choice the build agent offered
-              ? (text, asked) => onSend(text, asked, t.turn) : undefined}   // goes back as the owner's words
+            // a choice the build agent offered goes back as the owner's words; streamed or read back from the record
+            onSend={onSend && (asking ? (t.turn ?? t.record) === asking : t === turns.at(-1))
+              ? (text, asked) => onSend(text, asked, t.turn ?? t.record) : undefined}
             onAnswer={(turn, id, allow, scope, answers, picks) => work.answer(path, turn, id, allow, scope, answers, picks)} />
         </div>
       ))}

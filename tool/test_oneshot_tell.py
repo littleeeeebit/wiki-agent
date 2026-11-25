@@ -216,9 +216,11 @@ def test_a_rewrite_claims_its_tree_from_its_start_to_its_follow_up_and_gives_it_
 
 def test_a_choice_answers_only_the_turn_that_asked_and_the_words_are_kept_before_the_turn_hears_them(world):  # noqa: F811 — the imported fixture, requested by name
     choice = {"question": "세금은?", "answer": "포함", "picked": [0], "options": [{"label": "포함"}, {"label": "제외"}]}
-    at("build", stopped={"reason": "asked", "detail": "묻는다", "state": "build", "turn": "t1"}, inflight={"turn": "x"})
-    oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t2"))   # a later turn's question
-    assert not o()["tell_pending"][-1].get("answers")
+    for busy in ({}, {"inflight": {"turn": "x"}}):   # idle and parked, or the tree still held
+        at("build", stopped={"reason": "asked", "detail": "묻는다", "state": "build", "turn": "t1"}, **busy)
+        with pytest.raises(HTTPException) as refused:   # an earlier turn's question, from a window left open
+            oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t0"))
+        assert refused.value.status_code == 409 and not o().get("tell_pending") and o()["stopped"]["reason"] == "asked"
     oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t1"))   # the one that asked
     assert o()["tell_pending"][-1]["answers"]
     heard = []
@@ -229,6 +231,16 @@ def test_a_choice_answers_only_the_turn_that_asked_and_the_words_are_kept_before
     with patch.object(oneshot_tell, "steered", lambda *a: True):
         say("모델을 바꿔")
     assert o()["told"][-1]["into_turn"] is True and o()["tell_pending"][-1]["text"] == "모델을 바꿔"
+    real, saves = oneshot_spec.saved, []
+
+    def mark_fails(repo: str, **fields):   # the words are kept; only the mark that the turn heard them fails
+        saves.append(fields)
+        if len(saves) > 1:
+            raise OSError("disk")
+        return real(repo, **fields)
+    with patch.object(oneshot_tell, "steered", lambda *a: True), patch.object(oneshot_spec, "saved", mark_fails):
+        say("소리를 줄여")   # accepted: no error the window would answer with a second copy
+    assert [w["text"] for w in o()["tell_pending"]].count("소리를 줄여") == 1
 
 
 def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name
@@ -346,7 +358,8 @@ def test_a_send_that_holds_the_tree_takes_words_said_by_then_first_and_a_rewrite
     assert o()["working"] == "retell"
 
 
-def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_is_cleared_before_the_next_turn(world):  # noqa: F811 — the imported fixture, requested by name
+def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_opens_nothing_once_its_turn_is_gone(world):  # noqa: F811 — the imported fixture, requested by name
+    import guard_grant
     from main import work
     at("build")
     tree, real, broken = str(specs.load("budget", oneshot.BRANCH)["worktree"]), oneshot_spec.saved, [True]
@@ -359,30 +372,30 @@ def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_is_cleared_befo
     def granted() -> bool:
         return bool(specs.load("budget", oneshot.BRANCH).get("adapter"))
 
+    def live() -> bool:   # what the guard opens to whatever turn runs there now
+        return guard_grant.live(specs.load("budget", oneshot.BRANCH))
+
     with patch.dict(oneshot_build.GRANTS, {"build": lambda spec: True}), patch.object(oneshot_spec, "saved", saved), \
          patch.object(oneshot_build, "resolve_tools", lambda *a: True), patch.object(work, "session"):
         with patch.object(work, "begin") as begin:
             oneshot_build.send("budget", "build", "BUILD")
+        assert live()   # the turn's own grant, while it is the run's turn
         begin.call_args[0][3]()   # the turn ends, and clearing its grant fails: the tree still goes
-        begin.call_args[0][4].ended.set()   # its heartbeat stops with it
-        assert tree not in work._busy and granted() and oneshot_build._stale == {tree: "budget"}
-        order = MagicMock()
-        with patch.dict(work._queued, {tree: order}):
-            work.dispatch(Path(tree), MagicMock(halt=threading.Event()))   # the retry fails: the order stays queued
-            assert work._queued[tree] is order
-        with pytest.raises(HTTPException) as refused:   # nor does any other turn without the grant start
-            work.begin(Path(tree), MagicMock(), "다른 일", lambda: None, work.Run(MagicMock()))
-        assert refused.value.status_code == 409
+        begin.call_args[0][4].finish()   # its end clears its mark, and its heartbeat stops
+        assert tree not in work._busy and granted() and not live()   # left on record, opening nothing to any turn
         with patch.object(work, "begin", side_effect=RuntimeError("refused")):
             oneshot_build.send("budget", "build", "BUILD")   # refused at launch, its clearing failing too
         assert tree not in work._busy and not o().get("inflight") and o()["stopped"]["reason"] == "block"
+        assert granted() and not live()
         broken[0] = False
         with patch.object(work, "begin") as begin:
             oneshot_build.send("budget", "tests", "TESTS")   # a turn with no grant: the one left is cleared first
-        assert not granted() and not oneshot_build._stale
+        assert not granted()
         begin.call_args[0][3]()
-        begin.call_args[0][4].ended.set()
+        begin.call_args[0][4].finish()
     assert tree not in work._busy
+    # a survey's grant opens the adapter to every turn of its spec; a malformed record opens nothing
+    assert guard_grant.live({"adapter": True}) and not guard_grant.live({"adapter": "t", "oneshot": []})
 
 
 def test_a_build_send_that_finds_a_rewrite_started_before_it_held_the_tree_yields(world):  # noqa: F811 — the imported fixture, requested by name
