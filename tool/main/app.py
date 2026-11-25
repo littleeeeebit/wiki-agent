@@ -627,9 +627,8 @@ def main() -> int:
     # cp949 character eight times.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
-    # Every agent, gate and oneshot build this server starts inherits it. Agents build one worktree with many
-    # flag sets, and the incremental cache never shrinks: one oneshot worktree's `target` reached 24 GB.
-    os.environ.setdefault("CARGO_INCREMENTAL", "0")
+    # Cargo's incremental cache stays on, so a fix rebuilds only what changed; each turn's end bounds it
+    # (`common.build_cache`).
     process.hide_child_consoles()   # no console window of a gate, agent or build reaches the owner's screen
     previous_exception, previous_thread_exception = sys.excepthook, threading.excepthook
     def exception(kind, value, trace):

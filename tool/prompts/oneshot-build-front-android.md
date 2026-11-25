@@ -127,3 +127,8 @@ A refusal comes back with the reason, at most three times in all.
   emulator or address a device: the server's emulator is the only one used.
 - Visible text follows the profile's `ui_language`; Korean text is written
   directly in Korean, never translated from English.
+- Build and test with the gate command's own package selection, features and profile
+  each time: every other flag set builds its own copy of the dependencies, and
+  the next build starts from that copy instead of what was just built. Never
+  clean the build cache (`cargo clean`, deleting `target`, `gradle clean`):
+  the server keeps it bounded, so a fix rebuilds only the modules it changed.

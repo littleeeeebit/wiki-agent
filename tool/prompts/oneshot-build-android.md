@@ -59,3 +59,8 @@ A refusal comes back with the reason, at most three times in all.
   until the next review. Decide within the approved design.
 - Running the gate command or the tests in this repository is fine. Do not
   start an emulator or address a device.
+- Build and test with the gate command's own package selection, features and profile
+  each time: every other flag set builds its own copy of the dependencies, and
+  the next build starts from that copy instead of what was just built. Never
+  clean the build cache (`cargo clean`, deleting `target`, `gradle clean`):
+  the server keeps it bounded, so a fix rebuilds only the modules it changed.
