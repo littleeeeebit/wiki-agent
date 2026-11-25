@@ -223,6 +223,12 @@ def test_a_choice_answers_only_the_turn_that_asked_and_the_words_are_kept_before
         assert refused.value.status_code == 409 and not o().get("tell_pending") and o()["stopped"]["reason"] == "asked"
     oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t1"))   # the one that asked
     assert o()["tell_pending"][-1]["answers"]
+    oneshot_spec.saved("budget", oneshot={"stopped": None, "working": "retell"})   # answered: the rewrite took it
+    with pytest.raises(HTTPException) as again:   # the same form sent twice, or from a second window
+        oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t1"))
+    assert again.value.status_code == 409 and len(o()["tell_pending"]) == 1
+    oneshot_spec.saved("budget", oneshot={"stopped": {"reason": "asked", "detail": "묻는다", "state": "build",
+                                                      "turn": "t1"}, "working": None})
     heard = []
     with patch.object(oneshot_tell, "steered", lambda *a: heard.append(a) or True), \
          patch.object(oneshot_spec, "saved", side_effect=OSError("disk")), pytest.raises(OSError):
@@ -244,7 +250,7 @@ def test_a_choice_answers_only_the_turn_that_asked_and_the_words_are_kept_before
 
 
 def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name
-    at("build")
+    at("build", stopped={"reason": "asked", "detail": "묻는다", "state": "build", "turn": "t1"}, inflight={"turn": "x"})
 
     def asked(chapter, answer):
         return {"header": chapter, "question": "이 부분은 어떤 모델을 쓸까?", "answer": answer, "picked": [1 if answer == "그대로" else 0],
@@ -255,7 +261,8 @@ def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_thei
     turn = MagicMock(spec=oneshot_build.Turn, repo="budget", done=False, wake=MagicMock())
     turn.chat = MagicMock(steer=lambda text: steers.append(text) or True)
     with patch.object(oneshot_tell.work, "attached", lambda tree: turn):   # a build turn runs: it is told at once
-        oneshot_tell.tell("budget", oneshot_tell.Tell(text=long, asked=[asked("재생", "새 모델"), asked("녹음", "그대로")]))
+        oneshot_tell.tell("budget", oneshot_tell.Tell(text=long, asked=[asked("재생", "새 모델"), asked("녹음", "그대로")],
+                                                      turn="t1"))
     assert o()["tell_pending"][-1]["asked"][0]["header"] == "재생" and "이 부분은" in steers[0] and "재생" in steers[0]
     # which option was chosen, by its place: labels can collide, a joined answer can read as two
     assert [[x["chosen"] for x in a["options"]] for a in o()["tell_pending"][-1]["asked"]] == [[True, False], [False, True]]
@@ -381,8 +388,17 @@ def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_opens_nothing_o
             oneshot_build.send("budget", "build", "BUILD")
         assert live()   # the turn's own grant, while it is the run's turn
         begin.call_args[0][3]()   # the turn ends, and clearing its grant fails: the tree still goes
+        assert tree not in work._busy and live()   # until its end clears its mark, no other turn starts there
+        with pytest.raises(HTTPException) as refused:
+            work.begin(Path(tree), MagicMock(), "다른 일", lambda: None, work.Run(MagicMock()))
+        assert refused.value.status_code == 409
+        order = MagicMock()
+        with patch.dict(work._queued, {tree: order}):
+            work.dispatch(Path(tree), MagicMock(halt=threading.Event()))
+            assert work._queued[tree] is order   # a queued order waits, kept
         begin.call_args[0][4].finish()   # its end clears its mark, and its heartbeat stops
         assert tree not in work._busy and granted() and not live()   # left on record, opening nothing to any turn
+        oneshot_build.admitted(Path(tree), work.Run(MagicMock()))   # any turn may start again
         with patch.object(work, "begin", side_effect=RuntimeError("refused")):
             oneshot_build.send("budget", "build", "BUILD")   # refused at launch, its clearing failing too
         assert tree not in work._busy and not o().get("inflight") and o()["stopped"]["reason"] == "block"

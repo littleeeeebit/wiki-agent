@@ -126,8 +126,8 @@ def tell(repo: str, body: Tell) -> dict:
             raise HTTPException(409, "설계를 승인한 뒤부터 주인 화면 회차(R3)까지 구현 에이전트에게 말할 수 있다")
         stage = o["stage"]
         said, stop = {"text": text, "ts": time.time(), "stage": stage, "into_turn": False}, o.get("stopped") or {}
-        if asked and stop.get("reason") == "asked" and body.turn != stop.get("turn"):   # never past the question
-            raise HTTPException(409, "지난 턴의 질문에 대한 답이다 — 작업 기록의 지금 질문에 답하라")
+        if asked and (stop.get("reason") != "asked" or body.turn != stop.get("turn")):   # never past the question:
+            raise HTTPException(409, "지금 답할 질문이 아니다 — 작업 기록의 지금 질문에 답하라")   # answered, or another's
         word = {"text": text, "stage": stage, "ts": said["ts"], **({"asked": asked} if asked else {}),
                 # said to a run stopped on its question: the answer, which `answered` hands on as the turn lets go;
                 **({"answers": True} if stop.get("reason") == "asked" else {})}

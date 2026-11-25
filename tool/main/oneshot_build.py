@@ -268,6 +268,28 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
         idle(path)
 
 
+def foreign(path: Path, run=None) -> bool:
+    """A oneshot turn's adapter grant still open on `path` that `run` is not: its clearing failed and its mark is
+    not cleared yet. Read from the record each time, so nothing kept in memory can go stale."""
+
+    import guard_grant   # the guard's own rule for what is open
+    try:   # the run whose worktree this is, however its folder is named
+        spec = next((s for f in specs.SPECS.glob("*") if f.is_dir() and (s := specs.load(f.name, oneshot.BRANCH))
+                     and s.get("worktree") and Path(s["worktree"]).resolve() == path.resolve()), {})
+    except Exception as exc:   # a record the guard cannot read either opens nothing there
+        errorlog.record("oneshot-grant", exc, path=str(path))
+        return False
+    grant = spec.get("adapter")
+    return isinstance(grant, str) and guard_grant.live(spec) and getattr(run, "token", None) != grant
+
+
+def admitted(path: Path, run) -> None:
+    """`work.ADMITS`: no other turn starts in a tree while a build turn's grant there is still open."""
+
+    if foreign(path, run):
+        raise HTTPException(409, "앞선 빌드 턴의 어댑터 쓰기 권한이 아직 열려 있다 — 그 턴이 끝나면 다시 보낸다")
+
+
 def idle(path: Path) -> None:
     """No turn was sent: the instruction queued for the worktree goes now, unless the server is stopping."""
 
@@ -843,3 +865,5 @@ def reviewed(repo: str) -> None:
 STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, (s := oneshot_spec.spec_of(repo))["oneshot"]["stage"],
                                                                   owner().next_build(s))),
           "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}
+work.ADMITS.append(admitted)
+work.RELEASED.append(foreign)   # the tree's queued instruction waits while a grant there is still open

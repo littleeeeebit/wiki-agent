@@ -200,7 +200,7 @@ function Log({ path, asking, onSend }: {
         <div key={t.key} className="rounded-md border border-border bg-card px-3 py-2.5">
           <Reply turn={t} on={mode !== 'off'} progressOn={mode === 'full'} onPeek={() => {}}
             // a choice the build agent offered goes back as the owner's words; streamed or read back from the record
-            onSend={onSend && (asking ? (t.turn ?? t.record) === asking : t === turns.at(-1))
+            onSend={onSend && asking && (t.turn ?? t.record) === asking   // only the question the run waits on
               ? (text, asked) => onSend(text, asked, t.turn ?? t.record) : undefined}
             onAnswer={(turn, id, allow, scope, answers, picks) => work.answer(path, turn, id, allow, scope, answers, picks)} />
         </div>
