@@ -416,11 +416,16 @@ def status(repo: Path, head: str, state: str, description: str) -> dict:
                   {"state": state, "context": CONTEXT, "description": description[:140]})
 
 
+class Replaced(RuntimeError):
+    """The task this record was read from is gone, or another one was made under its ID."""
+
+
 def keep(spec: dict, **fields) -> dict:
+    born = (spec.get("history") or [{}])[0].get("ts")   # as `loop.born`: a task made again has another
     with specs._files:
         fresh = specs.load(spec["repo"], spec["id"])
-        if fresh is None:
-            raise RuntimeError("검증 명세가 없어졌다")
+        if fresh is None or born is not None and (fresh.get("history") or [{}])[0].get("ts") != born:
+            raise Replaced("검증 명세가 없어졌다")
         fresh["local_verification"] = {"version": 1, **fresh.get("local_verification", {}), **fields}
         specs.save(fresh)
         return fresh
@@ -975,7 +980,10 @@ def set_config(body: LocalSettings, sid: str | None = None) -> dict:
                     selected = None if cloud(current) else [f["id"] for f in (current.get("review_contract") or {}).get("flows", [])]
                     problem = proven(repo, tree, current, record["head"], record.get("base_oid", ""), flow_ids=selected)
                     if problem:
-                        pending(repo, current, record["head"], problem, "waiting_review")
+                        try:
+                            pending(repo, current, record["head"], problem, "waiting_review")
+                        except Replaced:   # made again under its ID meanwhile: the background poll reads the new one
+                            continue
         except (OSError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
     return get_config(sid)

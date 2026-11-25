@@ -1229,8 +1229,10 @@ def test_a_forced_delete_stays_with_the_project_it_checked(tmp_path):
         chat._project = "b"   # the switch lands here
         return found
 
+    task, load = {"id": "t1", "repo": "proj", "state": "리뷰 R1"}, specs.load
     with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
-         patch.object(specs, "owner", lambda path: {"id": "t1", "repo": "proj", "state": "리뷰 R1"}), \
+         patch.object(specs, "owner", lambda path: task), \
+         patch.object(specs, "load", lambda repo, sid: task if (repo, sid) == ("proj", "t1") else load(repo, sid)), \
          patch.object(loop, "halt_loop", lambda repo, sid: halted.append((repo, sid))):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         path = _made()
