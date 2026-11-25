@@ -690,7 +690,9 @@ def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
     if (old is not None and not old.halt.is_set()
             and (old.thread is None or old.thread.ident is None or old.thread.is_alive())):
         spec = specs.load(repo, sid)
-        if spec is not None and LOOPING.fullmatch(spec["state"]):
+        if spec is not None and old.born and born(spec) != old.born:
+            old.halt.set()   # that loop ran the task deleted before this one was made under the ID
+        elif spec is not None and LOOPING.fullmatch(spec["state"]):
             return
     if old is not None and old.thread is not None:
         if old.thread is threading.current_thread():
@@ -756,7 +758,8 @@ def drive(loop: Loop) -> None:
                 if fresh and fresh["state"] == "머지 가능" and not loop.halt.is_set():
                     requested_merge(channels.repo_for(loop.repo), fresh)
                 fresh = specs.load(loop.repo, loop.sid)
-                if not fresh or not LOOPING.fullmatch(fresh["state"]) or loop.halt.is_set():
+                if not fresh or not LOOPING.fullmatch(fresh["state"]) or loop.halt.is_set() \
+                        or loop.born and born(fresh) != loop.born:   # a replacement is its own loop's
                     break
         finally:
             with _seats:
@@ -810,6 +813,8 @@ def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "", sou
         if loop is not None and loop.halt.is_set():
             return False
         spec = specs.load(repo, sid)
+        if spec is not None and loop is not None and loop.born and born(spec) != loop.born:
+            return False   # another task made under this ID: not this loop's to stop
         if spec is not None and source.fullmatch(spec["state"]):
             specs.save(specs.moved(spec, "멈춤", stopped={"reason": why.value, "detail": detail},
                                    merge_request=spec.get("merge_request") if why is Why.RESTART else None))
@@ -966,6 +971,15 @@ def born(spec: dict) -> float | None:
     return (spec.get("history") or [{}])[0].get("ts")
 
 
+def own(loop: Loop, **fields) -> dict | None:
+    """`specs.update` on this loop's own task whatever its state; `None` for one made again under the ID."""
+    with specs._files:
+        now = specs.load(loop.repo, loop.sid)
+        if now is None or loop.born and born(now) != loop.born:
+            return None
+        return specs.update(loop.repo, loop.sid, **fields)
+
+
 def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     """A repair turn of the work cell (`turn`) — review, gate, merge conflict,
     local verification — held to its test cleanup (`sweep.held`)."""
@@ -991,7 +1005,7 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
             return kept
         with specs._files:
             now = specs.load(loop.repo, loop.sid)
-            return specs.update(loop.repo, loop.sid, **fields) if now and mine and born(now) == mine else None
+            return own(loop, **fields) if now and mine and born(now) == mine else None
 
     return sweep.held(path, text, follow, lambda answer: block("test-cleanup", answer),
                       lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), keep,
@@ -1315,8 +1329,7 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | 
         return False
     if maintenance.repaired(path, specs.load(loop.repo, loop.sid) or spec) == head:
         if (specs.load(loop.repo, loop.sid) or spec).get("repaired") != head:   # it may have fixed what is outside the code
-            specs.update(loop.repo, loop.sid, repaired=head, continued=time.time())
-            return True
+            return change(loop, repaired=head, continued=time.time()) is not None
         return stop(loop, loop.repo, loop.sid, Why.GATE, f"최종 게이트 실패, 고친 커밋이 없다 — {final['reason']}")
     return True
 
@@ -1364,9 +1377,11 @@ def external_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, 
         if reusable(spec, head, chosen):
             return True
         verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
-        specs.validate(loop.repo, loop.sid, loop.born, round=record)
+        # `gate` first, as `shipped` does: a Stop between the two leaves no receipt to reuse without its `gate`,
+        # so the resumed step runs the gate again instead of reusing it on every step.
         if change(loop, gate=verdict) is None:
             return False
+        specs.validate(loop.repo, loop.sid, loop.born, round=record)
         if not verdict["ok"]:
             return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, verdict["reason"] + "\n" + verdict["tail"])
         return True
@@ -1395,8 +1410,9 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
             raise ValueError("인계를 읽는 동안 PR 이 바뀌었다 — 다시 시작한다")
         transfer = verification.handoff(view["body"], head)
         # Preserve the public PR handoff; runtime observations are redacted separately.
-        spec = specs.update(loop.repo, loop.sid, cloud_handoff=transfer,
-                            pr={**spec["pr"], "head": head, "base": base})
+        spec = own(loop, cloud_handoff=transfer, pr={**spec["pr"], "head": head, "base": base})
+        if spec is None:   # deleted, or made again under this ID: not this loop's
+            return False
         record = spec.get("local_verification") or {}
         if record.get("needs_research") and not record.get("research_note"):
             raise ValueError("재분석 원인·근거·다음 실험을 적고 로컬 검증을 재개한다")
@@ -1422,10 +1438,10 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
             settings = verification.redaction(verification.local(repo), path)
             verdict, check = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
-            specs.validate(loop.repo, loop.sid, loop.born, round=check)
-            spec = change(loop, gate=verdict)
+            spec = change(loop, gate=verdict)   # before the receipt, as in `external_shipped`
             if spec is None:
                 return False
+            spec = specs.validate(loop.repo, loop.sid, loop.born, round=check) or spec
             if not verdict["ok"]:
                 verification.return_to_cloud(repo, spec, head, verdict["reason"] + "\n" + verdict["tail"], ["offline/round"])
                 return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "게이트 실패 — 클라우드 수정 대기")

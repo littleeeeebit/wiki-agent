@@ -425,6 +425,16 @@ def test_the_authors_answer_stays_owed_until_its_turn_passes_this_revision(tmp_p
     assert change.call_count == 2 and len(held) == 4 and spot.handing is None
 
 
+def test_an_external_gate_stopped_before_its_gate_is_saved_leaves_no_receipt(tmp_path):
+    """A receipt without its `gate` was reused on resume while `gate` stayed empty, so every step ran again."""
+    with patch.object(loop, "wait_hold", return_value=lambda: None), patch.object(loop, "sync_review"), \
+            patch.object(specs, "for_round", return_value={}), patch.object(loop, "reusable", return_value=False), \
+            patch.object(specs, "rounded", return_value=({"ok": True}, {"ok": True})), \
+            patch.object(loop, "change", return_value=None), patch.object(specs, "validate") as receipt:
+        assert loop.external_shipped(loop.Loop("proj", "t1"), {}, tmp_path, tmp_path, "h", "main") is False
+    assert not receipt.called
+
+
 def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path):
     def stopped(spot, spec, path, text):
         spot.halt.set()   # the Review Loop Stop lands after the repair committed code
@@ -456,4 +466,6 @@ def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path)
         with patch.object(specs, "save") as save:
             assert loop.change(old, gate={"ok": True}) is None
             assert specs.validate("proj", "t1", old.born, round={"ok": True}) is None and not save.called
+            assert loop.own(old, repaired="h") is None and not save.called
+            assert loop.stop(old, "proj", "t1", loop.Why.GATE) is False and not save.called
     assert update.call_count == 1   # the replacement never takes the old checkout's baseline
