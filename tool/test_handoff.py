@@ -144,6 +144,24 @@ def test_a_split_cards_the_prerequisite_and_holds_the_task(task):
     assert "untangle-transaction" in specs.load("proj", sid)["fault"]
 
 
+def test_a_revision_gives_the_author_fresh_rounds(task):
+    """reach-gemini-from-phone: guidance, then a revision, and the first conflict on revision 2 went to the person."""
+    repo, sid = task
+    update = {"rev": 1, "reason": "The person widened acceptance", "goal": "Read the chapter ahead", "out": [],
+              "done": ["The chapter is read ahead"], "task": {"kind": "feature", "what": "Read ahead"},
+              "precedence": [{"ref": "a.txt", "role": "current"}]}
+    answers = [block("guidance", {"text": "Ask the person."}), block("spec-update", update),
+               *[block("guidance", {"text": "Go on."})] * handoff.ROUNDS]
+    with patch.object(handoff, "ask", side_effect=answers) as ask, patch.object(specs, "again", return_value=True):
+        for _ in answers:
+            assert specs._check(repo, Run(), block("escalation", ESCALATION)) is not None
+        assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None   # two on revision 2
+    assert ask.call_count == len(answers) and "명세 2판" in specs.load("proj", sid)["fault"]
+    # The person stepping in (a pause, a stop, a failed or refused round trip) starts the count again.
+    asked = [{"rev": 2, "answer": {"kind": k}} for k in ("guidance", "guidance", "person", "guidance")]
+    assert handoff.spent(asked, 2) == 1 and handoff.spent(asked, 3) == 0
+
+
 def test_the_person_decides_past_the_rounds_or_without_an_author(task):
     repo, sid = task
     with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})) as ask, \

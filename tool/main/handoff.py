@@ -35,7 +35,7 @@ DEFAULT_ESCALATE = (
     "The task requires changing code that only a `legacy` document describes.",
     "A done item cannot be met as the spec states it.",
 )
-ROUNDS = 2          # the author's answers per task before the person decides
+ROUNDS = 2          # the author's answers on one revision before the person decides (`spent`)
 TOOLS = "Read,Glob,Grep"   # the author reads the worktree; it never writes there
 RANGE = re.compile(r"^(.+?):(\d+)[-–](\d+)$")
 ANSWERS = ("spec-update", "guidance", "split")
@@ -260,14 +260,16 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     author, past = author_of(spec), spec.get("escalations") or []
     entry = {"ts": time.time(), "rev": spec["rev"], "escalation": value}
     # A record with an empty model is the CLI's default the spec was written on; no record is an older card.
-    if not author or len(past) >= ROUNDS:
-        why = "명세를 쓴 모델이 기록돼 있지 않다" if not author else f"상위 모델 판단이 {ROUNDS}번 넘었다"
+    if not author or spent(past, spec["rev"]) >= ROUNDS:
+        why = "명세를 쓴 모델이 기록돼 있지 않다" if not author else \
+            f"명세 {spec['rev']}판에서 상위 모델 판단이 {ROUNDS}번 넘었다"
         return person(spec, run, [*past, {**entry, "answer": {"kind": "person"}}],
                       f"상위 판단 필요 — {why}. 구현 모델의 충돌: {value['conflict']} / 질문: {value['question']}")
 
     # Run here, still holding the worktree as the gate does: the author reads the tree the implementer left,
     # and its lines land in this turn's record.
-    specs.note(run, f"충돌을 명세를 쓴 모델 `{author.get('model') or '기본 모델'}` 에게 넘긴다 ({len(past) + 1}/{ROUNDS})")
+    specs.note(run, f"충돌을 명세를 쓴 모델 `{author.get('model') or '기본 모델'}` 에게 넘긴다 "
+                    f"({spent(past, spec['rev']) + 1}/{ROUNDS}, 명세 {spec['rev']}판)")
     from common import masked
 
     hide = getattr(getattr(run, "chat", None), "hide", None)   # a oneshot's secrets: never saved or sent on
@@ -287,6 +289,20 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     if run.halt.is_set():   # a Stop pressed while the author answered: nothing of the answer takes effect
         return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "text": answer[-2000:]}}])
     return applied(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec, past, entry, answer)
+
+
+def spent(past: list[dict], rev: int) -> int:
+    """The author's answers since the spec last changed: none before a revision, nor before the person stepped
+    in (any answer that is not the author's ended with the person). Counted over the whole task, a spec the
+    author had just revised reached the person on its first new conflict (realtime-screen-translator
+    reach-gemini-from-phone, revision 2)."""
+
+    n = 0
+    for e in reversed(past):
+        if e.get("rev") != rev or (e.get("answer") or {}).get("kind") not in ANSWERS:
+            break
+        n += 1
+    return n
 
 
 def safe(run, reason: str) -> str:
