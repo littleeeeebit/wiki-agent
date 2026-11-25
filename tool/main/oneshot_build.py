@@ -634,6 +634,9 @@ def checked(path: Path, run, spec: dict, final: str):
     if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
     run.checked = True
+    if not why and specs.asks(final):   # a question for the owner: it waits, answerable in the work log (`oneshot_tell`)
+        oneshot_spec.store(repo).stop("asked", "구현 에이전트가 묻는다 — 작업 로그에서 답하면 설계에 반영하고 이어 간다")
+        return None
     check, stop, _, after = STAGES[stage]
     try:
         why = why or check(path, run, spec, final)

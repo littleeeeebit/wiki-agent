@@ -194,6 +194,15 @@ def test_a_retold_tests_turn_that_kept_the_contract_moves_on_from_head_past_an_u
     assert git(tree, "status", "--porcelain") == "?? app.py"   # left for the build turn after
 
 
+def test_a_build_turn_that_asks_the_owner_waits_for_the_answer_with_no_retry(built_world):
+    tree, sent = built_world
+    to_build(tree, sent)
+    before = len(sent)
+    asked = fenced("choices", {"question": "합계는 세금 포함인가?", "options": [{"label": "포함"}, {"label": "제외"}]})
+    assert check(tree, "물어본다.\n\n" + asked) is None and len(sent) == before   # no retry replaces the question
+    assert o()["stopped"]["reason"] == "asked" and o()["attempts"] == 0 and not o()["working"]
+
+
 @pytest.mark.parametrize("files, final, said", [
     ({"test_budget.py": TESTS}, "썼다.", "`oneshot-runner` 블록이 하나 있어야 한다"),
     ({"test_budget.py": TESTS}, told(command=GATE), "`{report}`"),
