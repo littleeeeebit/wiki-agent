@@ -306,7 +306,11 @@ def on_desktop(spec: dict, command: str, project: Path) -> tuple[int | None, str
     looks.mkdir(parents=True, exist_ok=True)
     try:
         with desktop_session.look(looks, f"preview-{uuid.uuid4().hex[:12]}") as look:
-            return look.run("preview", argv, project, PREVIEW_SECONDS, runtime.stopping)
+            code, out, cut = look.run("preview", argv, project, PREVIEW_SECONDS, runtime.stopping)
+            if not cut and not code and not look.shown.get("preview"):   # pictures drawn out of the owner's sight
+                raise ValueError("화면 사진 명령이 주인 화면에 창을 하나도 띄우지 않았다 — 화면마다 보이는 창에 띄워 찍는다 "
+                                 "(headless 브라우저나 창 없는 렌더링은 받지 않는다)")
+            return code, out, cut
     except desktop_session.Refused as exc:
         raise RuntimeError(f"PC 앱 미리보기를 띄운 데스크톱을 정리하지 못했다 — {exc}") from exc
 

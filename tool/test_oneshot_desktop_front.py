@@ -49,9 +49,10 @@ def desktop_name() -> str:
     return name.value
 
 
-def drawer(ids, width: int, height: int) -> str:
-    """A stand-in preview tool that writes each screen as a grey PNG. It says nothing of a window, and refuses to
-    draw anywhere but on the desktop the server itself runs on: the owner's, where they can see it."""
+def drawer(ids, width: int, height: int, window: bool = True) -> str:
+    """A stand-in preview tool that writes each screen as a grey PNG while a window of it shows, as a headed browser's
+    does; with no `window`, as a headless one draws. It refuses to draw anywhere but on the desktop the server itself
+    runs on: the owner's, where they can see it."""
 
     return ("import ctypes, pathlib, struct, zlib\n"
             "u = ctypes.windll.user32\n"
@@ -67,7 +68,9 @@ def drawer(ids, width: int, height: int) -> str:
             "       chunk(b'IDAT', zlib.compress(b'\\x00' * ((w + 1) * h))) + chunk(b'IEND', b''))\n"
             f"out = pathlib.Path('{SHOTS}')\nout.mkdir(parents=True, exist_ok=True)\n"
             f"for sid in {list(ids)!r}:\n"
-            "    (out / f'{sid}.png').write_bytes(png)\n")
+            "    (out / f'{sid}.png').write_bytes(png)\n" + (
+                "import time, tkinter\nshown = tkinter.Tk()\nshown.geometry('400x300')\nshown.update()\n"
+                "time.sleep(1.5)\nshown.destroy()\n" if window else ""))
 
 
 def pc_mocks(ids=("S1", "S2"), width: int = 1280, height: int = 770, **files) -> dict:
@@ -136,6 +139,7 @@ def test_a_pc_apps_preview_runs_on_the_owners_desktop_and_r2_shows_its_window_sh
     (pc_mocks(width=1400, height=800), "S1: `build/mock-shots/S1.png` 가 창보다 크지 않은 온전한 PNG 로 없다"),
     (pc_mocks(width=1000, height=800), "창 1280×800px 로 찍히지 않았다 — S1: `build/mock-shots/S1.png` 가 1000×800px 다"),
     (pc_mocks(**{"shoot.py": "raise SystemExit(4)"}), "4 로 끝났다"),
+    (pc_mocks(**{"shoot.py": drawer(("S1", "S2"), 1280, 770, window=False)}), "주인 화면에 창을 하나도 띄우지 않았다"),
 ])
 def test_a_pc_preview_of_the_wrong_size_or_failing_is_sent_back_once(pc, found, said):
     heard, asking = replies(answer(pc_blocks(**{"oneshot-mocks": found})), answer(pc_blocks()))

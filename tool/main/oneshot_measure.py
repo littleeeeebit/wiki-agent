@@ -229,7 +229,7 @@ def measure(repo: str, mode: str | None = None) -> None:
                            if x["env"] not in env or x["kind"] != "secret" and not has(now, x)]:
                 store.stop("measure", f"아직 넣지 않은 입력이 있다: {', '.join(missing)}")   # no failure counted
                 return None
-            since = oneshot_needs.CHANGES.get(repo, 0)
+            since = (secrets := reads(now, plan)), changes(repo, secrets)
             env[product.MODE] = how   # the script and the program both know whose measurement it is
         out = store.folder / "measure" / f"m{n}-{o['built_head'][:12]}"
         raw = out.with_name(out.name + ".raw")   # what the script writes; only `kept_from` copies leave it
@@ -286,20 +286,41 @@ def measure(repo: str, mode: str | None = None) -> None:
     oneshot_review.holding(repo, "실측", body, again=moved_repair)
 
 
-def moved_repair(repo: str, _store, why: str, _build: str = "build"):   # `holding`'s `again` too: never back a stage
-    return repair(repo, {"moved": why}, "moved")
+def moved_repair(repo: str, store, why: str, _build: str = "build"):   # `holding`'s `again`: never back a stage
+    with oneshot._lock:   # a stop pressed while the tree was checked holds: no build turn starts after it
+        return None if halted(repo, store) else repair(repo, {"moved": why}, "moved")
 
 
-def decided(repo: str, store, record: dict, since: int, hide: dict[str, str] | None = None):
-    """`result` of a measurement whose run started at change count `since`: compared and saved under the lock every
-    stored-value change takes, so a change made at any moment of the run sets it aside."""
+def halted(repo: str, store, hide: dict[str, str] | None = None) -> bool:
+    """A stop the owner pressed, or the server going down, saved as the measurement's; read under `oneshot._lock`,
+    which `stop` sets it under too."""
+
+    if (halt := HALTS.get(repo)) is None or not halt.is_set():
+        return False
+    store.stop("measure", masked("사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
+                                 else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다", hide))
+    return True
+
+
+def reads(spec: dict, plan: dict) -> set[str]:
+    """The secrets a measurement reads: the design's and the plan's secret inputs, by name."""
+
+    return {n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)} | {
+        x["env"].upper() for x in plan["inputs"] if x["kind"] == "secret"}
+
+
+def changes(repo: str, envs) -> int:   # how many changes the secrets named `envs` have seen (`oneshot_needs.CHANGES`)
+    return sum(oneshot_needs.CHANGES.get(repo, {}).get(env, 0) for env in envs)
+
+
+def decided(repo: str, store, record: dict, since: tuple, hide: dict[str, str] | None = None):
+    """`result` of a measurement whose run started when the secrets it reads had `since` changes: compared and saved
+    under the lock every stored-value change takes, so a change to one of them at any moment sets it aside."""
 
     with oneshot._lock:
-        if (halt := HALTS.get(repo)) is not None and halt.is_set():   # `stop` sets it under this lock too
-            store.stop("measure", masked("사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
-                                         else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다", hide))
+        if halted(repo, store, hide):
             return None
-        if oneshot_needs.CHANGES.get(repo, 0) != since:   # every sentence the owner reads masked whole (13e)
+        if changes(repo, since[0]) != since[1]:   # every sentence the owner reads masked whole (13e)
             record = {**record, "status": "stale", "error": masked("실측하는 동안 비밀 값이 바뀌었다 — [실측 시작]으로 다시 잰다", hide)}
         return result(repo, store, record, hide)
 
@@ -478,10 +499,12 @@ def remeasure(repo: str) -> None:
     if (thread := oneshot._workers.get(oneshot_spec.store(repo).key)) and thread.is_alive():
         thread.join(60)
     with oneshot._lock:
+        o = oneshot_spec.spec_of(repo)["oneshot"]
+        if o.get("working") or (o.get("stopped") or {}).get("reason") != "measure-input":
+            return   # another answer meanwhile started it, or the stop was answered otherwise
         spec, plan, _ = measuring(repo)
         o = spec["oneshot"]
-        if (o.get("stopped") or {}).get("reason") == "measure-input" and not o.get("working") \
-                and not kept_input(o, o["measures"][-1]) and all(has(spec, x) for x in plan["inputs"]):
+        if not kept_input(o, o["measures"][-1]) and all(has(spec, x) for x in plan["inputs"]):
             launch(repo, spec, plan)
 
 
@@ -517,6 +540,8 @@ def start(repo: str, body: Start) -> dict:
             # an input an earlier version disputed at its cap is measured again, so the owner is asked about it.
             then = repair(repo, {"measure_fails": 0})
         else:   # the same lock scope decides and launches: no other request's result slips in between
+            if last and last["status"] == "failed" and last.get("input_error"):   # its count was the disputes'
+                spec = oneshot_spec.saved(repo, oneshot={"measure_fails": 0})
             then = launch(repo, spec, plan)
     if then:   # the build agent's turn goes after the lock is let go
         then()
@@ -592,7 +617,7 @@ def decide(repo: str, body: Decision) -> dict:
             runs[-1] = {**last, "owner": {"approve": body.approve, "note": masked(note, hide), "ts": time.time()}}
             if why:
                 retire(spec, f"실측한 뒤 작업트리가 바뀌었다 — {why}")
-                then = moved_repair(repo, None, why)
+                then = repair(repo, {"moved": why}, "moved")
             elif body.approve:
                 spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "stage": "review", "attempts": 0,
                                                          "measure_fails": 0, "fix": None, "working": "review"})
@@ -657,12 +682,10 @@ oneshot_spec.VIEWS.append(shown)
 
 def secret_changed(repo: str, env: str):   # the fields to put back if the store refuses
     """A secret about to change by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran
-    with it. A running one is set aside when it ends, by `oneshot_needs.CHANGES`, counted once the store changed."""
+    with it. A running one is set aside when it ends, by `changes`, counted once the store changed."""
     o = (spec := oneshot_spec.spec_of(repo))["oneshot"]   # a changed value is measured again, never sent to the build
-    try:   # one no measurement reads, neither the design's nor the plan's, leaves the results and a dispute as they are
-        plan = planned(Path(spec["worktree"]), spec, o["built_head"])
-        if env.upper() not in {n["env"].upper() for _, n in oneshot_needs.secret_needs(spec)} | {
-                x["env"].upper() for x in plan["inputs"] if x["kind"] == "secret"}:
+    try:   # one no measurement reads (`reads`) leaves the results and a dispute as they are
+        if env.upper() not in reads(spec, planned(Path(spec["worktree"]), spec, o["built_head"])):
             return {}
     except (KeyError, OSError, ValueError):   # no plan to read: taken as one it reads
         pass

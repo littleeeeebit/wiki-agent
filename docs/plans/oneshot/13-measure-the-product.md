@@ -172,17 +172,23 @@ owner approves. A repair is a build turn sent from there: `fix` names why
 holds, `moved` for a tree that moved before, during or after a measurement,
 its reason kept in `moved`), and `oneshot_profile.turn_stage` routes that
 turn's end to the build's own check. The check's pass clears `fix` and
-measures the new HEAD. `[재개]` after a stopped repair sends the same build
+measures the new HEAD. A stop pressed before the moved check, or while it
+runs, holds: no repair turn starts after it. A repair of an input the owner
+kept as it was needs a new commit, as one of a failed metric does.
+`[재개]` after a stopped repair sends the same build
 turn with the same reason, and an escalation from it reaches the spec's author
 and comes back as a build turn, as any build turn's does. The screen shows the
 repair on the measurement page, and a repair stopped by a restart shows the
 stop with its `[재개]`.
 
 A new value given at a `measure-input` stop waits for the measurement that
-asked to let the tree go, then measures. Only a value the measurement reads
-counts as a change: forgetting a credential neither the design nor the plan
-names leaves the question as it stands. An input an earlier version disputed
-at its round cap is measured again first, so the owner is asked about it.
+asked to let the tree go, then measures; a second answer that waited too
+finds that measurement running and adds nothing. Only a value the measurement
+reads counts as a change, during a measurement or after one: writing or
+forgetting a credential neither the design nor the plan names leaves the
+question and a running result as they are. An input an earlier version
+disputed at its round cap is measured again first, its count cleared, so the
+owner is asked about it.
 
 Whatever a oneshot runs opens where the owner can see it. A desktop look has
 no desktop of its own (`desktop_session.look`), so the server's own
@@ -190,7 +196,9 @@ measurement, the screen looks and the owner's round all run on the owner's
 desktop. The driver keeps a window's shot only while that window is still the
 app's after it is drawn, since another program's window can reuse a handle
 there. The browser looks run a headed browser, and the emulator opens its
-window. The cost, accepted: windows open on the owner's screen while the
+window. A PC screen preview must show a window while it runs
+(`desktop_session.Look.shown`): pictures drawn with none, by a headless browser
+or an offscreen render, are sent back to the designer. The cost, accepted: windows open on the owner's screen while the
 server works, and its test runs open them too.
 
 A program that leaves the owner's screen empty, opens no window of its own,

@@ -88,8 +88,8 @@ def test_a_run_counts_an_exit_read_by_its_deadline_and_starts_nothing_once_halte
             time.sleep(0.05)
         return value
 
-    look = SimpleNamespace(folder=tmp_path, jobs={"preview": SimpleNamespace(code=read)},
-                           start=lambda *a: {"pid": 1}, observe=lambda: None)
+    look = SimpleNamespace(folder=tmp_path, jobs={"preview": SimpleNamespace(code=read, members=lambda: [])},
+                           start=lambda *a: {"pid": 1}, observe=lambda: None, shown={})
     code, _, cut = desktop_session.Look.run(look, "preview", ["x"], tmp_path, 0.05, threading.Event())
     assert code is None and cut
     halted = threading.Event()

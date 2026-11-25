@@ -23,7 +23,9 @@ What reaches the screen is read by a person and stays Korean.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -31,7 +33,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import apply
-import setup_agents
 from common import indexes
 from common.paths import PACKAGED
 
@@ -102,13 +103,30 @@ def settle() -> list[str]:
             plan = connect.pending(path)
             if switched_off(plan):
                 continue
-            mine = [(file, settings, changes) for file, settings, changes in plan if changes
-                    and apply.user_wired("claude" if file.parent.name == ".claude" else "codex") and own(path, file)]
-            setup_agents.write_plan(mine, runtime.stopping.is_set)   # each file whole or as it was
-            done += [f"{file}: {change}" for file, _s, changes in mine for change in changes]
+            for file, settings, changes in plan:
+                if changes and apply.user_wired("claude" if file.parent.name == ".claude" else "codex") \
+                        and own(path, file) and replaced(path, file, connect.settled(settings)):
+                    done += [f"{file}: {change}" for change in changes]
         except Exception:   # noqa: BLE001 — one checkout never stops the others or the watch; the screen names it
             continue
     return done
+
+
+def replaced(repo: Path, file: Path, text: str) -> bool:
+    """`text` staged beside `file` and swapped in whole, only if the file is still the checkout's own and untracked
+    (`own`) once the staging is written, and the server is not going down: a change since the plan writes nothing."""
+
+    file.parent.mkdir(exist_ok=True)
+    fd, partial = tempfile.mkstemp(dir=file.parent, prefix=file.name + ".", suffix=".part")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
+            out.write(text)
+        if runtime.stopping.is_set() or not own(repo, file) or Path(partial).resolve().parent != file.resolve().parent:
+            return False
+        os.replace(partial, file)
+        return True
+    finally:
+        Path(partial).unlink(missing_ok=True)
 
 
 def own(repo: Path, file: Path) -> bool:

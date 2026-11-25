@@ -37,7 +37,9 @@ The mocks are low-fidelity screens in the stack's own UI code: grey boxes and
 real labels, no real data, no network. They are drawn by the stack's own
 preview tool on this PC: for a web view stack such as Tauri or Electron, its
 pages rendered by a screenshot of a headed browser window, never a headless
-one; for WinUI or WPF, a rendered-control snapshot test.
+one; for WinUI or WPF, a snapshot of each screen shown in a window of its
+own. A preview that shows no window while it runs is refused, whatever it
+drew.
 
 - `files` holds every file the preview needs that HEAD does not already have:
   the mock sources, the screenshot script or test, and any build file it

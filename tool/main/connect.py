@@ -244,9 +244,9 @@ def status(path: Path, wired: dict[str, bool] | None = None) -> dict:
     for host in agents:
         if not wired.get(host):
             missing.append(f"사용자 단위 hook 없음 ({LABEL[host]})")
-        try:
+        try:   # hooks of another shape (an array of them, a string) are as unreadable as broken JSON
             old = leftover(path, host)
-        except (OSError, ValueError):
+        except (OSError, ValueError, AttributeError, TypeError):
             old = ["읽지 못함"]
         if old:
             missing.append(f"옛 hook 남음 ({LABEL[host]})")

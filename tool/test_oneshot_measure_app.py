@@ -438,8 +438,7 @@ def test_a_stop_accepted_before_the_outcome_is_saved_holds(with_person):
     measure.stop("budget")
     record = {"n": before + 1, "head": o()["built_head"], "ts": 1, "folder": "m", "mode": "auto", "status": "passed"}
     try:
-        assert measure.decided("budget", oneshot_spec.store("budget"), record,
-                               measure.oneshot_needs.CHANGES.get("budget", 0)) is None
+        assert measure.decided("budget", oneshot_spec.store("budget"), record, ({ENV}, 0)) is None
     finally:
         measure.HALTS.pop("budget", None)   # one process's tests share it: the next run starts unstopped
     assert len(o().get("measures") or []) == before and o()["stopped"]["reason"] == "measure"

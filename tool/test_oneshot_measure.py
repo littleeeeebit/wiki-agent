@@ -230,6 +230,10 @@ def test_an_input_the_script_calls_wrong_stops_for_the_owner_and_a_new_value_mea
     measure.start("budget", measure.Start(head=o()["built_head"]))
     assert o()["stage"] == "measure" and o()["working"] == "build" and o()["fix"] == "measure"
     assert "kept the input as it is" in sent[-1][2] and "the service refused" in sent[-1][2] and WRONG not in sent[-1][2]
+    then = check(tree, "확인했다.\n" + report())   # the kept dispute's HEAD with no commit: sent back, never measured
+    assert o()["stage"] == "measure" and o()["working"] == "build" and then is not None
+    then()
+    assert "커밋이 하나도 늘지 않았다" in sent[-1][2]
     write(tree, "checked.txt", "")
     git(tree, "add", "-A")
     git(tree, "commit", "-m", "check")
@@ -251,11 +255,11 @@ def test_an_input_the_script_calls_wrong_stops_for_the_owner_and_a_new_value_mea
 
 def test_a_stop_or_a_set_aside_result_shows_the_owner_its_sentence_masked_whole(at_measure, monkeypatch):
     store, head, hide = oneshot_spec.store("budget"), o()["built_head"], {"비밀 값이": "[K]"}
-    measure.decided("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "passed"}, -1, hide)
+    measure.decided("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "passed"}, ({ENV}, -1), hide)
     assert o()["measures"][-1]["status"] == "stale" and "비밀 값이" not in json.dumps(o(), ensure_ascii=False)
     monkeypatch.setitem(measure.HALTS, "budget", halted := measure.Halted())
     halted.set()
-    measure.decided("budget", store, {"n": 2, "head": head, "mode": "auto", "status": "passed"}, 0, {"실측을 멈췄다": "[K]"})
+    measure.decided("budget", store, {"n": 2, "head": head, "mode": "auto", "status": "passed"}, ({ENV}, 0), {"실측을 멈췄다": "[K]"})
     assert "실측을 멈췄다" not in o()["stopped"]["detail"]
 
 
@@ -370,6 +374,26 @@ def test_a_tree_that_moves_while_it_is_measured_is_repaired_at_the_measurement_a
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
         oneshot_spec.resume("budget")
     assert len(sent) == turns + 1 and "stray.txt" in sent[-1][2]   # the resumed turn is told why, as the first was
+    for pressed in (1, 2):   # a stop before the worker's first check, or while its last one runs, holds
+        oneshot_spec.saved("budget", oneshot={"working": None, "fix": None, "stopped": None})
+        calls.clear()
+        measure.HALTS["budget"] = measure.Halted()
+
+        def stopping(*a, pressed=pressed):
+            calls.append(1)
+            if len(calls) == pressed:
+                measure.stop("budget")
+            return "stray.txt 가 새로 생겼다" if len(calls) == pressed else ""
+
+        turns = len(sent)
+        try:
+            with patch.object(oneshot_review, "moved", stopping), \
+                    patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
+                measure.measure("budget", "owner")
+        finally:
+            measure.HALTS.pop("budget", None)
+        assert len(sent) == turns and o()["stopped"]["reason"] == "measure" and "멈췄다" in o()["stopped"]["detail"]
+        assert o()["working"] != "build" and not o().get("fix")
 
 
 def test_an_input_question_waits_for_its_measurement_to_end_and_counts_only_what_the_measurement_reads(at_measure):
@@ -396,14 +420,20 @@ def test_an_input_question_waits_for_its_measurement_to_end_and_counts_only_what
     with patch.object(measure.oneshot, "start_worker", lambda *a: started.append(ending.is_alive())):
         measure.remeasure("budget")
     assert started == [False]
-    # An input an earlier version disputed at its cap (`failed` with `input_error`) is measured again first.
+    # A second answer that waited too finds the first one's measurement running: nothing more, and no refusal.
+    oneshot_spec.saved("budget", oneshot={"working": "measure"})
+    with patch.object(measure.oneshot, "start_worker", lambda *a: started.append("again")):
+        measure.remeasure("budget")
+    assert started == [False]
+    # An input an earlier version disputed at its cap (`failed` with `input_error`) is measured again first, its
+    # count, the disputes', cleared: the first metric that fails after it is one failure.
     oneshot_spec.saved("budget", oneshot={"measures": [*o()["measures"][:-1], {**asked, "status": "failed"}],
-                                          "stopped": None, "working": None})
+                                          "stopped": None, "working": None, "measure_fails": 3})
     launched = []
     with patch.object(measure, "launch", lambda *a: launched.append(1)), \
             patch.object(measure.oneshot_build, "send", lambda *a: launched.append("build")):
         measure.start("budget", measure.Start(head=head))
-    assert launched == [1] and o()["stage"] == "measure" and not o().get("fix")
+    assert launched == [1] and o()["stage"] == "measure" and not o().get("fix") and o()["measure_fails"] == 0
 
 
 def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_strands_the_run(at_measure):
@@ -507,6 +537,16 @@ def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_stran
     with patch.object(measure.specs, "gate", changing):
         measure.measure("budget", "owner")
     assert o()["measures"][-1]["status"] == "stale" and o()["stage"] == "measure" and not o().get("measure_fails")
+    unused = f"UNUSED_KEY_{os.getpid()}"
+
+    def elsewhere(*args, **kwargs):   # a credential no measurement reads, written and removed while the script runs
+        oneshot_needs.stored("budget", unused, "x" * 12)
+        oneshot_needs.forget("budget", unused)
+        return gate(*args, **kwargs)
+    given()
+    with patch.object(measure.specs, "gate", elsewhere):
+        measure.measure("budget", "owner")
+    assert o()["measures"][-1]["status"] == "owner", "only what the measurement reads sets its result aside"
     given()
     read = measure.report_of
 

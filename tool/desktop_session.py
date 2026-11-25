@@ -198,6 +198,7 @@ class Look:
         self.result = None   # the teardown's reasons, kept until its proof is saved
         self.closing = False
         self.jobs: dict[str, owned_job.Job] = {}
+        self.shown: dict[str, int] = {}   # per run, the most windows its members showed at once on the owner's screen
         self.closed = False
         held = recover_all(self.root)
         if held:
@@ -308,6 +309,7 @@ class Look:
                 cut = "멈춤"
             elif time.monotonic() > deadline:   # read after the code: an exit it shows happened by now
                 cut = f"{int(seconds)}초 안에 끝나지 않았다"
+            self.shown[key] = max(self.shown.get(key, 0), visible({m["pid"] for m in job.members()}))
             if cut or code is not None:
                 break
             time.sleep(max(0.0, min(0.2, deadline - time.monotonic())))
@@ -439,6 +441,31 @@ class Look:
         return [f"port {port} is still held by a recorded process" for port in ports
                 if any(native_process.same(member, native_process.identity(pid))
                        for pid in native_process.listeners(port) for member in recorded)]
+
+
+def visible(pids: set[int]) -> int:
+    """How many windows of `pids` the owner's screen shows now: visible, and at least 100×50 pixels, so a hidden or
+    collapsed helper window is never taken for one the owner sees."""
+
+    if not pids:
+        return 0
+    u = ctypes.windll.user32
+    callback = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+    u.EnumWindows.argtypes = (callback, w.LPARAM)
+    u.GetWindowThreadProcessId.argtypes = (w.HWND, ctypes.POINTER(w.DWORD))
+    u.IsWindowVisible.argtypes, u.GetWindowRect.argtypes = (w.HWND,), (w.HWND, ctypes.POINTER(w.RECT))
+    found = []
+
+    @callback
+    def seen(hwnd, _):
+        owner, rect = w.DWORD(), w.RECT()
+        u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value in pids and u.IsWindowVisible(hwnd) and u.GetWindowRect(hwnd, ctypes.byref(rect))                 and rect.right - rect.left >= 100 and rect.bottom - rect.top >= 50:
+            found.append(hwnd)
+        return True
+
+    u.EnumWindows(seen, 0)
+    return len(found)
 
 
 @contextmanager

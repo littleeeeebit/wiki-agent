@@ -99,8 +99,11 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
     (elsewhere / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
     linked.mkdir()
     git(linked, "init", "-q")
-    import _winapi
-    _winapi.CreateJunction(str(elsewhere / ".claude"), str(linked / ".claude"))   # a link out of the checkout
+    try:   # a link out of the checkout: a junction on Windows, a symbolic link elsewhere
+        import _winapi
+        _winapi.CreateJunction(str(elsewhere / ".claude"), str(linked / ".claude"))
+    except ImportError:
+        os.symlink(elsewhere / ".claude", linked / ".claude", target_is_directory=True)
     rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked)]
     rule = "Bash(dos2unix*)"
     with patch.object(connect, "hosts", return_value=["claude"]), \
@@ -123,6 +126,19 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
             def unreadable(argv, *a, **k):   # git that could not read its index
                 return SimpleNamespace(returncode=128, stdout="") if "ls-files" in argv else real(argv, *a, **k)
 
+            shaped = repo("shaped", '{"hooks": [1]}')   # hooks of another shape: unreadable, never the listing's stop
+            with patch.object(connect, "adapter_of", return_value=({"slots": {"gate_cmd": "x"}}, "")):
+                assert "옛 hook 남음 (Claude)" in connect.status(shaped, {"claude": True})["missing"]
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            checked, mine = {}, wiring.own
+
+            def flips(at: Path, file: Path) -> bool:   # staged or linked after the plan read it
+                checked[file] = checked.get(file, 0) + 1
+                return mine(at, file) and checked[file] == 1
+
+            with patch.object(wiring, "own", flips):
+                assert wiring.settle() == [] and (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            assert not list((loose / ".claude").glob("*.part")), "the staging never stays behind"
             with patch.object(wiring.subprocess, "run", unreadable):
                 (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
                 assert wiring.settle() == [], "git 이 색인을 읽지 못하면 추적 여부를 모르니 쓰지 않는다"
