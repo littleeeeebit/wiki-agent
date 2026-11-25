@@ -1,7 +1,7 @@
 import { get, json, post, type ChoiceQuestion } from '@/lib/api'
 
 /** A `choices` question answered, as the owner saw it (`oneshot_tell.Asked`). */
-export type Answered = ChoiceQuestion & { answer: string }
+export type Answered = ChoiceQuestion & { answer: string; picked: number[] | null }   // `picked`: null when typed
 
 /** The oneshot run's data past S1 and its requests (`tool/main/oneshot_spec.py` `view`). */
 
@@ -212,7 +212,7 @@ export const api = {
   // The owner's words to the build agent mid-build (`oneshot_tell.tell`).
   // `asked`: the work-log questions the words answer, each with its options (`oneshot_tell.Asked`).
   tell: (repo: string, text: string, asked?: Answered[]) => post(`${base(repo)}/tell`, {
-    text, asked: asked?.map((q) => ({ header: q.header ?? '', question: q.question, answer: q.answer,
+    text, asked: asked?.map((q) => ({ header: q.header ?? '', question: q.question, answer: q.answer, picked: q.picked,
       options: q.options.map((o) => ({ label: o.label, note: o.note ?? '', preview: o.preview ?? '' })) })) ?? [] }).then(answer),
   // [지금 반영]: the words a parked run holds, taken in now (`oneshot_tell.apply`).
   applyTell: (repo: string) => post(`${base(repo)}/tell/apply`, {}).then(answer),

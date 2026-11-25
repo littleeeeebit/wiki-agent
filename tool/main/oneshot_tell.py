@@ -92,6 +92,13 @@ class Asked(BaseModel):
     question: str
     options: list[Option] = []
     answer: str
+    picked: list[int] | None = None   # the options chosen, by index (labels can collide); None: the owner typed it
+
+    def shown(self) -> dict:
+        """As the agents read it: each option marked when the owner chose it."""
+
+        return {**self.model_dump(exclude={"options", "picked"}), "typed": self.picked is None, "options": [
+            {**o.model_dump(), "chosen": i in (self.picked or [])} for i, o in enumerate(self.options)]}
 
 
 class Tell(BaseModel):
@@ -104,7 +111,7 @@ def tell(repo: str, body: Tell) -> dict:
     text = body.text.strip()
     if not text or len(text) > MAX_TELL:
         raise HTTPException(400, f"말은 1–{MAX_TELL}자로 적는다")
-    asked = [a.model_dump() for a in body.asked]
+    asked = [a.shown() for a in body.asked]
     if len(json.dumps(asked, ensure_ascii=False)) > MAX_ASKED:   # bounded on its own: the answer keeps its budget
         raise HTTPException(400, f"답한 질문은 {MAX_ASKED}자까지 싣는다")
     with oneshot._lock:   # held through the start, so two requests never both find the run idle

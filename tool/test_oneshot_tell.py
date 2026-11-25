@@ -130,7 +130,7 @@ def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_thei
     at("build")
 
     def asked(chapter, answer):
-        return {"header": chapter, "question": "이 부분은 어떤 모델을 쓸까?", "answer": answer,
+        return {"header": chapter, "question": "이 부분은 어떤 모델을 쓸까?", "answer": answer, "picked": [1 if answer == "그대로" else 0],
                 "options": [{"label": "새 모델", "note": "무손실 중간 파일을 거친다", "preview": "clip_start_ms"},
                             {"label": "그대로"}]}
     long = "가" * oneshot_tell.MAX_TELL   # the answer keeps its whole budget: the questions are bounded on their own
@@ -140,6 +140,8 @@ def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_thei
     with patch.object(oneshot_tell.work, "attached", lambda tree: turn):   # a build turn runs: it is told at once
         oneshot_tell.tell("budget", oneshot_tell.Tell(text=long, asked=[asked("재생", "새 모델"), asked("녹음", "그대로")]))
     assert o()["tell_pending"][-1]["asked"][0]["header"] == "재생" and "이 부분은" in steers[0] and "재생" in steers[0]
+    # which option was chosen, by its place: labels can collide, a joined answer can read as two
+    assert [[x["chosen"] for x in a["options"]] for a in o()["tell_pending"][-1]["asked"]] == [[True, False], [False, True]]
     with pytest.raises(HTTPException) as refused:
         oneshot_tell.tell("budget", oneshot_tell.Tell(text="네", asked=[asked("x" * oneshot_tell.MAX_ASKED, "네")]))
     assert refused.value.status_code == 400 and len(o()["tell_pending"]) == 1
