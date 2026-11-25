@@ -33,6 +33,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import apply
+import setup_agents
 from common import indexes
 from common.paths import PACKAGED
 
@@ -99,27 +100,36 @@ def settle() -> list[str]:
         return []
     done = []
     for path in paths:
-        try:
+        try:   # each file as it was, absent included, read before the plan: a change after it is never planned over
+            sources = {file: raw(file) for file in (path / name for name in setup_agents.SETTINGS.values())}
             plan = connect.pending(path)
             if switched_off(plan):
                 continue
             for file, settings, changes in plan:
                 if changes and apply.user_wired("claude" if file.parent.name == ".claude" else "codex") \
-                        and own(path, file) and replaced(path, file, settings):
+                        and own(path, file) and replaced(path, file, settings, sources[file]):
                     done += [f"{file}: {change}" for change in changes]
         except Exception:   # noqa: BLE001 — one checkout never stops the others or the watch; the screen names it
             continue
     return done
 
 
-def replaced(repo: Path, file: Path, settings: dict) -> bool:
-    """`settings` staged in the folder `own` checked and swapped in whole, only if, once the staging is written,
-    that folder is still the same one, the file still the checkout's own and untracked, the checkout's settings
-    still plan exactly this (an edit the person made since, `disableAllHooks` in either file included, writes
-    nothing), and the server is not going down.
+def raw(file: Path) -> bytes | None:   # a file's bytes, or `None` when there is none
+    try:
+        return file.read_bytes()
+    except FileNotFoundError:
+        return None
 
-    Accepted limit: a folder moved, or an index staged, in the instant between this last check and the swap is not
-    seen. The watch guards against mistakes, not a race made on purpose; the screen names what it wrote."""
+
+def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bool:
+    """`settings` staged in the folder `own` checked and swapped in whole, only if, once the staging is written,
+    that folder is still the same one, the file still the checkout's own and untracked and still `source`, the
+    bytes the plan was made from (`None`: absent), with `disableAllHooks` off in both files, and the server is not
+    going down. An edit or removal the person made since writes nothing.
+
+    Accepted limits: a folder moved, or an index staged, in the instant between this last check and the swap is not
+    seen; and a folder renamed while the staging is written keeps that `.part` file, which the old path no longer
+    reaches. The watch guards against mistakes, not a race made on purpose; the screen names what it wrote."""
 
     file.parent.mkdir(exist_ok=True)
     where = file.parent.resolve()
@@ -131,8 +141,7 @@ def replaced(repo: Path, file: Path, settings: dict) -> bool:
         if runtime.stopping.is_set() or file.parent.resolve() != where or not os.path.samestat(before, os.stat(where)) \
                 or not own(repo, file):
             return False
-        again = connect.pending(repo)   # read last: what the person changed up to now is seen
-        if switched_off(again) or [s for f, s, _c in again if f == file] != [settings]:
+        if raw(file) != source or switched_off(connect.pending(repo)):   # read last: every change up to now is seen
             return False
         os.replace(partial, where / file.name)
         return True

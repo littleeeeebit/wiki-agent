@@ -140,21 +140,23 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
                 assert wiring.settle() == [] and (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
             assert not list((loose / ".claude").glob("*.part")), "the staging never stays behind"
             for edited, text in (("settings.json", '{"disableAllHooks": true}'), ("settings.json", '{"x": 1}'),
-                                 ("settings.local.json", '{"disableAllHooks": true}')):
+                                 ("settings.local.json", '{"disableAllHooks": true}'), ("settings.json", None)):
                 (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
                 (loose / ".claude/settings.local.json").unlink(missing_ok=True)
                 checked.clear()
 
                 def editing(at: Path, file: Path, edited=edited, text=text) -> bool:   # the person edits mid-write
                     checked[file] = checked.get(file, 0) + 1
-                    if checked[file] == 2:
+                    if checked[file] == 2 and text is None:   # removed: absent reads as `{}`, never as the same
+                        (file.parent / edited).unlink()
+                    elif checked[file] == 2:
                         (file.parent / edited).write_text(text, encoding="utf-8")
                     return mine(at, file)
 
                 with patch.object(wiring, "own", editing):
                     assert wiring.settle() == [], f"an edit to {edited} after the plan read it writes nothing"
-                assert (loose / ".claude" / edited).read_text(encoding="utf-8") == text
-            (loose / ".claude/settings.local.json").unlink()
+                assert wiring.raw(loose / ".claude" / edited) == (text and text.encode())
+            (loose / ".claude/settings.local.json").unlink(missing_ok=True)
             with patch.object(wiring.subprocess, "run", unreadable):
                 (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
                 assert wiring.settle() == [], "git 이 색인을 읽지 못하면 추적 여부를 모르니 쓰지 않는다"
