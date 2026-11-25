@@ -80,11 +80,17 @@ reach as not reached, never as passed.
 
 After every build turn whose gate passes, the server measures by itself.
 
-- It launches the frozen program on the run-owned desktop, so no window
-  covers the owner's screen. With `ONESHOT_MEASURE=auto` the program plays
-  no sound through the speakers, and the clips hold what it said. A program
-  that plays sound anyway is heard: an accepted limit, since the server sets
-  no per-program volume.
+- It launches the frozen program on the owner's desktop, so the owner sees
+  the window the measurement drives and hears its sound. The server, the
+  search daemon and the tests start every console child without a window
+  (`process.hide_child_consoles`), and the contract has the script start
+  its own console helpers the same way; the owner sees the program's
+  windows and, in their own measurement, the browser pages its steps open.
+  The clips also hold what the program said.
+- A metric is read from what the program put out (the sound, the screen,
+  the file), never from its own account of what it did. One the script
+  could not observe is left out of the report, and fails; a truth value is
+  judged only against a truth value and a number only against a number.
 - `{data}` is one folder kept for the whole run, not a fresh one per launch,
   so a sign-in the owner gave once is still there for the next build.
 - The program gets only what it needs to run, the measurement's inputs, the
@@ -188,7 +194,7 @@ which.
 | # | Step | Status |
 | --- | --- | --- |
 | 13a | `.wiki/measure.json` takes `app` for a `desktop` run, frozen and health-checked like the PC app's `run`; metrics carry `person`; the build prompt asks for the first screen with the backend | In this pull request |
-| 13b | The server measures by itself after each passing build turn, on the run-owned desktop, without sound, with one data folder per run; only failed metrics go back | In this pull request |
+| 13b | The server measures by itself after each passing build turn, on the owner's screen, with sound, with one data folder per run; only failed metrics go back | In this pull request |
 | 13c | The owner's one measurement on their own screen, with sound, after every machine metric passed | In this pull request |
 | 13d | The `vtuber-ko-dub` run goes through 13a–13c: its build turn writes the first screen, the server measures until it passes, then the owner measures once | After the merge |
 | 13e | An input the script calls wrong goes to the build agent; the owner is asked only once a check outside the program shows it wrong | In this pull request |

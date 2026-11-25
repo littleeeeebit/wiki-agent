@@ -273,7 +273,8 @@ def serve_check(path: Path, run, spec: dict) -> str:
         env, hide = env_of(spec, plan)
         log = Path(tempfile.mkdtemp(prefix="oneshot-serve-")) / "serve.log"
         try:
-            with product.started(spec, plan, path, {**env, product.MODE: "auto"}, run.halt, log, hide, "auto"):
+            with product.started(spec, plan, path, {**env, product.MODE: "auto"}, run.halt, log, hide, "auto",
+                                 seen=False):   # only its health address is read: the owner sees the measurement
                 pass
         finally:
             error = None
@@ -337,7 +338,10 @@ def report_of(out: Path, plan: dict, hide: dict[str, str]) -> dict:
     rows = []
     for m in plan["metrics"]:
         v = got.get(m["id"])
-        number = isinstance(v, (int, float)) and (not isinstance(v, bool) or m["pass"]["op"] == "==") \
+        # A truth value only against a truth value and a number only against a number: Python's `False == 0`
+        # would pass a metric the script could not observe and wrote as `false`.
+        number = isinstance(v, (int, float)) and isinstance(v, bool) == isinstance(m["pass"]["value"], bool) \
+            and (not isinstance(v, bool) or m["pass"]["op"] == "==") \
             and label_of(v, hide) is None   # a value that is a secret is never shown as a measurement
         ok = bool(number and OPS[m["pass"]["op"]](v, m["pass"]["value"]))
         rows.append({**m, "value": v if number else None, "ok": ok})

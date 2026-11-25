@@ -5,10 +5,19 @@ the tests start as subprocesses see the same empty home.
 """
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+# Loaded on its own too (`test_verification_runtime` runs it with `runpy`), where pytest has not put `tool` on the path.
+if (here := str(Path(__file__).resolve().parent)) not in sys.path:
+    sys.path.insert(0, here)
+from common import process  # noqa: E402
+
+# A test worker has no console of its own: every console child it started flashed a window on the owner's screen.
+process.hide_child_consoles()
 
 
 @pytest.hookimpl(optionalhook=True)

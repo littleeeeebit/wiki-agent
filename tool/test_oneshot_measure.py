@@ -325,6 +325,23 @@ def test_a_report_naming_no_declared_input_or_a_blank_check_is_never_the_owners(
     assert secret not in shown["said"] + shown["asked"] and "[K]" in shown["asked"] and shown["kind"] == "secret"
 
 
+def test_a_metric_passes_only_on_a_value_of_its_own_kind_and_an_empty_clip_is_none(tmp_path):
+    plan = {"metrics": [{"id": "gaps", "pass": {"op": "==", "value": 0}},
+                        {"id": "voice", "pass": {"op": "==", "value": True}}]}
+
+    def oks(values):
+        (tmp_path / "report.json").write_text(json.dumps({"metrics": values}), encoding="utf-8")
+        return [row["ok"] for row in measure.report_of(tmp_path, plan, {})["metrics"]]
+
+    assert oks({}) == oks({"gaps": None, "voice": None}) == [False, False]   # nothing observed fails
+    assert oks({"gaps": False, "voice": 1}) == [False, False]   # `False == 0` and `1 == True` pass nothing
+    assert oks({"gaps": 0, "voice": True}) == [True, True]
+    (tmp_path / "clips").mkdir()
+    (tmp_path / "clips" / "empty.wav").write_bytes(b"")
+    (tmp_path / "clips" / "said.wav").write_bytes(b"RIFF")
+    assert measure.clips_of(tmp_path, {}) == ["said.wav"]   # a clip with nothing in it is none
+
+
 def test_the_backend_that_never_answers_fails_the_measurement(at_measure):
     tree, sent = at_measure
     plan = json.loads((tree / ".wiki/measure.json").read_text(encoding="utf-8"))

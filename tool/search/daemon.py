@@ -52,6 +52,7 @@ from pathlib import Path
 # Run as a script by `spawn`: `tool/` goes on the path so the package imports.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from common import process  # noqa: E402
 from common.language import language  # noqa: E402
 from search import PORT, cache_dir, evidence, knowledge_graph, proof, retrieval, state_path, version  # noqa: E402
 from search.retrieval import family  # noqa: E402
@@ -1186,8 +1187,8 @@ def serve(port: int, daemon: Daemon, tries: int = 1) -> Server | None:
 
 
 def main() -> int:
-    # Detached, its streams are the null device — but pinned like every tool.
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")   # detached, its streams are the null device, but pinned like every tool
+    process.hide_child_consoles()   # and it has no console: each console child would open a window of its own
     token = secrets.token_hex(16)
     embedder = Embedder(cache_dir())
     daemon = Daemon(token, embedder)

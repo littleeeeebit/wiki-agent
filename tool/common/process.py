@@ -42,6 +42,41 @@ def background_options() -> dict:
     return {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 
+def hide_child_consoles() -> None:
+    """From now on every child this process starts on Windows gets a hidden console, unless its caller asked for
+    a console of its own (`CREATE_NEW_CONSOLE`) or for none (`DETACHED_PROCESS`).
+
+    `background_options` covers one call; this covers the ones nobody passed it to. A test worker with no console
+    of its own flashed a window on the owner's screen for every `powershell` and `git` it started. A window
+    program still shows its window: the flag only hides consoles. Called once, by the server, the search daemon
+    and the tests, before they start anything.
+    """
+
+    global _create
+    if os.name != "nt" or _create is not None:
+        return
+    import _winapi   # the call `Popen` (and asyncio's, and multiprocessing's) makes once its arguments are bound
+    _create = _winapi.CreateProcess
+    _winapi.CreateProcess = _hidden
+
+
+_create = None   # Windows' own `CreateProcess`, once `hide_child_consoles` stands in front of it
+
+
+def hidden_flags(flags):
+    """`flags` with `CREATE_NO_WINDOW`, unless they ask for a console of their own or none; anything that is not
+    a number is passed as it came, for Windows to refuse as it would."""
+
+    own = subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS
+    # As the plain number Windows is handed: a strict flag enum refuses a bit it does not declare, and a subclass's
+    # own `__int__` is not what Windows reads.
+    return int.__index__(flags) | subprocess.CREATE_NO_WINDOW if isinstance(flags, int) and not flags & own else flags
+
+
+def _hidden(application, command, process_attributes, thread_attributes, inherit, flags, *rest):
+    return _create(application, command, process_attributes, thread_attributes, inherit, hidden_flags(flags), *rest)
+
+
 def resumed(proc: subprocess.Popen) -> None:
     """Let a child started with `SUSPENDED` run; `OSError` when it cannot."""
 
