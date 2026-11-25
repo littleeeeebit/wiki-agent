@@ -1037,16 +1037,17 @@ def delete_task(sid: str) -> dict:
         repo = current_repo()
     with _files:
         spec = editable_task(load(repo.name, sid))
-    with _lock:
-        worker = planning._workers.get((repo.name, sid))
-    if worker is not None:
-        worker.cancel()
-        if worker.thread is not None:
-            worker.thread.join(work.HALT_WAIT)
-            if worker.thread.is_alive():
-                raise HTTPException(409, "계획 작업이 멈춘 뒤 삭제해라")
-    # Nothing still acting on it writes the task adopted next under this ID; its loop is stopped there.
+    # Nothing still acting on it writes the task adopted next under this ID; its loop is stopped there. A busy
+    # merge refuses it before its planning worker is cancelled.
     with loop.deleting(repo.name, spec):
+        with _lock:
+            worker = planning._workers.get((repo.name, sid))
+        if worker is not None:
+            worker.cancel()
+            if worker.thread is not None:
+                worker.thread.join(work.HALT_WAIT)
+                if worker.thread.is_alive():
+                    raise HTTPException(409, "계획 작업이 멈춘 뒤 삭제해라")
         path = Path(spec["worktree"]) if spec.get("worktree") else None
         if path and spec.get("workspace_mode") != "branch" and path.resolve() != repo.resolve() and path.exists():
             work.clear(work.Removal(path=str(path), force=True))
@@ -1079,8 +1080,11 @@ def drop(sid: str) -> dict:
         spec = editable_task(load(repo.name, sid))
     if spec["state"] not in ("정리됨", "머지됨"):
         raise HTTPException(409, "시작한 명세는 머지된 뒤에 버린다")
-    with loop.deleting(repo.name, spec):   # a cleanup still running on it finishes first
-        aside_task(repo.name, spec)
+    with loop.deleting(repo.name, spec), _files:   # a cleanup still running on it finishes first
+        now = load(repo.name, sid)
+        if now is None or born(now) != born(spec) or now["state"] not in ("정리됨", "머지됨"):   # started meanwhile
+            raise HTTPException(409, "시작한 명세는 머지된 뒤에 버린다")
+        aside(repo.name, sid)
     return {"ok": True}
 
 

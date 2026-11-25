@@ -713,6 +713,10 @@ def kick(repo: str, sid: str, *, automatic: bool = False, of: dict | None = None
             raise HTTPException(404, "그런 명세가 없다")
         if of is not None and born(spec) != born(of):
             raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
+        if key in _deleting:   # reserved under this lock (`deleting`): the task is not moved, as no loop starts
+            if automatic:
+                return
+            raise HTTPException(409, "삭제하는 중인 작업이다")
         if spec.get("refreezing"):
             # The re-freeze has the card's worktree on the old code on purpose; a loop started then read the
             # detached checkout as a lost branch and stopped the card (ai-coding-wiki #162).
@@ -2805,46 +2809,51 @@ def halt(sid: str) -> dict:
 
 
 @contextlib.contextmanager
-def deleting(repo: str, spec: dict):
+def deleting(repo: str, spec: dict, *, interrupt: bool = True):
     """Hold off everything that acts on `spec`'s task while it is archived. Its ID is its branch's folder, so
     a loop, a merge or a cleanup still running on it would write the task adopted next under that ID.
-    - The task is reserved (`_deleting`): `kick` registers no loop for it meanwhile, and a second delete
-      is refused.
-    - A busy merge or cleanup (`_landing`) refuses it before anything is stopped.
-    - The task must still hold its ID; its own loop is stopped and waited for, and `_landing` is held to
-      the end. A removal inside (`work.clear`) on the same thread passes through."""
+    - A busy merge or cleanup (`_landing`) refuses it before anything is stopped; it is held to the end.
+    - The task is reserved (`_deleting`): `kick` neither moves it nor registers a loop meanwhile, and a
+      second delete is refused.
+    - The task must still hold its ID. Its own running loop is stopped and waited for — or, without
+      `interrupt` (an ordinary worktree removal), the delete is refused and the review keeps running.
+    - A removal inside (`work.clear`) on the same thread passes through."""
     key, mine = (repo, spec["id"]), born(spec)
     if _deleting.get(key) == threading.get_ident():
         yield
         return
-    if not _landing.acquire(blocking=False):   # a merge's GitHub reads can take minutes: refused, not waited on
+    # Held from before anything stops to the end. A merge's GitHub reads can take minutes, so it is refused,
+    # not waited on; the loop never takes it (only merges, their observation, cleanup and the poll do), so the
+    # join below never waits on this delete.
+    if not _landing.acquire(blocking=False):
         raise HTTPException(409, "이 저장소의 머지·정리가 끝난 뒤 삭제해라")
-    _landing.release()
-    with _lock:
-        if key in _deleting:
-            raise HTTPException(409, "이미 삭제하는 중이다")
-        _deleting[key] = threading.get_ident()
-        old = _loops.get(key)
     try:
-        with specs._files:
+        with specs._files:   # `kick` reads the reservation under it before moving the task
+            if key in _deleting:
+                raise HTTPException(409, "이미 삭제하는 중이다")
             now = specs.load(repo, spec["id"])
-        if now is None or born(now) != mine:
-            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
-        if old is not None and old.born in (None, mine):
-            old.stop()
-            if old.thread is not None and old.thread is not threading.current_thread():
+            if now is None or born(now) != mine:
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
+            _deleting[key] = threading.get_ident()
+        try:
+            with _lock:   # after the reservation: a loop registered later is refused by `kick`
+                old = _loops.get(key)
+            if old is not None and old.born in (None, mine) and old.thread is not None \
+                    and old.thread is not threading.current_thread() and old.thread.is_alive():
+                if not interrupt:
+                    raise HTTPException(409, "리뷰가 도는 동안은 지우지 않는다")
+                old.stop()
                 old.thread.join(work.HALT_WAIT)
                 if old.thread.is_alive():
                     raise HTTPException(409, "리뷰 루프가 멈춘 뒤 삭제해라")
-        if not _landing.acquire(blocking=False):   # taken while the loop stopped
-            raise HTTPException(409, "이 저장소의 머지·정리가 끝난 뒤 삭제해라")
-        try:
+            elif old is not None and old.born in (None, mine):
+                old.stop()
             yield
         finally:
-            _landing.release()
+            with specs._files:
+                _deleting.pop(key, None)
     finally:
-        with _lock:
-            _deleting.pop(key, None)
+        _landing.release()
 
 
 def halt_loop(repo: str, sid: str) -> None:
