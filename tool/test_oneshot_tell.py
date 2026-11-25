@@ -329,6 +329,36 @@ def test_a_send_that_holds_the_tree_takes_words_said_by_then_first_and_a_rewrite
     assert o()["working"] == "retell"
 
 
+def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_is_cleared_before_the_next_turn(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import work
+    at("build")
+    tree, real, broken = str(specs.load("budget", oneshot.BRANCH)["worktree"]), oneshot_spec.saved, [True]
+
+    def saved(repo: str, **fields):
+        if fields.get("adapter") is False and broken[0]:
+            raise OSError("disk")
+        return real(repo, **fields)
+
+    def granted() -> bool:
+        return bool(specs.load("budget", oneshot.BRANCH).get("adapter"))
+
+    with patch.dict(oneshot_build.GRANTS, {"build": lambda spec: True}), patch.object(oneshot_spec, "saved", saved), \
+         patch.object(oneshot_build, "resolve_tools", lambda *a: True), patch.object(work, "session"):
+        with patch.object(work, "begin") as begin:
+            oneshot_build.send("budget", "build", "BUILD")
+        begin.call_args[0][3]()   # the turn ends, and clearing its grant fails: the tree still goes
+        assert tree not in work._busy and granted()
+        with patch.object(work, "begin", side_effect=RuntimeError("refused")):
+            oneshot_build.send("budget", "build", "BUILD")   # refused at launch, its clearing failing too
+        assert tree not in work._busy and not o().get("inflight") and o()["stopped"]["reason"] == "block"
+        broken[0] = False
+        with patch.object(work, "begin") as begin:
+            oneshot_build.send("budget", "tests", "TESTS")   # a turn with no grant: the one left is cleared first
+        assert not granted()
+        begin.call_args[0][3]()
+    assert tree not in work._busy
+
+
 def test_a_build_send_that_finds_a_rewrite_started_before_it_held_the_tree_yields(world):  # noqa: F811 — the imported fixture, requested by name
     from main import work
     at("build", working="retell")

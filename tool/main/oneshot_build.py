@@ -24,7 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
-from common import masked
+from common import errorlog, masked
 from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
@@ -96,8 +96,11 @@ class Turn(work.Run):
         self.ended.set()
         store = oneshot_spec.store(self.repo)
         with oneshot._lock:
-            if self.stage in GRANTS:
-                oneshot_spec.saved(self.repo, adapter=False)
+            try:
+                if self.stage in GRANTS:
+                    oneshot_spec.saved(self.repo, adapter=False)
+            except Exception as exc:   # cleared before the next turn instead (`send`); the mark still goes
+                errorlog.record("oneshot-grant", exc, repo=self.repo)
             if (store.get().get("inflight") or {}).get("turn") == self.token:
                 store.put(inflight=None)
 
@@ -235,11 +238,15 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
             return
 
     def release() -> None:   # the grant and the closing block go before the tree does: the next turn there,
-        if turn is not None:   # a person's included, never finds them set (`work.run_turn` lets go first)
-            turn.settle()
-        if stage in GRANTS:
-            oneshot_spec.saved(repo, adapter=False)
-        held()
+        try:   # a person's included, never finds them set (`work.run_turn` lets go first)
+            if turn is not None:
+                turn.settle()
+            if stage in GRANTS:
+                oneshot_spec.saved(repo, adapter=False)
+        except Exception as exc:   # the tree still goes and the turn still ends; a grant left set is cleared below
+            errorlog.record("oneshot-grant", exc, repo=repo)
+        finally:
+            held()
 
     release.held = held.held
     turn = None
@@ -251,13 +258,16 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
         store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
                   inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
                   sent_refusal=due and {**due, "turn": turn.token})
-        if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
-            oneshot_spec.saved(repo, adapter=True)
+        grant = stage in GRANTS and GRANTS[stage](spec)   # set as the turn starts, a resumed one included; its end
+        if grant or spec.get("adapter"):   # clears it, and one a failed clearing left goes before any other turn
+            oneshot_spec.saved(repo, adapter=bool(grant))
         work.begin(path, chat, text, release, turn)
     except BaseException as exc:
-        if turn is not None:
-            turn.unsent()
-        release()
+        try:
+            if turn is not None:
+                turn.unsent()
+        finally:
+            release()
         store.stop("restart" if runtime.stopping.is_set() else "block",
                    f"작업 턴을 보내지 못했다 — {getattr(exc, 'detail', exc)}")
         idle(path)
