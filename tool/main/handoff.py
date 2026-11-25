@@ -264,6 +264,11 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     blocks = found(specs.blocks(final)[1])
     if not blocks:
         return None
+    from . import oneshot_build
+    if oneshot_build.owns(spec) and (getattr(run, "person", False) or spec["oneshot"]["stage"] not in oneshot_build.STAGES):
+        # Only a turn its stage's check owns goes up: a person's turn, or one at an owner gate (R1, R2 …), is
+        # left as that check leaves it, so no answer starts a build turn the owner has not let in.
+        return oneshot_build.checked(path, run, spec, final)
     value = blocks[0].get("value")
     if len(blocks) != 1 or "error" in blocks[0] or not shaped(value):
         return ended(spec, run, "`escalation` 블록은 conflict·where·question 을 담은 JSON 객체 하나여야 한다")
