@@ -68,6 +68,11 @@ def test_every_way_of_starting_a_child_reaches_windows_with_its_console_hidden(m
     strict = enum.IntFlag("Strict", {"SUSPENDED": 4}, boundary=enum.STRICT)
     assert process.hidden_flags(strict.SUSPENDED) == hidden   # an enum that refuses the added bit still gets it
 
+    class Lying(int):
+        def __int__(self):
+            return 0
+    assert process.hidden_flags(Lying(4)) == hidden   # the value Windows reads, not the subclass's own account
+
 
 # A parent with no console (as a test worker or the search daemon has none) starts a console child that reports
 # whether its console window is visible.
