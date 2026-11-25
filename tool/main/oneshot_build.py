@@ -204,24 +204,28 @@ def run_as(command: str, o: dict, path: Path) -> str:
     return "&&".join(parts)
 
 
-def send(repo: str, stage: str, text: str) -> None:
+def send(repo: str, stage: str, text: str, held=None) -> None:
     """One work turn for `stage` in the spec's worktree, answering only the refusal its `text` was `composed` with;
-    a turn that cannot be sent stops the stage, and the instruction the person queued for the worktree goes then."""
+    a turn that cannot be sent stops the stage, and the instruction the person queued for the worktree goes then.
+    `held`: the hold a rewrite hands on, so no turn comes between; let go on any way out that sends no turn."""
 
-    store = oneshot_spec.store(repo)
-    if stopped_for_kind(repo) or oneshot.diverted(store, stage) or not resolve_tools(repo, stage):
-        return
-    spec = oneshot_spec.spec_of(repo)
-    path, codex = Path(spec["worktree"]), oneshot.codex_role("build", store)
+    store, let_go = oneshot_spec.store(repo), held or (lambda: None)
     try:
-        held = hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
+        if stopped_for_kind(repo) or (not held and oneshot.diverted(store, stage)) or not resolve_tools(repo, stage):
+            return let_go()
+        spec = oneshot_spec.spec_of(repo)
+        path, codex = Path(spec["worktree"]), oneshot.codex_role("build", store)
+    except BaseException:
+        let_go()
+        raise
+    try:
+        held = held or hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
     except HTTPException as exc:   # whoever holds it sends the queued instruction when it lets go
         store.stop("block", str(exc.detail))
         return
     with oneshot._lock:   # held now, a tell only queues (`oneshot_tell`): words said by now, or a rewrite, go first
         if (o := store.get()).get("working") == "retell" or owner().due(o):
-            held()   # the rewrite holds the tree itself
-            oneshot.diverted(store, stage)   # starts it, or leaves the one running
+            owner().start(store, held)   # the hold goes on to the rewrite, or back when one already runs
             return
 
     def release() -> None:   # the grant and the closing block go before the tree does: the next turn there,

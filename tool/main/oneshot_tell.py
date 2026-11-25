@@ -186,20 +186,28 @@ def due(o: dict) -> bool:
 _claimed: dict[str, dict] = {}   # repo -> the rewrite's tree and the hold `start` took for it, from its start to its end
 
 
-def start(store: oneshot.Store) -> None:
+def start(store: oneshot.Store, held=None) -> None:
     """`retell` started under `oneshot._lock`, holding the worktree from this moment: no release, queued order or
-    other turn takes it between the start and the worker (`retell` takes over the hold). A rewrite already running
-    is left as it is. A tree another turn holds, or a start that fails (the server going down, a save that cannot
-    be written), gives the hold back and stops the run with its reason, so no `working` is left without a worker
-    and no hold without its turn; `[지금 반영]` or `[재개]` tries again."""
+    other turn takes it between the start and the worker (`retell` takes over the hold). `held` is a hold the
+    caller hands on (`oneshot_build.send`). A rewrite already running is left as it is. A tree another turn holds,
+    or a start that fails (the server going down, a save that cannot be written), gives the hold back and stops the
+    run with its reason, so no `working` is left without a worker and no hold without its turn; `[지금 반영]` or
+    `[재개]` tries again."""
 
     repo = store.key.removeprefix("spec:")
-    if store.get().get("working") == "retell":
-        return
-    tree = str(Path(oneshot_spec.spec_of(repo)["worktree"]))
     try:
-        _claimed[repo] = {"tree": tree, "held": hold(work._busy, work_lock, tree, "작업트리를 다른 턴이 쓰고 있다",
-                                                     kind="turn")}
+        tree = None if store.get().get("working") == "retell" else str(Path(oneshot_spec.spec_of(repo)["worktree"]))
+    except BaseException:
+        if held:
+            held()
+        raise
+    if tree is None:   # a rewrite already running
+        if held:
+            held()
+        return
+    try:
+        _claimed[repo] = {"tree": tree, "held": held or hold(work._busy, work_lock, tree, "작업트리를 다른 턴이 쓰고 있다",
+                                                             kind="turn")}
     except HTTPException:
         store.stop("block", "다른 턴이 작업트리를 쓰고 있어 주인의 말을 아직 반영하지 못했다 — 그 턴이 끝나면 [지금 반영]")
         return
@@ -327,15 +335,19 @@ def retell(repo: str) -> None:
             return
         try:
             sent = rewritten(repo)
-        finally:
+        except BaseException:
             release()
-        if sent:   # the claim covers the gap until the follow-up holds the tree
-            oneshot_build.send(repo, *sent)
+            raise
+        if sent:   # the hold goes on to the follow-up, or to the next rewrite: no turn comes between
+            oneshot_build.send(repo, *sent, held=release)
+        else:
+            release()
     finally:   # the next turn holds the tree now, or nothing does and an order queued for it meanwhile goes
         if reserved:
             reserved()
-        with oneshot._lock:
-            _claimed.pop(repo, None)
+        with oneshot._lock:   # a rewrite started from the follow-up has a claim of its own
+            if _claimed.get(repo) is claim:
+                del _claimed[repo]
         if claim["tree"]:
             work.dispatch(Path(claim["tree"]), SimpleNamespace(halt=runtime.stopping, turn=""))
 

@@ -76,7 +76,7 @@ def retold(made, reqs, stage="build", tests_head="t" * 40, during=None, committe
     with patch.object(oneshot, "turned", turned), patch.object(oneshot_spec, "design_text", lambda spec: ""), \
          patch.object(oneshot_spec, "design_committed",
                       lambda repo, message, spec: recorded.append(spec["requirements"]) or committed), \
-         patch.object(oneshot_build, "send", lambda *a: sent.append(a)), \
+         patch.object(oneshot_build, "send", lambda *a, held: sent.append(a) or held()), \
          patch.object(oneshot_build, "tests_text", lambda spec: "TESTS"), \
          patch.object(oneshot_build, "build_text", lambda spec: "BUILD"):
         oneshot_tell.retell("budget")
@@ -163,7 +163,7 @@ def test_an_answer_given_as_the_asking_turn_closes_goes_in_once_it_lets_go_and_o
     dispatched = []
     with patch.object(work, "dispatch", lambda path, ended: dispatched.append(path)), \
          patch.object(oneshot_tell, "rewritten", lambda repo: ("build", "BUILD")), \
-         patch.object(oneshot_build, "send", lambda *a: None):   # a follow-up refused before any turn took the tree
+         patch.object(oneshot_build, "send", lambda *a, held: held()):   # a follow-up refused before any turn ran
         oneshot_tell.retell("budget")
     assert dispatched == [Path(tree)] and tree not in work._busy   # the order queued meanwhile still goes
 
@@ -184,15 +184,26 @@ def test_a_rewrite_claims_its_tree_from_its_start_to_its_follow_up_and_gives_it_
     at("build", working="retell")
     order = MagicMock()
 
-    def send(repo: str, stage: str, text: str) -> None:   # a late callback lands before the follow-up holds the tree
+    def send(repo: str, stage: str, text: str, held) -> None:   # the follow-up gets the rewrite's hold itself
+        assert tree in work._busy   # a late callback, or a person's new turn, finds the tree held: none comes between
         work.dispatch(Path(tree), MagicMock(halt=threading.Event()))
-        assert work._queued[tree] is order and tree not in work._busy
+        assert work._queued[tree] is order
+        held()
 
     with patch.dict(work._queued, {tree: order}), patch.object(work, "session"), patch.object(work, "begin") as begin, \
          patch.object(oneshot_tell, "rewritten", lambda repo: ("build", "BUILD")), patch.object(oneshot_build, "send", send):
         oneshot_tell.retell("budget")
         assert begin.call_args[0][0] == Path(tree) and tree not in work._queued   # the order goes after it, once
     begin.call_args[0][3]()
+    assert tree not in work._busy and not oneshot_tell._claimed
+    at("build", tell_pending=[{"text": "더 크게", "stage": "build"}])   # said while the rewrite ran
+    with patch.object(oneshot_tell, "rewritten", lambda repo: ("build", "BUILD")), \
+         patch.object(oneshot_build, "resolve_tools", lambda *a: True), \
+         patch.object(work, "session", side_effect=AssertionError("the old step went")):
+        oneshot_tell.retell("budget")   # the real follow-up hands the tree on to the next rewrite
+    assert o()["working"] == "retell" and oneshot_tell._claimed["budget"]["held"] and tree in work._busy
+    with patch.object(oneshot_tell, "rewritten", lambda repo: None):
+        oneshot_tell.retell("budget")   # the next rewrite takes over that claim and its hold
     assert tree not in work._busy and not oneshot_tell._claimed
 
 

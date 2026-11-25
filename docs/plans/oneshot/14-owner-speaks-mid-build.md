@@ -73,8 +73,10 @@ turn asks again once it holds the worktree, and lets the tree go before it
 hands the step over. The measurement's start checks the request, then asks,
 then reads its old plan, so a word that drops an input is never held behind
 that input. The rewrite holds the worktree from the moment it is started
-through its design turn, its commit and its save, as a work turn does, and
-dispatches the tree's queued instruction when nothing follows it. When
+through its design turn, its commit and its save, as a work turn does. It
+hands that hold to the turn that follows, or to the next rewrite when more
+words wait, so no other turn comes between, and dispatches the tree's queued
+instruction when nothing follows it. When
 another turn has the tree, the words stay waiting and the run stops with a
 stop the owner may resume, so
 [지금 반영] or [재개] tries again once that turn lets go. The panel shows
