@@ -23,8 +23,8 @@ class Again(str):
 
 
 def unchanged(path: Path, o: dict, turn: str | None = None) -> str:
-    """Why the build ended on a HEAD the review refused, or one whose measurement failed or the owner refused, as
-    an `Again`, or empty. Any such HEAD, the last or an earlier one gone back to, is never read again: the turn
+    """Why the build ended on a HEAD the review refused, or one whose measurement failed, the owner refused, or
+    called an input wrong that the owner kept as it was, as an `Again`, or empty. Any such HEAD, the last or an earlier one gone back to, is never read again: the turn
     commits its fix, or, when that refusal was sent to this `turn`, the tests that pin what it answered."""
 
     now, sent = oneshot_build.head(path), o.get("sent_refusal") or {}
@@ -33,9 +33,9 @@ def unchanged(path: Path, o: dict, turn: str | None = None) -> str:
             return Again(f"리뷰가 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 고친 코드를 커밋한다")
         return Again(f"리뷰가 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 고친 코드를 커밋하거나, 고치지 않고 "
                      "증거로 답한 발견마다 그 동작을 고정하는 테스트를 커밋하고 `oneshot-answers` 에 적는다")
-    if now in {m["head"] for m in o.get("measures") or []
-               if m["status"] == "failed" or (m.get("owner") or {}).get("approve") is False}:
-        return Again(f"실측이 실패했거나 주인이 거절한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 원인을 고쳐 커밋한다")
+    if now in {m["head"] for m in o.get("measures") or [] if m["status"] == "failed" or (m.get("owner") or {}).get(
+               "approve") is False or m["status"] == "input" and int(o.get("input_since") or 0) < m["n"]}:   # kept
+        return Again(f"실측이 실패했거나, 주인이 거절했거나, 주인이 그대로 둔 입력을 스크립트가 틀렸다고 한 HEAD `{now[:12]}` 에서 커밋이 하나도 늘지 않았다 — 원인을 고쳐 커밋한다")
     return ""
 
 

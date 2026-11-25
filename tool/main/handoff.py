@@ -201,7 +201,17 @@ def found(blocks: list[dict]) -> list[dict]:
 
 
 def author_of(spec: dict) -> dict:
-    return spec.get("author") or (spec.get("source") or {}).get("author") or {}
+    """Who wrote the spec. An unfinished oneshot whose design was approved (`design_head`) before the approval
+    kept it asks the design's author, else the spec model the run pinned at its start by name. A CLI default
+    names no model that wrote it: the person decides, as for a card with no author."""
+
+    if got := spec.get("author") or (spec.get("source") or {}).get("author"):
+        return got
+    o = spec.get("oneshot") or {}
+    if o.get("stage") in (None, "done") or not o.get("design_head"):
+        return {}
+    pinned = o.get("design_author") or (o.get("models") or {}).get("spec") or {}
+    return pinned if pinned.get("model") else {}
 
 
 def question(spec: dict, escalation: dict) -> str:
@@ -255,6 +265,11 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     blocks = found(specs.blocks(final)[1])
     if not blocks:
         return None
+    from . import oneshot_build
+    if oneshot_build.owns(spec) and (getattr(run, "person", False) or oneshot_build.turn_stage(spec["oneshot"]) not in oneshot_build.STAGES):
+        # Only a turn its stage's check owns goes up: a person's turn, or one at an owner gate (R1, R2 …), is
+        # left as that check leaves it, so no answer starts a build turn the owner has not let in.
+        return oneshot_build.checked(path, run, spec, final)
     value = blocks[0].get("value")
     if len(blocks) != 1 or "error" in blocks[0] or not shaped(value):
         return ended(spec, run, "`escalation` 블록은 conflict·where·question 을 담은 JSON 객체 하나여야 한다")
@@ -437,6 +452,6 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         run.checked = True   # handled: the stage's finalizer records no unchecked turn
         due, more = oneshot_answers.carried(spec["oneshot"], run)   # what the escalating turn was sent, bound now
         told = oneshot_answers.composed(told + more, due)
-        return oneshot_build.unless_stopped(run, spec["repo"],
-                                            lambda: oneshot_build.send(spec["repo"], spec["oneshot"]["stage"], told))
+        stage = oneshot_build.turn_stage(spec["oneshot"])   # a repair at the measurement answers as a build turn
+        return oneshot_build.unless_stopped(run, spec["repo"], lambda: oneshot_build.send(spec["repo"], stage, told))
     return lambda: None if run.halt.is_set() else specs.again(path, run.chat, told, spec)

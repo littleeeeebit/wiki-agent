@@ -754,7 +754,7 @@ def test_rounds_of_two_repositories_take_the_owners_desktop_one_at_a_time_throug
     order, release = [], threading.Event()
 
     @contextlib.contextmanager
-    def look(folder, key, owned, disposable=False):
+    def look(folder, key, disposable=False):
         order.append("enter")
         try:
             yield SimpleNamespace(record={"jobs": {}})
@@ -792,9 +792,9 @@ def test_any_repositorys_held_look_record_keeps_every_round_off_the_desktop_rest
     kept = []
 
     @contextlib.contextmanager
-    def look(folder, key, owned, disposable=False):
+    def look(folder, key, disposable=False):
         order.append(folder.parent.parent.name)
-        kept.append((owned, disposable))
+        kept.append(disposable)
         yield SimpleNamespace(record={"jobs": {}})
 
     record = empty_rounds(monkeypatch, tmp_path, look, lambda: standing[0])
@@ -814,10 +814,10 @@ def test_any_repositorys_held_look_record_keeps_every_round_off_the_desktop_rest
     monkeypatch.setattr(pc.os, "scandir", scan)
     assert pc.observe("b", record, lambda: False) == {} and order == ["spec-b"]
     assert callable(made[0]["ready"]) and made[0]["gate"] is pc.oneshot._lock
-    assert made[0]["given"] is None and kept == [(False, False)]
+    assert made[0]["given"] is None and kept == [False]
     # The owner's secrets: each app starts with them, and the look's raw evidence goes with its cleanup.
     assert pc.observe("b", record, lambda: False, {"API_KEY": "s3cr3t"}, {"s3cr3t": "[N1]"}) == {}
-    assert made[1]["given"] == {"API_KEY": "s3cr3t"} and kept[1] == (False, True)
+    assert made[1]["given"] == {"API_KEY": "s3cr3t"} and kept[1] is True
     order.remove("spec-b")
     standing[0] = False   # changed while the round waited: no look opens, and the desktop is free again
     with pytest.raises(pc.Stale):

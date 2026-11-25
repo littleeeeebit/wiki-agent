@@ -1,4 +1,4 @@
-"""oneshot S7's look at a PC app: the frozen build started on a desktop the run owns, once for each screen and
+"""oneshot S7's look at a PC app: the frozen build started on the owner's desktop, once for each screen and
 state, its windows shot and read by the driver, and the mechanical, placement and coverage findings.
 
 `docs/plans/oneshot/9-kinds.md` ("The look loop", "Screens") is the design, and the research note

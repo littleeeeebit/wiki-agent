@@ -159,6 +159,10 @@ export type SpecView = SpecSummary & {
   limits?: { attempts: number; refusals: number; critiques: number }
   oneshot: {
     sentence: string; models?: Models; talk?: Talk[]; attempts?: number; critiques?: Critique[]
+    /** Why a build turn repairs the run: at the measurement, a repair that stays there (plan 13). */
+    fix?: string | null
+    /** How many measurements there were when an input last changed: one before it was of an older value. */
+    input_since?: number
     intent?: { kind?: string; kinds?: string[] }
     /** How many `critiques` came before the count against the cap restarted (a resume, an R3 fix). */
     critique_base?: number
@@ -193,9 +197,10 @@ export type SpecView = SpecSummary & {
 
 /** Whether the stage's own screen shows (`OneshotMeasure` `Owner`), its stop included: a stop at the measurement (a
  *  wrong input, the owner's stop, a restart) shows above its steps, and [실측 시작] starts it again with no [재개]
- *  first. Any other stop shows as every stage's does. */
+ *  first. Any other stop shows as every stage's does, a repair's at the measurement too: its [재개] sends the build. */
 export const owns = (v: SpecView) => v.stage === 'measure' && !!v.measure
-  && (!v.stopped || ['measure', 'measure-input', 'restart'].includes(v.stopped.reason))
+  && (!v.stopped || ['measure', 'measure-input'].includes(v.stopped.reason)
+      || v.stopped.reason === 'restart' && !v.oneshot.fix)
   || v.stage === 'conflict' && !v.working && !v.stopped
 
 export const base = (repo: string) => `/api/oneshot/spec/${repo}`
@@ -232,7 +237,8 @@ export const api = {
   measureTakeBack: (repo: string, head: string, x: MeasureInput) => post(
     `${base(repo)}/measure/inputs/${x.id}?${new URLSearchParams({ head, env: x.env, kind: x.kind })}`, undefined, 'DELETE')
     .then(answer),
-  measureStart: (repo: string, head: string) => post(`${base(repo)}/measure/start`, { head }).then(answer),
+  // `n`: the measurement whose result the screen shows, so a repair it sends is of that result and no later one.
+  measureStart: (repo: string, head: string, n = 0) => post(`${base(repo)}/measure/start`, { head, n }).then(answer),
   measureStop: (repo: string) => post(`${base(repo)}/measure/stop`, {}).then(answer),
   measureDecide: (repo: string, run: MeasureRun, approve: boolean, note: string) =>
     post(`${base(repo)}/measure/decide`, { head: run.head, n: run.n, approve, note }).then(answer),

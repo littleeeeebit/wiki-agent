@@ -640,7 +640,7 @@ def need_of(repo: str, nid: str, source: str) -> tuple[dict, dict]:
 
 CHANGED: list = []   # `f(repo, env)` before any secret changes, by any route; returns what `settled` puts back
                      # if the store then refuses, the `oneshot` fields, or `None`: `oneshot_measure` registers one
-CHANGES: dict[str, int] = {}   # changes made per repository, so a measurement sees one made while it ran
+CHANGES: dict[str, dict[str, int]] = {}   # per repository and name: a measurement sees a change to one it read
 
 
 def stored(repo: str, env: str, value: str | None) -> None:
@@ -694,7 +694,7 @@ def stored(repo: str, env: str, value: str | None) -> None:
             raise HTTPException(409, "이 컴퓨터에는 Windows 자격 증명 관리자가 없다 — 비밀 값은 Windows 에서 넣는다") from None
         raise HTTPException(409, f"자격 증명 관리자를 고치지 못했다 — {e}") from None
     if changed:   # only a change made: a refused or empty one leaves a running result alone
-        CHANGES[repo] = CHANGES.get(repo, 0) + 1
+        CHANGES.setdefault(repo, {})[env.upper()] = CHANGES.get(repo, {}).get(env.upper(), 0) + 1
 
 
 BACK: dict[str, list] = {}   # per repository, what a refused change set aside and has yet to put back

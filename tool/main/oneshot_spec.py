@@ -22,7 +22,8 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import STAGE_ORDER, current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled
+from .oneshot_profile import (STAGE_ORDER, current, environment, held, kind_of, kinds_of, off_host, stacked, tooled,
+                              turn_stage, unsettled)
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -488,9 +489,9 @@ def recover() -> None:
             # never a `restart` the owner's `[재개]` would only be refused on.
             waiting(folder.name, specs.load(folder.name, oneshot.BRANCH)["oneshot"])
         o = specs.load(folder.name, oneshot.BRANCH)["oneshot"] if o else o
-        if o and o.get("stage") in TURNS and (o.get("stopped") or {}).get("reason") == "restart" and not held(o):
+        if o and turn_stage(o) in TURNS and (o.get("stopped") or {}).get("reason") == "restart" and not held(o):
             from . import oneshot_build   # it imports this module
-            oneshot_build.resolve_tools(folder.name, o["stage"])   # a PC app's tool gone meanwhile: `toolchain`
+            oneshot_build.resolve_tools(folder.name, turn_stage(o))   # a PC app's tool gone meanwhile: `toolchain`
 
 
 def waiting(repo: str, o: dict) -> dict:
@@ -784,10 +785,10 @@ def resume(repo: str) -> dict:
             o = saved(repo, oneshot=settle)["oneshot"]
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
-        if o["stage"] not in (*RUNNING, *TURNS, *SHEETS, "review", "board"):
+        if (stage := turn_stage(o)) not in (*RUNNING, *TURNS, *SHEETS, "review", "board"):   # a repair resumes
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
         # An edit turn that stopped: the sheet stands, the owner decides again. A board's stop likewise.
-        if o["stage"] in SHEETS or o["stage"] == "board":
+        if stage in SHEETS or stage == "board":
             return view(saved(repo, oneshot={"stopped": None}))
         if o["stage"] in RUNNING:
             start(repo, RUNNING[o["stage"]])
@@ -799,7 +800,7 @@ def resume(repo: str) -> dict:
                 return view(spec_of(repo))
             # The cap stopped it on a refused HEAD: the findings go to the build, the refusals counted afresh.
             o = saved(repo, oneshot={"stage": "build", "refused": 0, "fix": "review"})["oneshot"]
-        saved(repo, oneshot={"working": o["stage"], "stopped": None})   # a second resume meanwhile is refused
+        saved(repo, oneshot={"working": turn_stage(o), "stopped": None})   # a second resume meanwhile is refused
     from . import oneshot_build   # it imports this module
     oneshot_build.resume(repo)   # outside the lock, as after the approval
     return view(spec_of(repo))

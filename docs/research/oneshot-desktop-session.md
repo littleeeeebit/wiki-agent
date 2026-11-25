@@ -9,6 +9,12 @@ step 9d's first deliverable: the options on this PC, what was measured here on
 2026-11-18, the design that follows, its refusals and its cleanup proof. 9d2
 builds the design; "Next" names what it measures.
 
+Where a look runs is plan 13's decision: on the owner's own desktop, where
+the owner sees everything it starts ("nothing runs out of sight"). The jobs,
+the driver, the refusals and the cleanup proof below hold there as written.
+The measurements were taken on a desktop the look created of its own, and
+what they say of that desktop stays a record of that run.
+
 ## Options on this PC
 
 This PC runs Windows 11 Home (build 26200).
@@ -18,8 +24,8 @@ This PC runs Windows 11 Home (build 26200).
 | Windows Sandbox | Not on Home; `WindowsSandbox.exe` is absent |
 | A Hyper-V guest | Not on Home, and a guest image is one more thing to build, update and license |
 | A second user session over RDP | Home has no RDP host |
-| The owner's own desktop | Moves windows and focus under the owner's hands |
-| A desktop the run owns, in the owner's session | Chosen |
+| The owner's own desktop | Chosen (plan 13): the owner sees what runs, and its windows open under the owner's hands |
+| A desktop the run owns, in the owner's session | Not used: nothing on it reaches the owner's screen, so a judgement made there is one only the server saw |
 
 A Win32 desktop is a separate surface inside the owner's window station.
 Windows on a desktop that is not the input desktop are not shown on the

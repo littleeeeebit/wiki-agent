@@ -1,9 +1,9 @@
-"""oneshot 9e3a: a PC app's screens — S6 designs them with the stack's own preview, which runs on a desktop the run
-owns and is checked against the card's window, R2 shows and approves them with every other kind's, and the run
+"""oneshot 9e3a: a PC app's screens — S6 designs them with the stack's own preview, which runs on the owner's own
+desktop and is checked against the card's window, R2 shows and approves them with every other kind's, and the run
 waits at the frontend build.
 
 See `docs/plans/oneshot/9-kinds.md` ("Screens"). Model turns are stand-ins; each preview is a real stand-in script
-run by the real launcher, the PC one on a real owned desktop; the web mocks are shot by Playwright when it is
+run by the real launcher, the PC one in a real look on the owner's desktop; the web mocks are shot by Playwright when it is
 installed.
 """
 
@@ -39,16 +39,27 @@ FEATURES = [
 FREQUENCY = {"start-translation": "every", "history": "every", "seen-boxes": "never"}
 
 
-def drawer(ids, width: int, height: int) -> str:
-    """A stand-in preview tool that writes each screen as a grey PNG. It says nothing of a window, and refuses to
-    draw anywhere but on a desktop the run owns."""
+def desktop_name() -> str:
+    """The name of the desktop this process runs on."""
 
-    return ("import ctypes, pathlib, struct, zlib\n"
+    import ctypes
+
+    u, name = ctypes.windll.user32, ctypes.create_unicode_buffer(256)
+    u.GetUserObjectInformationW(u.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId()), 2, name, 512, None)
+    return name.value
+
+
+def drawer(ids, width: int, height: int, window: str | None = "400x300+100+100") -> str:
+    """A stand-in preview tool that shows each screen in a window placed at `window` for a second and writes it as
+    a grey PNG, as a headed browser does; with no `window`, as a headless one draws, and placed off every display, as
+    one hidden there would. It refuses to draw anywhere but on the desktop the server itself runs on: the owner's."""
+
+    return ("import ctypes, pathlib, struct, time, zlib\n"
             "u = ctypes.windll.user32\n"
             "name = ctypes.create_unicode_buffer(256)\n"
             "u.GetUserObjectInformationW(u.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId()), 2, name,"
             " 512, None)\n"
-            "assert name.value.startswith('wiki-look-'), name.value\n"
+            f"assert name.value == {desktop_name()!r}, name.value\n"
             "assert not pathlib.Path('.git').exists() and pathlib.Path('README.md').is_file()\n"
             "def chunk(kind, data):\n"
             "    return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))\n"
@@ -56,7 +67,9 @@ def drawer(ids, width: int, height: int) -> str:
             "png = (b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 0, 0, 0, 0)) +\n"
             "       chunk(b'IDAT', zlib.compress(b'\\x00' * ((w + 1) * h))) + chunk(b'IEND', b''))\n"
             f"out = pathlib.Path('{SHOTS}')\nout.mkdir(parents=True, exist_ok=True)\n"
+            + (f"import tkinter\nshown = tkinter.Tk()\nshown.geometry({window!r})\n" if window else "") +
             f"for sid in {list(ids)!r}:\n"
+            + ("    shown.title(sid)\n    shown.update()\n    time.sleep(1)\n" if window else "") +
             "    (out / f'{sid}.png').write_bytes(png)\n")
 
 
@@ -103,7 +116,7 @@ def pc(android):  # noqa: F811 — the imported fixture, by its name
     return android
 
 
-def test_a_pc_apps_preview_runs_on_a_desktop_the_run_owns_and_r2_shows_its_window_shots(pc):
+def test_a_pc_apps_preview_runs_on_the_owners_desktop_and_r2_shows_its_window_shots(pc):
     heard, asking = replies(answer(pc_blocks()))
     with asking:
         front.frontend("budget")
@@ -126,6 +139,9 @@ def test_a_pc_apps_preview_runs_on_a_desktop_the_run_owns_and_r2_shows_its_windo
     (pc_mocks(width=1400, height=800), "S1: `build/mock-shots/S1.png` 가 창보다 크지 않은 온전한 PNG 로 없다"),
     (pc_mocks(width=1000, height=800), "창 1280×800px 로 찍히지 않았다 — S1: `build/mock-shots/S1.png` 가 1000×800px 다"),
     (pc_mocks(**{"shoot.py": "raise SystemExit(4)"}), "4 로 끝났다"),
+    (pc_mocks(**{"shoot.py": drawer(("S1", "S2"), 1280, 770, window=None)}), "주인 화면에 창을 하나도 띄우지 않았다"),
+    (pc_mocks(**{"shoot.py": drawer(("S1", "S2"), 1280, 770, window="400x300+40000+40000")}),
+     "주인 화면에 창을 하나도 띄우지 않았다"),
 ])
 def test_a_pc_preview_of_the_wrong_size_or_failing_is_sent_back_once(pc, found, said):
     heard, asking = replies(answer(pc_blocks(**{"oneshot-mocks": found})), answer(pc_blocks()))

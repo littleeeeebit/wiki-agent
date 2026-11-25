@@ -162,7 +162,7 @@ def shoot(mocks: dict[str, str], folder: Path, viewports: list[str], clear: bool
     folder.mkdir(parents=True, exist_ok=True)
     errors: dict[str, list[str]] = {}
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = p.chromium.launch(headless=False)   # on the owner's screen: nothing a oneshot runs is out of sight
         try:
             for sid, html in mocks.items():
                 page_file = folder / f"{sid}.html"
@@ -241,8 +241,8 @@ def photographed(spec: dict, kind: str, preview: dict, folder: Path) -> None:
     """A native kind's mocks drawn by the stack's own preview tool: the reviewed HEAD unpacked into a folder of
     that kind's own, so two kinds' sources never share a path, the mock files added and the preview command run
     there. Only the pictures stay, `<folder>/<screen>-<view>.png`, each at its kind's size (`frame`). An Android
-    app's command runs on the card's toolchain with no emulator; a PC app's on a desktop the run owns, whatever
-    its command says of a window, so a preview that opens one never opens it on the owner's.
+    app's command runs on the card's toolchain with no emulator; a PC app's in a look on the owner's desktop,
+    whatever its command says of a window, so a window it opens is one the owner sees.
 
     The command is model-written code run with the server's rights, as S4's contract tests and gate are; the
     scratch folder is not a sandbox (`docs/plans/oneshot/7-android.md`, "How 7c builds it")."""
@@ -294,7 +294,7 @@ def photographed(spec: dict, kind: str, preview: dict, folder: Path) -> None:
 
 
 def on_desktop(spec: dict, command: str, project: Path) -> tuple[int | None, str, str]:
-    """A PC preview's command run in a look of its own: a job on a desktop the run owns, its data in the look's
+    """A PC preview's command run in a look of its own: a job on the owner's desktop, its data in the look's
     disposable folders, and everything it started ended and proven gone when it returns. A look that refuses,
     or whose cleanup is not proven, is no fault of the answer: it stops the stage instead of asking again, and
     the next look refuses while the earlier one is held."""
@@ -306,7 +306,11 @@ def on_desktop(spec: dict, command: str, project: Path) -> tuple[int | None, str
     looks.mkdir(parents=True, exist_ok=True)
     try:
         with desktop_session.look(looks, f"preview-{uuid.uuid4().hex[:12]}") as look:
-            return look.run("preview", argv, project, PREVIEW_SECONDS, runtime.stopping)
+            code, out, cut = look.run("preview", argv, project, PREVIEW_SECONDS, runtime.stopping)
+            if not cut and not code and not look.shown.get("preview"):   # pictures drawn out of the owner's sight
+                raise ValueError("화면 사진 명령이 주인 화면에 창을 하나도 띄우지 않았다 — 화면마다 보이는 창에 띄워 찍는다 "
+                                 "(headless 브라우저나 창 없는 렌더링은 받지 않는다)")
+            return code, out, cut
     except desktop_session.Refused as exc:
         raise RuntimeError(f"PC 앱 미리보기를 띄운 데스크톱을 정리하지 못했다 — {exc}") from exc
 

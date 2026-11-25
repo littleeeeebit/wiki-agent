@@ -94,6 +94,13 @@ def held(o: dict) -> bool:
     return STAGE_ORDER.index(o["stage"]) >= STAGE_ORDER.index(stop)
 
 
+def turn_stage(o: dict) -> str | None:
+    """The stage whose check a finished work turn answers. The measurement's own repair (`fix`) is a build turn
+    while the run stays at the measurement: its screen never goes back before the owner approves (plan 13)."""
+
+    return "build" if o.get("stage") == "measure" and o.get("fix") else o.get("stage")
+
+
 def unavailable() -> dict[str, str]:
     """The supported kinds this host cannot build, each with why, in the owner's words."""
 
