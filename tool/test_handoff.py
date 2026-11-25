@@ -369,6 +369,7 @@ def test_a_review_loop_takes_the_authors_revision_and_sends_its_turn_itself(task
         with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})):
             assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
         assert "선행 리뷰 중" in specs.load("proj", sid)["fault"] and asked.call_count == 2
+        assert handoff.spent(specs.load("proj", sid)["escalations"]) == 0   # decided by the person, not the author
         specs.update("proj", sid, state="고치는 중 R1", fault=None, prerequisite_review=None)
         # The repair's own goal change is still refused: the loop keeps its retries, nothing else sends one.
         assert specs._check(repo, Run(), block("spec-update", {**update, "rev": 2, "goal": "Mine"}))() is None

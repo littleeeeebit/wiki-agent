@@ -370,6 +370,7 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
                       f"상위 모델이 {', '.join(ANSWERS)} 중 하나로 답하지 않았다")
     name, value = got[0]["name"], got[0]["value"]
     history = [*past, {**entry, "answer": {"kind": name, "value": value}}]
+    held = [*past, {**entry, "answer": {"kind": "person", "proposed": name, "value": value}}]   # the person decides it
     oneshot = bool((spec.get("oneshot") or {}).get("stage") not in (None, "done"))
     from . import loop
     # A review loop's repair takes the answer as any turn does: a revision marks the loop's rounds stale
@@ -381,7 +382,7 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         # restarted step would leave: that review's answer stays the person's.
         said = value["text"] if name == "guidance" and isinstance(value, dict) and isinstance(value.get("text"), str) \
             else json.dumps(value, ensure_ascii=False, indent=1)
-        return person(spec, run, history, f"상위 모델이 `{name}` 로 답했다 — 선행 리뷰 중이라 반영하지 않고 리뷰 루프를 "
+        return person(spec, run, held, f"상위 모델이 `{name}` 로 답했다 — 선행 리뷰 중이라 반영하지 않고 리뷰 루프를 "
                                           f"멈췄다. 답을 보고 에이전트 칸에서 이어 가라:\n{said[:6000]}")
     try:
         if name == "guidance":
@@ -390,7 +391,7 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
             specs.update(spec["repo"], spec["id"], escalations=history)
             owed = {"kind": name, "rev": spec["rev"], "text": value["text"]}
         elif oneshot:   # a oneshot's contract is its committed design: only the person changes it mid-build
-            return person(spec, run, history, f"상위 모델이 원샷 설계를 바꾸자고 답했다 ({name}) — 사람이 정한다")
+            return person(spec, run, held, f"상위 모델이 원샷 설계를 바꾸자고 답했다 ({name}) — 사람이 정한다")
         elif name == "spec-update":
             # A Stop sets the halt, then waits on `run.saving`: one before this check owns the result, one after
             # it answers once the revision, validation included, is saved, and no follow-up starts.

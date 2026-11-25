@@ -996,8 +996,8 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     if release is None:
         return None
     now = specs.load(loop.repo, loop.sid) or {}
-    if loop.handing and now.get("rev") != loop.handing["rev"]:
-        release()   # revised again while the worktree was free: the text names a revision that no longer stands
+    if loop.handing and (now.get("rev"), now.get("handoff_owed")) != (loop.handing["rev"], loop.handing["owed"]):
+        release()   # answered or revised again while the worktree was free: the text is no longer what is owed
         raise Revised()
     owed = now.get("handoff_owed")   # one this turn's own escalation leaves differs
     try:
@@ -1035,6 +1035,9 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         loop.report_at = run.report_at
     if loop.halt.is_set():
         return None
+    if run.halt.is_set():   # the work pane stopped this turn: its answer is not judged, and nothing is retried
+        stop(loop, loop.repo, loop.sid, Why.PERSON, "사람이 작업 칸에서 이 턴을 멈췄다")
+        return None
     end = next((e for e in reversed(run.events) if e["kind"] in ("done", "error")), None)
     failure = next((e for e in run.events if e["kind"] == "error" or (e.get("meta") or {}).get("error")), None)
     answered = (failure.get("meta") or {}).get("answer") or "" if failure else ""
@@ -1047,11 +1050,7 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         raise RuntimeError(failure["text"] or "완료된 답이 없다")
     if not end or end["kind"] != "done" or not end["text"].strip():
         raise RuntimeError("완료된 답이 없다")
-    escalated = (specs.load(loop.repo, loop.sid) or {}).get("handoff_owed") not in (None, owed)
-    if (escalated or loop.handing) and run.halt.is_set():   # the work pane stopped it: nothing goes on from here
-        stop(loop, loop.repo, loop.sid, Why.PERSON, "사람이 멈춤 — 상위 모델의 답을 반영한 턴을 멈췄다")
-        return None
-    if escalated:
+    if (specs.load(loop.repo, loop.sid) or {}).get("handoff_owed") not in (None, owed):
         raise Revised()   # this turn escalated and the author answered: a new step sends it (`handed`)
     return end["text"]
 
@@ -1433,20 +1432,33 @@ def handed(loop: Loop, spec: dict, path: Path, owed: dict) -> bool:
     from . import handoff
 
     def complete(s: dict, turns: list | None = None) -> bool:
-        at = s.get("report_at") or {}
-        return bool(s.get("report")) and at != owed.get("report_at") and at.get("rev") == s.get("rev") \
-            and (turns is None or at.get("turn") in turns) and not specs.shortfall(s["report"], s)
+        at, items = s.get("report_at") or {}, s.get("report") or []
+        # One passing entry per item of this revision's `done`, as written (`prompts/work-spec.md`): a count
+        # alone let two copies of one item stand for another (`shortfall`).
+        return bool(items) and at != owed.get("report_at") and at.get("rev") == s.get("rev") \
+            and (turns is not None and at.get("turn") in turns or turns is None and at.get("head") == head()) \
+            and sorted(i["item"].strip() for i in items) == sorted(d.strip() for d in s.get("done") or []) \
+            and not specs.shortfall(items, s)
+
+    def head() -> str:   # a report the checkout has moved past since is not this revision's evidence
+        return specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+
+    def clear() -> bool:   # only the answer that was sent: a newer one is sent by the next step
+        with specs._files:
+            if (specs.load(loop.repo, loop.sid) or {}).get("handoff_owed") != owed:
+                raise Revised()
+            return change(loop, handoff_owed=None) is not None
 
     if complete(spec):
-        return change(loop, handoff_owed=None) is not None
-    loop.handing = {"rev": spec["rev"], "turns": []}
+        return clear()
+    loop.handing = {"rev": spec["rev"], "owed": owed, "turns": []}
     try:
         for text in (f"{handoff.turn_for(path, spec, owed)}\n\nEnd with the `done-report` block for revision "
                      f"{spec['rev']} once every completion condition holds.", specs.REPORT_AGAIN.format(rev=spec["rev"])):
             if told(loop, spec, path, text) is None:
                 return False
             if complete(specs.load(loop.repo, loop.sid) or {}, loop.handing["turns"]):
-                return change(loop, handoff_owed=None) is not None
+                return clear()
     finally:
         loop.handing = None
     return stop(loop, loop.repo, loop.sid, Why.FORMAT, f"명세 {spec['rev']}판의 완료 보고가 없다")

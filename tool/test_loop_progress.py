@@ -4,6 +4,7 @@
 
 import json
 import re
+import subprocess
 import threading
 from pathlib import Path
 from unittest.mock import patch
@@ -355,13 +356,16 @@ def test_an_answered_escalation_ends_the_step_unless_the_turn_was_stopped(tmp_pa
             loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1")
         # An answer owed from before is not this turn's: a cleanup turn sent ahead of it finishes.
         assert loop.turn(loop.Loop("proj", "t1"), {}, where, "cleanup") == "escalated" and not stop.called
+        # A newer answer than the one being delivered: its text is stale before it is sent.
+        sending = loop.Loop("proj", "t1")
+        sending.handing = {"rev": 2, "owed": {"kind": "guidance", "rev": 2, "text": "older"}, "turns": []}
+        with pytest.raises(loop.Revised):
+            loop.turn(sending, {}, where, "the older answer")
         halted.append(True)
         store["handoff_owed"] = None
         assert loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1") is None
-        # A Stop on the turn that delivers the answer stops the loop too.
-        sending = loop.Loop("proj", "t1")
-        sending.handing = {"rev": 2, "turns": []}
-        assert loop.turn(sending, {}, where, "the answer") is None
+        # Any turn the work pane stopped stops the loop: no answer of it is judged or retried.
+        assert loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1") is None
     assert [c[0][2:4] for c in stop.call_args_list] == [("t1", loop.Why.PERSON)] * 2 and store["handoff_owed"]
     with patch.object(loop, "stepped", side_effect=loop.Revised):
         assert loop.step(loop.Loop("proj", "t1")) is True
@@ -369,7 +373,8 @@ def test_an_answered_escalation_ends_the_step_unless_the_turn_was_stopped(tmp_pa
 
 def test_the_authors_answer_stays_owed_until_its_turn_passes_this_revision(tmp_path):
     owed = {"kind": "spec-update", "rev": 2, "report_at": {"rev": 1, "turn": "old"}}
-    store = {"rev": 2, "done": ["x"], "report": [{"item": "x", "pass": True}], "report_at": owed["report_at"]}
+    store = {"rev": 2, "done": ["x"], "report": [{"item": "x", "pass": True}], "report_at": owed["report_at"],
+             "handoff_owed": owed}
     sent = []
 
     def told(spot, spec, path, text):
@@ -380,13 +385,23 @@ def test_the_authors_answer_stays_owed_until_its_turn_passes_this_revision(tmp_p
         store["report_at"] = {"rev": 2, "turn": f"t{len(sent)}"}
         return "answer"
 
-    spot = loop.Loop("proj", "t1")
+    spot, at = loop.Loop("proj", "t1"), subprocess.CompletedProcess([], 0, "h2\n", "")
     with patch.object(loop, "told", told), patch.object(specs, "load", lambda *a: dict(store)), \
             patch("main.handoff.turn_for", return_value="Revision 2 replaces the spec."), \
-            patch.object(loop, "change", return_value={}) as change:
+            patch.object(specs, "sh", return_value=at), patch.object(loop, "change", return_value={}) as change:
         assert loop.handed(spot, dict(store), tmp_path, owed) is True
         assert sent[0].startswith("Revision 2 replaces the spec.") and "revision 2" in sent[0]
         assert sent[1] == specs.REPORT_AGAIN.format(rev=2) and change.call_args.kwargs == {"handoff_owed": None}
         # The person finished the revision in their own turn while the loop stood: nothing is sent again.
-        assert loop.handed(spot, {**store, "report_at": {"rev": 2, "turn": "person"}}, tmp_path, owed) is True
-    assert len(sent) == 2 and spot.handing is None
+        mine = {**store, "report_at": {"rev": 2, "turn": "person", "head": "h2"}}
+        assert loop.handed(spot, mine, tmp_path, owed) is True and len(sent) == 2
+        # Not a report the checkout has moved past, nor one where two copies of an item stand for another.
+        with patch.object(loop, "told", return_value=None) as again:
+            assert loop.handed(spot, {**mine, "report_at": {**mine["report_at"], "head": "h1"}}, tmp_path, owed) is False
+            twice = {**mine, "done": ["x", "y"], "report": [{"item": "x", "pass": True}] * 2}
+            assert loop.handed(spot, twice, tmp_path, owed) is False and again.call_count == 2
+        # A newer answer saved meanwhile is the next step's to send, never cleared unsent.
+        store.update(report=mine["report"], report_at=mine["report_at"], handoff_owed={**owed, "rev": 3})
+        with pytest.raises(loop.Revised):
+            loop.handed(spot, dict(store), tmp_path, owed)
+    assert change.call_count == 2 and spot.handing is None
