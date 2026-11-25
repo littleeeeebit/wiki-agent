@@ -155,8 +155,22 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
 
                 with patch.object(wiring, "own", editing):
                     assert wiring.settle() == [], f"an edit to {edited} after the plan read it writes nothing"
-                assert wiring.raw(loose / ".claude" / edited) == (text and text.encode())
+                left = loose / ".claude" / edited
+                assert (left.read_text(encoding="utf-8") if left.exists() else None) == text
             (loose / ".claude/settings.local.json").unlink(missing_ok=True)
+            planned, reads = connect.pending, []
+
+            def saving(at: Path):   # the person saves while the writer's last read of the plan runs
+                reads.append(at)
+                found = planned(at)
+                if at == loose.resolve() and reads.count(at) == 2:
+                    (loose / ".claude/settings.json").write_text('{"x": 1}', encoding="utf-8")
+                return found
+
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            with patch.object(wiring.connect, "pending", saving):
+                assert wiring.settle() == [], "a save during the last read writes nothing"
+            assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == '{"x": 1}'
             with patch.object(wiring.subprocess, "run", unreadable):
                 (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
                 assert wiring.settle() == [], "git 이 색인을 읽지 못하면 추적 여부를 모르니 쓰지 않는다"

@@ -141,7 +141,7 @@ def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bo
         if runtime.stopping.is_set() or file.parent.resolve() != where or not os.path.samestat(before, os.stat(where)) \
                 or not own(repo, file):
             return False
-        if raw(file) != source or switched_off(connect.pending(repo)):   # read last: every change up to now is seen
+        if switched_off(connect.pending(repo)) or raw(file) != source:   # the bytes last, right before the swap
             return False
         os.replace(partial, where / file.name)
         return True
