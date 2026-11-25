@@ -485,18 +485,36 @@ def test_a_task_made_again_while_its_merge_or_poll_runs_is_left_to_its_own_loop(
         with patch.object(specs, "approved", return_value=None):   # cancelled: nor its cancel line
             loop.requested_merge(tmp_path, queued)
         assert update.call_count == 0 and progress.call_count == 1
-    # The final gate passed for the old task: its snapshot of the replacement is never checked or published.
+    # The final gate passed for the old task: its snapshot of the replacement is never checked or published,
+    # nor is a revision made since the gate; both are judged holding the worktree.
     lp = loop.Loop("proj", "t1")
-    lp.born = 1.0
+    lp.born, held = 1.0, []
+    spec = {**old, "rev": 1, "validation": {"final": {"ok": True}}, "pr": {"number": 7}}
     with patch.object(loop, "merge_preview", return_value={"ok": True}), patch.object(specs, "proven", return_value=""), \
             patch.object(specs, "current_merge_base", return_value="b"), patch.object(specs, "digest"), \
             patch.object(specs, "required"), patch.object(loop, "pick", return_value=([], [])), \
             patch.object(loop.review_contract, "merge_problem", return_value=""), \
             patch.object(verification, "enabled", return_value=True), \
+            patch.object(loop, "wait_hold", return_value=lambda: held.append("released")), \
             patch.object(specs, "load", return_value=new), patch.object(verification, "publish") as publish:
-        spec = {**old, "validation": {"final": {"ok": True}}, "pr": {"number": 7}}
         assert loop.allowed(lp, spec, tmp_path, tmp_path, None, 1, "h", "main") is False
-    assert not publish.called
+        with patch.object(specs, "load", return_value={**old, "rev": 2}):
+            assert loop.allowed(lp, spec, tmp_path, tmp_path, None, 1, "h", "main") is True
+    assert not publish.called and held == ["released", "released"]
+    # A merge observation or cleanup that read the old task never lands on the replacement.
+    with patch.object(specs, "load", return_value={**new, "state": "머지됨", "pr": {"number": 7}}), \
+            patch.object(loop, "_finish") as finished, patch.object(loop, "gh_json") as github:
+        loop.finish(tmp_path, old, "main", "c", "")
+        loop.landed(tmp_path, old)
+    assert not finished.called and not github.called
+    # A resume reading GitHub while the task was made again answers 410 and moves nothing.
+    stopped = {**old, "stopped": {"reason": loop.Why.LEFT_QUEUE.value}, "pr": {"number": 7}}
+    with patch.object(loop, "gh_or_502", return_value={"state": "OPEN", "headRefOid": "h", "baseRefName": "main"}), \
+            patch.object(specs, "approved", return_value={"head": "h", "base": "main"}), \
+            patch.object(specs, "load", return_value=new), patch.object(specs, "save") as save:
+        with pytest.raises(HTTPException) as refused:
+            loop.proceed(tmp_path, stopped, "")
+    assert refused.value.status_code == 410 and not save.called
     halt = threading.Event()
     (tmp_path / "specs" / "proj").mkdir(parents=True)
     task = {"id": "t1", "state": "머지 가능", "pr": {"number": 1}, "local_verification": {"state": "verified"}}
@@ -512,6 +530,41 @@ def test_a_task_made_again_while_its_merge_or_poll_runs_is_left_to_its_own_loop(
             patch.object(verification, "pending", side_effect=replaced) as pending, patch.object(loop, "POLL", 0):
         loop.poll(halt)   # returns: the snapshot was skipped instead of raising out of the thread
     assert pending.call_count == 1
+
+
+def test_a_task_is_deleted_only_once_nothing_acts_on_it():
+    """Its ID is its branch's folder: a loop, merge or cleanup still running would write the next task."""
+    from fastapi import HTTPException
+
+    busy = loop.Loop("proj", "t1")
+    busy.thread = threading.Thread(target=threading.Event().wait, args=(5,), daemon=True)
+    busy.thread.start()
+    with patch.dict(loop._loops, {("proj", "t1"): busy}), patch.object(work, "HALT_WAIT", 0.05):
+        with pytest.raises(HTTPException, match="리뷰 루프"):
+            with loop.deleting("proj", "t1"):
+                pass
+    assert busy.halt.is_set()
+    taken, done = threading.Event(), threading.Event()
+
+    def merge():   # a merge holding the lock until the delete was refused
+        with loop._landing:
+            taken.set()
+            done.wait(5)
+
+    merging = threading.Thread(target=merge, daemon=True)
+    merging.start()
+    taken.wait(5)
+    try:
+        with pytest.raises(HTTPException, match="머지"):
+            with loop.deleting("proj", "t2"):
+                pass
+    finally:
+        done.set()
+        merging.join(5)
+    with patch.object(loop, "_landing", threading.RLock()):
+        with loop.deleting("proj", "t3"):
+            assert loop._landing.acquire(blocking=False)   # held by this delete (reentrant here)
+            loop._landing.release()
 
 
 def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path):

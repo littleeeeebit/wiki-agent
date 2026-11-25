@@ -1031,27 +1031,28 @@ def delete_task(sid: str) -> dict:
             worker.thread.join(work.HALT_WAIT)
             if worker.thread.is_alive():
                 raise HTTPException(409, "계획 작업이 멈춘 뒤 삭제해라")
-    path = Path(spec["worktree"]) if spec.get("worktree") else None
-    if path and spec.get("workspace_mode") != "branch" and path.resolve() != repo.resolve() and path.exists():
-        work.clear(work.Removal(path=str(path), force=True))
-    else:
-        loop.halt_loop(repo.name, sid)
-        # An inactive task shares another task's checkout; never stop that owner.
-        active = owner(path) if path and path.exists() else None
-        if active and active["id"] == sid:
-            work.halt_all(str(path), repo)
-            with _lock:
-                release = hold(work._busy, _lock, str(path), "작업이 멈춘 뒤 삭제해라")
-            try:
-                work.forget(path)
-                with _files:
-                    if load(repo.name, sid) is not None:
-                        aside(repo.name, sid)
-            finally:
-                release()
-    with _files:
-        if load(repo.name, sid) is not None:
-            aside(repo.name, sid)
+    with loop.deleting(repo.name, sid):   # nothing still acting on it writes the task adopted next under this ID
+        path = Path(spec["worktree"]) if spec.get("worktree") else None
+        if path and spec.get("workspace_mode") != "branch" and path.resolve() != repo.resolve() and path.exists():
+            work.clear(work.Removal(path=str(path), force=True))
+        else:
+            loop.halt_loop(repo.name, sid)
+            # An inactive task shares another task's checkout; never stop that owner.
+            active = owner(path) if path and path.exists() else None
+            if active and active["id"] == sid:
+                work.halt_all(str(path), repo)
+                with _lock:
+                    release = hold(work._busy, _lock, str(path), "작업이 멈춘 뒤 삭제해라")
+                try:
+                    work.forget(path)
+                    with _files:
+                        if load(repo.name, sid) is not None:
+                            aside(repo.name, sid)
+                finally:
+                    release()
+        with _files:
+            if load(repo.name, sid) is not None:
+                aside(repo.name, sid)
     work.feed.put({"kind": "sync"})
     return {"ok": True}
 
