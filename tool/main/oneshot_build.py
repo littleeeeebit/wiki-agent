@@ -55,6 +55,7 @@ class Turn(work.Run):
         self.token = uuid.uuid4().hex   # names this turn's `inflight`, so a late end clears only its own
         self.sender = threading.get_ident()   # `work.begin` ends a turn it could not start on this thread
         self.ended = threading.Event()
+        self.over = False   # its end has run, whatever it managed to write (`ending`)
         # The session is the worktree's, the person's turns included: this turn's closing block is its own.
         block = CLOSES.get(stage)
         self.closes = chat.settled = (re.compile(rf"^```(?:done-report|disposition|{block})[ \t]*\r?$", re.M).search
@@ -69,6 +70,12 @@ class Turn(work.Run):
             self.chat.settled = work.SETTLING.search
 
     def finish(self) -> None:
+        try:
+            self.closing()
+        finally:
+            self.over = True
+
+    def closing(self) -> None:
         super().finish()
         self.settle()
         if threading.get_ident() == self.sender:   # never started: no model ran, so nothing is charged
@@ -95,9 +102,12 @@ class Turn(work.Run):
         self.settle()
         self.ended.set()
         store = oneshot_spec.store(self.repo)
-        with oneshot._lock:   # the grant is cleared by `send`'s release, which follows on every way out
-            if (store.get().get("inflight") or {}).get("turn") == self.token:
-                store.put(inflight=None)
+        try:
+            with oneshot._lock:   # the grant is cleared by `send`'s release, which follows on every way out
+                if (store.get().get("inflight") or {}).get("turn") == self.token:
+                    store.put(inflight=None)
+        finally:
+            self.over = True
 
 
 def stopped_for_kind(repo: str) -> bool:
@@ -268,55 +278,86 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
         idle(path)
 
 
-def opened(path: Path, run=None) -> str:
-    """A oneshot build turn's adapter grant the guard would open on `path` to a turn that is not `run`:
-    `"running"` while that turn is still the tree's, `"unsure"` when the record cannot be read or a grant left
-    by a turn that is gone cannot be cleared, `""` otherwise. A grant left by a gone turn is cleared here, so
-    nothing waits on it. Read from the record each time: nothing kept in memory can go stale."""
+def ending(path: Path) -> bool:
+    """`work.RELEASED`: a build turn let this tree go and has not ended yet. Its end, which clears its marks,
+    dispatches the queued instruction. Read in memory, so there is nothing to fail to read."""
 
-    import guard_grant   # the guard's own rule for what is open
+    turn = work._runs.get(str(path))
+    return isinstance(turn, Turn) and not turn.over
+
+
+def record(path: Path) -> tuple[str, dict] | None:
+    """The oneshot run whose worktree is `path`, read now. Raises when the folder or a record cannot be
+    read: a refused read is never "no run" (`specs.load` and `glob` both hide one)."""
+
     key = path.resolve()
-    try:
-        with specs._files:   # every run's record, however its folder is named; a refused read is never "none"
-            found = [(f.name, s) for f in specs.SPECS.glob("*") if (f / f"{oneshot.BRANCH}.json").is_file()
-                     and isinstance(s := json.loads((f / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8")), dict)
-                     and s.get("worktree") and Path(s["worktree"]).resolve() == key]
-    except (OSError, ValueError) as exc:
-        errorlog.record("oneshot-grant", exc, path=str(key))
-        return "unsure"
-    for repo, spec in found:
-        grant = spec.get("adapter")
-        if not (isinstance(grant, str) and guard_grant.live(spec)) or getattr(run, "token", None) == grant:
-            continue
-        mine = work._runs.get(str(path))
-        if getattr(mine, "token", None) == grant and not mine.done:
-            return "running"   # between its release and its end, which clears its mark
+    with specs._files:
         try:
-            oneshot_spec.saved(repo, adapter=False)
-        except Exception as exc:
-            errorlog.record("oneshot-grant", exc, repo=repo)
-            return "unsure"
-    return ""
+            entries = [e for e in os.scandir(specs.SPECS) if e.is_dir()]
+        except FileNotFoundError:
+            return None
+        for entry in entries:
+            try:
+                spec = json.loads((Path(entry.path) / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            if isinstance(spec, dict) and spec.get("worktree") and Path(spec["worktree"]).resolve() == key:
+                return entry.name, spec
+    return None
+
+
+def reclaimed(path: Path, run=None) -> None:
+    """Clear the marks a build turn's end failed to clear, once that turn is gone.
+
+    Revoke its grant and, on a run nothing works on, charge the turn once as cut, in one save. The caller
+    holds the tree, so no turn of the run is starting. Raise when the record cannot be read or saved: nothing
+    is opened on a guess."""
+
+    if ending(path) and work._runs.get(str(path)) is not run:
+        raise HTTPException(409, "앞선 빌드 턴이 아직 끝나는 중이다 — 끝나면 기다리던 지시가 이어 간다")
+    mine = getattr(run, "token", None)
+    with oneshot._lock:   # `Turn.finish` writes its marks under it
+        if not (found := record(path)):
+            return
+        repo, spec = found
+        o, grant = spec.get("oneshot") or {}, spec.get("adapter")
+        flight = o.get("inflight") or {}
+        import guard_grant   # the guard's own rule for what is open
+        fields = {"adapter": False} if isinstance(grant, str) and grant != mine and guard_grant.live(spec) else {}
+        if flight.get("turn") and flight["turn"] != mine and not o.get("working"):
+            fields["oneshot"] = oneshot.settled(o)
+        if fields:
+            oneshot_spec.saved(repo, **fields)
 
 
 def admitted(path: Path, run) -> None:
-    """`work.ADMITS`: no other turn starts in a tree while a build turn's grant there is still open."""
+    """`work.ADMITS`: no other turn starts in a tree whose build turn's marks are not cleared."""
 
-    if opened(path, run):
-        raise HTTPException(409, "앞선 빌드 턴의 어댑터 쓰기 권한이 아직 열려 있다 — 잠시 뒤 다시 보낸다")
-
-
-def waits(path: Path) -> bool:
-    """`work.RELEASED`: the tree's queued instruction waits while a build turn's grant there is open. The
-    turn's end dispatches it again; a record that could not be read or cleared is tried again shortly."""
-
-    if (why := opened(path)) == "unsure":
-        threading.Timer(RETRY, lambda: str(path) in work._queued and work.dispatch(
-            path, SimpleNamespace(halt=runtime.stopping, turn=""))).start()
-    return bool(why)
+    try:
+        reclaimed(path, run)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        errorlog.record("oneshot-grant", exc, path=str(path))
+        raise HTTPException(409, "실행 기록을 읽거나 고치지 못했다 — 잠시 뒤 다시 보낸다") from exc
 
 
-RETRY = 2.0   # seconds before a queued instruction is tried again after an unreadable or uncleared grant
+def unstuck(repo: str) -> None:
+    """For `[재개]` and the owner's answer: clear a stopped run's marks left by a turn that is gone, holding
+    the tree. A tree in use, or a turn still ending, is left to that turn."""
+
+    tree = Path(oneshot_spec.spec_of(repo)["worktree"])
+    try:
+        release = hold(work._busy, work_lock, str(tree), "", kind="turn")
+    except HTTPException:
+        return
+    try:
+        if not ending(tree):
+            reclaimed(tree)
+    except Exception as exc:
+        errorlog.record("oneshot-grant", exc, repo=repo)
+    finally:
+        release()
 
 
 def idle(path: Path) -> None:
@@ -895,4 +936,4 @@ STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, (s := o
                                                                   owner().next_build(s))),
           "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}
 work.ADMITS.append(admitted)
-work.RELEASED.append(waits)
+work.RELEASED.append(ending)

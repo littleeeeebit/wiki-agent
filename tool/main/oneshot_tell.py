@@ -118,6 +118,7 @@ def tell(repo: str, body: Tell) -> dict:
     asked = [a.shown() for a in body.asked]
     if len(json.dumps(asked, ensure_ascii=False)) > MAX_ASKED:   # bounded on its own: the answer keeps its budget
         raise HTTPException(400, f"답한 질문은 {MAX_ASKED}자까지 싣는다")
+    oneshot_build.unstuck(repo)   # a turn gone without clearing its marks never parks the answer
     with oneshot._lock:   # held through the start, so two requests never both find the run idle
         spec = oneshot_spec.spec_of(repo)
         o = spec["oneshot"]

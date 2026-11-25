@@ -791,6 +791,8 @@ def decide(repo: str, body: Decisions) -> dict:
 
 @router.post("/api/oneshot/spec/{repo}/resume")
 def resume(repo: str) -> dict:
+    from . import oneshot_build   # it imports this module
+    oneshot_build.unstuck(repo)   # a turn gone without clearing its marks never holds `[재개]`
     with oneshot._lock:
         o = spec_of(repo)["oneshot"]
         supported(o)
