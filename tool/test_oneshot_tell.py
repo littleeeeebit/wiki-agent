@@ -131,15 +131,22 @@ def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_thei
 
     def asked(chapter, answer):
         return {"header": chapter, "question": "이 부분은 어떤 모델을 쓸까?", "answer": answer,
-                "options": [{"label": "새 모델", "note": "무손실 중간 파일을 거친다"}, {"label": "그대로"}]}
+                "options": [{"label": "새 모델", "note": "무손실 중간 파일을 거친다", "preview": "clip_start_ms"},
+                            {"label": "그대로"}]}
     long = "가" * oneshot_tell.MAX_TELL   # the answer keeps its whole budget: the questions are bounded on their own
-    oneshot_tell.tell("budget", oneshot_tell.Tell(text=long, asked=[asked("재생", "새 모델"), asked("녹음", "그대로")]))
-    assert o()["tell_pending"][-1]["asked"][0]["header"] == "재생"
+    steers = []
+    turn = MagicMock(spec=oneshot_build.Turn, repo="budget", done=False, wake=MagicMock())
+    turn.chat = MagicMock(steer=lambda text: steers.append(text) or True)
+    with patch.object(oneshot_tell.work, "attached", lambda tree: turn):   # a build turn runs: it is told at once
+        oneshot_tell.tell("budget", oneshot_tell.Tell(text=long, asked=[asked("재생", "새 모델"), asked("녹음", "그대로")]))
+    assert o()["tell_pending"][-1]["asked"][0]["header"] == "재생" and "이 부분은" in steers[0] and "재생" in steers[0]
     with pytest.raises(HTTPException) as refused:
         oneshot_tell.tell("budget", oneshot_tell.Tell(text="네", asked=[asked("x" * oneshot_tell.MAX_ASKED, "네")]))
     assert refused.value.status_code == 400 and len(o()["tell_pending"]) == 1
     _, _, prompts = retold(sheet.parsed(DESIGN), REQS, pending=o()["tell_pending"])
-    assert "재생" in prompts[0]["text"] and "무손실 중간 파일을 거친다" in prompts[0]["text"]
+    assert all(s in prompts[0]["text"] for s in ("재생", "무손실 중간 파일을 거친다", "clip_start_ms"))
+    built = oneshot_tell.told(o(), "")   # every build and tests turn after reads the answer with its questions
+    assert "이 부분은 어떤 모델을 쓸까?" in built and "clip_start_ms" in built
 
 
 def test_words_said_while_the_screens_are_designed_wait_out_a_backend_rewrite(world):  # noqa: F811 — the imported fixture, requested by name

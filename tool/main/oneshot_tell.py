@@ -25,7 +25,7 @@ from .query import _lock as work_lock, hold
 
 router = APIRouter()
 MAX_TELL = 4000
-MAX_ASKED = 20000   # the questions a work-log answer carries, with every option the owner saw
+MAX_ASKED = 40000   # the questions a work-log answer carries, with every option and preview the owner saw
 # From the first build turn to the owner's last round (R3): before it the design talk and R1 take the owner's
 # words, after it the pull request is published. Words said by then and still waiting turn the run back first.
 OPEN = STAGE_ORDER[STAGE_ORDER.index("tests"):STAGE_ORDER.index("pr")]
@@ -58,7 +58,7 @@ def told(o: dict, text: str) -> str:
     """A work turn's `text` with what the owner said during the build, which the design now follows, and the line
     that they watch and can be asked."""
 
-    words = [w for r in o.get("retold") or [] for w in r["words"]]
+    words = [w for r in o.get("retold") or [] for w in r.get("said") or r["words"]]   # an answer with its questions
     return text + ("\n\nDuring the build the owner said this, in their own words, and the design was rewritten to "
                    f"follow it:\n\n{json.dumps(words, ensure_ascii=False, indent=2)}\n" if words else "") + OWNER
 
@@ -82,6 +82,7 @@ def next_build(spec: dict) -> str:
 class Option(BaseModel):
     label: str
     note: str = ""
+    preview: str = ""   # a schema, a layout or a file tree the option shows: it can be what was chosen
 
 
 class Asked(BaseModel):
@@ -113,7 +114,7 @@ def tell(repo: str, body: Tell) -> dict:
         if o.get("stage") not in OPEN:
             raise HTTPException(409, "설계를 승인한 뒤부터 주인 화면 회차(R3)까지 구현 에이전트에게 말할 수 있다")
         stage = o["stage"]
-        said = {"text": text, "ts": time.time(), "stage": stage, "into_turn": steered(spec, text)}
+        said = {"text": text, "ts": time.time(), "stage": stage, "into_turn": steered(spec, text, asked)}
         o = oneshot_spec.saved(repo, oneshot={"told": [*(o.get("told") or []), said], "tell_pending": [
             *(o.get("tell_pending") or []), {"text": text, "stage": stage, "ts": said["ts"], **({"asked": asked} if asked else {})}]})["oneshot"]
         if o.get("working") == "measure":   # the build goes back to work at once: the measurement stops
@@ -188,7 +189,13 @@ def handoff(store: oneshot.Store) -> bool:
         return store.get().get("working") == "retell"
 
 
-def steered(spec: dict, text: str) -> bool:
+def spoken(word: dict) -> str | dict:
+    """A waiting word as an agent reads it: a work-log answer with the questions it answers (`Asked`)."""
+
+    return {"said": word["text"], "answering": word["asked"]} if word.get("asked") else word["text"]
+
+
+def steered(spec: dict, text: str, asked: list | None = None) -> bool:
     """`text` said into the build agent's running oneshot turn, as a person's steer is; false when none runs."""
 
     try:
@@ -198,7 +205,9 @@ def steered(spec: dict, text: str) -> bool:
     if not isinstance(run, oneshot_build.Turn) or run.repo != spec["repo"]:
         return False
     with run.wake:
-        if run.done or not run.chat.steer(STEERED.format(text=text)):
+        said = spoken({"text": text, "asked": asked})
+        if run.done or not run.chat.steer(STEERED.format(text=said if isinstance(said, str) else json.dumps(
+                said, ensure_ascii=False, indent=2))):
             return False
         run.put({"kind": "said", "text": text, "meta": {}, "session_id": run.chat.id, "parent_id": run.chat.parent_id})
     return True
@@ -264,8 +273,7 @@ def rewritten(repo: str) -> tuple[str, str] | None:
             if store.get().get("working") == "retell":
                 store.put(working=None)
         return None
-    words = [w["text"] for w in pending]
-    said = [{"said": w["text"], "answering": w["asked"]} if w.get("asked") else w["text"] for w in pending]
+    words, said = [w["text"] for w in pending], [spoken(w) for w in pending]
     text = (oneshot_spec.design_text(spec) + f"\nThe current design:\n\n{json.dumps(o['design'], ensure_ascii=False)}"
             "\n\nWhile the product was being built, the owner said this, in their own words. An entry with `answering` "
             "answers the build agent's questions: each with its chapter, its options as the owner saw them, and the "
@@ -305,7 +313,7 @@ def rewritten(repo: str) -> tuple[str, str] | None:
         spec = oneshot_measure.retire(now, "주인의 말로 설계를 다시 썼다 — 다시 빌드한 뒤 다시 잰다", changes, **again,
             tell_pending=[w for w in now["oneshot"].get("tell_pending") or [] if w not in pending], stage=stage,
             retell_to=back if stage == "tests" else None,
-            retold=[*(o.get("retold") or []), {"words": words, "changed": moved, "ts": time.time()}])
+            retold=[*(o.get("retold") or []), {"words": words, "said": said, "changed": moved, "ts": time.time()}])
     return stage, oneshot_build.tests_text(spec) if stage == "tests" else next_build(spec)
 
 

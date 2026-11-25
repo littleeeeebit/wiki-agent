@@ -213,7 +213,7 @@ export const api = {
   // `asked`: the work-log questions the words answer, each with its options (`oneshot_tell.Asked`).
   tell: (repo: string, text: string, asked?: Answered[]) => post(`${base(repo)}/tell`, {
     text, asked: asked?.map((q) => ({ header: q.header ?? '', question: q.question, answer: q.answer,
-      options: q.options.map((o) => ({ label: o.label, note: o.note ?? '' })) })) ?? [] }).then(answer),
+      options: q.options.map((o) => ({ label: o.label, note: o.note ?? '', preview: o.preview ?? '' })) })) ?? [] }).then(answer),
   // [지금 반영]: the words a parked run holds, taken in now (`oneshot_tell.apply`).
   applyTell: (repo: string) => post(`${base(repo)}/tell/apply`, {}).then(answer),
   // A PC app's build part, confirmed exactly as offered (`oneshot_spec.confirm_build`).
