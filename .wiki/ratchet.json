@@ -128,8 +128,8 @@
     },
     "tool/main/oneshot_build.py": {
       "dup": 0,
-      "lines": 817,
-      "reason": "Oneshot plan 14a: a tests turn after the owner changed the design mid-build may find a planned test passing, commits only the contract, configuration and adapter, and hands on to the build it came from (`retell_to`); every work turn is sent through `oneshot.diverted` and told of the owner (seventeen lines past the 800-line cap for a file without an entry)."
+      "lines": 820,
+      "reason": "PR #450 round 4: a work turn that finds the owner's rewrite started before it held the worktree yields to it (three lines). Before that: Oneshot plan 14a: a tests turn after the owner changed the design mid-build may find a planned test passing, commits only the contract, configuration and adapter, and hands on to the build it came from (`retell_to`); every work turn is sent through `oneshot.diverted` and told of the owner (seventeen lines past the 800-line cap for a file without an entry)."
     },
     "tool/main/oneshot_spec.py": {
       "dup": 0,
@@ -138,8 +138,8 @@
     },
     "tool/main/oneshot_review.py": {
       "dup": 0,
-      "lines": 858,
-      "reason": "Plan 11c: a review finding marked `fake` must be a blocking P1 that names its design test, says what it stands in for and names its test file exactly in `file`, a file of the checkout the review read (`faked_file`), never deferred to a device or a later build; it is pinned when that file and a pin are the same file on disk (`pinned`), and a pinned fake stops the run for the owner instead of sending the build a test it may not change (PR #436 rounds 1-6; the stop sits beside the cap's, under the same lock)."
+      "lines": 859,
+      "reason": "PR #450 round 4: a stage that lets the worktree go with nothing following takes in the owner's words said meanwhile (`oneshot_tell.settle`, one line). Before that: Plan 11c: a review finding marked `fake` must be a blocking P1 that names its design test, says what it stands in for and names its test file exactly in `file`, a file of the checkout the review read (`faked_file`), never deferred to a device or a later build; it is pinned when that file and a pin are the same file on disk (`pinned`), and a pinned fake stops the run for the owner instead of sending the build a test it may not change (PR #436 rounds 1-6; the stop sits beside the cap's, under the same lock)."
     },
     "tool/main/oneshot.py": {
       "dup": 0,

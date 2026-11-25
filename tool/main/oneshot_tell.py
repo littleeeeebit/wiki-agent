@@ -138,6 +138,15 @@ def handoff(store: oneshot.Store) -> bool:
         return store.get().get("working") == "retell"
 
 
+def settle(store: oneshot.Store) -> bool:
+    """A stage let the worktree go with nothing following it: words said meanwhile, which found the tree held and
+    had no handoff to meet, are taken in now. True when the rewrite took the run."""
+
+    with oneshot._lock:
+        o = store.get()
+        return not o.get("working") and due(o) and handoff(store)
+
+
 def steered(spec: dict, text: str) -> bool:
     """`text` said into the build agent's running oneshot turn, as a person's steer is; false when none runs."""
 

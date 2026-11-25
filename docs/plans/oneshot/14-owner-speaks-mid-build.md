@@ -63,10 +63,12 @@ for a stage's worker and `oneshot_build.send` for a work turn. Both ask
 the `retell` worker in that step's place, and the step's own text is
 dropped: the rewritten design leads to a fresh build turn, and a review or
 measurement runs again after it. A step whose run a rewrite has already
-taken yields to it, since the rewrite sends the next step itself. The draft
-pull request's upload asks before the measurement checks its old plan, so a
-word that drops an input is never held behind that input. The publication
-step asks too, so words
+taken yields to it, since the rewrite sends the next step itself, and a work
+turn checks that again once it holds the worktree. The measurement's start
+asks before it checks its old plan, so a word that drops an input is never
+held behind that input. A stage that lets the worktree go with nothing
+following it takes in the words said while it held it
+(`oneshot_tell.settle`). The publication step asks too, so words
 said by R3 are never published past. A start that meets the rewrite
 already running (a turn's handoff after a word said at its very end) leaves
 it as it is; one the server refuses otherwise (it is going down) stops the

@@ -538,6 +538,8 @@ def holding(repo: str, what: str, body, passed: str = "built_head", build: str =
             release()
         if callable(following):   # a save that only saves returns the spec
             passed_on = bool(following())
+        from . import oneshot_tell   # words the owner said while the tree was held, with nothing to take them in
+        passed_on = passed_on or oneshot_tell.settle(store)
     finally:   # an exception included: the worker records the stop, and the instruction still goes
         if not passed_on:   # a server going down drops it, as `dispatch` drops one after a stopped turn
             work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))

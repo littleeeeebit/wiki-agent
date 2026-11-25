@@ -138,9 +138,35 @@ def test_a_published_draft_takes_the_owners_words_before_the_old_measurement_pla
     from main import oneshot_measure, oneshot_publish
     at("measure", working="publish", built_head="b" * 40, tell_pending=[{"text": "입력 하나를 빼", "stage": "measure"}])
     with patch.object(oneshot_publish, "published", lambda repo: {"number": 1}), \
-         patch.object(oneshot_measure, "start", side_effect=AssertionError("the old plan was checked first")):
-        oneshot_publish.publish("budget")
+         patch.object(oneshot_measure, "measuring", side_effect=AssertionError("the old plan was checked first")):
+        oneshot_publish.publish("budget")   # the draft's handoff reaches the measurement's start, which asks first
     assert o()["working"] == "retell"
+
+
+def test_words_said_while_a_stage_held_the_tree_are_taken_in_once_it_lets_go(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import oneshot_review, work
+    at("measure", working="measure", built_head="b" * 40)
+    store = oneshot_spec.store("budget")
+
+    def body(store, spec, tree):   # the owner's measurement saves its result, then the owner speaks
+        store.put(working=None)
+        say("소리를 줄여")   # the tree is held: queued for the holder
+        assert o()["working"] is None and o()["tell_pending"]
+        return lambda: spec
+    with patch.object(oneshot_review, "moved", lambda *a: ""), patch.object(work, "dispatch") as dispatch:
+        oneshot_review.holding("budget", "실측", body)
+    assert o()["working"] == "retell" and not dispatch.called and store.get()["tell_pending"]
+
+
+def test_a_build_send_that_finds_a_rewrite_started_before_it_held_the_tree_yields(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import work
+    at("build", working="retell")
+    with patch.object(oneshot, "diverted", lambda store, what: False), \
+         patch.object(oneshot_build, "resolve_tools", lambda *a: True), \
+         patch.object(work, "session", side_effect=AssertionError("a second agent turn")):
+        oneshot_build.send("budget", "build", "BUILD")
+    tree = specs.load("budget", oneshot.BRANCH)["worktree"]
+    assert o()["working"] == "retell" and not o().get("stopped") and str(tree) not in work._busy
 
 
 def test_a_measurement_the_owner_spoke_into_hands_on_only_once_the_tree_is_let_go(world):  # noqa: F811 — the imported fixture, requested by name

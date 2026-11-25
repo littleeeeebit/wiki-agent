@@ -216,6 +216,9 @@ def send(repo: str, stage: str, text: str) -> None:
     except HTTPException as exc:   # whoever holds it sends the queued instruction when it lets go
         store.stop("block", str(exc.detail))
         return
+    with oneshot._lock:   # held now, no new rewrite starts (`oneshot_tell`); one started before owns the run
+        if store.get().get("working") == "retell":
+            return held()
 
     def release() -> None:   # the grant and the closing block go before the tree does: the next turn there,
         if turn is not None:   # a person's included, never finds them set (`work.run_turn` lets go first)

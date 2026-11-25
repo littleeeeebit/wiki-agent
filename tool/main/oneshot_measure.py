@@ -653,7 +653,9 @@ class Start(BaseModel):
 
 @router.post("/api/oneshot/spec/{repo}/measure/start")
 def start(repo: str, body: Start) -> dict:
-    with oneshot._lock:
+    with oneshot._lock:   # the owner's waiting words first, before the old plan is checked (`oneshot_tell`)
+        if oneshot.diverted(oneshot_spec.store(repo), "measure"):
+            return oneshot_spec.view(oneshot_spec.spec_of(repo))
         spec, plan, broken = measuring(repo, plan_needed=False)
         o = spec["oneshot"]   # a measurement stopped (a wrong input, a restart) starts again from here
         if body.head != o.get("built_head"):
