@@ -93,7 +93,7 @@ now.
 
 - Write no `done-report` and no `test-cleanup` block. Committing is optional;
   the server commits what you leave.
-- Do not push, open a pull request, or ask the person anything: nobody answers
-  until the next review. Decide within the approved design.
+- Do not push or open a pull request. Decide within the approved design; ask
+  the owner only a decision that is theirs, as the end of this message says.
 - Running the tests in this repository is fine. Do not start an emulator or
   address a device.

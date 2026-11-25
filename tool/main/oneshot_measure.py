@@ -428,6 +428,8 @@ def measure(repo: str, mode: str | None = None) -> None:
             store.stop("measure", found["io"])
             return None
         record["tail"] = (text or "").strip()[-3000:]
+        if halt.is_set() and getattr(halt, "told", False) and not runtime.stopping.is_set():
+            return lambda: decided(repo, store, record, since, hide)   # the owner spoke: the words are taken in
         if halt.is_set():
             store.stop("measure", masked("사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
                                          else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다", hide))
@@ -456,8 +458,8 @@ def decided(repo: str, store, record: dict, since: int, hide: dict[str, str] | N
     with oneshot._lock:
         if (halt := HALTS.get(repo)) is not None and halt.is_set() and getattr(halt, "told", False) \
                 and not runtime.stopping.is_set():   # the owner spoke: their words are taken in, then built
-            store.put(working=None)
-            oneshot_spec.start(repo, "retell")
+            from . import oneshot_tell   # it imports this module's neighbours
+            oneshot_tell.start(store)
             return None
         if (halt := HALTS.get(repo)) is not None and halt.is_set():   # `stop` sets it under this lock too
             store.stop("measure", masked("사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()

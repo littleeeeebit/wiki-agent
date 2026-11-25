@@ -28,13 +28,14 @@ export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
 
 // The stages the owner can speak to the build agent in (`oneshot_tell.OPEN`), and those whose words wait for the
 // frontend build (`WAIT`): the screens are being designed with them then.
-const TELLS = ['tests', 'build', 'measure', 'review', 'conflict', 'split', 'board', 'frontend', 'r2', 'build-front',
-  'critique', 'phone', 'pc', 'r3', 'pr']
+export const TELLS = ['tests', 'build', 'measure', 'review', 'conflict', 'split', 'board', 'frontend', 'r2',
+  'build-front', 'critique', 'phone', 'pc', 'r3']
 const WAITS = ['split', 'board', 'frontend', 'r2']
 
 /** The owner's words to the build agent, any time it builds: said into the turn that runs, and the design rewritten
- *  from them before the next step, which carries on from the code as it is. */
-function Tell({ view }: { view: SpecView }) {
+ *  from them before the next step, which carries on from the code as it is. `post` sends them; an idle screen
+ *  passes its own, so the view the server answers with shows the rewrite starting at once. */
+export function Tell({ view, post }: { view: SpecView; post?: (text: string) => Promise<unknown> }) {
   const o = view.oneshot
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -43,8 +44,8 @@ function Tell({ view }: { view: SpecView }) {
     if (!text.trim()) return
     setBusy(true)
     setFault('')
-    api.tell(view.repo, text.trim()).then(() => setText('')).catch((err) => setFault(String(err?.message ?? err)))
-      .finally(() => setBusy(false))
+    ;(post ?? ((t: string) => api.tell(view.repo, t)))(text.trim()).then(() => setText(''))
+      .catch((err) => setFault(String(err?.message ?? err))).finally(() => setBusy(false))
   }
   const waiting = o.tell_pending?.length ?? 0
   return (

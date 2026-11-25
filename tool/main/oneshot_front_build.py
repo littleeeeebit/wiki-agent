@@ -94,7 +94,8 @@ def build_front_text(spec: dict) -> str:
     """The frontend build's turn, then what the backend review left to the kinds' own builds (`later`)."""
 
     from . import oneshot_review   # it imports this module's neighbours
-    return front_text(spec) + oneshot_review.later_text(spec["oneshot"], kinds_of(spec["oneshot"]))
+    return oneshot_build.owner().told(spec["oneshot"], front_text(spec) + oneshot_review.later_text(
+        spec["oneshot"], kinds_of(spec["oneshot"])))
 
 
 def front_text(spec: dict) -> str:

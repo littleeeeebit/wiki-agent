@@ -7,7 +7,7 @@ import { Board } from '@/components/OneshotBoard'
 import { Owner } from '@/components/OneshotMeasure'
 import { Calls, Leaked, Needs } from '@/components/OneshotNeeds'
 import { PcApprove, PcResults } from '@/components/OneshotPc'
-import { Track } from '@/components/OneshotTrack'
+import { Tell, TELLS, Track } from '@/components/OneshotTrack'
 import { api, owns, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName,
   ownedNotice, toolText,
@@ -175,7 +175,13 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
         forget={(env) => act(() => api.forget(repo, env))} />
     </div>
   ) : null
-  if (owns(view)) return <>{faulted}{needs}<Owner repo={repo} view={view} busy={busy} act={act} /></>
+  // A screen waiting on the owner (a measurement to judge, a round, a sheet): they can still speak to the build.
+  const tell = idle && TELLS.includes(view.stage) ? (
+    <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
+      <Tell view={view} post={(text) => act(() => api.tell(repo, text))} />
+    </div>
+  ) : null
+  if (owns(view)) return <>{faulted}{needs}<Owner repo={repo} view={view} busy={busy} act={act} />{tell}</>
   if (view.stopped) {
     return (
       <Track view={view} halt={<>
@@ -217,6 +223,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
           items={view.r3_items ?? []} state={o.r3} busy={busy} brief={view.r3_brief}
           submit={(body) => act(() => api.decide(repo, 'r3', { ...body, source: view.r3_brief?.source }))} />
       )}
+      {tell}
       {view.stage === 'done' && view.summary && <Finished summary={view.summary} />}
       {view.working && view.stage !== 'done' && <Track view={view} halt={view.working === 'phone' && (
         <section aria-label="휴대폰 회차" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-5 py-4">

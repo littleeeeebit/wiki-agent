@@ -388,12 +388,12 @@ def design_files(o: dict) -> dict:
     return {"docs/design/backend.md": sheet.sheet, "docs/design/api.yaml": sheet.openapi}
 
 
-def design_committed(repo: str, message: str) -> str | None:
-    """The design as the spec holds it now, written into the worktree's design files and committed with `message`:
-    the new HEAD, or `None` after stopping with `folder`. R1's approval records it, and so does a design the owner
-    changed during the build (`oneshot_tell.retell`)."""
+def design_committed(repo: str, message: str, spec: dict | None = None) -> str | None:
+    """The design as the spec holds it now (or as `spec`, one not saved yet, holds it), written into the worktree's
+    design files and committed with `message`: the new HEAD, or `None` after stopping with `folder`. R1's approval
+    records it, and so does a design the owner changed during the build (`oneshot_tell.retell`)."""
 
-    spec = spec_of(repo)
+    spec = spec or spec_of(repo)
     tree, o = own_tree(spec), spec["oneshot"]
     docs = tree and (tree / "docs" / "design").resolve()
     if not tree or not docs.is_relative_to(tree):

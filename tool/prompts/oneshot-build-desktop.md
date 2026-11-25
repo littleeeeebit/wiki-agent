@@ -49,7 +49,7 @@ A refusal comes back with the reason, at most three times in all.
   refused, so a secret never reaches the screen.
 - Commit everything and leave nothing uncommitted, then end with the
   `done-report`. No `test-cleanup` block is needed in this stage.
-- Do not push, open a pull request, or ask the person anything: nobody answers
-  until the next review. Decide within the approved design.
+- Do not push or open a pull request. Decide within the approved design; ask
+  the owner only a decision that is theirs, as the end of this message says.
 - Running the gate command or the tests in this repository is fine. Do not
   start the program or open a window.

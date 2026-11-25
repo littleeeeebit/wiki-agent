@@ -723,7 +723,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
         raise ValueError(f"계약 테스트 커밋 뒤에도 바뀐 파일이 남았다 — {left[:300]}")
     tests_head, pins = head(path), cases(spec, found)
     scenarios = [f"{r['id']}: {r['text']}" for r in spec.get("requirements") or [] if r.get("postconditions")]
-    oneshot_spec.saved(spec["repo"], done=[gate, *scenarios],
+    oneshot_spec.saved(spec["repo"], done=spec.get("done") if o.get("retell_to") == "build-front" else [gate, *scenarios],   # R2's screens stay
                        # the record is version 2's now, whatever version the run started at
                        oneshot={"version": max(o.get("version", 1), 2), "stage": o.get("retell_to") or "build",
                                 "retell_to": None, "tests_head": tests_head, "contract": runner["contract"] + runner["config"],
