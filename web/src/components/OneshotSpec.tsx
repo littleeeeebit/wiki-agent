@@ -185,7 +185,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   ) : null
   // A screen waiting on the owner (a measurement to judge, a round, a sheet), stopped or not: they can still speak
   // to the build, and take waiting words in. Each answer installs the new view, so a started rewrite is followed.
-  const told = { post: (text: string, asked?: Answered[]) => act(() => api.tell(repo, text, asked)),
+  const told = { post: (text: string, asked?: Answered[], turn?: string) => act(() => api.tell(repo, text, asked, turn)),
     apply: () => act(() => api.applyTell(repo)) }
   const tell = !view.working && TELLS.includes(view.stage) ? (
     <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4"><Tell view={view} {...told} /></div>

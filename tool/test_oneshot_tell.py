@@ -214,6 +214,23 @@ def test_a_rewrite_claims_its_tree_from_its_start_to_its_follow_up_and_gives_it_
         assert tree not in work._busy   # the hold handed on goes with it
 
 
+def test_a_choice_answers_only_the_turn_that_asked_and_the_words_are_kept_before_the_turn_hears_them(world):  # noqa: F811 — the imported fixture, requested by name
+    choice = {"question": "세금은?", "answer": "포함", "picked": [0], "options": [{"label": "포함"}, {"label": "제외"}]}
+    at("build", stopped={"reason": "asked", "detail": "묻는다", "state": "build", "turn": "t1"}, inflight={"turn": "x"})
+    oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t2"))   # a later turn's question
+    assert not o()["tell_pending"][-1].get("answers")
+    oneshot_tell.tell("budget", oneshot_tell.Tell(text="포함", asked=[choice], turn="t1"))   # the one that asked
+    assert o()["tell_pending"][-1]["answers"]
+    heard = []
+    with patch.object(oneshot_tell, "steered", lambda *a: heard.append(a) or True), \
+         patch.object(oneshot_spec, "saved", side_effect=OSError("disk")), pytest.raises(OSError):
+        say("모델을 바꿔")   # not kept for the rewrite: the running turn never hears it either
+    assert not heard
+    with patch.object(oneshot_tell, "steered", lambda *a: True):
+        say("모델을 바꿔")
+    assert o()["told"][-1]["into_turn"] is True and o()["tell_pending"][-1]["text"] == "모델을 바꿔"
+
+
 def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name
     at("build")
 
@@ -347,15 +364,24 @@ def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_is_cleared_befo
         with patch.object(work, "begin") as begin:
             oneshot_build.send("budget", "build", "BUILD")
         begin.call_args[0][3]()   # the turn ends, and clearing its grant fails: the tree still goes
-        assert tree not in work._busy and granted()
+        begin.call_args[0][4].ended.set()   # its heartbeat stops with it
+        assert tree not in work._busy and granted() and oneshot_build._stale == {tree: "budget"}
+        order = MagicMock()
+        with patch.dict(work._queued, {tree: order}):
+            work.dispatch(Path(tree), MagicMock(halt=threading.Event()))   # the retry fails: the order stays queued
+            assert work._queued[tree] is order
+        with pytest.raises(HTTPException) as refused:   # nor does any other turn without the grant start
+            work.begin(Path(tree), MagicMock(), "다른 일", lambda: None, work.Run(MagicMock()))
+        assert refused.value.status_code == 409
         with patch.object(work, "begin", side_effect=RuntimeError("refused")):
             oneshot_build.send("budget", "build", "BUILD")   # refused at launch, its clearing failing too
         assert tree not in work._busy and not o().get("inflight") and o()["stopped"]["reason"] == "block"
         broken[0] = False
         with patch.object(work, "begin") as begin:
             oneshot_build.send("budget", "tests", "TESTS")   # a turn with no grant: the one left is cleared first
-        assert not granted()
+        assert not granted() and not oneshot_build._stale
         begin.call_args[0][3]()
+        begin.call_args[0][4].ended.set()
     assert tree not in work._busy
 
 

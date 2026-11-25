@@ -45,7 +45,7 @@ def month(name):
 
 class Turn:
     def __init__(self, person=False):
-        self.events, self.halt, self.person, self.token = [], threading.Event(), person, "turn"
+        self.events, self.halt, self.person, self.token, self.turn = [], threading.Event(), person, "turn", "t1"
         self.chat = SimpleNamespace(id="c", parent_id=None)
 
     def put(self, payload):
@@ -201,6 +201,7 @@ def test_a_build_turn_that_asks_the_owner_waits_for_the_answer_with_no_retry(bui
     asked = fenced("choices", {"question": "합계는 세금 포함인가?", "options": [{"label": "포함"}, {"label": "제외"}]})
     assert check(tree, "물어본다.\n\n" + asked) is None and len(sent) == before   # no retry replaces the question
     assert o()["stopped"]["reason"] == "asked" and o()["attempts"] == 0 and not o()["working"]
+    assert o()["stopped"]["turn"]   # whose question it is: only that turn's form answers it (`oneshot_tell.tell`)
     oneshot_spec.saved("budget", oneshot={"stage": "pr", "stopped": None})   # the README turn: no work-log answer there
     check(tree, "물어본다.\n\n" + asked)   # its own check refuses the question, as a README turn may ask nothing
     assert (o().get("stopped") or {}).get("reason") != "asked"

@@ -124,9 +124,10 @@ class Store:
     def __init__(self, key: str, get, put, state: str, folder: Path, active) -> None:
         self.key, self.get, self.put, self.state, self.folder, self.active = key, get, put, state, folder, active
 
-    def stop(self, reason: str, detail: str) -> dict:
+    def stop(self, reason: str, detail: str, **more) -> dict:
         with _lock:
-            return self.put(working=None, stopped={"reason": reason, "detail": detail, "state": self.get()[self.state]})
+            return self.put(working=None, stopped={"reason": reason, "detail": detail, "state": self.get()[self.state],
+                                                   **more})
 
     def profile(self) -> dict | None:
         """The profile whose ceilings bind this store's turns, or `None` before the card is confirmed."""

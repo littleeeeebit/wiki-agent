@@ -107,6 +107,7 @@ class Asked(BaseModel):
 class Tell(BaseModel):
     text: str
     asked: list[Asked] = []   # the words answer these: the design model never saw them
+    turn: str = ""   # the work-log turn whose question they answer
 
 
 @router.post("/api/oneshot/spec/{repo}/tell")
@@ -124,12 +125,16 @@ def tell(repo: str, body: Tell) -> dict:
         if o.get("stage") not in OPEN:
             raise HTTPException(409, "설계를 승인한 뒤부터 주인 화면 회차(R3)까지 구현 에이전트에게 말할 수 있다")
         stage = o["stage"]
-        said = {"text": text, "ts": time.time(), "stage": stage, "into_turn": steered(spec, text, asked)}
+        said, stop = {"text": text, "ts": time.time(), "stage": stage, "into_turn": False}, o.get("stopped") or {}
         word = {"text": text, "stage": stage, "ts": said["ts"], **({"asked": asked} if asked else {}),
-                # said to a run stopped on its question: the answer, which `answered` hands on as the turn lets go
-                **({"answers": True} if (o.get("stopped") or {}).get("reason") == "asked" else {})}
-        o = oneshot_spec.saved(repo, oneshot={"told": [*(o.get("told") or []), said],
+                # said to a run stopped on its question: the answer, which `answered` hands on as the turn lets go;
+                # a choice answers it only from the turn that asked, never another turn's question
+                **({"answers": True} if stop.get("reason") == "asked" and (not asked or body.turn == stop.get("turn"))
+                   else {})}
+        o = oneshot_spec.saved(repo, oneshot={"told": [*(o.get("told") or []), said],   # kept for the rewrite first:
                                               "tell_pending": [*(o.get("tell_pending") or []), word]})["oneshot"]
+        if steered(spec, text, asked):   # a save that fails never leaves the turn told and the design not
+            o = oneshot_spec.saved(repo, oneshot={"told": [*o["told"][:-1], {**said, "into_turn": True}]})["oneshot"]
         if o.get("working") == "measure":   # the build goes back to work at once: the measurement stops
             from . import oneshot_measure   # it imports this module's neighbours
             if halt := oneshot_measure.HALTS.get(repo):

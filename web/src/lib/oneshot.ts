@@ -40,8 +40,8 @@ export const modelName = (role: keyof Models, m: { model: string; effort: string
   `${m.model || (role === 'review' ? '리뷰 설정 따름' : 'Claude 기본')}${m.effort ? ` · ${m.effort}` : ''}`
 export type SpecSummary = {
   repo: string; stage: string; working: string | null; waits: boolean; kind?: string; kinds?: string[]
-  /** `counted`: the critiques a cap stop reached (`oneshot_critique`). */
-  stopped: { reason: string; detail: string; counted?: number } | null
+  /** `counted`: the critiques a cap stop reached (`oneshot_critique`); `turn`: the work-log turn that asked. */
+  stopped: { reason: string; detail: string; counted?: number; turn?: string } | null
 }
 export type Reading = { round: number; seconds: number | null; opened: string[]; edited: string[] }
 export type RunSummary = {
@@ -210,9 +210,9 @@ export const api = {
   view: (repo: string) => get(base(repo)).then(answer),
   say: (repo: string, text: string) => post(`${base(repo)}/say`, { text }).then(answer),
   // The owner's words to the build agent mid-build (`oneshot_tell.tell`).
-  // `asked`: the work-log questions the words answer, each with its options (`oneshot_tell.Asked`).
-  tell: (repo: string, text: string, asked?: Answered[]) => post(`${base(repo)}/tell`, {
-    text, asked: asked?.map((q) => ({ header: q.header ?? '', question: q.question, answer: q.answer, picked: q.picked,
+  // `asked`: the work-log questions the words answer, each with its options (`oneshot_tell.Asked`); `turn`: theirs.
+  tell: (repo: string, text: string, asked?: Answered[], turn?: string) => post(`${base(repo)}/tell`, {
+    text, turn: turn ?? '', asked: asked?.map((q) => ({ header: q.header ?? '', question: q.question, answer: q.answer, picked: q.picked,
       options: q.options.map((o) => ({ label: o.label, note: o.note ?? '', preview: o.preview ?? '' })) })) ?? [] }).then(answer),
   // [지금 반영]: the words a parked run holds, taken in now (`oneshot_tell.apply`).
   applyTell: (repo: string) => post(`${base(repo)}/tell/apply`, {}).then(answer),

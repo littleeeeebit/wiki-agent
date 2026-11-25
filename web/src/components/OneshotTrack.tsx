@@ -12,7 +12,8 @@ import { cn } from '@/lib/utils'
  *  against the server's caps, each review and critique with its findings, and what the run has spent. A stopped
  *  run shows the same, under its reason and `[재개]`, so why it stopped is read off what happened. */
 export function Track({ view, halt, post, apply }: {
-  view: SpecView; halt?: ReactNode; post?: (text: string, asked?: Answered[]) => Promise<boolean>; apply?: () => Promise<boolean>
+  view: SpecView; halt?: ReactNode; post?: (text: string, asked?: Answered[], turn?: string) => Promise<boolean>
+  apply?: () => Promise<boolean>
 }) {
   const o = view.oneshot
   const kinds = o.intent?.kinds ?? (o.intent?.kind ? [o.intent.kind] : [])   // a record from before kinds has one
@@ -22,8 +23,9 @@ export function Track({ view, halt, post, apply }: {
         {halt}
         {o.inflight && <Now inflight={o.inflight} kinds={kinds} />}
         {/* As the box sends, so the pane follows the answer; with its questions, since the design model never saw them. */}
-        <Log path={view.worktree ?? ''} onSend={TELLS.includes(view.stage)
-          ? (text, asked) => void (post ?? ((t: string, a?: Answered[]) => api.tell(view.repo, t, a)))(text, asked) : undefined} />
+        <Log path={view.worktree ?? ''} asking={view.stopped?.reason === 'asked' ? view.stopped.turn : undefined}
+          onSend={TELLS.includes(view.stage) ? (text, asked, turn) => void (post ?? ((t: string, a?: Answered[], n?: string) =>
+            api.tell(view.repo, t, a, n)))(text, asked, turn) : undefined} />
         {TELLS.includes(view.stage) && <Tell view={view} post={post} apply={apply} />}
       </div>
     </Split>
@@ -136,7 +138,10 @@ function Now({ inflight, kinds }: { inflight: Inflight; kinds: readonly string[]
 const SHOWN = 6   // turns kept open; earlier ones fold behind one button
 
 /** The run's worktree turns, live: the same record and stream maintenance shows for a task, read-only here. */
-function Log({ path, onSend }: { path: string; onSend?: (text: string, asked?: Answered[]) => void }) {
+// `asking`: the turn a run stopped on its question waits on; only its form answers, whatever turn came after.
+function Log({ path, asking, onSend }: {
+  path: string; asking?: string; onSend?: (text: string, asked?: Answered[], turn?: string) => void
+}) {
   // Its own record: a turn the server starts here (each attempt, a review's repair) reaches it on the feed.
   const work = useWork()
   const { load, forget } = work
@@ -194,7 +199,8 @@ function Log({ path, onSend }: { path: string; onSend?: (text: string, asked?: A
       ) : (
         <div key={t.key} className="rounded-md border border-border bg-card px-3 py-2.5">
           <Reply turn={t} on={mode !== 'off'} progressOn={mode === 'full'} onPeek={() => {}}
-            onSend={t === turns.at(-1) ? onSend : undefined}   // a choice the build agent offered goes back as the owner's words
+            onSend={onSend && (asking ? t.turn === asking : t === turns.at(-1))   // a choice the build agent offered
+              ? (text, asked) => onSend(text, asked, t.turn) : undefined}   // goes back as the owner's words
             onAnswer={(turn, id, allow, scope, answers, picks) => work.answer(path, turn, id, allow, scope, answers, picks)} />
         </div>
       ))}
