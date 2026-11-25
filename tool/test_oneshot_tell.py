@@ -18,6 +18,9 @@ def o() -> dict:
 
 
 def at(stage: str, **more) -> None:
+    for release in oneshot_tell._reserved.values():   # the fixture's stand-in start runs no worker to take its hold
+        release()
+    oneshot_tell._reserved.clear()
     oneshot_spec.saved("budget", requirements=REQS, oneshot={
         "glossary": GLOSSARY, "stage": stage, "design": sheet.parsed(DESIGN), "design_head": "d" * 40, "working": None,
         **more})
@@ -155,6 +158,14 @@ def test_an_answer_given_as_the_asking_turn_closes_goes_in_once_it_lets_go_and_o
     with patch.dict(work._queued, {tree: queued}), patch.object(work, "session", side_effect=AssertionError("queued")):
         work.dispatch(Path(tree), MagicMock(halt=threading.Event()))   # that one let go too
         assert o()["working"] == "retell" and work._queued[tree] is queued   # the rewrite goes first; the order waits
+        work.dispatch(Path(tree), MagicMock(halt=threading.Event()))   # a late callback of an earlier release
+        assert work._queued[tree] is queued   # the rewrite holds the tree from its start: nothing comes between
+    dispatched = []
+    with patch.object(work, "dispatch", lambda path, ended: dispatched.append(path)), \
+         patch.object(oneshot_tell, "rewritten", lambda repo: ("build", "BUILD")), \
+         patch.object(oneshot_build, "send", lambda *a: None):   # a follow-up refused before any turn took the tree
+        oneshot_tell.retell("budget")
+    assert dispatched == [Path(tree)] and tree not in work._busy   # the order queued meanwhile still goes
 
 
 def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name
@@ -261,7 +272,8 @@ def test_a_send_that_holds_the_tree_takes_words_said_by_then_first_and_a_rewrite
          patch.object(work, "session", side_effect=AssertionError("the old prompt went")):
         oneshot_build.send("budget", "build", "BUILD")
     tree = specs.load("budget", oneshot.BRANCH)["worktree"]
-    assert started == ["retell"] and str(tree) not in work._busy   # the tree let go before the rewrite starts
+    # the send let the tree go; the rewrite holds it from its start, so nothing comes between
+    assert started == ["retell"] and list(oneshot_tell._reserved) == [str(Path(tree))]
     at("build", working="retell", tell_pending=[{"text": "소리를 줄여", "stage": "build"}])
     with patch.dict(work._busy, {str(tree): object()}), \
          patch.object(oneshot, "turned", side_effect=AssertionError("the design turn ran in a held tree")):
