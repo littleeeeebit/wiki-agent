@@ -1308,19 +1308,21 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | 
             return resolve_merge(loop, spec, repo, path, preview, base)
         deferred = spec.get("deferred") or []
         kept_p2, shown = pick(loop, chat() if callable(chat) else chat, deferred)
+        # One snapshot of this loop's own task is checked and published: `keep` refuses it once replaced.
+        fresh = specs.load(loop.repo, loop.sid)
+        if fresh is None or loop.born and born(fresh) != loop.born:
+            return False
         if not verification.cloud(spec) and (spec.get("review_contract") or {}).get("flows"):
-            fresh = specs.load(loop.repo, loop.sid)
             problem = review_contract.merge_problem(repo, path, fresh, head, specs.current_merge_base(path, base, head))
             if problem or pr_head(repo, spec["pr"]["number"]) != (head, base):
                 return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem or "검증 뒤 PR 커밋·base 가 바뀌었다")
         if verification.cloud(spec):
-            fresh = specs.load(loop.repo, loop.sid)
             problem = verification.proven(repo, path, fresh, head, specs.current_merge_base(path, base, head))
             if problem or pr_head(repo, spec["pr"]["number"]) != (head, base):
                 return cloud_stop(loop, repo, fresh, head, problem or "검증 뒤 PR 커밋·base 가 바뀌었다")
         if verification.cloud(spec) or verification.enabled(repo):
             try:
-                spec = verification.publish(repo, specs.load(loop.repo, loop.sid), head, base)
+                spec = verification.publish(repo, fresh, head, base)
             except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
                 if verification.cloud(spec):
                     return cloud_stop(loop, repo, spec, head, str(exc))
@@ -2306,17 +2308,25 @@ def requested_merge(repo: Path, spec: dict) -> None:
         # click authorized; any other change still cancels the request.
         if maintenance.documents_only(Path(spec.get("worktree") or repo), request["head"], allowed["head"]):
             request = {**request, "head": allowed["head"]}
-            spec = specs.update(repo.name, spec["id"], merge_request=request) or spec
+            spec = on_task(repo.name, spec, merge_request=request) or spec
     if (not allowed or request.get("head") != allowed["head"] or request.get("base") != allowed["base"]
             or request.get("rev") != spec["rev"] or request.get("pr") != spec["pr"]["number"]):
-        specs.update(repo.name, spec["id"], merge_request=None)
-        specs.merge_progress(repo.name, spec["id"], "승인한 커밋·명세 변경 — 머지 요청 취소", "blocked")
+        with specs._files:
+            if on_task(repo.name, spec, merge_request=None) is not None:
+                specs.merge_progress(repo.name, spec["id"], "승인한 커밋·명세 변경 — 머지 요청 취소", "blocked")
         return
     try:
         merge_spec(repo, spec, Merge(head=request["head"]), prepare=False)
     except Exception as exc:
         errorlog.record("requested-merge", exc, repo=repo.name, spec=spec["id"])
-        specs.update(repo.name, spec["id"], merge_request=None, fault=f"요청한 머지 중단 — {exc}")
+        on_task(repo.name, spec, merge_request=None, fault=f"요청한 머지 중단 — {exc}")
+
+
+def on_task(repo: str, spec: dict, **fields) -> dict | None:
+    """`specs.update` only while `spec`'s task holds its ID; `None` for one made again under it since."""
+    with specs._files:
+        now = specs.load(repo, spec["id"])
+        return specs.update(repo, spec["id"], **fields) if now is not None and born(now) == born(spec) else None
 
 
 def poll(halt: threading.Event | None = None) -> None:
@@ -2418,17 +2428,16 @@ def merge(sid: str, body: Merge) -> dict:
 def merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) -> dict:
     """The guarded merge for a click or its explicitly authorized prepared head."""
     with _landing:
-        fresh = specs.load(repo.name, spec["id"])
-        if fresh is None or fresh["history"][0]["ts"] != spec["history"][0]["ts"]:
-            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
-        try:
+        with specs._files:   # the check and its first progress line on the same task, never a replacement
+            fresh = specs.load(repo.name, spec["id"])
+            if fresh is None or fresh["history"][0]["ts"] != spec["history"][0]["ts"]:
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
             specs.merge_progress(repo.name, spec["id"], "리뷰·게이트·GitHub 머지 상태 확인 중", reset=prepare)
+        try:
             return _merge_spec(repo, fresh, body, prepare=prepare)
         except Exception as exc:
             with specs._files:   # only on the task this merge was asked for, never one made again under its ID
-                now = specs.load(repo.name, spec["id"])
-                if now is not None and born(now) == born(spec):
-                    specs.update(repo.name, spec["id"], merge_request=None)
+                if on_task(repo.name, spec, merge_request=None) is not None:
                     specs.merge_progress(repo.name, spec["id"], f"머지 중단 — {getattr(exc, 'detail', str(exc))}", "blocked")
             if isinstance(exc, verification.Replaced):
                 raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요") from exc

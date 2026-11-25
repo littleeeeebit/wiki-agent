@@ -471,8 +471,32 @@ def test_a_task_made_again_while_its_merge_or_poll_runs_is_left_to_its_own_loop(
             patch.object(loop, "_merge_spec", side_effect=verification.Replaced("gone")):
         with pytest.raises(HTTPException) as refused:
             loop.merge_spec(tmp_path, old, loop.Merge(head="h"))
-    assert refused.value.status_code == 410
-    assert update.call_count == 0 and progress.call_count == 1   # only the "checking" line written before the swap
+        assert refused.value.status_code == 410
+        assert update.call_count == 0 and progress.call_count == 1   # only the "checking" line written before the swap
+        # Replaced before the merge starts: no running line on the replacement either.
+        with pytest.raises(HTTPException):
+            loop.merge_spec(tmp_path, old, loop.Merge(head="h"))
+        assert progress.call_count == 1
+        # A queued request the poll resumes: its failure clears nothing on the replacement.
+        queued = {**old, "rev": 1, "pr": {"number": 7}, "merge_request": {"head": "h", "base": "main", "rev": 1, "pr": 7}}
+        with patch.object(specs, "approved", return_value={"head": "h", "base": "main"}), \
+                patch.object(loop, "merge_spec", side_effect=HTTPException(410, "gone")):
+            loop.requested_merge(tmp_path, queued)
+        with patch.object(specs, "approved", return_value=None):   # cancelled: nor its cancel line
+            loop.requested_merge(tmp_path, queued)
+        assert update.call_count == 0 and progress.call_count == 1
+    # The final gate passed for the old task: its snapshot of the replacement is never checked or published.
+    lp = loop.Loop("proj", "t1")
+    lp.born = 1.0
+    with patch.object(loop, "merge_preview", return_value={"ok": True}), patch.object(specs, "proven", return_value=""), \
+            patch.object(specs, "current_merge_base", return_value="b"), patch.object(specs, "digest"), \
+            patch.object(specs, "required"), patch.object(loop, "pick", return_value=([], [])), \
+            patch.object(loop.review_contract, "merge_problem", return_value=""), \
+            patch.object(verification, "enabled", return_value=True), \
+            patch.object(specs, "load", return_value=new), patch.object(verification, "publish") as publish:
+        spec = {**old, "validation": {"final": {"ok": True}}, "pr": {"number": 7}}
+        assert loop.allowed(lp, spec, tmp_path, tmp_path, None, 1, "h", "main") is False
+    assert not publish.called
     halt = threading.Event()
     (tmp_path / "specs" / "proj").mkdir(parents=True)
     task = {"id": "t1", "state": "머지 가능", "pr": {"number": 1}, "local_verification": {"state": "verified"}}
