@@ -172,7 +172,7 @@ Effects come from:
 | Effect | Denied when |
 |---|---|
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) outside every write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder |
-| — always | `.git`, `.claude`, `.codex` and `.wiki/adapter.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`). Below a write root, the same names at any depth (with the trailing dots or spaces Windows drops, too), and a folder named `.wiki`. A delete is also denied when anything below it is one of those names, a link or a junction, or when the folder has more than 20,000 entries to look through. Only git's own write of the repository it runs in is judged by place alone, and every git write is denied while `core.hooksPath` may point inside a write root |
+| — always | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and the ignored `.wiki/verification.toml` of the checkout and its main clone (the tracked `verification.toml` is a task's to write), and any write or delete of a folder that holds them (`echo x > .wiki`). Below a write root, the same names at any depth (with the trailing dots or spaces Windows drops, too), and a folder named `.wiki`. A delete is also denied when anything below it is one of those names, a link or a junction, or when the folder has more than 20,000 entries to look through. Only git's own write of the repository it runs in is judged by place alone, and every git write is denied while `core.hooksPath` may point inside a write root |
 | `network` | the host is neither the loopback nor a host a configured git remote names |
 | `spawn`, `top` | never |
 

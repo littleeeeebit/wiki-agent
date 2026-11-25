@@ -248,6 +248,14 @@ def test_a_task_writes_and_commits_its_checks(repo):
     for command in ("echo x > verification.toml", "git add verification.toml", "rm verification.toml",
                     "mkdir copy && cp verification.toml copy"):
         assert call(repo, command) is None, command
+    # The machine's own override stays the person's: git ignores it, so no review would see the change.
+    wt = Path(os.environ["TEMP"]).as_posix() + "/wt"
+    for command in ("echo x > .wiki/verification.toml", "cp verification.toml .wiki/verification.toml",
+                    f"printf x > {wt}/.wiki/verification.toml", "rm .wiki/verification.toml"):
+        assert "허가를 정하는 파일" in (call(repo, command) or ""), command
+    (repo / "wt/.wiki").mkdir(parents=True)
+    (repo / "wt/.wiki/verification.toml").write_text("x", encoding="utf-8")
+    assert "허가를 정하는 파일" in (call(repo, "Remove-Item wt -Recurse", tool="PowerShell") or "")
 
 
 def test_every_ancestor_of_a_protected_path_is_judged_protected_for_every_path_kind(repo):

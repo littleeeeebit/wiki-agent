@@ -38,10 +38,15 @@ class Grant:
     adapter: str = ""                   # this checkout's adapter, when the task fills its slots
 
 
-# Inside a write root, but they decide the grant or what runs next: never granted. `verification.toml` is
-# not one: it names the checks, which a task may add to, and review and [Merge] judge the change; refusing
-# it stopped a task whose reviewer asked for a round check until the person wrote and committed the file.
-PROTECTED = (".git", ".claude", ".codex", ".wiki/adapter.toml")
+# Inside a write root, but they decide the grant or what runs next: never granted. The tracked
+# `verification.toml` is not one: it names the checks, which a task may add to, and review and [Merge] judge
+# the change; refusing it stopped a task whose reviewer asked for a round check until the person wrote and
+# committed the file. A changed `round` runs on the server before review sees it, and the owner accepted
+# that: the guard stops mistakes, not a hostile task, which can already run any program and edit any script
+# a check calls. The machine's own `.wiki/verification.toml` is one: git ignores it, so no review sees
+# a change to who runs the final check.
+PROTECTED = (".git", ".claude", ".codex", ".wiki/adapter.toml", ".wiki/verification.toml")
+WIKI_OWN = ("adapter.toml", "verification.toml")   # the names protected inside a `.wiki` folder
 
 
 def temps() -> list[Path]:
@@ -233,7 +238,7 @@ def protected_below(target: str, roots: list) -> bool:
         if contained(target, [root]):
             parts = [p.rstrip(". ") or p for p in re.split(r"[\\/]", os.path.relpath(where, real_path(root)).lower())]
             if {".git", ".claude", ".codex"} & set(parts) or parts[-1] == ".wiki" \
-                    or any(parts[i:i + 2] == [".wiki", "adapter.toml"] for i in range(len(parts))):
+                    or any(parts[i] == ".wiki" and parts[i + 1] in WIKI_OWN for i in range(len(parts) - 1)):
                 return True
     return False
 
@@ -267,7 +272,7 @@ def holds_protected(target: str, copies: bool = False) -> bool:
                 name = e.name.lower()
                 if seen > WALK or e.is_symlink() or (e.is_junction() if typed else is_junction(e.path)) or name == ".git" and not (copies and folder == top) \
                         or not copies and (name in (".claude", ".codex")
-                                           or name == "adapter.toml" and os.path.basename(folder).lower() == ".wiki"):
+                                           or name in WIKI_OWN and os.path.basename(folder).lower() == ".wiki"):
                     return True
                 if e.is_dir(follow_symlinks=False):
                     stack.append(e.path)
