@@ -343,17 +343,20 @@ def test_a_stop_while_the_author_answers_applies_nothing_and_sends_nothing(task)
     assert specs.load("proj", sid)["escalations"][-1]["answer"]["kind"] == "stopped"
 
 
-def test_a_review_loop_halts_before_any_answer_or_refusal_takes_effect(task):
+def test_a_review_loop_takes_the_authors_revision_and_sends_its_turn_itself(task):
+    """Held for the person, the author's revision never took effect while a review loop ran."""
     repo, sid = task
     specs.update("proj", sid, state="고치는 중 R1")
     update = {"rev": 1, "reason": "r", "goal": "Another goal", "out": [], "done": ["x"]}
     with patch.object(handoff, "ask", return_value=block("spec-update", update)), \
          patch("main.loop.asked") as asked, patch.object(specs, "again") as again:
-        assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
-        assert specs.load("proj", sid)["rev"] == 1 and asked.call_count == 1
-        # The repair's own refused revision: the loop keeps its retries, nothing else sends one.
-        assert specs._check(repo, Run(), block("spec-update", update))() is None
-    assert asked.call_count == 2 and not again.called and specs.load("proj", sid)["rev"] == 1
+        assert specs._check(repo, Run(), block("escalation", ESCALATION))() is None
+        spec = specs.load("proj", sid)
+        assert (spec["rev"], spec["goal"], spec["state"]) == (2, "Another goal", "고치는 중 R1") and not asked.called
+        assert "revision 2" in spec["handoff_told"] and "Another goal" in spec["handoff_told"]
+        # The repair's own goal change is still refused: the loop keeps its retries, nothing else sends one.
+        assert specs._check(repo, Run(), block("spec-update", {**update, "rev": 2, "goal": "Mine"}))() is None
+    assert asked.call_count == 1 and not again.called and specs.load("proj", sid)["rev"] == 2
 
 
 def test_a_persons_turn_moves_the_task_with_the_goal(task):

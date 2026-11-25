@@ -987,6 +987,8 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     whose files the server writes (`planning.revise`), never by a write session."""
 
     loop.report_at = None
+    if (specs.load(loop.repo, loop.sid) or {}).get("handoff_told"):   # a reply a stopped loop never sent
+        specs.update(loop.repo, loop.sid, handoff_told=None)
     if spec.get("planning"):
         from . import planning  # `planning` imports this module
 
@@ -1039,6 +1041,9 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         raise RuntimeError(failure["text"] or "완료된 답이 없다")
     if not end or end["kind"] != "done" or not end["text"].strip():
         raise RuntimeError("완료된 답이 없다")
+    if told := (specs.load(loop.repo, loop.sid) or spec).get("handoff_told"):   # the author's answer (`handoff`)
+        specs.update(loop.repo, loop.sid, handoff_told=None)
+        return turn(loop, spec, path, told)
     return end["text"]
 
 

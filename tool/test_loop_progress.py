@@ -332,3 +332,24 @@ def test_external_implementer_keeps_its_branch_and_can_add_remote_review_rounds(
     third = specs.load("proj", original["id"])
     assert len(third["rounds"]) == 3 and third["rounds"][-1]["head"] == corrected
     assert third["state"] == "머지 가능" and not Worker.made
+
+
+def test_the_loop_sends_the_authors_reply_as_its_next_turn(tmp_path):
+    """`handoff.applied` leaves the author's answer for the loop, the one sender of a repair's turns."""
+    store = {"handoff_told": None}
+    sent = []
+
+    def begin(path, chat, text, release, run):
+        sent.append(text)
+        if len(sent) == 1:   # the escalating turn: its check applied the author's revision
+            store["handoff_told"] = "The spec's author revised it to revision 2."
+        run.put({"kind": "done", "text": f"answer {len(sent)}", "meta": {}, "session_id": "h", "parent_id": None})
+        release()
+        run.finish()
+
+    spot = loop.Loop("proj", "t1")
+    with patch.object(work, "session", lambda *a: Hangs()), patch.object(work, "begin", begin), \
+            patch.object(specs, "load", lambda *a: dict(store)), \
+            patch.object(specs, "update", lambda repo, sid, **f: store.update(f)):
+        assert loop.turn(spot, {}, tmp_path / "proj-worktrees" / "t1", "fix R1") == "answer 2"
+    assert sent == ["fix R1", "The spec's author revised it to revision 2."] and store["handoff_told"] is None

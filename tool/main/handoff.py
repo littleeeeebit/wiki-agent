@@ -356,13 +356,10 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
     history = [*past, {**entry, "answer": {"kind": name, "value": value}}]
     oneshot = bool((spec.get("oneshot") or {}).get("stage") not in (None, "done"))
     from . import loop
-    if loop.LOOPING.fullmatch(spec["state"]):
-        # The review loop owns this task's turns and its spec: nothing is applied before the person decides.
-        # The whole answer goes on the card and the pause: the person resumes from what was proposed.
-        said = value["text"] if name == "guidance" and isinstance(value, dict) and isinstance(value.get("text"), str) \
-            else json.dumps(value, ensure_ascii=False, indent=1)
-        return person(spec, run, history, f"상위 모델이 `{name}` 로 답했다 — 반영하지 않고 리뷰 루프를 멈췄다. 답을 보고 "
-                                          f"에이전트 칸에서 이어 가라:\n{said[:6000]}")
+    # A review loop's repair takes the answer as any turn does: a revision marks the loop's rounds stale
+    # (`specs.revise`), and the loop, the one sender of its turns, sends the next one (`loop.turn`). Held for
+    # the person, the author's revision never took effect and the spec could not move while the loop ran.
+    looping = bool(loop.LOOPING.fullmatch(spec["state"]))
     try:
         if name == "guidance":
             if not isinstance(value, dict) or not isinstance(value.get("text"), str) or not value["text"].strip():
@@ -402,6 +399,9 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         return person(spec, run, [*history[:-1], {**entry, "answer": {"kind": "refused", "error": str(exc)}}],
                       f"상위 모델의 답을 적용하지 못했다 — {exc}")
     specs.note(run, f"상위 모델이 `{name}` 로 답했다 — 구현을 이어 간다")
+    if looping:   # a second sender would race the loop for the worktree
+        specs.update(spec["repo"], spec["id"], handoff_told=told)
+        return lambda: None
     if oneshot:   # a Stop pressed while this turn is recorded leaves the stage resumable instead
         from . import oneshot_answers, oneshot_build
         run.checked = True   # handled: the stage's finalizer records no unchecked turn
