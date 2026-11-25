@@ -1,5 +1,6 @@
 """A contained child's whole tree ends with it, on POSIX through its process group."""
 
+import enum
 import os
 import subprocess
 import sys
@@ -64,6 +65,8 @@ def test_every_way_of_starting_a_child_reaches_windows_with_its_console_hidden(m
     hidden = subprocess.CREATE_NO_WINDOW | 4
     assert seen == [hidden, hidden, hidden, subprocess.CREATE_NEW_CONSOLE | 4, subprocess.DETACHED_PROCESS | 4]
     assert process.hidden_flags(None) is None   # left for Windows to refuse, as it would
+    strict = enum.IntFlag("Strict", {"SUSPENDED": 4}, boundary=enum.STRICT)
+    assert process.hidden_flags(strict.SUSPENDED) == hidden   # an enum that refuses the added bit still gets it
 
 
 # A parent with no console (as a test worker or the search daemon has none) starts a console child that reports

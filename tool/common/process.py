@@ -68,7 +68,8 @@ def hidden_flags(flags):
     a number is passed as it came, for Windows to refuse as it would."""
 
     own = subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS
-    return flags | subprocess.CREATE_NO_WINDOW if isinstance(flags, int) and not flags & own else flags
+    # As a plain number: a strict flag enum refuses a bit it does not declare.
+    return int(flags) | subprocess.CREATE_NO_WINDOW if isinstance(flags, int) and not flags & own else flags
 
 
 def _hidden(application, command, process_attributes, thread_attributes, inherit, flags, *rest):
