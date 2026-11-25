@@ -407,6 +407,10 @@ def halt_all(path: str, repo: Path) -> None:
 
 @router.post("/api/worktrees/remove")
 def clear(body: Removal) -> dict:
+    """Removing an unmerged task's worktree archives the task (`forsaken`): as a delete, only once nothing
+    still acts on it (`loop.deleting`)."""
+    from . import loop, specs  # both import this module
+
     # The repository is read once and used to the end — for the check, the
     # stops, the hold and the removal. Read again later, a switch in between
     # handed it another repository, and a stop aimed at another project.
@@ -414,10 +418,16 @@ def clear(body: Removal) -> dict:
         repo = current_repo()
     if Path(body.path).resolve() == repo.resolve():
         raise HTTPException(409, "원본 저장소는 삭제하지 않는다. 작업 브랜치는 Git에서 관리해라")
+    # Only that project's worktree is stopped: a path from anywhere else is a 404 before anything halts.
+    ours(body.path, repo)
+    task = specs.owner(Path(body.path))
+    with (loop.deleting(repo.name, task, interrupt=body.force) if task and task["state"] != "머지됨"
+          else nullcontext()):
+        return _clear(body, repo)
+
+
+def _clear(body: Removal, repo: Path) -> dict:
     if body.force:
-        # Only that project's worktree is stopped: a path from anywhere else
-        # is a 404 before anything halts.
-        ours(body.path, repo)
         halt_all(body.path, repo)
     # Held for the whole removal, as a turn holds it. Checked and let go, a
     # new instruction was accepted while the worktree was being deleted.

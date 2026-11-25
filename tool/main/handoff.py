@@ -35,7 +35,8 @@ DEFAULT_ESCALATE = (
     "The task requires changing code that only a `legacy` document describes.",
     "A done item cannot be met as the spec states it.",
 )
-ROUNDS = 2          # the author's answers per task before the person decides
+ROUNDS = 2          # the author's answers on one revision before the person decides (`spent`)
+CHAIN = 4           # and in a row across revisions: a revision always moves `rev`, even one that changes nothing
 TOOLS = "Read,Glob,Grep"   # the author reads the worktree; it never writes there
 RANGE = re.compile(r"^(.+?):(\d+)[-–](\d+)$")
 ANSWERS = ("spec-update", "guidance", "split")
@@ -275,14 +276,18 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     author, past = author_of(spec), spec.get("escalations") or []
     entry = {"ts": time.time(), "rev": spec["rev"], "escalation": value}
     # A record with an empty model is the CLI's default the spec was written on; no record is an older card.
-    if not author or len(past) >= ROUNDS:
-        why = "명세를 쓴 모델이 기록돼 있지 않다" if not author else f"상위 모델 판단이 {ROUNDS}번 넘었다"
+    here, row = spent(past, spec["rev"]), spent(past)
+    if not author or here >= ROUNDS or row >= CHAIN:
+        why = "명세를 쓴 모델이 기록돼 있지 않다" if not author else \
+            f"명세 {spec['rev']}판에서 상위 모델 판단이 {ROUNDS}번 넘었다" if here >= ROUNDS else \
+            f"사람 없이 상위 모델 판단이 {CHAIN}번 이어졌다"
         return person(spec, run, [*past, {**entry, "answer": {"kind": "person"}}],
                       f"상위 판단 필요 — {why}. 구현 모델의 충돌: {value['conflict']} / 질문: {value['question']}")
 
     # Run here, still holding the worktree as the gate does: the author reads the tree the implementer left,
     # and its lines land in this turn's record.
-    specs.note(run, f"충돌을 명세를 쓴 모델 `{author.get('model') or '기본 모델'}` 에게 넘긴다 ({len(past) + 1}/{ROUNDS})")
+    specs.note(run, f"충돌을 명세를 쓴 모델 `{author.get('model') or '기본 모델'}` 에게 넘긴다 "
+                    f"({here + 1}/{ROUNDS}, 명세 {spec['rev']}판)")
     from common import masked
 
     hide = getattr(getattr(run, "chat", None), "hide", None)   # a oneshot's secrets: never saved or sent on
@@ -302,6 +307,33 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     if run.halt.is_set():   # a Stop pressed while the author answered: nothing of the answer takes effect
         return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "text": answer[-2000:]}}])
     return applied(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec, past, entry, answer)
+
+
+def spent(past: list[dict], rev: int | None = None) -> int:
+    """The author's answers in a row since the person last stepped in (any answer that is not the author's
+    ended with the person), and with `rev` only those on that revision. Counted over the whole task, a spec
+    the author had just revised reached the person on its first new conflict (realtime-screen-translator
+    reach-gemini-from-phone, revision 2)."""
+
+    n = 0
+    for e in reversed(past):   # a `split` waits for the person, so it ends a run like the person's own answer
+        if rev is not None and e.get("rev") != rev or (e.get("answer") or {}).get("kind") not in ("guidance", "spec-update"):
+            break
+        n += 1
+    return n
+
+
+def turn_for(path: Path, spec: dict, owed: dict) -> str:
+    """The implementer's next turn after the author answered (`owed`, `applied`'s record), built from the spec
+    as it stands: guidance holds only on the revision it answered; any later revision is sent whole."""
+
+    from . import specs
+    if owed.get("kind") == "guidance" and owed.get("rev") == spec["rev"]:
+        return (f"The spec stands at revision {spec['rev']}. Its author answered your escalation:\n\n"
+                f"{owed['text'].strip()}\n\nCarry on under that answer.")
+    return (f"The spec's author revised it to revision {spec['rev']} in answer to your escalation. It "
+            f"replaces the spec in your instructions:\n\n{text(path, spec)}{specs.brief(spec)}\n"
+            "Continue the task under this revision.")
 
 
 def safe(run, reason: str) -> str:
@@ -353,24 +385,30 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
                       f"상위 모델이 {', '.join(ANSWERS)} 중 하나로 답하지 않았다")
     name, value = got[0]["name"], got[0]["value"]
     history = [*past, {**entry, "answer": {"kind": name, "value": value}}]
+    held = [*past, {**entry, "answer": {"kind": "person", "proposed": name, "value": value}}]   # the person decides it
     oneshot = bool((spec.get("oneshot") or {}).get("stage") not in (None, "done"))
     from . import loop
-    if loop.LOOPING.fullmatch(spec["state"]):
-        # The review loop owns this task's turns and its spec: nothing is applied before the person decides.
-        # The whole answer goes on the card and the pause: the person resumes from what was proposed.
+    # A review loop's repair takes the answer as any turn does: a revision marks the loop's rounds stale
+    # (`specs.revise`). The loop, the one sender of its turns, ends the step and sends the next turn as a new
+    # step's repair (`loop.handed`). Held for the person, the spec could not move while the loop ran.
+    looping = bool(loop.LOOPING.fullmatch(spec["state"]))
+    if looping and spec.get("prerequisite_review"):
+        # Its acceptance turn reports to the prerequisite controller (`prerequisite_review.advance`), which a
+        # restarted step would leave: that review's answer stays the person's.
         said = value["text"] if name == "guidance" and isinstance(value, dict) and isinstance(value.get("text"), str) \
             else json.dumps(value, ensure_ascii=False, indent=1)
-        return person(spec, run, history, f"상위 모델이 `{name}` 로 답했다 — 반영하지 않고 리뷰 루프를 멈췄다. 답을 보고 "
-                                          f"에이전트 칸에서 이어 가라:\n{said[:6000]}")
+        return person(spec, run, held, f"상위 모델이 `{name}` 로 답했다 — 선행 리뷰 중이라 반영하지 않고 리뷰 루프를 "
+                                          f"멈췄다. 답을 보고 에이전트 칸에서 이어 가라:\n{said[:6000]}")
     try:
         if name == "guidance":
             if not isinstance(value, dict) or not isinstance(value.get("text"), str) or not value["text"].strip():
                 raise ValueError("`guidance` 는 {\"text\": ...} 여야 한다")
-            specs.update(spec["repo"], spec["id"], escalations=history)
-            told = (f"The spec stands at revision {spec['rev']}. Its author answered your escalation:\n\n"
-                    f"{value['text'].strip()}\n\nCarry on under that answer.")
+            owed = {"kind": name, "rev": spec["rev"], "text": value["text"]}
+            # One write: a loop's answer is never saved without the delivery it owes (`loop.handed`).
+            spec = specs.update(spec["repo"], spec["id"], escalations=history, **(
+                {"handoff_owed": {**owed, "report_at": spec.get("report_at")}} if looping else {})) or spec
         elif oneshot:   # a oneshot's contract is its committed design: only the person changes it mid-build
-            return person(spec, run, history, f"상위 모델이 원샷 설계를 바꾸자고 답했다 ({name}) — 사람이 정한다")
+            return person(spec, run, held, f"상위 모델이 원샷 설계를 바꾸자고 답했다 ({name}) — 사람이 정한다")
         elif name == "spec-update":
             # A Stop sets the halt, then waits on `run.saving`: one before this check owns the result, one after
             # it answers once the revision, validation included, is saved, and no follow-up starts.
@@ -378,12 +416,17 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
                 current = specs.load(spec["repo"], spec["id"])
                 if run.halt.is_set():
                     return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
+                owed = {"kind": name, "rev": current["rev"] + 1}
+                # Saved by the revision itself: it never stands without its escalation or the delivery it owes.
+                current["escalations"] = history
+                if looping:
+                    current["handoff_owed"] = {**owed, "report_at": current.get("report_at")}
                 specs.revise(repo, current, value, author=True, checkout=path)   # the tree the author read
-            spec = specs.update(spec["repo"], spec["id"], escalations=history)
-            # A running session keeps the system prompt it started with: the revision goes in the turn.
-            told = (f"The spec's author revised it to revision {spec['rev']} in answer to your escalation. It "
-                    f"replaces the spec in your instructions:\n\n{text(path, spec)}{specs.brief(spec)}\n"
-                    "Continue the task under this revision.")
+                # A running session keeps the system prompt it started with: the revision goes in the turn.
+                spec = specs.load(spec["repo"], spec["id"])
+        elif looping:   # the person decides on a prerequisite before any card of it exists
+            return person(spec, run, history, f"상위 모델이 선행 작업으로 나누자고 답했다 — 반영하지 않고 리뷰 루프를 멈췄다:\n"
+                                              f"{json.dumps(value, ensure_ascii=False, indent=1)[:6000]}")
         else:
             if not isinstance(value, dict) or not isinstance(value.get("spec"), dict):
                 raise ValueError("`split` 은 {\"spec\": 선행 작업 명세, \"reason\": ...} 이어야 한다")
@@ -401,6 +444,9 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         return person(spec, run, [*history[:-1], {**entry, "answer": {"kind": "refused", "error": str(exc)}}],
                       f"상위 모델의 답을 적용하지 못했다 — {exc}")
     specs.note(run, f"상위 모델이 `{name}` 로 답했다 — 구현을 이어 간다")
+    if looping:   # a second sender would race the loop for the worktree; `handoff_owed` is saved above
+        return lambda: None
+    told = turn_for(path, spec, owed)
     if oneshot:   # a Stop pressed while this turn is recorded leaves the stage resumable instead
         from . import oneshot_answers, oneshot_build
         run.checked = True   # handled: the stage's finalizer records no unchecked turn

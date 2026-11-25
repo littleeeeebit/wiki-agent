@@ -298,6 +298,23 @@ def test_a_report_naming_no_declared_input_is_failed_and_the_owner_reads_only_ko
     assert "빌드가 확인한 것: 서비스에 직접 물었다 — 서비스의 답: 그런 키는 없다고 했다" in shown["asked"]
 
 
+def test_a_metric_passes_only_on_a_value_of_its_own_kind_and_an_empty_clip_is_none(tmp_path):
+    plan = {"metrics": [{"id": "gaps", "pass": {"op": "==", "value": 0}},
+                        {"id": "voice", "pass": {"op": "==", "value": True}}]}
+
+    def oks(values):
+        (tmp_path / "report.json").write_text(json.dumps({"metrics": values}), encoding="utf-8")
+        return [row["ok"] for row in measure.report_of(tmp_path, plan, {})["metrics"]]
+
+    assert oks({}) == oks({"gaps": None, "voice": None}) == [False, False]   # nothing observed fails
+    assert oks({"gaps": False, "voice": 1}) == [False, False]   # `False == 0` and `1 == True` pass nothing
+    assert oks({"gaps": 0, "voice": True}) == [True, True]
+    (tmp_path / "clips").mkdir()
+    (tmp_path / "clips" / "empty.wav").write_bytes(b"")
+    (tmp_path / "clips" / "said.wav").write_bytes(b"RIFF")
+    assert measure.clips_of(tmp_path, {}) == ["said.wav"]   # a clip with nothing in it is none
+
+
 def test_the_backend_that_never_answers_fails_the_measurement(at_measure):
     tree, sent = at_measure
     plan = json.loads((tree / ".wiki/measure.json").read_text(encoding="utf-8"))
@@ -319,6 +336,23 @@ def test_the_end_of_a_startup_log_is_cut_only_after_its_secrets_are_masked(tmp_p
     for written in (b"start sk-line\r\nend-part done", b"start sk-line\r\r\nend-part done"):   # read as text; and
         log.write_bytes(written)                                    # a Windows text-mode write before the read
         assert "end-part" not in measure.tail(log, measure.spelled({"sk-line\r\nend-part": "[K]"}))
+
+
+def test_the_running_card_drops_the_cut_off_once_the_script_returns_or_raises(at_measure):
+    given()
+    seen = []
+
+    def gate(*a, **k):
+        seen.append(dict(measure.RUNNING["budget"]))
+        if len(seen) > 1:
+            raise OSError("the script could not start")
+        return 0, "", ""
+
+    with patch.object(measure.specs, "gate", gate):
+        for _ in range(2):   # returned, then raised
+            measure.measure("budget", "owner")
+            assert measure.RUNNING["budget"]["cut"] is None and measure.RUNNING["budget"]["ended"]
+    assert all(s["cut"] and not s["ended"] for s in seen)   # while it ran, its cut-off was shown
 
 
 def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(at_measure, tmp_path):

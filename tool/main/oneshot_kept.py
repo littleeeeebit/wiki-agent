@@ -128,7 +128,7 @@ def clips_of(out: Path, hide: dict[str, str]) -> list[str]:
     if not plain(folder, stat.S_IFDIR):
         return []
     found = sorted(p.name for p in folder.iterdir() if plain(p) and p.suffix.lower() in CLIPS
-                   and p.stat().st_size <= MAX_CLIP and masked(p.name, hide) == p.name)
+                   and 0 < p.stat().st_size <= MAX_CLIP and masked(p.name, hide) == p.name)   # an empty one plays nothing
     return found[:MAX_CLIPS]
 
 
@@ -291,3 +291,34 @@ def input_report(bad, plan: dict, hide: dict[str, str], limit: int) -> dict:
              + " — 새 값을 넣으면 바로 다시 잰다. 이 값이 맞으면 그대로 [실측 시작]을 누른다: 빌드가 프로그램을 고친다")
     return {"input_error": {"input": x["id"], "env": x["env"], "what": x["what"], "kind": x["kind"],
                             "why": masked(why, hide)[:limit], "asked": masked(asked, hide)}}
+
+
+# -- The screen -------------------------------------------------------------------------------------------
+
+RUNNING: dict[str, dict] = {}   # by repository, the record of the measurement its worker launched last
+
+
+def shown(spec: dict) -> dict:
+    """The measurement's plan and its inputs, given or not (never a secret's value), the runs, PR #1, and the
+    measurement running now: its number, whose it is and when it started, or None while it is still being set up."""
+
+    from .oneshot_measure import HALTS, has, next_mode, planned   # it imports this module
+
+    o = spec["oneshot"]
+    if not o.get("built_head") or not (o.get("measures") or o.get("stage") == "measure"):
+        return {}
+    plan, error = None, ""
+    if o.get("stage") == "measure":
+        try:
+            plan = planned(Path(spec["worktree"]), spec, o["built_head"])
+        except ValueError as exc:
+            error = str(exc)
+    inputs = [{**x, "given": has(spec, x)} for x in (plan or {}).get("inputs") or []]
+    runs = [{k: v for k, v in m.items() if k != "folder"} for m in o.get("measures") or []]
+    # Only the worker running now: a retry's fresh `halt` sets an earlier attempt's aside, and so does a saved run.
+    r = RUNNING.get(spec["repo"]) or {}
+    live = (o.get("working") == "measure" and r.get("halt") is not None and r.get("halt") is HALTS.get(spec["repo"])
+            and r.get("head") == o["built_head"] and r.get("n") == len(runs) + 1)
+    return {"measure": {"plan": plan and {**plan, "inputs": inputs}, "error": error, "runs": runs,
+                        "pr": o.get("pr1"), "head": o["built_head"], "next": next_mode(o),
+                        "running": {k: r[k] for k in ("n", "mode", "ts", "cut", "ended")} if live else None}}

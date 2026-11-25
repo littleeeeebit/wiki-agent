@@ -5,6 +5,7 @@ See `docs/plans/oneshot/13-measure-the-product.md`. The backend and script are `
 the program's desktop is replaced, since a look opens a real one.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -66,6 +67,16 @@ def test_the_server_measures_first_and_calls_the_owner_once_every_machine_metric
     assert run["mode"] == "auto" and run["status"] == "passed" and not o().get("measure_fails")
     assert by["total_ok"]["ok"] and not by["signed_in"]["ok"]   # the person metric is not judged without a person
     assert o()["stage"] == "measure" and measure.shown(spec())["measure"]["next"] == "owner"
+    assert measure.RUNNING["budget"]["n"] == run["n"] and measure.shown(spec())["measure"]["running"] is None   # saved
+    oneshot_spec.saved("budget", oneshot={"working": "measure"})   # as while the next one runs
+    measure.HALTS["budget"] = halt = measure.Halted()
+    measure.RUNNING["budget"] = {"n": run["n"] + 1, "head": run["head"], "ts": 7.0, "mode": "owner", "cut": 9.0,
+                                 "ended": False, "halt": halt}
+    assert measure.shown(spec())["measure"]["running"] == {"n": run["n"] + 1, "mode": "owner", "ts": 7.0, "cut": 9.0,
+                                                           "ended": False}
+    measure.HALTS["budget"] = measure.Halted()   # a retry's own, before its worker launches: the earlier one is aside
+    assert measure.shown(spec())["measure"]["running"] is None
+    oneshot_spec.saved("budget", oneshot={"working": None})
     started_once()   # the owner's one measurement, on their screen
     run = o()["measures"][-1]
     assert run["mode"] == "owner" and run["status"] == "owner" and all(m["ok"] for m in run["metrics"])
@@ -400,6 +411,30 @@ def test_a_gate_log_that_cannot_be_removed_stops_for_the_owner(at_measure):  # n
         removed(path)
     with patch.object(measure.shutil, "rmtree", busy_once), patch.object(measure.time, "sleep", lambda s: None):
         assert measure.serve_check(tree, run, spec()) == "" and len(tries) == 2
+
+
+def test_the_builds_health_check_runs_the_program_on_the_owners_screen_too(at_measure, tmp_path):  # noqa: F811
+    tree, _ = at_measure
+    run = types.SimpleNamespace(halt=measure.Halted(), put=lambda *a, **k: None,
+                                chat=types.SimpleNamespace(id="c", parent_id=None))
+    asked = []
+
+    @contextlib.contextmanager
+    def started(*args, **kwargs):
+        asked.append(kwargs)
+        yield None
+    with patch.object(product, "started", started):
+        assert measure.serve_check(tree, run, spec()) == ""
+    assert asked == [{}]   # nothing asks for the program out of sight: no run of it is hidden (plan 13f)
+    job, looked = Job(), {}
+    answers = iter([None, 200])
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, job, looked)), \
+            patch.object(product, "answers", lambda url: next(answers)), \
+            patch.object(product, "vouched", lambda pids, url, status=False: True):
+        with product.running(spec(), {"app": program(tree), "inputs": []}, tree, {}, measure.Halted(),
+                             tmp_path / "h.log", {}, "auto"):
+            pass
+    assert looked["disposable"] and "owned" not in looked   # the owner's own desktop, as every run's
 
 
 def test_the_programs_output_reaches_the_disk_only_masked(at_measure, tmp_path):  # noqa: F811 — the imported fixture

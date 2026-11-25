@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Btn } from '@/components/Modal'
 import { Track } from '@/components/OneshotTrack'
 import { api, type Conflict, type Keep, type MeasureInput, type MeasureRun, type Metric, type SpecView, type Step } from '@/lib/oneshot'
@@ -70,8 +70,8 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
               : '이제 서버가 백엔드를 다시 띄우고, 사람이 필요한 항목까지 잰다. 끝나면 클립을 직접 듣는다.'}</p>
             {m.plan.during.length > 0 && <><p>[주인 실측 시작]을 누른 뒤, 도는 동안 이것을 한다:</p><Steps steps={m.plan.during} /></>}
           </> : (
-            <p>{m.plan.app ? '서버가 이 PC 에서 PC 프로그램을 띄워 사람이 필요 없는 항목을 잰다. 프로그램은 이 화면에 뜬다. 소리는 내지 않고 클립으로 남긴다.'
-              : '서버가 이 PC 에서 백엔드를 띄워 사람이 필요 없는 항목을 잰다.'}
+            <p>{m.plan.app ? '서버가 이 PC 에서 PC 프로그램을 띄워 사람이 필요 없는 항목을 혼자 잰다. 프로그램 창이 wiki-agent 가 도는 PC 화면에 뜨고 소리가 난다.'
+              : '서버가 이 PC 에서 백엔드를 띄워 사람이 필요 없는 항목을 혼자 잰다.'}
               {' '}통과하지 못한 항목은 이 단계 안에서 빌드 에이전트가 고치고, 서버가 다시 잰다. 모두 통과하면 주인 실측을 한 번 부른다.</p>
           )}
           <p className="text-muted-foreground">한 번에 약 {m.plan.measure.minutes}분 걸린다. 진짜 서비스로 아래를 잰다.</p>
@@ -98,24 +98,73 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
   )
 }
 
-/** The running measurement, shown with the track: the owner's `during` steps stay in view, with a stop. */
+/** The running measurement, shown with the track: which one, since when and for how long, what it measures and
+ *  what follows, so a measurement with no window still reads as running. The owner's `during` steps stay in view. */
 function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; busy: boolean; act: Act }) {
-  const during = view.measure?.plan?.during ?? []
-  const owner = view.measure?.next === 'owner'   // the server's own measurement asks nothing of the owner
+  const m = view.measure
+  const plan = m?.plan
+  const during = plan?.during ?? []
+  const run = m?.running
+  const owner = (run?.mode ?? m?.next) === 'owner'   // the server's own measurement asks nothing of the owner
+  const now = useNow(run ? 1000 : 0)
+  if (view.working !== 'measure') return <section aria-label="실측 중" className={BOX}><p>{view.working === 'build'
+    ? '실측에서 나온 문제를 빌드 에이전트가 이 단계 안에서 고치는 중이다. 고친 커밋이 빌드 검사를 통과하면 서버가 바로 다시 잰다.'
+    : 'PR #1 초안을 올리는 중이다.'}</p></section>
+  const minutes = plan?.measure.minutes ?? 0
+  const gone = run ? Math.max(0, Math.floor(now / 1000 - run.ts)) : 0
+  const late = !!run?.cut && now / 1000 > run.cut - 300   // the script past its planned minutes, by its own clock
+  const measured = (plan?.metrics ?? []).filter((x) => owner || !x.person)
   return (
     <section aria-label="실측 중" className={BOX}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p>{view.working === 'publish' ? 'PR #1 초안을 올리는 중이다.'
-          : view.working === 'build' ? '실측에서 나온 문제를 빌드 에이전트가 이 단계 안에서 고치는 중이다. 고친 커밋이 빌드 검사를 통과하면 서버가 바로 다시 잰다.'
-          : !owner ? (view.measure?.plan?.app ? '서버가 실측하는 중이다. 화면에 뜬 프로그램이 서버가 돌리는 것이다. 할 일은 없다.'
-            : '서버가 실측하는 중이다. 할 일은 없다.')
-            : view.measure?.plan?.app ? '주인 실측 중이다. 화면에 뜬 프로그램을 보고 소리를 듣는다.' : '주인 실측 중이다. 아래 단계를 한다.'}</p>
-        {view.working === 'measure' && <Btn disabled={busy} onClick={() => void act(() => api.measureStop(repo))}>멈춤</Btn>}
+        <h2 className="text-[15px] font-semibold">
+          {run ? `${run.n}회차 ${owner ? '주인' : '자동'} 실측 중` : '실측을 준비하는 중'}</h2>
+        <Btn disabled={busy} onClick={() => void act(() => api.measureStop(repo))}>멈춤</Btn>
       </div>
-      {view.working === 'measure' && owner && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
+      {run ? (
+        <p className="tabular-nums">
+          {clock(run.ts)}에 시작 · {span(gone)} 지났다{minutes > 0 && <> · 보통 약 {minutes}분 걸린다</>}
+          {run.ended ? ' · 재기는 끝났고 프로그램을 닫고 결과를 모으는 중' : run.cut ? '' : ' · 프로그램을 띄우는 중'}
+          {late && run.cut && <span className="text-wait"> — 예상보다 오래 걸린다. {clock(run.cut)}까지 끝나지 않으면 서버가 끊고 실패로 센다.</span>}
+        </p>
+      ) : <p>PR #1 초안과 넣은 값을 확인하는 중이다. 곧 시작한다.</p>}
+      <p>{!owner ? (plan?.app
+        ? 'PC 프로그램 창이 wiki-agent 가 도는 PC 화면에 뜬다. 서버가 혼자 재는 중이니 창을 닫거나 조작하지 않는다. 보고 들을 수만 있다. 할 일은 없다.'
+        : '서버가 백엔드를 띄워 혼자 잰다. 할 일은 없다.')
+        : run?.ended ? '재기는 끝났다. 더 할 일은 없다. 결과가 뜨기를 기다린다.'
+          : !run?.cut ? '아직 할 일은 없다. 실측이 시작되면 이 줄이 바뀐다.'
+            : plan?.app ? '화면에 뜬 프로그램을 보고 소리를 듣는다.' : '아래 단계를 한다.'}</p>
+      {owner && !run?.ended && during.length > 0 && <>   {/* now only once the script runs, which opens what they need */}
+        <p>{run?.cut ? '지금 할 일:' : '프로그램이 뜨고 실측이 시작되면 할 일:'}</p><Steps steps={during} /></>}
+      {measured.length > 0 && (
+        <details>
+          <summary className="cursor-pointer">재는 항목 {measured.length}개</summary>
+          <ul className="mt-2 flex flex-col gap-1 text-muted-foreground">
+            {measured.map((x) => <li key={x.id}><span className="font-mono">{x.id}</span> {x.what}</li>)}
+          </ul>
+        </details>
+      )}
+      <p className="text-muted-foreground">{owner
+        ? `끝나면: 모든 항목이 기준을 넘으면 ${plan?.clips ? '결과와 클립이 이 화면에 뜨고, 보고 들은 뒤' : '결과가 이 화면에 뜨고, 본 뒤'} 승인하거나 거절한다. 어느 항목이든 기준에 못 미치면 판정 없이 빌드 에이전트가 고친다.`
+        : '끝나면: 모두 통과하면 주인 실측을 부른다. 통과하지 못한 항목이 있으면 보통은 빌드 에이전트가 그 항목만 고치고 서버가 다시 잰다.'}
+        {' '}실패가 회차 한도에 닿거나 스크립트가 넣은 입력이 틀렸다고 하면 멈추고, 이 화면 위에 이유와 누를 버튼이 뜬다.</p>
     </section>
   )
 }
+
+/** The current time, ticking every `ms` (0: never), for a running clock. */
+function useNow(ms: number) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!ms) return
+    const t = setInterval(() => setNow(Date.now()), ms)
+    return () => clearInterval(t)
+  }, [ms])
+  return now
+}
+
+const clock = (ts: number) => new Date(ts * 1000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+const span = (s: number) => s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`
 
 function Steps({ steps }: { steps: Step[] }) {
   return (

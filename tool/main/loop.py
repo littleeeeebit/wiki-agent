@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import contextlib
 import threading
 import time
 from pathlib import Path
@@ -658,6 +659,8 @@ class Loop:
         self.run: work.Run | None = None        # the work cell's turn, while one runs
         self.report_at: dict | None = None      # the last work turn's identity, captured before release
         self.refused = False   # a response of the last turn was cut; the answer it went on to is kept
+        self.handing: dict | None = None   # the author's answer this step sends (`handed`), and its revision
+        self.born: float | None = None   # the task this loop runs, as its first step found it (`born`)
         self.thread: threading.Thread | None = None
 
     def stop(self) -> None:
@@ -672,13 +675,15 @@ class Loop:
 
 
 _loops: dict[tuple[str, str], Loop] = {}
+_deleting: dict[tuple[str, str], int] = {}   # tasks being archived (`deleting`) → the thread archiving them
 _seats = threading.Condition()
 _seated = 0
 
 
-def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
+def kick(repo: str, sid: str, *, automatic: bool = False, of: dict | None = None) -> None:
     """Put the spec in `리뷰 대기` and start its loop, unless one runs or it is an unfinished oneshot run's,
-    whose review is its own. A loop that was stopped is waited for first, so two never drive one spec."""
+    whose review is its own. A loop that was stopped is waited for first, so two never drive one spec.
+    `of` is the task the caller read: one made again under its ID since gets no loop from it (410)."""
 
     if oneshot_profile.in_run(specs.load(repo, sid)):
         return
@@ -688,7 +693,9 @@ def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
     if (old is not None and not old.halt.is_set()
             and (old.thread is None or old.thread.ident is None or old.thread.is_alive())):
         spec = specs.load(repo, sid)
-        if spec is not None and LOOPING.fullmatch(spec["state"]):
+        if spec is not None and old.born and born(spec) != old.born:
+            old.halt.set()   # that loop ran the task deleted before this one was made under the ID
+        elif spec is not None and LOOPING.fullmatch(spec["state"]):
             return
     if old is not None and old.thread is not None:
         if old.thread is threading.current_thread():
@@ -704,6 +711,12 @@ def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
         spec = specs.load(repo, sid)
         if spec is None:
             raise HTTPException(404, "그런 명세가 없다")
+        if of is not None and born(spec) != born(of):
+            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
+        if key in _deleting:   # reserved under this lock (`deleting`): the task is not moved, as no loop starts
+            if automatic:
+                return
+            raise HTTPException(409, "삭제하는 중인 작업이다")
         if spec.get("refreezing"):
             # The re-freeze has the card's worktree on the old code on purpose; a loop started then read the
             # detached checkout as a lost branch and stopped the card (ai-coding-wiki #162).
@@ -718,9 +731,14 @@ def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
             # A fault is the work stage's; in the loop it only misleads.
             specs.save(specs.moved(spec, "리뷰 대기", stopped=None, fault=None))
     loop = Loop(repo, sid)
+    loop.born = born(spec)   # the task this kick read: its first step never adopts a replacement's
     with _lock:
         if runtime.stopping.is_set():
             return  # Keep the accepted handoff queued for startup recovery.
+        if key in _deleting:   # registered under the lock `deleting` reserves it with
+            if automatic:
+                return
+            raise HTTPException(409, "삭제하는 중인 작업이다")
         if _loops.get(key) not in (None, old):
             return
         _loops[key] = loop
@@ -754,7 +772,8 @@ def drive(loop: Loop) -> None:
                 if fresh and fresh["state"] == "머지 가능" and not loop.halt.is_set():
                     requested_merge(channels.repo_for(loop.repo), fresh)
                 fresh = specs.load(loop.repo, loop.sid)
-                if not fresh or not LOOPING.fullmatch(fresh["state"]) or loop.halt.is_set():
+                if not fresh or not LOOPING.fullmatch(fresh["state"]) or loop.halt.is_set() \
+                        or loop.born and born(fresh) != loop.born:   # a replacement is its own loop's
                     break
         finally:
             with _seats:
@@ -781,6 +800,8 @@ def change(loop: Loop, state: str | None = None, **fields) -> dict | None:
         spec = specs.load(loop.repo, loop.sid)
         if spec is None or not (LOOPING.fullmatch(spec["state"]) or (state and spec["state"] == state)):
             return None
+        if loop.born and born(spec) != loop.born:   # another task made under this ID since
+            return None
         if state and state != spec["state"]:
             specs.moved(spec, state, **fields)
         else:
@@ -806,6 +827,8 @@ def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "", sou
         if loop is not None and loop.halt.is_set():
             return False
         spec = specs.load(repo, sid)
+        if spec is not None and loop is not None and loop.born and born(spec) != loop.born:
+            return False   # another task made under this ID: not this loop's to stop
         if spec is not None and source.fullmatch(spec["state"]):
             specs.save(specs.moved(spec, "멈춤", stopped={"reason": why.value, "detail": detail},
                                    merge_request=spec.get("merge_request") if why is Why.RESTART else None))
@@ -957,11 +980,25 @@ def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
     return final
 
 
+born = specs.born
+
+
+def own(loop: Loop, **fields) -> dict | None:
+    """`specs.update` on this loop's own task whatever its state; `None` for one made again under the ID."""
+    with specs._files:
+        now = specs.load(loop.repo, loop.sid)
+        if now is None or loop.born and born(now) != loop.born:
+            return None
+        return specs.update(loop.repo, loop.sid, **fields)
+
+
 def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     """A repair turn of the work cell (`turn`) — review, gate, merge conflict,
     local verification — held to its test cleanup (`sweep.held`)."""
 
     loop.refused = False
+    if loop.born and born(spec) != loop.born:   # another task made under this ID since: not this loop's to repair
+        return None
     if spec.get("planning"):    # a plan's revision writes documents only
         return turn(loop, spec, path, text)
 
@@ -973,8 +1010,17 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
                                "nothing more is sent to that provider")
         return turn(loop, specs.load(loop.repo, loop.sid) or spec, path, t)
 
+    mine = loop.born or born(spec)
+
+    def keep(fields: dict):   # a Review Loop Stop's baseline lands on the stopped spec too, never reopening it
+        if (kept := change(loop, **fields)) is not None or not loop.halt.is_set():
+            return kept
+        with specs._files:
+            now = specs.load(loop.repo, loop.sid)
+            return own(loop, **fields) if now and mine and born(now) == mine else None
+
     return sweep.held(path, text, follow, lambda answer: block("test-cleanup", answer),
-                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), lambda fields: change(loop, **fields),
+                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), keep,
                       (specs.load(loop.repo, loop.sid) or spec).get("cleanup_owed", ""))
 
 
@@ -994,9 +1040,16 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     release = wait_hold(loop, path)
     if release is None:
         return None
+    now = specs.load(loop.repo, loop.sid) or {}
+    if loop.handing and (now.get("rev"), now.get("handoff_owed")) != (loop.handing["rev"], loop.handing["owed"]):
+        release()   # answered or revised again while the worktree was free: the text is no longer what is owed
+        raise Revised()
+    owed = now.get("handoff_owed")   # one this turn's own escalation leaves differs
     try:
         chosen = spec.get("cell") or {}
         run = work.Run(work.session(path, chosen.get("model", ""), chosen.get("effort", ""), chosen.get("fast", False)))
+        if loop.handing:
+            loop.handing["turns"].append(run.turn)   # the reports `handed` accepts are these turns'
         if getattr(run.chat, "hide", None):   # its push is refused (`secrets_held`); the server pushes
             text += "\n\nThis session carries the owner's secrets: commit only, never push. The server pushes the branch after its secret check."
         # Seen by `stop` before its thread starts. `stop` sets the halt, then
@@ -1025,8 +1078,16 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     finally:
         loop.run = None
         loop.report_at = run.report_at
+        if owed and not loop.handing:   # a turn that never carried the owed answer (cleanup): its report is no delivery
+            with specs._files:   # only this turn's own: the owner's report from their own turn still counts
+                fresh = specs.load(loop.repo, loop.sid) or {}
+                if fresh.get("handoff_owed") == owed and fresh.get("report_at") != owed.get("report_at") \
+                        and (fresh.get("report_at") or {}).get("turn") == run.turn:
+                    own(loop, handoff_owed=(owed := {**owed, "report_at": fresh.get("report_at")}))
     if loop.halt.is_set():
         return None
+    if run.halt.is_set():   # the work pane stopped this turn: its answer is not judged, and nothing is retried
+        raise Halted()
     end = next((e for e in reversed(run.events) if e["kind"] in ("done", "error")), None)
     failure = next((e for e in run.events if e["kind"] == "error" or (e.get("meta") or {}).get("error")), None)
     answered = (failure.get("meta") or {}).get("answer") or "" if failure else ""
@@ -1039,6 +1100,8 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         raise RuntimeError(failure["text"] or "완료된 답이 없다")
     if not end or end["kind"] != "done" or not end["text"].strip():
         raise RuntimeError("완료된 답이 없다")
+    if (specs.load(loop.repo, loop.sid) or {}).get("handoff_owed") not in (None, owed):
+        raise Revised()   # this turn escalated and the author answered: a new step sends it (`handed`)
     return end["text"]
 
 
@@ -1105,6 +1168,13 @@ def answered(repo: Path, sid: str, run: work.Run, path: str) -> None:
         release()
 
 
+def gate_passed(spec: dict, head: str) -> bool:
+    """`gate` stands passed for this head: a receipt reused without it is rebuilt by `specs.rounded`, so an
+    older failed `gate` at the same head never outlives a passing receipt."""
+    gate = spec.get("gate") or {}
+    return gate.get("head") == head and bool(gate.get("ok"))
+
+
 def reusable(spec: dict, head: str, chosen: dict) -> bool:
     """A passing round result for this very identity — head, merge base and
     commands. A spec from before `validation` has only `gate`, and that was
@@ -1160,7 +1230,9 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
             release()
         if change(loop, gate=verdict) is None:
             return False
-        spec = specs.validate(loop.repo, loop.sid, round=record)
+        spec = specs.validate(loop.repo, loop.sid, loop.born, round=record)
+        if spec is None:   # deleted, or made again under this ID: not this loop's
+            return False
         if verdict["ok"]:
             if pushed is not None and pushed.returncode:
                 return stop(loop, loop.repo, loop.sid, Why.GATE, f"push 실패 — {specs.said(pushed)}")
@@ -1200,13 +1272,13 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
         record = {"head": head, "base_oid": specs.current_merge_base(path, base, head), "command": cmd,
                   "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
                   "reason": "끝나지 않았다", "finished_at": None}
-        specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
+        specs.validate(loop.repo, loop.sid, loop.born, phase="final_running", final=record)
         settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
         with specs.gating(loop.repo, loop.sid, "final", cmd) as gated:
             verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
                 retry_reason=retry, again=again,
                 local_only=bool(review_contract.preservation_command(spec)),
-                noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
+                noted=lambda backend: specs.validate(loop.repo, loop.sid, loop.born, final={**record, "verification": {"backend": backend}}))
             gated["ok"] = verdict["ok"] and not (verdict.get("verification") or {}).get("carried_from")   # a carried pass ran nothing
         if verification.cloud(spec):
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
@@ -1219,7 +1291,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     record["pending"] = verdict.get("pending", False)
     if ok:
         record["verification"] = verdict["verification"]
-    specs.validate(loop.repo, loop.sid, phase=None, final=record)
+    specs.validate(loop.repo, loop.sid, loop.born, phase=None, final=record)
     return None if loop.halt.is_set() else {**record, "tail": verdict["tail"]}
 
 
@@ -1248,28 +1320,39 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | 
             return resolve_merge(loop, spec, repo, path, preview, base)
         deferred = spec.get("deferred") or []
         kept_p2, shown = pick(loop, chat() if callable(chat) else chat, deferred)
-        if not verification.cloud(spec) and (spec.get("review_contract") or {}).get("flows"):
+        # One snapshot of this loop's own task, at the revision the final gate passed, is checked, published and
+        # moved, holding the worktree: a person's turn cannot revise it in between, and `keep` refuses it once replaced.
+        release = wait_hold(loop, path)
+        if release is None:
+            return False
+        try:
             fresh = specs.load(loop.repo, loop.sid)
-            problem = review_contract.merge_problem(repo, path, fresh, head, specs.current_merge_base(path, base, head))
-            if problem or pr_head(repo, spec["pr"]["number"]) != (head, base):
-                return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem or "검증 뒤 PR 커밋·base 가 바뀌었다")
-        if verification.cloud(spec):
-            fresh = specs.load(loop.repo, loop.sid)
-            problem = verification.proven(repo, path, fresh, head, specs.current_merge_base(path, base, head))
-            if problem or pr_head(repo, spec["pr"]["number"]) != (head, base):
-                return cloud_stop(loop, repo, fresh, head, problem or "검증 뒤 PR 커밋·base 가 바뀌었다")
-        if verification.cloud(spec) or verification.enabled(repo):
-            try:
-                spec = verification.publish(repo, specs.load(loop.repo, loop.sid), head, base)
-            except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
-                if verification.cloud(spec):
-                    return cloud_stop(loop, repo, spec, head, str(exc))
-                return stop(loop, loop.repo, loop.sid, Why.GATE, str(exc))
-        # `p2` stays as the cell wrote it — the next candidates read it; the
-        # comment goes up on GitHub, read by a person, in the cell's own Korean.
-        comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in shown)) if kept_p2 else ""
-        change(loop, "머지 가능", p2=kept_p2, p2_comment=comment)
-        return False
+            if fresh is None or loop.born and born(fresh) != loop.born:
+                return False
+            if fresh["rev"] != spec["rev"]:
+                return True   # revised since the final gate: the next step judges the revision
+            if not verification.cloud(spec) and (spec.get("review_contract") or {}).get("flows"):
+                problem = review_contract.merge_problem(repo, path, fresh, head, specs.current_merge_base(path, base, head))
+                if problem or pr_head(repo, spec["pr"]["number"]) != (head, base):
+                    return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem or "검증 뒤 PR 커밋·base 가 바뀌었다")
+            if verification.cloud(spec):
+                problem = verification.proven(repo, path, fresh, head, specs.current_merge_base(path, base, head))
+                if problem or pr_head(repo, spec["pr"]["number"]) != (head, base):
+                    return cloud_stop(loop, repo, fresh, head, problem or "검증 뒤 PR 커밋·base 가 바뀌었다")
+            if verification.cloud(spec) or verification.enabled(repo):
+                try:
+                    spec = verification.publish(repo, fresh, head, base)
+                except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
+                    if verification.cloud(spec):
+                        return cloud_stop(loop, repo, spec, head, str(exc))
+                    return stop(loop, loop.repo, loop.sid, Why.GATE, str(exc))
+            # `p2` stays as the cell wrote it — the next candidates read it; the
+            # comment goes up on GitHub, read by a person, in the cell's own Korean.
+            comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in shown)) if kept_p2 else ""
+            change(loop, "머지 가능", p2=kept_p2, p2_comment=comment)
+            return False
+        finally:
+            release()
     if final.get("pending"):
         return stop(loop, loop.repo, loop.sid, Why.PREPARATION, final["reason"])
     if verification.cloud(spec):
@@ -1282,14 +1365,15 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | 
         return False
     if maintenance.repaired(path, specs.load(loop.repo, loop.sid) or spec) == head:
         if (specs.load(loop.repo, loop.sid) or spec).get("repaired") != head:   # it may have fixed what is outside the code
-            specs.update(loop.repo, loop.sid, repaired=head, continued=time.time())
-            return True
+            return change(loop, repaired=head, continued=time.time()) is not None
         return stop(loop, loop.repo, loop.sid, Why.GATE, f"최종 게이트 실패, 고친 커밋이 없다 — {final['reason']}")
     return True
 
 
 def cloud_stop(loop: Loop, repo: Path, spec: dict, head: str, reason: str) -> bool:
-    spec = specs.load(loop.repo, loop.sid) or spec
+    spec = specs.load(loop.repo, loop.sid)
+    if spec is None or loop.born and born(spec) != loop.born:   # deleted, or made again under this ID: not this loop's
+        return False
     state = (spec.get("local_verification") or {}).get("state")
     verification.pending(repo, spec, head, reason, state if state in ("reanalysis", "unstable") else "waiting_environment")
     return stop(loop, loop.repo, loop.sid, Why.PREPARATION, "로컬 검증 준비 대기 — " + verification.redact(reason, verification.local(repo)))
@@ -1328,11 +1412,12 @@ def external_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, 
     try:
         sync_review(spec, path, head)
         chosen = specs.for_round(repo, path, spec, base)
-        if reusable(spec, head, chosen):
+        # The receipt is saved before `gate`: a gate cut between them is reused only once `gate` is back,
+        # which `rounded` rebuilds from that receipt, so no pass stands for a base or environment it never ran on.
+        if reusable(spec, head, chosen) and gate_passed(spec, head):
             return True
         verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
-        specs.validate(loop.repo, loop.sid, round=record)
-        if change(loop, gate=verdict) is None:
+        if specs.validate(loop.repo, loop.sid, loop.born, round=record) is None or change(loop, gate=verdict) is None:
             return False
         if not verdict["ok"]:
             return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, verdict["reason"] + "\n" + verdict["tail"])
@@ -1362,8 +1447,9 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
             raise ValueError("인계를 읽는 동안 PR 이 바뀌었다 — 다시 시작한다")
         transfer = verification.handoff(view["body"], head)
         # Preserve the public PR handoff; runtime observations are redacted separately.
-        spec = specs.update(loop.repo, loop.sid, cloud_handoff=transfer,
-                            pr={**spec["pr"], "head": head, "base": base})
+        spec = own(loop, cloud_handoff=transfer, pr={**spec["pr"], "head": head, "base": base})
+        if spec is None:   # deleted, or made again under this ID: not this loop's
+            return False
         record = spec.get("local_verification") or {}
         if record.get("needs_research") and not record.get("research_note"):
             raise ValueError("재분석 원인·근거·다음 실험을 적고 로컬 검증을 재개한다")
@@ -1385,11 +1471,12 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
                                          sorted({issue for r in unresolved for issue in r["failures"]}), "unstable")
             raise ValueError(reason)
         chosen = specs.for_round(repo, path, spec, base)
-        if not reusable(spec, head, chosen):
+        if not reusable(spec, head, chosen) or not gate_passed(spec, head):   # as `external_shipped`
             settings = verification.redaction(verification.local(repo), path)
             verdict, check = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
-            specs.validate(loop.repo, loop.sid, round=check)
+            if specs.validate(loop.repo, loop.sid, loop.born, round=check) is None:
+                return False
             spec = change(loop, gate=verdict)
             if spec is None:
                 return False
@@ -1406,11 +1493,84 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         release()
 
 
+class Revised(Exception):
+    """The spec's author answered during this step's turn: the step ends, and the next starts from the spec as
+    it now stands (`handed`). Continued inside the old step, it mixed the new revision with the old rounds."""
+
+
+class Halted(Revised):
+    """The work pane stopped a loop turn: the step stops the loop. Raised, so a repair that committed code
+    keeps its cleanup baseline (`sweep.held`), and passing wherever `Revised` does."""
+
+
+def handed(loop: Loop, spec: dict, path: Path, owed: dict) -> bool:
+    """The author's answer to an escalation (`handoff.applied`) as this step's repair, built from the spec as it
+    stands. It stays owed until a passing done-report covering this revision is saved since the answer: by a
+    turn it sends (asked once more, then the loop stops), or by the person's own turn while the loop stood."""
+
+    from . import handoff
+
+    def complete(s: dict, turns: list | None = None) -> bool:
+        at, items = s.get("report_at") or {}, s.get("report") or []
+        # One passing entry per item of this revision's `done`, as written (`prompts/work-spec.md`): a count
+        # alone let two copies of one item stand for another (`shortfall`).
+        return bool(items) and at != owed.get("report_at") and at.get("rev") == s.get("rev") \
+            and (turns is None or at.get("turn") in turns) and at.get("head") == head() \
+            and sorted(i["item"].strip() for i in items) == sorted(d.strip() for d in s.get("done") or []) \
+            and not specs.shortfall(items, s)
+
+    def head() -> str:   # a report the checkout has moved past since is not this revision's evidence
+        return specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+
+    def clear(turns: list | None = None) -> bool:
+        # Judged again holding the worktree and the lock it is cleared in: a commit, a newer answer, or a
+        # revision that reset the report is the next step's to send.
+        release = wait_hold(loop, path)
+        if release is None:
+            return False
+        try:
+            with specs._files:
+                now = specs.load(loop.repo, loop.sid) or {}
+                if now.get("handoff_owed") != owed or not complete(now, turns):
+                    raise Revised()
+                return change(loop, handoff_owed=None) is not None
+        finally:
+            release()
+
+    if complete(spec):
+        return clear()
+    loop.handing = {"rev": spec["rev"], "owed": owed, "turns": []}
+    try:
+        for text in (f"{handoff.turn_for(path, spec, owed)}\n\nEnd with the `done-report` block for revision "
+                     f"{spec['rev']} once every completion condition holds.", specs.REPORT_AGAIN.format(rev=spec["rev"])):
+            if told(loop, spec, path, text) is None:
+                return False
+            if complete(specs.load(loop.repo, loop.sid) or {}, loop.handing["turns"]):
+                return clear(loop.handing["turns"])
+    finally:
+        loop.handing = None
+    return stop(loop, loop.repo, loop.sid, Why.FORMAT, f"명세 {spec['rev']}판의 완료 보고가 없다")
+
+
 def step(loop: Loop) -> bool:
     """One round. `True` when another follows."""
 
+    try:
+        return stepped(loop)
+    except Halted:
+        return stop(loop, loop.repo, loop.sid, Why.PERSON, "사람이 작업 칸에서 이 턴을 멈췄다")
+    except Revised:
+        return True
+    except verification.Replaced:   # deleted, or made again under this ID: its own loop runs it
+        return False
+
+
+def stepped(loop: Loop) -> bool:
     spec = specs.load(loop.repo, loop.sid)
     if spec is None or loop.halt.is_set() or not LOOPING.fullmatch(spec["state"]):
+        return False
+    loop.born = loop.born or born(spec)
+    if born(spec) != loop.born:   # another task made under this ID: its own loop runs it
         return False
     repo = channels.repo_for(spec["repo"])
     if repo is None:
@@ -1427,6 +1587,8 @@ def step(loop: Loop) -> bool:
         return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, "작업 브랜치를 다시 연 뒤 리뷰를 계속해라")
     if spec.get("cleanup_owed"):    # resumed from a missing cleanup report: nothing ships before it is given
         return told(loop, spec, path, sweep.RESUMED) is not None
+    if spec.get("handoff_owed"):    # the spec's author answered an escalation: sent before anything ships
+        return handed(loop, spec, path, spec["handoff_owed"])
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
     head, base = pr_head(repo, pr)
@@ -1916,9 +2078,10 @@ def landed(repo: Path, spec: dict) -> None:
     auto-merge or queues the pull request. One `state` and one condition
     split every case; a read that fails changes nothing and is tried again."""
 
-    with _landing:
+    mine = born(spec)
+    with _landing:   # held by a delete too (`deleting`): the task read here is the one passed, or none
         spec = specs.load(repo.name, spec["id"])
-        if spec is None or spec["state"] not in ("머지 대기", "머지됨") or spec.get("cleanup_complete"):
+        if spec is None or born(spec) != mine or spec["state"] not in ("머지 대기", "머지됨") or spec.get("cleanup_complete"):
             return
         n = spec["pr"]["number"]
         allowed = specs.approved(spec) or {"base": spec["pr"].get("base"), "head": spec["pr"].get("head", "")}
@@ -2054,9 +2217,9 @@ def pruned(repo: Path, branch: str, approved: str) -> str:
 
 
 def finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
-    with _landing:
+    with _landing:   # as `landed`: never the task made again under this ID after the merge it cleans up
         fresh = specs.load(repo.name, spec["id"])
-        if fresh is not None and not fresh.get("cleanup_complete"):
+        if fresh is not None and born(fresh) == born(spec) and not fresh.get("cleanup_complete"):
             _finish(repo, fresh, base, commit, text)
 
 
@@ -2167,17 +2330,27 @@ def requested_merge(repo: Path, spec: dict) -> None:
         # click authorized; any other change still cancels the request.
         if maintenance.documents_only(Path(spec.get("worktree") or repo), request["head"], allowed["head"]):
             request = {**request, "head": allowed["head"]}
-            spec = specs.update(repo.name, spec["id"], merge_request=request) or spec
+            spec = on_task(repo.name, spec, merge_request=request) or spec
     if (not allowed or request.get("head") != allowed["head"] or request.get("base") != allowed["base"]
             or request.get("rev") != spec["rev"] or request.get("pr") != spec["pr"]["number"]):
-        specs.update(repo.name, spec["id"], merge_request=None)
-        specs.merge_progress(repo.name, spec["id"], "승인한 커밋·명세 변경 — 머지 요청 취소", "blocked")
+        with specs._files:
+            if on_task(repo.name, spec, merge_request=None) is not None:
+                specs.merge_progress(repo.name, spec["id"], "승인한 커밋·명세 변경 — 머지 요청 취소", "blocked")
         return
     try:
         merge_spec(repo, spec, Merge(head=request["head"]), prepare=False)
+    except Deferred:
+        return   # the request and its progress stay: archived with the task, or retried by the poll if it survives
     except Exception as exc:
         errorlog.record("requested-merge", exc, repo=repo.name, spec=spec["id"])
-        specs.update(repo.name, spec["id"], merge_request=None, fault=f"요청한 머지 중단 — {exc}")
+        on_task(repo.name, spec, merge_request=None, fault=f"요청한 머지 중단 — {exc}")
+
+
+def on_task(repo: str, spec: dict, **fields) -> dict | None:
+    """`specs.update` only while `spec`'s task holds its ID; `None` for one made again under it since."""
+    with specs._files:
+        now = specs.load(repo, spec["id"])
+        return specs.update(repo, spec["id"], **fields) if now is not None and born(now) == born(spec) else None
 
 
 def poll(halt: threading.Event | None = None) -> None:
@@ -2204,14 +2377,19 @@ def poll(halt: threading.Event | None = None) -> None:
                     if allowed:
                         tree = Path(spec.get("worktree") or path)
                         try:
-                            head, base = pr_head(path, spec["pr"]["number"])
-                            base_oid = specs.current_merge_base(tree, base, head)
-                            problem = verification.merge_proven(path, tree, spec, head, base_oid) if verification.cloud(spec) \
-                                else review_contract.merge_problem(path, tree, spec, head, base_oid)
-                            if problem:
-                                verification.pending(path, spec, head, problem, "waiting_review")
-                        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
-                            verification.pending(path, spec, allowed["head"], "현재 검증 상태를 확인하지 못했다", "waiting_review")
+                            try:
+                                head, base = pr_head(path, spec["pr"]["number"])
+                                base_oid = specs.current_merge_base(tree, base, head)
+                                problem = verification.merge_proven(path, tree, spec, head, base_oid) if verification.cloud(spec) \
+                                    else review_contract.merge_problem(path, tree, spec, head, base_oid)
+                                if problem:
+                                    verification.pending(path, spec, head, problem, "waiting_review")
+                            except verification.Replaced:
+                                raise
+                            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                                verification.pending(path, spec, allowed["head"], "현재 검증 상태를 확인하지 못했다", "waiting_review")
+                        except verification.Replaced:   # made again under this ID meanwhile: the next minute reads it
+                            continue
                 # A clicked merge holds `_landing` through its minutes-long `.omm` analysis;
                 # waiting here stalled every repository's loop reattach. Next minute retries.
                 if not _landing.acquire(blocking=False):
@@ -2271,18 +2449,39 @@ def merge(sid: str, body: Merge) -> dict:
     return merge_spec(repo, spec, body)
 
 
+class Deferred(HTTPException):
+    """A merge given up while a delete holds its task: a queued request stays for the poll, should it survive."""
+
+
+@contextlib.contextmanager
+def admitted(repo: str, sid: str):
+    """`_landing` for a merge of `sid`'s task, given up once a delete reserves that task: the delete holds
+    it while it waits for the task's loop, whose own queued merge (`drive` → `requested_merge`) waits here."""
+    while not _landing.acquire(timeout=0.5):
+        if (repo, sid) in _deleting:
+            raise Deferred(409, "삭제하는 중인 작업이다")
+    try:
+        yield
+    finally:
+        _landing.release()
+
+
 def merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) -> dict:
     """The guarded merge for a click or its explicitly authorized prepared head."""
-    with _landing:
-        fresh = specs.load(repo.name, spec["id"])
-        if fresh is None or fresh["history"][0]["ts"] != spec["history"][0]["ts"]:
-            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
-        try:
+    with admitted(repo.name, spec["id"]):
+        with specs._files:   # the check and its first progress line on the same task, never a replacement
+            fresh = specs.load(repo.name, spec["id"])
+            if fresh is None or fresh["history"][0]["ts"] != spec["history"][0]["ts"]:
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
             specs.merge_progress(repo.name, spec["id"], "리뷰·게이트·GitHub 머지 상태 확인 중", reset=prepare)
+        try:
             return _merge_spec(repo, fresh, body, prepare=prepare)
         except Exception as exc:
-            specs.update(repo.name, spec["id"], merge_request=None)
-            specs.merge_progress(repo.name, spec["id"], f"머지 중단 — {getattr(exc, 'detail', str(exc))}", "blocked")
+            with specs._files:   # only on the task this merge was asked for, never one made again under its ID
+                if on_task(repo.name, spec, merge_request=None) is not None:
+                    specs.merge_progress(repo.name, spec["id"], f"머지 중단 — {getattr(exc, 'detail', str(exc))}", "blocked")
+            if isinstance(exc, verification.Replaced):
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요") from exc
             raise
 
 
@@ -2439,9 +2638,11 @@ def settle(sid: str, body: Settle) -> dict:
         finish(repo, spec, actual, (spec.get("merge") or {}).get("commit", ""),
                f"검토하지 않은 base `{actual}` 로 머지됨 — 받아들임")
         return specs.view(repo, specs.load(repo.name, sid))
-    allowed = specs.approved(spec)
+    allowed, first = specs.approved(spec), born(spec)
     with specs._files:
         spec = specs.load(repo.name, sid)
+        if spec is None or born(spec) != first:   # the stop judged above was another task's
+            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
         # Rounds and their allow belong to one pull request.
         spec["history"].append({"ts": time.time(), "pr": n, "rounds": spec.get("rounds") or [],
                                 "closed": Why.WRONG_BASE.value})
@@ -2471,8 +2672,11 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
         from . import recovery
 
         with specs._files:
+            fresh = specs.load(repo.name, sid)
+            if fresh is None or born(fresh) != born(spec):
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
             try:
-                fields = recovery.resumed(specs.load(repo.name, sid) or spec, limits, note)
+                fields = recovery.resumed(fresh, limits, note)
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
             specs.update(repo.name, sid, **fields)
@@ -2484,15 +2688,18 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
             if not note:
                 raise HTTPException(400, "재분석 원인·근거·다음 실험을 적어야 재개한다")
             note = verification.redact(note, verification.local(repo))
-            spec = verification.keep(spec, research_note=note, needs_research=False, research=[*record.get("research", []),
-                                     {"head": record.get("head"), "note": note, "ts": time.time(),
-                                      "failure_attempts": list(range(len(record.get("failure_attempts", []))))}])
+            try:
+                spec = verification.keep(spec, research_note=note, needs_research=False, research=[*record.get("research", []),
+                                         {"head": record.get("head"), "note": note, "ts": time.time(),
+                                          "failure_attempts": list(range(len(record.get("failure_attempts", []))))}])
+            except verification.Replaced as exc:
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요") from exc
     if why is Why.DISPUTE:
         if not note:
             raise HTTPException(400, "그 발견에 정한 것을 적어야 잇는다")
-        specs.update(repo.name, sid, rulings=[*(spec.get("rulings") or []), note])
+        resumed(repo, spec, rulings=[*(spec.get("rulings") or []), note])
     elif why is Why.CAP:
-        specs.update(repo.name, sid, extra=spec.get("extra", 0) + MORE)
+        resumed(repo, spec, extra=spec.get("extra", 0) + MORE)
     elif why is Why.NO_REPO and channels.repo_for(spec["repo"]) is None:
         raise HTTPException(409, f"`{spec['repo']}` 가 아직 작업 공간에 없다")
     elif why is Why.NO_WORKTREE:
@@ -2501,8 +2708,8 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
         else:
             view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "headRefName,headRefOid"])
             path = adopted(repo, view["headRefName"], view["headRefOid"],
-                           detached=spec.get("implementation_environment") not in (None, "local"))
-            specs.update(repo.name, sid, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
+                           detached=spec.get("implementation_environment") not in (None, "local"), task=spec)
+            resumed(repo, spec, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
     elif why is Why.LEFT_QUEUE:
         view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "state,headRefOid,baseRefName"])
         allowed = specs.approved(spec)
@@ -2510,6 +2717,8 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
             raise HTTPException(409, "GitHub 에서 PR 을 다시 열어야 한다")
         with specs._files:
             fresh = specs.load(repo.name, sid)
+            if fresh is None or born(fresh) != born(spec):   # made again under this ID while GitHub was read
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
             if view["state"] == "MERGED":
                 specs.save(specs.moved(fresh, "머지 대기", stopped=None))
             elif allowed and (view["headRefOid"], view["baseRefName"]) == (allowed["head"], allowed["base"]):
@@ -2518,9 +2727,15 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
         if view["state"] == "MERGED":
             landed(repo, fresh)
             return specs.view(repo, specs.load(repo.name, sid))
-    specs.update(repo.name, sid, continued=time.time())   # `finalized` runs a cut-short final gate once more after it
-    kick(repo.name, sid)
+    resumed(repo, spec, continued=time.time())   # `finalized` runs a cut-short final gate once more after it
+    kick(repo.name, sid, of=spec)
     return specs.view(repo, specs.load(repo.name, sid))
+
+
+def resumed(repo: Path, spec: dict, **fields) -> None:
+    """A resume's write, onto the task it judged (`on_task`): 410 once another was made under its ID."""
+    if on_task(repo.name, spec, **fields) is None:
+        raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
 
 
 def gh_or_502(repo: Path, args: list[str]) -> dict:
@@ -2530,14 +2745,17 @@ def gh_or_502(repo: Path, args: list[str]) -> dict:
         raise HTTPException(502, str(exc)) from exc
 
 
-def adopted(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
-    """`workspace.adopt`, held like making a worktree: the switch waits."""
+def adopted(repo: Path, branch: str, oid: str, detached: bool = False, task: dict | None = None) -> Path:
+    """`workspace.adopt`, held like making a worktree: the switch waits. `task`, a resume's, must still hold
+    its ID inside the hold: a deleted one gets no worktree that would block the next adoption's path."""
 
     release = hold(work._busy, _lock, str(repo), "이 저장소에서 작업이 실행 중이다")
     tree_release = held_release = None
     try:
         specs.checkout_idle(repo)
         tree_release = hold(work._busy, _lock, str(worktree_home(repo) / folder_for(branch)), "그 작업트리를 다른 요청이 쓰고 있다")
+        if task is not None and ((now := specs.load(repo.name, task["id"])) is None or born(now) != born(task)):
+            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
         # Another worktree holding the branch is let go (`adopt`): never one a spec owns or a turn runs in.
         held = None if detached else holder(repo, branch)
         if held is not None and held not in {Path(repo).resolve(), (worktree_home(repo) / folder_for(branch)).resolve()}:
@@ -2588,10 +2806,10 @@ def rereview(repo: str, spec: dict) -> None:
 
     if oneshot_profile.in_run(spec):
         return
-    with specs._files:
-        specs.update(repo, spec["id"], review_again=True,
-                     extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0))
-    kick(repo, spec["id"])
+    # A deferred callback (`specs.check`) may run after its task was deleted: only that task is reviewed.
+    if on_task(repo, spec, review_again=True,
+               extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0)) is not None:
+        kick(repo, spec["id"], of=spec)
 
 
 @router.post("/api/specs/{sid}/halt")
@@ -2607,6 +2825,54 @@ def halt(sid: str) -> dict:
         # The loop got to its end first; that end stands.
         raise HTTPException(409, f"루프가 먼저 끝났다 — {spec['state']}")
     return specs.view(repo, spec)
+
+
+@contextlib.contextmanager
+def deleting(repo: str, spec: dict, *, interrupt: bool = True):
+    """Hold off everything that acts on `spec`'s task while it is archived. Its ID is its branch's folder, so
+    a loop, a merge or a cleanup still running on it would write the task adopted next under that ID.
+    - A busy merge or cleanup (`_landing`) refuses it before anything is stopped; it is held to the end.
+    - The task is reserved (`_deleting`): `kick` neither moves it nor registers a loop meanwhile, and a
+      second delete is refused.
+    - The task must still hold its ID. Its own running loop is stopped and waited for — or, without
+      `interrupt` (an ordinary worktree removal), the delete is refused and the review keeps running.
+    - A removal inside (`work.clear`) on the same thread passes through."""
+    key, mine = (repo, spec["id"]), born(spec)
+    if _deleting.get(key) == threading.get_ident():
+        yield
+        return
+    # Held from before anything stops to the end. A merge's GitHub reads can take minutes, so it is refused,
+    # not waited on. The loop takes it only for its own queued merge (`drive` → `merge_spec`), which gives
+    # up once this task is reserved (`admitted`), so the join below never waits on this delete.
+    if not _landing.acquire(blocking=False):
+        raise HTTPException(409, "이 저장소의 머지·정리가 끝난 뒤 삭제해라")
+    try:
+        with specs._files:   # `kick` reads the reservation under it before moving the task
+            if key in _deleting:
+                raise HTTPException(409, "이미 삭제하는 중이다")
+            now = specs.load(repo, spec["id"])
+            if now is None or born(now) != mine:
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
+            _deleting[key] = threading.get_ident()
+        try:
+            with _lock:   # after the reservation: a loop registered later is refused by `kick`
+                old = _loops.get(key)
+            if old is not None and old.born in (None, mine) and old.thread is not None \
+                    and old.thread is not threading.current_thread() and old.thread.is_alive():
+                if not interrupt:
+                    raise HTTPException(409, "리뷰가 도는 동안은 지우지 않는다")
+                old.stop()
+                old.thread.join(work.HALT_WAIT)
+                if old.thread.is_alive():
+                    raise HTTPException(409, "리뷰 루프가 멈춘 뒤 삭제해라")
+            elif old is not None and old.born in (None, mine):
+                old.stop()
+            yield
+        finally:
+            with specs._files:
+                _deleting.pop(key, None)
+    finally:
+        _landing.release()
 
 
 def halt_loop(repo: str, sid: str) -> None:

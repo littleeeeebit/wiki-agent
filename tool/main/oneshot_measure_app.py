@@ -62,7 +62,8 @@ def folder(spec: dict) -> Path:
 def started(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide: dict, mode: str,
             passed: dict | None = None):
     """What the measurement runs, started for the block, which gets the frozen build or `None`: the PC program in
-    a run that builds one (`owner` starting the build the server's own measurement `passed`), else the backend."""
+    a run that builds one (`owner` starting the build the server's own measurement `passed`), else the backend.
+    The program is on the owner's screen whenever it runs, the build's health check included."""
 
     if "app" in plan:
         return running(spec, plan, tree, env, halt, log, hide, mode, passed)

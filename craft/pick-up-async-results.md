@@ -6,7 +6,7 @@ triggers: ["리뷰\\s*루프", "review\\s*loop", "기싸움", "안 ?받", "안 ?
 slots: []
 sources: []
 sources_withheld: true
-links: [codex-review-loop, declared-continuation, verify-narrow-then-wide, report-without-stopping]
+links: [codex-review-loop, declared-continuation, verify-narrow-then-wide, report-without-stopping, decide-moved-background-commands]
 ---
 
 # An async result is picked up the moment it lands

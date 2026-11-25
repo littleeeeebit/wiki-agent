@@ -144,6 +144,28 @@ def test_a_split_cards_the_prerequisite_and_holds_the_task(task):
     assert "untangle-transaction" in specs.load("proj", sid)["fault"]
 
 
+def test_a_revision_gives_the_author_fresh_rounds(task):
+    """reach-gemini-from-phone: guidance, then a revision, and the first conflict on revision 2 went to the person."""
+    repo, sid = task
+    update = {"rev": 1, "reason": "The person widened acceptance", "goal": "Read the chapter ahead", "out": [],
+              "done": ["The chapter is read ahead"], "task": {"kind": "feature", "what": "Read ahead"},
+              "precedence": [{"ref": "a.txt", "role": "current"}]}
+    answers = [block("guidance", {"text": "Ask the person."}), block("spec-update", update),
+               *[block("guidance", {"text": "Go on."})] * handoff.ROUNDS]
+    with patch.object(handoff, "ask", side_effect=answers) as ask, patch.object(specs, "again", return_value=True):
+        for _ in answers:
+            assert specs._check(repo, Run(), block("escalation", ESCALATION)) is not None
+        assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None   # two on revision 2
+    assert ask.call_count == len(answers) and "명세 2판" in specs.load("proj", sid)["fault"]
+    # The person stepping in (a pause, a stop, a failed or refused round trip) starts the count again.
+    asked = [{"rev": 2, "answer": {"kind": k}} for k in ("guidance", "guidance", "person", "guidance")]
+    assert handoff.spent(asked, 2) == 1 and handoff.spent(asked, 3) == 0
+    # A revision that changes nothing still moves `rev`: the author's answers in a row stop at `CHAIN`.
+    chain = [{"rev": r, "answer": {"kind": "spec-update"}} for r in range(1, handoff.CHAIN + 1)]
+    assert handoff.spent(chain, handoff.CHAIN + 1) == 0 and handoff.spent(chain) == handoff.CHAIN
+    assert handoff.spent([*chain, {"rev": 5, "answer": {"kind": "split"}}]) == 0   # a split waits for the person
+
+
 def test_the_person_decides_past_the_rounds_or_without_an_author(task):
     repo, sid = task
     with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})) as ask, \
@@ -354,17 +376,38 @@ def test_a_stop_while_the_author_answers_applies_nothing_and_sends_nothing(task)
     assert specs.load("proj", sid)["escalations"][-1]["answer"]["kind"] == "stopped"
 
 
-def test_a_review_loop_halts_before_any_answer_or_refusal_takes_effect(task):
+def test_a_review_loop_takes_the_authors_revision_and_sends_its_turn_itself(task):
+    """Held for the person, the author's revision never took effect while a review loop ran."""
     repo, sid = task
     specs.update("proj", sid, state="고치는 중 R1")
     update = {"rev": 1, "reason": "r", "goal": "Another goal", "out": [], "done": ["x"]}
+    saves, save = [], specs.save
     with patch.object(handoff, "ask", return_value=block("spec-update", update)), \
-         patch("main.loop.asked") as asked, patch.object(specs, "again") as again:
-        assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
-        assert specs.load("proj", sid)["rev"] == 1 and asked.call_count == 1
-        # The repair's own refused revision: the loop keeps its retries, nothing else sends one.
-        assert specs._check(repo, Run(), block("spec-update", update))() is None
-    assert asked.call_count == 2 and not again.called and specs.load("proj", sid)["rev"] == 1
+         patch("main.loop.asked") as asked, patch.object(specs, "again") as again, \
+         patch.object(specs, "save", side_effect=lambda s: saves.append(dict(s)) or save(s)):
+        assert specs._check(repo, Run(), block("escalation", ESCALATION))() is None
+        spec = specs.load("proj", sid)
+        assert (spec["rev"], spec["goal"], spec["state"]) == (2, "Another goal", "고치는 중 R1") and not asked.called
+        assert spec["handoff_owed"] == {"kind": "spec-update", "rev": 2, "report_at": None}   # `loop.handed` sends it
+        # The revision's own save carries its answer and the delivery it owes: none stands without the other.
+        revised = [s for s in saves if s["rev"] == 2]
+        assert revised and all(s.get("handoff_owed") and s.get("escalations") for s in revised)
+        # A split waits for the person before any card of it exists.
+        split = block("split", {"reason": "first", "spec": spec_block(slug="first-thing")})
+        with patch.object(handoff, "ask", return_value=split):
+            specs.update("proj", sid, escalations=[])
+            assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
+        assert specs.load("proj", "first-thing") is None and asked.call_count == 1
+        # A prerequisite review's acceptance reports to its own controller: that answer stays the person's.
+        specs.update("proj", sid, state="고치는 중 R1", fault=None, escalations=[], prerequisite_review={"id": "p"})
+        with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})):
+            assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
+        assert "선행 리뷰 중" in specs.load("proj", sid)["fault"] and asked.call_count == 2
+        assert handoff.spent(specs.load("proj", sid)["escalations"]) == 0   # decided by the person, not the author
+        specs.update("proj", sid, state="고치는 중 R1", fault=None, prerequisite_review=None)
+        # The repair's own goal change is still refused: the loop keeps its retries, nothing else sends one.
+        assert specs._check(repo, Run(), block("spec-update", {**update, "rev": 2, "goal": "Mine"}))() is None
+    assert asked.call_count == 3 and not again.called and specs.load("proj", sid)["rev"] == 2
 
 
 def test_a_persons_turn_moves_the_task_with_the_goal(task):

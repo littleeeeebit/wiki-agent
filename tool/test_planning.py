@@ -751,10 +751,10 @@ def test_a_reviser_turn_stopped_on_its_own_writes_nothing(checkout):
     head, before = git(path, "rev-parse", "HEAD"), (path / root / "1-entry.md").read_bytes()
     lp = SimpleNamespace(halt=threading.Event(), run=None)
     fixed = file_block(f"{root}/1-entry.md", stage_md("R1").replace("Proposed.", "Changed."), ["R1"], ["S1"])
-    # `/api/work/stop` sets the turn's own stop, not the loop's.
+    # `/api/work/stop` sets the turn's own stop, not the loop's: the step stops the loop (`loop.Halted`).
     Host.replies = [lambda text, halt: (halt.set(), fixed)[1]]
-    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", remote):
-        assert planning.revise(lp, spec, path, "Fix F1.") == ""
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", remote), pytest.raises(loop.Halted):
+        planning.revise(lp, spec, path, "Fix F1.")
     assert git(path, "rev-parse", "HEAD") == head and (path / root / "1-entry.md").read_bytes() == before
 
 
