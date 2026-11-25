@@ -126,7 +126,7 @@ def raw(file: Path) -> bytes | None:
                     return data
         except FileNotFoundError:
             return None
-    return b"\0"   # still being replaced: never a settings file's bytes, so never the source
+    raise OSError(f"{file}: 읽는 동안 계속 바뀌었다")   # never compared: the checkout's write is skipped
 
 
 def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bool:
@@ -135,12 +135,11 @@ def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bo
     bytes the plan was made from (`None`: absent), with `disableAllHooks` off in both files, and the server is not
     going down. An edit or removal the person made since writes nothing.
 
-    Accepted limits: the final checks read the folder, the index, both files' opt-out and the bytes once each, in
-    that order, within milliseconds of the swap, and no lock holds them still; an action that lands inside those
-    milliseconds, after the check that would have seen it, is not seen. A folder renamed while the staging is written
-    keeps that `.part` file, which the old path no longer reaches. The watch guards against mistakes, not races: a
-    person's save, removal or `git add` takes far longer than those milliseconds, and the screen names what it
-    wrote."""
+    Accepted limits: the final checks read the folder, the index (one `git ls-files`), both files' opt-out and the
+    bytes once each, in that order, and no lock holds them still; an action that lands after the check that would
+    have seen it and before the swap is not seen, however long that window runs. A folder renamed while the staging
+    is written keeps that `.part` file, which the old path no longer reaches. The watch guards against mistakes, not
+    races; after a write the screens list the repositories again (`watch`), which shows the wiring as it now is."""
 
     file.parent.mkdir(exist_ok=True)
     where = file.parent.resolve()
@@ -165,7 +164,7 @@ def own(repo: Path, file: Path) -> bool:
 
     if file.is_symlink() or file.resolve() != repo / file.relative_to(repo):
         return False
-    done = subprocess.run(["git", "-C", str(repo), "ls-files", "--", file.relative_to(repo).as_posix()],
+    done = subprocess.run(["git", "-C", str(repo), "ls-files", "--", f":(icase){file.relative_to(repo).as_posix()}"],
                           capture_output=True, encoding="utf-8", errors="replace")
     return done.returncode == 0 and not done.stdout.strip()
 

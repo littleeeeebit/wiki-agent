@@ -104,7 +104,10 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
         _winapi.CreateJunction(str(elsewhere / ".claude"), str(linked / ".claude"))
     except ImportError:
         os.symlink(elsewhere / ".claude", linked / ".claude", target_is_directory=True)
-    rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked)]
+    cased = repo("cased", "{}")   # git tracks it as `Settings.json`: the same file on Windows, the person's either way
+    (cased / ".claude/settings.json").rename(cased / ".claude/Settings.json")
+    git(cased, "add", ".claude/Settings.json")
+    rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked, cased)]
     rule = "Bash(dos2unix*)"
     with patch.object(connect, "hosts", return_value=["claude"]), \
          patch.object(chat_channels, "projects", side_effect=lambda: list(rows)), \
@@ -118,6 +121,7 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
             assert json.loads((loose / ".claude/settings.json").read_text(encoding="utf-8"))["permissions"]["deny"] == [rule]
             assert wiring.settle() == [], "맞춘 뒤에는 쓸 것이 없다"
             assert (kept / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "git 이 추적하는 파일은 사람의 것"
+            assert (cased / ".claude/Settings.json").read_text(encoding="utf-8") == "{}", "다른 대소문자로 추적해도 사람의 것"
             assert "permissions" not in json.loads((off / ".claude/settings.json").read_text(encoding="utf-8"))
             assert (elsewhere / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "링크 너머는 쓰지 않는다"
             assert (bad / ".claude/settings.json").read_text(encoding="utf-8") == "[]"

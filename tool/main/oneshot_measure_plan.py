@@ -163,4 +163,3 @@ def planned(path: Path, spec: dict, rev: str | None = None) -> dict:
         return checked(value, spec, path)
     except (TypeError, KeyError, AttributeError) as exc:   # a shape `checked` did not foresee is still a bad plan
         raise ValueError(f"`{PLAN}` 의 형식이 틀렸다 — {type(exc).__name__}: {exc}") from None
-
