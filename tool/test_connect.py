@@ -107,8 +107,9 @@ def test_each_missing_item_makes_the_row_partial_and_is_named(tmp_path):
     found = connect.status(repo, ALL)
     assert found["missing"] == ["gate_cmd 빈 칸"]
     assert found["notes"] == ["채워야 함 — review_dir, scratch_dirs, server_stop"], "빈 선택 슬롯은 알림이다"
-    (repo / ".wiki/adapter.toml").write_text('slots = "make test"\n', encoding="utf-8")   # no table: its own finding
-    assert connect.status(repo, ALL)["missing"] == ["adapter 의 slots 가 표가 아니다"]
+    for value in ('"make test"', '""', "[]", "false"):   # no table, empty or not: its own finding
+        (repo / ".wiki/adapter.toml").write_text(f"slots = {value}\n", encoding="utf-8")
+        assert connect.status(repo, ALL)["missing"] == ["adapter 의 slots 가 표가 아니다"], value
 
 
 def test_only_a_connected_repository_is_offered(tmp_path):
