@@ -90,6 +90,8 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
         path = tmp_path / name
         (path / ".claude").mkdir(parents=True)
         (path / ".claude" / "settings.json").write_text(text, encoding="utf-8")
+        (path / ".wiki").mkdir()
+        (path / ".wiki" / "adapter.toml").write_text("", encoding="utf-8")   # connected: an adapter of no hosts named
         git(path, "init", "-q")
         if track:
             git(path, "add", ".claude/settings.json")
@@ -100,7 +102,8 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
     linked, elsewhere = tmp_path / "linked", tmp_path / "elsewhere"
     (elsewhere / ".claude").mkdir(parents=True)
     (elsewhere / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
-    linked.mkdir()
+    (linked / ".wiki").mkdir(parents=True)
+    (linked / ".wiki" / "adapter.toml").write_text("", encoding="utf-8")
     git(linked, "init", "-q")
     try:   # a link out of the checkout: a junction on Windows, a symbolic link elsewhere
         import _winapi
@@ -115,6 +118,10 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
     git(nested / ".claude", "add", "settings.json")
     rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked, cased, nested)]
     rule = "Bash(dos2unix*)"
+    choice = connect.hosts
+
+    def chosen():   # the adapter's choice itself, every host taken as installed
+        return patch.object(connect, "hosts", choice), patch.object(connect.apply, "available_agents", list)
     with patch.object(connect, "hosts", return_value=["claude"]), \
          patch.object(chat_channels, "projects", side_effect=lambda: list(rows)), \
          patch.object(connect.apply, "declared", return_value=({rule: []}, {})), \
@@ -151,6 +158,15 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
             assert codex.read_text(encoding="utf-8") == "[]", "Codex 훅은 [모두 다시 연결]만 뺀다"
             codex.unlink()
             codex.parent.rmdir()
+            adapter = loose / ".wiki" / "adapter.toml"   # one being edited, Codex's alone, or gone: never Claude's guess
+            for text in ("agents = [", 'agents = ["codex"]', 'agents = "claude"', None):
+                (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+                adapter.write_text(text, encoding="utf-8") if text is not None else adapter.unlink()
+                hosts, agents = chosen()
+                with hosts, agents:
+                    assert wiring.settle() == [], f"adapter {text!r} writes no Claude settings"
+                assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            adapter.write_text("", encoding="utf-8")
             (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
             assert (kept / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "git 이 추적하는 파일은 사람의 것"
             assert (cased / ".claude/Settings.json").read_text(encoding="utf-8") == "{}", "다른 대소문자로 추적해도 사람의 것"
@@ -228,7 +244,22 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
                 return planned(at)
 
             (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
-            with patch.object(wiring, "planned", unwiring),                     patch.object(wiring.apply, "user_wired", side_effect=lambda *a: reads.count(loose.resolve()) < 2):
+
+            def unselecting(at: Path):   # the checkout stops selecting Claude while the writer's last read runs
+                reads.append(at)
+                if at == loose.resolve() and reads.count(at) == 2:
+                    adapter.write_text('agents = ["codex"]', encoding="utf-8")
+                return planned(at)
+
+            reads.clear()
+            hosts, agents = chosen()
+            with patch.object(wiring, "planned", unselecting), hosts, agents:
+                assert wiring.settle() == [], "a checkout that left Claude during the last read is never written"
+            assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            adapter.write_text("", encoding="utf-8")
+            reads.clear()
+            with patch.object(wiring, "planned", unwiring), \
+                    patch.object(wiring.apply, "user_wired", side_effect=lambda *a: reads.count(loose.resolve()) < 2):
                 assert wiring.settle() == [], "the checkout's hooks are never dropped once they are the only ones"
             assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
             with patch.object(wiring.subprocess, "run", unreadable):
