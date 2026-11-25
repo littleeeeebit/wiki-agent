@@ -133,8 +133,8 @@
     },
     "tool/main/oneshot_build.py": {
       "dup": 0,
-      "lines": 827,
-      "reason": "PR #450 round 14: a work turn that ends on a well-formed `choices` question stops as `asked`, answerable in the work log, rather than being refused and retried past the question (three lines). Round 8: a retold tests turn whose contract files match HEAD commits nothing and moves on from HEAD, past the build's untracked files (two lines). Rounds 4-6: a work turn, once it holds the worktree, hands the step to the owner's rewrite when words were said by then or a rewrite has the run, letting the tree go first (five lines). Before that: Oneshot plan 14a: a tests turn after the owner changed the design mid-build may find a planned test passing, commits only the contract, configuration and adapter, and hands on to the build it came from (`retell_to`); every work turn is sent through `oneshot.diverted` and told of the owner (seventeen lines past the 800-line cap for a file without an entry)."
+      "lines": 829,
+      "reason": "PR #450 rounds 14-15: a work turn in a stage the owner can speak to that ends on a well-formed `choices` question stops as `asked`, answerable in the work log, rather than being refused and retried past the question; its end hands on an answer given while it closed (five lines). Round 8: a retold tests turn whose contract files match HEAD commits nothing and moves on from HEAD, past the build's untracked files (two lines). Rounds 4-6: a work turn, once it holds the worktree, hands the step to the owner's rewrite when words were said by then or a rewrite has the run, letting the tree go first (five lines). Before that: Oneshot plan 14a: a tests turn after the owner changed the design mid-build may find a planned test passing, commits only the contract, configuration and adapter, and hands on to the build it came from (`retell_to`); every work turn is sent through `oneshot.diverted` and told of the owner (seventeen lines past the 800-line cap for a file without an entry)."
     },
     "tool/main/oneshot_spec.py": {
       "dup": 0,

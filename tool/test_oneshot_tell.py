@@ -126,6 +126,20 @@ def test_a_design_commit_retried_after_it_landed_returns_head_past_an_untracked_
     assert not stopped.stop.called
 
 
+def test_an_answer_given_as_the_asking_turn_closes_goes_in_once_it_lets_go_and_only_an_asked_stop_does(world):  # noqa: F811 — the imported fixture, requested by name
+    store = oneshot_spec.store("budget")
+    asked = {"reason": "asked", "detail": "묻는다", "state": "build"}
+    at("build", stopped=asked, inflight={"turn": "t"})   # the question's turn has not let go yet
+    say("세금 포함")
+    assert o()["working"] is None and o()["tell_pending"]   # busy: only queued
+    store.put(inflight=None)
+    oneshot_tell.answered(store)   # `Turn.finish`, once its mark is gone
+    assert o()["working"] == "retell"
+    at("build", stopped={**asked, "reason": "block"}, tell_pending=o()["tell_pending"])
+    oneshot_tell.answered(store)   # any other stop waits for `[지금 반영]`
+    assert o()["working"] is None
+
+
 def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name
     at("build")
 

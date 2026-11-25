@@ -86,6 +86,8 @@ class Turn(work.Run):
                                     (done.get("meta") or {}).get("cost_usd"), time.time() - self.started_at))
             if not self.checked and mine and current.get("working") == self.stage:
                 store.stop("restart" if runtime.stopping.is_set() else "block", f"작업 턴이 멈췄다 — {error}")
+            if mine:   # the owner answered the turn's question as it ended: the answer goes in now
+                owner().answered(store)
 
     def unsent(self) -> None:
         """`work.begin` refused the turn before it took it: no model ran, so nothing is charged."""
@@ -634,7 +636,7 @@ def checked(path: Path, run, spec: dict, final: str):
     if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
     run.checked = True
-    if not why and specs.asks(final):   # a question for the owner: it waits, answerable in the work log (`oneshot_tell`)
+    if not why and stage in owner().OPEN and specs.asks(final):   # the owner answers it in the work log (`oneshot_tell`)
         oneshot_spec.store(repo).stop("asked", "구현 에이전트가 묻는다 — 작업 로그에서 답하면 설계에 반영하고 이어 간다")
         return None
     check, stop, _, after = STAGES[stage]

@@ -187,6 +187,16 @@ def start(store: oneshot.Store) -> None:
             store.stop("restart" if runtime.stopping.is_set() else "block", str(exc.detail))
 
 
+def answered(store: oneshot.Store) -> None:
+    """A turn that stopped on its question (`asked`) let go: an answer the owner gave while it was still closing,
+    which found the run busy and only queued, goes in now. Any other stop waits for `[지금 반영]`."""
+
+    with oneshot._lock:
+        spec = oneshot_spec.spec_of(store.key.removeprefix("spec:"))
+        if (spec["oneshot"].get("stopped") or {}).get("reason") == "asked" and due(spec["oneshot"]) and not parked(spec):
+            start(store)
+
+
 def handoff(store: oneshot.Store) -> bool:
     """A stage that held the worktree passes the run to the rewrite once it let the tree go: true when the rewrite
     took it, so the instruction queued for the worktree waits for the rewrite's own turn (`oneshot_review.holding`)."""
