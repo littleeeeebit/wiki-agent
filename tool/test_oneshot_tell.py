@@ -205,6 +205,13 @@ def test_a_rewrite_claims_its_tree_from_its_start_to_its_follow_up_and_gives_it_
     with patch.object(oneshot_tell, "rewritten", lambda repo: None):
         oneshot_tell.retell("budget")   # the next rewrite takes over that claim and its hold
     assert tree not in work._busy and not oneshot_tell._claimed
+    unreadable = MagicMock(get=MagicMock(side_effect=OSError("disk")))
+    for store_of in (MagicMock(side_effect=OSError("disk")), MagicMock(return_value=unreadable)):
+        held = oneshot_tell.hold(work._busy, oneshot_tell.work_lock, tree, "", kind="turn")
+        with patch.object(oneshot_spec, "store", store_of), patch.object(oneshot_build, "resolve_tools", lambda *a: True), \
+             pytest.raises(OSError):   # the run folder, or the run under the lock, cannot be read
+            oneshot_build.send("budget", "build", "BUILD", held=held)
+        assert tree not in work._busy   # the hold handed on goes with it
 
 
 def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name

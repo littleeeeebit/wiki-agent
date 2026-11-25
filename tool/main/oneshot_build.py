@@ -209,8 +209,9 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
     a turn that cannot be sent stops the stage, and the instruction the person queued for the worktree goes then.
     `held`: the hold a rewrite hands on, so no turn comes between; let go on any way out that sends no turn."""
 
-    store, let_go = oneshot_spec.store(repo), held or (lambda: None)
+    let_go = held or (lambda: None)
     try:
+        store = oneshot_spec.store(repo)
         if stopped_for_kind(repo) or (not held and oneshot.diverted(store, stage)) or not resolve_tools(repo, stage):
             return let_go()
         spec = oneshot_spec.spec_of(repo)
@@ -224,7 +225,12 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
         store.stop("block", str(exc.detail))
         return
     with oneshot._lock:   # held now, a tell only queues (`oneshot_tell`): words said by now, or a rewrite, go first
-        if (o := store.get()).get("working") == "retell" or owner().due(o):
+        try:
+            o = store.get()
+        except BaseException:   # an unreadable run: the hold goes with it, never left without a turn
+            held()
+            raise
+        if o.get("working") == "retell" or owner().due(o):
             owner().start(store, held)   # the hold goes on to the rewrite, or back when one already runs
             return
 
