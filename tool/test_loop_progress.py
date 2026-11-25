@@ -353,28 +353,40 @@ def test_an_answered_escalation_ends_the_step_unless_the_turn_was_stopped(tmp_pa
             patch.object(specs, "load", lambda *a: dict(store)), patch.object(loop, "stop") as stop:
         with pytest.raises(loop.Revised):
             loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1")
+        # An answer owed from before is not this turn's: a cleanup turn sent ahead of it finishes.
+        assert loop.turn(loop.Loop("proj", "t1"), {}, where, "cleanup") == "escalated" and not stop.called
         halted.append(True)
+        store["handoff_owed"] = None
         assert loop.turn(loop.Loop("proj", "t1"), {}, where, "fix R1") is None
-    assert stop.call_args[0][2:4] == ("t1", loop.Why.PERSON) and store["handoff_owed"]
+        # A Stop on the turn that delivers the answer stops the loop too.
+        sending = loop.Loop("proj", "t1")
+        sending.handing = {"rev": 2, "turns": []}
+        assert loop.turn(sending, {}, where, "the answer") is None
+    assert [c[0][2:4] for c in stop.call_args_list] == [("t1", loop.Why.PERSON)] * 2 and store["handoff_owed"]
     with patch.object(loop, "stepped", side_effect=loop.Revised):
         assert loop.step(loop.Loop("proj", "t1")) is True
 
 
-def test_the_authors_answer_stays_owed_until_a_new_report(tmp_path):
-    store = {"rev": 2, "report": {"items": []}, "report_at": {"turn": "old"}}
+def test_the_authors_answer_stays_owed_until_its_turn_passes_this_revision(tmp_path):
+    owed = {"kind": "spec-update", "rev": 2, "report_at": {"rev": 1, "turn": "old"}}
+    store = {"rev": 2, "done": ["x"], "report": [{"item": "x", "pass": True}], "report_at": owed["report_at"]}
     sent = []
 
     def told(spot, spec, path, text):
         sent.append(text)
-        if len(sent) == 2:   # the second ask is answered with a report of its own turn
-            store["report_at"] = {"turn": "new"}
+        spot.handing["turns"].append(f"t{len(sent)}")
+        # The first turn's report fails its item; the second passes it. A report of another turn never counts.
+        store["report"] = [{"item": "x", "pass": len(sent) == 2}]
+        store["report_at"] = {"rev": 2, "turn": f"t{len(sent)}"}
         return "answer"
 
-    spot, owed = loop.Loop("proj", "t1"), {"kind": "spec-update", "rev": 2}
+    spot = loop.Loop("proj", "t1")
     with patch.object(loop, "told", told), patch.object(specs, "load", lambda *a: dict(store)), \
             patch("main.handoff.turn_for", return_value="Revision 2 replaces the spec."), \
             patch.object(loop, "change", return_value={}) as change:
         assert loop.handed(spot, dict(store), tmp_path, owed) is True
-    assert sent[0].startswith("Revision 2 replaces the spec.") and "revision 2" in sent[0]
-    assert sent[1] == specs.REPORT_AGAIN.format(rev=2) and change.call_args.kwargs == {"handoff_owed": None}
-    assert spot.handing is None
+        assert sent[0].startswith("Revision 2 replaces the spec.") and "revision 2" in sent[0]
+        assert sent[1] == specs.REPORT_AGAIN.format(rev=2) and change.call_args.kwargs == {"handoff_owed": None}
+        # The person finished the revision in their own turn while the loop stood: nothing is sent again.
+        assert loop.handed(spot, {**store, "report_at": {"rev": 2, "turn": "person"}}, tmp_path, owed) is True
+    assert len(sent) == 2 and spot.handing is None

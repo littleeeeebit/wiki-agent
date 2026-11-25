@@ -995,12 +995,16 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     release = wait_hold(loop, path)
     if release is None:
         return None
-    if loop.handing and (specs.load(loop.repo, loop.sid) or {}).get("rev") != loop.handing["rev"]:
+    now = specs.load(loop.repo, loop.sid) or {}
+    if loop.handing and now.get("rev") != loop.handing["rev"]:
         release()   # revised again while the worktree was free: the text names a revision that no longer stands
         raise Revised()
+    owed = now.get("handoff_owed")   # one this turn's own escalation leaves differs
     try:
         chosen = spec.get("cell") or {}
         run = work.Run(work.session(path, chosen.get("model", ""), chosen.get("effort", ""), chosen.get("fast", False)))
+        if loop.handing:
+            loop.handing["turns"].append(run.turn)   # the reports `handed` accepts are these turns'
         if getattr(run.chat, "hide", None):   # its push is refused (`secrets_held`); the server pushes
             text += "\n\nThis session carries the owner's secrets: commit only, never push. The server pushes the branch after its secret check."
         # Seen by `stop` before its thread starts. `stop` sets the halt, then
@@ -1043,10 +1047,11 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         raise RuntimeError(failure["text"] or "완료된 답이 없다")
     if not end or end["kind"] != "done" or not end["text"].strip():
         raise RuntimeError("완료된 답이 없다")
-    if (owed := (specs.load(loop.repo, loop.sid) or {}).get("handoff_owed")) and owed != (loop.handing or {}).get("owed"):
-        if run.halt.is_set():   # the work pane stopped this turn: the author's answer waits for a resume
-            stop(loop, loop.repo, loop.sid, Why.PERSON, "사람이 멈춤 — 상위 모델의 답을 아직 보내지 않았다")
-            return None
+    escalated = (specs.load(loop.repo, loop.sid) or {}).get("handoff_owed") not in (None, owed)
+    if (escalated or loop.handing) and run.halt.is_set():   # the work pane stopped it: nothing goes on from here
+        stop(loop, loop.repo, loop.sid, Why.PERSON, "사람이 멈춤 — 상위 모델의 답을 반영한 턴을 멈췄다")
+        return None
+    if escalated:
         raise Revised()   # this turn escalated and the author answered: a new step sends it (`handed`)
     return end["text"]
 
@@ -1422,18 +1427,25 @@ class Revised(Exception):
 
 def handed(loop: Loop, spec: dict, path: Path, owed: dict) -> bool:
     """The author's answer to an escalation (`handoff.applied`) as this step's repair, built from the spec as it
-    stands. It stays owed until a done-report of this turn's is saved: asked once more, then the loop stops."""
+    stands. It stays owed until a passing done-report covering this revision is saved since the answer: by a
+    turn it sends (asked once more, then the loop stops), or by the person's own turn while the loop stood."""
 
     from . import handoff
-    before = spec.get("report_at")
-    loop.handing = {"owed": owed, "rev": spec["rev"]}
+
+    def complete(s: dict, turns: list | None = None) -> bool:
+        at = s.get("report_at") or {}
+        return bool(s.get("report")) and at != owed.get("report_at") and at.get("rev") == s.get("rev") \
+            and (turns is None or at.get("turn") in turns) and not specs.shortfall(s["report"], s)
+
+    if complete(spec):
+        return change(loop, handoff_owed=None) is not None
+    loop.handing = {"rev": spec["rev"], "turns": []}
     try:
         for text in (f"{handoff.turn_for(path, spec, owed)}\n\nEnd with the `done-report` block for revision "
                      f"{spec['rev']} once every completion condition holds.", specs.REPORT_AGAIN.format(rev=spec["rev"])):
             if told(loop, spec, path, text) is None:
                 return False
-            fresh = specs.load(loop.repo, loop.sid) or {}
-            if fresh.get("report") and fresh.get("report_at") != before:
+            if complete(specs.load(loop.repo, loop.sid) or {}, loop.handing["turns"]):
                 return change(loop, handoff_owed=None) is not None
     finally:
         loop.handing = None

@@ -301,8 +301,8 @@ def spent(past: list[dict], rev: int | None = None) -> int:
     reach-gemini-from-phone, revision 2)."""
 
     n = 0
-    for e in reversed(past):
-        if rev is not None and e.get("rev") != rev or (e.get("answer") or {}).get("kind") not in ANSWERS:
+    for e in reversed(past):   # a `split` waits for the person, so it ends a run like the person's own answer
+        if rev is not None and e.get("rev") != rev or (e.get("answer") or {}).get("kind") not in ("guidance", "spec-update"):
             break
         n += 1
     return n
@@ -376,6 +376,13 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
     # (`specs.revise`). The loop, the one sender of its turns, ends the step and sends the next turn as a new
     # step's repair (`loop.handed`). Held for the person, the spec could not move while the loop ran.
     looping = bool(loop.LOOPING.fullmatch(spec["state"]))
+    if looping and spec.get("prerequisite_review"):
+        # Its acceptance turn reports to the prerequisite controller (`prerequisite_review.advance`), which a
+        # restarted step would leave: that review's answer stays the person's.
+        said = value["text"] if name == "guidance" and isinstance(value, dict) and isinstance(value.get("text"), str) \
+            else json.dumps(value, ensure_ascii=False, indent=1)
+        return person(spec, run, history, f"상위 모델이 `{name}` 로 답했다 — 선행 리뷰 중이라 반영하지 않고 리뷰 루프를 "
+                                          f"멈췄다. 답을 보고 에이전트 칸에서 이어 가라:\n{said[:6000]}")
     try:
         if name == "guidance":
             if not isinstance(value, dict) or not isinstance(value.get("text"), str) or not value["text"].strip():
@@ -415,8 +422,8 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         return person(spec, run, [*history[:-1], {**entry, "answer": {"kind": "refused", "error": str(exc)}}],
                       f"상위 모델의 답을 적용하지 못했다 — {exc}")
     specs.note(run, f"상위 모델이 `{name}` 로 답했다 — 구현을 이어 간다")
-    if looping:   # a second sender would race the loop for the worktree
-        specs.update(spec["repo"], spec["id"], handoff_owed=owed)
+    if looping:   # a second sender would race the loop for the worktree; a later report is measured from here
+        specs.update(spec["repo"], spec["id"], handoff_owed={**owed, "report_at": spec.get("report_at")})
         return lambda: None
     told = turn_for(path, spec, owed)
     if oneshot:   # a Stop pressed while this turn is recorded leaves the stage resumable instead
