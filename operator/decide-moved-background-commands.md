@@ -39,7 +39,8 @@ added, from a scan kept under the temporary folder, so a command moved long
 ago stays on the list. A rewritten transcript is read again from its start.
 Parallel decisions and notices settle by task: a failed call undoes nothing
 another call decided. A command counts only while its output file is seen
-held open, which Windows shows. A command whose process has ended holds
+held open for writing, which Windows shows; a reader looking at it does not
+count. A command whose process has ended holds
 nothing, as when a resumed session's earlier process ended without a notice.
 Elsewhere nothing shows a held file, so nothing is held.
 

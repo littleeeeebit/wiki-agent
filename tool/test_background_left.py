@@ -178,6 +178,36 @@ def test_a_transcript_rewritten_to_the_same_size_is_read_again_from_its_start(tm
     assert left(path) == ["new1"]
 
 
+def test_a_rewrite_before_the_last_read_window_is_seen_too(tmp_path):
+    suffix = {"type": "user", "message": {"content": "x" * 5000}}
+    path = transcript(tmp_path, moved("old1"), suffix)
+    assert left(path) == ["old1"]
+    size = path.stat().st_size
+    transcript(tmp_path, moved("new1"), suffix)
+    assert path.stat().st_size == size
+    assert left(path) == ["new1"]
+
+
+def test_a_transcript_replaced_by_another_file_is_read_again(tmp_path):
+    path = transcript(tmp_path, moved("old1"))
+    assert left(path) == ["old1"]
+    other = tmp_path / "other.jsonl"
+    other.write_text(path.read_text(encoding="utf-8").replace("old1", "new1"), encoding="utf-8")
+    os.replace(other, path)
+    assert left(path) == ["new1"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="share modes tell a held output file only on Windows")
+def test_a_reader_of_an_ended_tasks_output_does_not_hold_the_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(background_left, "running", SHOWN_RUNNING)
+    output = tmp_path / "task1.output"
+    output.write_text("finished", encoding="utf-8")
+    path = transcript(tmp_path, moved("task1", output=str(output)))
+    assert not denied(path)
+    with output.open("r", encoding="utf-8"):
+        assert not denied(path)
+
+
 def test_where_a_held_output_file_cannot_be_seen_nothing_is_held(tmp_path, monkeypatch):
     monkeypatch.setattr(background_left, "running", SHOWN_RUNNING)
     monkeypatch.setattr(background_left, "LIVENESS", False)

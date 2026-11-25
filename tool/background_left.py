@@ -43,8 +43,12 @@ REASON = """명령 {ids} 이(가) 시간 제한을 넘어 백그라운드로 넘
 
 @dataclass
 class Scan:
-    """What a transcript's first `offset` bytes say (`mark`: a hash of the bytes just before `offset`, so a
-    rewritten transcript is read again from its start). `tasks`: each moved task not yet over, by id, with its
+    """What a transcript's first `offset` bytes say. `mark` is the file's identity and hashes of its first 4 KB
+    and of the 4 KB just before `offset`, so a transcript replaced or rewritten is read again from its start.
+    ponytail: a rewrite in place to the same size that keeps both windows goes unseen, since proving the whole
+    prefix means reading it on every call. Claude only appends, and the worst such a rewrite does is miss a
+    hold, never add a false one, since a stale task's output file has no writer. `tasks`: each moved task not
+    yet over, by id, with its
     output file ("" when unnamed), whether a deciding call on it succeeded, and how many deciding calls on it
     still wait for their result. `deciding`: those calls, by tool use id, with the tasks each one names."""
 
@@ -109,10 +113,15 @@ def _text(content) -> str:
 
 
 def _mark(fh, offset: int) -> str:
-    """A hash of the 4 KB before `offset`: what the scan read last, to tell the same history from a new one."""
+    """The open transcript's identity, and hashes of its first 4 KB and of the 4 KB before `offset`: to tell
+    the history a scan read from another written at the same path."""
 
+    stat = os.fstat(fh.fileno())
+    fh.seek(0)
+    head = hashlib.sha256(fh.read(min(4096, offset))).hexdigest()
     fh.seek(max(0, offset - 4096))
-    return hashlib.sha256(fh.read(offset - max(0, offset - 4096))).hexdigest()
+    tail = hashlib.sha256(fh.read(offset - max(0, offset - 4096))).hexdigest()
+    return f"{stat.st_dev}:{stat.st_ino}:{head}:{tail}"
 
 
 def _saved(transcript: Path) -> Path:
@@ -148,7 +157,8 @@ def scanned(transcript: Path) -> Scan:
 
 
 def running(output: str) -> bool:
-    """Whether a task's output file is shown held open by the command writing it. Only Windows share modes show
+    """Whether a task's output file is shown held open for writing by the command writing it; a reader that
+    opened it to look does not count. Only Windows share modes show
     that: elsewhere, or for an unnamed file, nothing is shown, and nothing is held, since a hold for a task whose
     process may have ended (a resumed session's) would stop the session on a guess."""
 
@@ -163,9 +173,10 @@ def running(output: str) -> bool:
     k32.CreateFileW.restype = wintypes.HANDLE
     k32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
                                 wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
-    handle = k32.CreateFileW(output, 0x80000000, 0, None, 3, 0x80, None)   # read, no sharing, open existing
+    # Read access, sharing read only: an open that has write access conflicts, a reader does not.
+    handle = k32.CreateFileW(output, 0x80000000, 0x1, None, 3, 0x80, None)
     if handle == wintypes.HANDLE(-1).value:
-        return ctypes.get_last_error() == 32   # ERROR_SHARING_VIOLATION: someone holds it
+        return ctypes.get_last_error() == 32   # ERROR_SHARING_VIOLATION: a writer holds it
     k32.CloseHandle(handle)
     return False
 
