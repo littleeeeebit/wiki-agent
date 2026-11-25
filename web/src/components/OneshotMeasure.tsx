@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Btn } from '@/components/Modal'
 import { Track } from '@/components/OneshotTrack'
 import { api, type Conflict, type Keep, type MeasureInput, type MeasureRun, type Metric, type SpecView, type Step } from '@/lib/oneshot'
@@ -92,22 +92,66 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
   )
 }
 
-/** The running measurement, shown with the track: the owner's `during` steps stay in view, with a stop. */
+/** The running measurement, shown with the track: which one, since when and for how long, what it measures and
+ *  what follows, so a measurement with no window still reads as running. The owner's `during` steps stay in view. */
 function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; busy: boolean; act: Act }) {
-  const during = view.measure?.plan?.during ?? []
-  const owner = view.measure?.next === 'owner'   // the server's own measurement asks nothing of the owner
+  const m = view.measure
+  const plan = m?.plan
+  const during = plan?.during ?? []
+  const run = m?.running
+  const owner = (run?.mode ?? m?.next) === 'owner'   // the server's own measurement asks nothing of the owner
+  const now = useNow(run ? 1000 : 0)
+  if (view.working !== 'measure') return <section aria-label="실측 중" className={BOX}><p>PR #1 초안을 올리는 중이다.</p></section>
+  const minutes = plan?.measure.minutes ?? 0
+  const gone = run ? Math.max(0, Math.floor(now / 1000 - run.ts)) : 0
+  const late = !!run && minutes > 0 && gone > minutes * 60
+  const measured = (plan?.metrics ?? []).filter((x) => owner || !x.person)
   return (
     <section aria-label="실측 중" className={BOX}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p>{view.working === 'publish' ? 'PR #1 초안을 올리는 중이다.'
-          : !owner ? '서버가 혼자 실측하는 중이다. 할 일은 없다.'
-            : view.measure?.plan?.app ? '주인 실측 중이다. 화면에 뜬 프로그램을 보고 소리를 듣는다.' : '주인 실측 중이다. 아래 단계를 한다.'}</p>
-        {view.working === 'measure' && <Btn disabled={busy} onClick={() => void act(() => api.measureStop(repo))}>멈춤</Btn>}
+        <h2 className="text-[15px] font-semibold">
+          {run ? `${run.n}회차 ${owner ? '주인' : '자동'} 실측 중` : '실측을 준비하는 중'}</h2>
+        <Btn disabled={busy} onClick={() => void act(() => api.measureStop(repo))}>멈춤</Btn>
       </div>
-      {view.working === 'measure' && owner && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
+      {run ? (
+        <p className="tabular-nums">
+          {clock(run.ts)}에 시작 · {span(gone)} 지났다{minutes > 0 && <> · 보통 약 {minutes}분 걸린다</>}
+          {late && <span className="text-wait"> — 예상보다 오래 걸린다. {minutes + 5}분이 지나면 서버가 끊고 실패로 센다.</span>}
+        </p>
+      ) : <p>PR #1 초안을 맞추고 프로그램을 띄우는 중이다. 곧 시작한다.</p>}
+      <p>{!owner ? (plan?.app
+        ? 'PC 프로그램은 보이지 않는 별도 바탕화면에서 돌고, 소리도 꺼져 있다. 창이 뜨지 않는 것이 정상이다. 할 일은 없다.'
+        : '서버가 백엔드를 띄워 혼자 잰다. 할 일은 없다.')
+        : plan?.app ? '화면에 뜬 프로그램을 보고 소리를 듣는다.' : '아래 단계를 한다.'}</p>
+      {owner && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
+      {measured.length > 0 && (
+        <details>
+          <summary className="cursor-pointer">재는 항목 {measured.length}개</summary>
+          <ul className="mt-2 flex flex-col gap-1 text-muted-foreground">
+            {measured.map((x) => <li key={x.id}><span className="font-mono">{x.id}</span> {x.what}</li>)}
+          </ul>
+        </details>
+      )}
+      <p className="text-muted-foreground">{owner
+        ? '끝나면 결과와 클립이 이 화면에 뜬다. 보고 들은 뒤 승인하거나 거절한다.'
+        : '끝나면: 모두 통과하면 주인 실측을 부른다. 통과하지 못한 항목이 있으면 빌드 에이전트가 그 항목만 고치고, 서버가 다시 잰다. 누를 것은 없다.'}</p>
     </section>
   )
 }
+
+/** The current time, ticking every `ms` (0: never), for a running clock. */
+function useNow(ms: number) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!ms) return
+    const t = setInterval(() => setNow(Date.now()), ms)
+    return () => clearInterval(t)
+  }, [ms])
+  return now
+}
+
+const clock = (ts: number) => new Date(ts * 1000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+const span = (s: number) => s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`
 
 function Steps({ steps }: { steps: Step[] }) {
   return (

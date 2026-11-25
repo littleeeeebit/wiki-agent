@@ -66,6 +66,11 @@ def test_the_server_measures_first_and_calls_the_owner_once_every_machine_metric
     assert run["mode"] == "auto" and run["status"] == "passed" and not o().get("measure_fails")
     assert by["total_ok"]["ok"] and not by["signed_in"]["ok"]   # the person metric is not judged without a person
     assert o()["stage"] == "measure" and measure.shown(spec())["measure"]["next"] == "owner"
+    assert measure.RUNNING["budget"]["n"] == run["n"] and measure.shown(spec())["measure"]["running"] is None   # saved
+    oneshot_spec.saved("budget", oneshot={"working": "measure"})   # as while the next one runs
+    measure.RUNNING["budget"] = {"n": run["n"] + 1, "head": run["head"], "ts": 7.0, "mode": "owner", "folder": "x"}
+    assert measure.shown(spec())["measure"]["running"] == {"n": run["n"] + 1, "mode": "owner", "ts": 7.0}
+    oneshot_spec.saved("budget", oneshot={"working": None})
     started_once()   # the owner's one measurement, on their screen
     run = o()["measures"][-1]
     assert run["mode"] == "owner" and run["status"] == "owner" and all(m["ok"] for m in run["metrics"])
