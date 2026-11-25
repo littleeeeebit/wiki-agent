@@ -444,23 +444,32 @@ class Look:
 
 
 def visible(pids: set[int]) -> int:
-    """How many windows of `pids` the owner's screen shows now: visible, and at least 100×50 pixels, so a hidden or
-    collapsed helper window is never taken for one the owner sees."""
+    """How many windows of `pids` the owner's screen shows now: visible, not minimized, not cloaked, at least
+    100×50 pixels and on a display, so a hidden, collapsed or off-screen window is never taken for one the owner
+    sees."""
 
     if not pids:
         return 0
-    u = ctypes.windll.user32
+    u, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
     callback = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
     u.EnumWindows.argtypes = (callback, w.LPARAM)
     u.GetWindowThreadProcessId.argtypes = (w.HWND, ctypes.POINTER(w.DWORD))
-    u.IsWindowVisible.argtypes, u.GetWindowRect.argtypes = (w.HWND,), (w.HWND, ctypes.POINTER(w.RECT))
+    u.IsWindowVisible.argtypes = u.IsIconic.argtypes = (w.HWND,)
+    u.GetWindowRect.argtypes = (w.HWND, ctypes.POINTER(w.RECT))
+    u.MonitorFromRect.argtypes, u.MonitorFromRect.restype = (ctypes.POINTER(w.RECT), w.DWORD), w.HANDLE
+    dwm.DwmGetWindowAttribute.argtypes = (w.HWND, w.DWORD, w.LPVOID, w.DWORD)
     found = []
 
     @callback
     def seen(hwnd, _):
-        owner, rect = w.DWORD(), w.RECT()
+        owner, rect, cloaked = w.DWORD(), w.RECT(), w.DWORD()
         u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        if owner.value in pids and u.IsWindowVisible(hwnd) and u.GetWindowRect(hwnd, ctypes.byref(rect))                 and rect.right - rect.left >= 100 and rect.bottom - rect.top >= 50:
+        if owner.value not in pids or not u.IsWindowVisible(hwnd) or u.IsIconic(hwnd) \
+                or not u.GetWindowRect(hwnd, ctypes.byref(rect)) \
+                or rect.right - rect.left < 100 or rect.bottom - rect.top < 50:
+            return True
+        dwm.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked))   # DWMWA_CLOAKED
+        if not cloaked.value and u.MonitorFromRect(ctypes.byref(rect), 0):   # 0: MONITOR_DEFAULTTONULL
             found.append(hwnd)
         return True
 

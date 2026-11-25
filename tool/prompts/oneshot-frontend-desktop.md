@@ -38,8 +38,9 @@ real labels, no real data, no network. They are drawn by the stack's own
 preview tool on this PC: for a web view stack such as Tauri or Electron, its
 pages rendered by a screenshot of a headed browser window, never a headless
 one; for WinUI or WPF, a snapshot of each screen shown in a window of its
-own. A preview that shows no window while it runs is refused, whatever it
-drew.
+own. Each screen is shown in a window on the owner's display, for at least
+a second, while it is shot; a preview that shows no window there is refused,
+whatever it drew.
 
 - `files` holds every file the preview needs that HEAD does not already have:
   the mock sources, the screenshot script or test, and any build file it

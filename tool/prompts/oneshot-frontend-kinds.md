@@ -70,8 +70,10 @@ never repeated.
 - The PC preview is the stack's own: for a web view stack such as Tauri or
   Electron, its pages rendered by a screenshot of a headed browser window,
   never a headless one; for WinUI or
-  WPF, a snapshot of each screen shown in a window of its own. A preview
-  that shows no window while it runs is refused, whatever it drew. A feature's control has the
+  WPF, a snapshot of each screen shown in a window of its own. Each screen
+  is shown in a window on the owner's display, for at least a second, while
+  it is shot; a preview that shows no window there is refused, whatever it
+  drew. A feature's control has the
   `AutomationId` `feature:<id>` (a web view element's `id`, or XAML's
   `AutomationProperties.AutomationId`). Each command starts one of the host
   programs listed, or a file inside the repository; any other program is

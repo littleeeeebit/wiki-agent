@@ -196,9 +196,15 @@ measurement, the screen looks and the owner's round all run on the owner's
 desktop. The driver keeps a window's shot only while that window is still the
 app's after it is drawn, since another program's window can reuse a handle
 there. The browser looks run a headed browser, and the emulator opens its
-window. A PC screen preview must show a window while it runs
-(`desktop_session.Look.shown`): pictures drawn with none, by a headless browser
-or an offscreen render, are sent back to the designer. The cost, accepted: windows open on the owner's screen while the
+window. A PC screen preview shows each screen in a window on the owner's
+display for at least a second while it is shot. The server samples the job's
+windows every 0.2 s (`desktop_session.Look.shown`); one visible, not
+minimized, not cloaked and on a display counts. Pictures drawn with none, by
+a headless browser, an offscreen render or a window placed off every display,
+are sent back to the designer. Accepted limit: no picture is matched to the
+window it was shot from. The guard catches a preview that forgot its window,
+not one that opens a blank window on purpose; the owner sees the pictures at
+R2. The cost, accepted: windows open on the owner's screen while the
 server works, and its test runs open them too.
 
 A program that leaves the owner's screen empty, opens no window of its own,

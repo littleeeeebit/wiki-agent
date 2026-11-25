@@ -105,25 +105,36 @@ def settle() -> list[str]:
                 continue
             for file, settings, changes in plan:
                 if changes and apply.user_wired("claude" if file.parent.name == ".claude" else "codex") \
-                        and own(path, file) and replaced(path, file, connect.settled(settings)):
+                        and own(path, file) and replaced(path, file, settings):
                     done += [f"{file}: {change}" for change in changes]
         except Exception:   # noqa: BLE001 — one checkout never stops the others or the watch; the screen names it
             continue
     return done
 
 
-def replaced(repo: Path, file: Path, text: str) -> bool:
-    """`text` staged beside `file` and swapped in whole, only if the file is still the checkout's own and untracked
-    (`own`) once the staging is written, and the server is not going down: a change since the plan writes nothing."""
+def replaced(repo: Path, file: Path, settings: dict) -> bool:
+    """`settings` staged in the folder `own` checked and swapped in whole, only if, once the staging is written,
+    that folder is still the same one, the file still the checkout's own and untracked, the checkout's settings
+    still plan exactly this (an edit the person made since, `disableAllHooks` in either file included, writes
+    nothing), and the server is not going down.
+
+    Accepted limit: a folder moved, or an index staged, in the instant between this last check and the swap is not
+    seen. The watch guards against mistakes, not a race made on purpose; the screen names what it wrote."""
 
     file.parent.mkdir(exist_ok=True)
-    fd, partial = tempfile.mkstemp(dir=file.parent, prefix=file.name + ".", suffix=".part")
+    where = file.parent.resolve()
+    before = os.stat(where)
+    fd, partial = tempfile.mkstemp(dir=where, prefix=file.name + ".", suffix=".part")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
-            out.write(text)
-        if runtime.stopping.is_set() or not own(repo, file) or Path(partial).resolve().parent != file.resolve().parent:
+            out.write(connect.settled(settings))
+        if runtime.stopping.is_set() or file.parent.resolve() != where or not os.path.samestat(before, os.stat(where)) \
+                or not own(repo, file):
             return False
-        os.replace(partial, file)
+        again = connect.pending(repo)   # read last: what the person changed up to now is seen
+        if switched_off(again) or [s for f, s, _c in again if f == file] != [settings]:
+            return False
+        os.replace(partial, where / file.name)
         return True
     finally:
         Path(partial).unlink(missing_ok=True)

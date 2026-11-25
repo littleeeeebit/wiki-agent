@@ -139,6 +139,22 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
             with patch.object(wiring, "own", flips):
                 assert wiring.settle() == [] and (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
             assert not list((loose / ".claude").glob("*.part")), "the staging never stays behind"
+            for edited, text in (("settings.json", '{"disableAllHooks": true}'), ("settings.json", '{"x": 1}'),
+                                 ("settings.local.json", '{"disableAllHooks": true}')):
+                (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+                (loose / ".claude/settings.local.json").unlink(missing_ok=True)
+                checked.clear()
+
+                def editing(at: Path, file: Path, edited=edited, text=text) -> bool:   # the person edits mid-write
+                    checked[file] = checked.get(file, 0) + 1
+                    if checked[file] == 2:
+                        (file.parent / edited).write_text(text, encoding="utf-8")
+                    return mine(at, file)
+
+                with patch.object(wiring, "own", editing):
+                    assert wiring.settle() == [], f"an edit to {edited} after the plan read it writes nothing"
+                assert (loose / ".claude" / edited).read_text(encoding="utf-8") == text
+            (loose / ".claude/settings.local.json").unlink()
             with patch.object(wiring.subprocess, "run", unreadable):
                 (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
                 assert wiring.settle() == [], "git 이 색인을 읽지 못하면 추적 여부를 모르니 쓰지 않는다"
