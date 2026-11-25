@@ -12,10 +12,11 @@ of every connected repository, all confirmed by one digest of the whole plan.
 It is refused while the hub is off main, since it would write that branch's
 wiring onto the machine, and where a repository has its hooks switched off.
 
-The part of it that touches only a checkout's own untracked settings needs no
-click: `settle` writes it whenever `watch` starts or sees a change, the pages'
-deny rules included, so a drift the lint reports is never left for the
-person to find. The user-level move stays the person's to confirm.
+The part of it that touches only a checkout's own untracked Claude settings
+needs no click: `settle` writes it whenever `watch` starts or sees a change,
+the pages' deny rules included, so a drift the lint reports is never left for
+the person to find. The user-level move and every Codex change stay the
+person's to confirm.
 
 What reaches the screen is read by a person and stays Korean.
 """
@@ -88,10 +89,11 @@ def watch(halt: threading.Event, every: float = EVERY) -> None:
 
 
 def settle() -> list[str]:
-    """What `[모두 다시 연결]` writes into each connected checkout's own settings, written with no click, by host:
-    the old per-project hooks out and the pages' deny rules in (`connect.rewired`), so `apply.wiring_drift` finds
-    nothing. Only for a host wired at the user level, only a file git does not track, and never while the hub is off
-    main or where hooks are switched off: those stay on the screen for the person. What was written, as lines."""
+    """What `[모두 다시 연결]` writes into each connected checkout's own Claude settings, written with no click: the
+    old per-project hooks out and the pages' deny rules in (`connect.rewired`), so `apply.wiring_drift` finds
+    nothing. Only while Claude is wired at the user level, only a file git does not track, and never while the hub
+    is off main or where hooks are switched off, at the user level or the checkout's: those stay on the screen for
+    the person, and so does every Codex change (`claude_off`). What was written, as lines."""
 
     if refused():
         return []
@@ -106,13 +108,21 @@ def settle() -> list[str]:
             plan = connect.pending(path)
             if switched_off(plan):
                 continue
-            for file, settings, changes in plan:
-                if changes and apply.user_wired("claude" if file.parent.name == ".claude" else "codex") \
+            for file, settings, changes in plan:   # Claude's only (`claude_off`); Codex's wait for `[모두 다시 연결]`
+                if changes and file.parent.name == ".claude" and apply.user_wired("claude") and not claude_off() \
                         and own(path, file) and replaced(path, file, settings, sources[file]):
                     done += [f"{file}: {change}" for change in changes]
         except Exception:   # noqa: BLE001 — one checkout never stops the others or the watch; the screen names it
             continue
     return done
+
+
+def claude_off() -> bool:
+    """Claude hooks switched off at the user level (`disableAllHooks`), which Claude honours from any layer: the
+    watch then writes no Claude settings, as `setup_agents.plan_global` refuses. Codex's checkout hooks are never
+    the watch's: only `[모두 다시 연결]` drops them, once Codex confirmed it trusts their user-level replacements."""
+
+    return any(apply.read_json(file).get("disableAllHooks") for file in apply.user_files("claude"))
 
 
 def raw(file: Path) -> bytes | None:
@@ -152,7 +162,7 @@ def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bo
         plan = connect.pending(repo)   # the slow read first: what the person does meanwhile, the checks below see
         if runtime.stopping.is_set() or refused() or file.parent.resolve() != where \
                 or not os.path.samestat(before, os.stat(where)) \
-                or not own(repo, file) or switched_off(plan) or raw(file) != source:   # the bytes last
+                or not own(repo, file) or switched_off(plan) or claude_off() or raw(file) != source:   # bytes last
             return False
         os.replace(partial, where / file.name)
         return True

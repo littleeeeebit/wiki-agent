@@ -373,10 +373,15 @@ def test_a_tree_that_moves_while_it_is_measured_is_repaired_at_the_measurement_a
 
     from main import oneshot_review
 
+    passed = {"n": 1, "head": o()["built_head"], "mode": "auto", "status": "passed", "results": {}}   # the server's own
+    oneshot_spec.saved("budget", oneshot={"measures": [passed]})
+    assert measure.next_mode(o()) == "owner"
     with patch.object(oneshot_review, "moved", moved), \
             patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
         measure.measure("budget", "owner")
     assert o()["stage"] == "measure" and o()["fix"] == "moved" and o()["working"] == "build"   # never back a stage
+    # The pass of the tree that moved stands for nothing: a repair that keeps the HEAD is measured by the machine.
+    assert o()["measures"][-1]["status"] == "stale" and measure.next_mode(o()) == "auto"
     assert sent[-1][1] == "build" and "stray.txt" in sent[-1][2] and "worktree moved" in sent[-1][2]
     oneshot_spec.saved("budget", oneshot={"working": None, "stopped": {"reason": "restart", "detail": "x", "state": "measure"}})
     turns = len(sent)

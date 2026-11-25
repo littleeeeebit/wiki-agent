@@ -134,6 +134,24 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
             assert done == [f"{loose.resolve() / '.claude' / 'settings.json'}: deny 추가: {rule}"]
             assert json.loads((loose / ".claude/settings.json").read_text(encoding="utf-8"))["permissions"]["deny"] == [rule]
             assert wiring.settle() == [], "맞춘 뒤에는 쓸 것이 없다"
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            user = wiring.apply.user_files("claude")[0]   # hooks switched off for every checkout, at the user level
+            user.parent.mkdir(parents=True, exist_ok=True)
+            before = user.read_bytes() if user.exists() else None
+            user.write_text('{"disableAllHooks": true}', encoding="utf-8")
+            try:
+                assert wiring.settle() == [] and (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            finally:
+                user.write_bytes(before) if before is not None else user.unlink()
+            codex, planned = loose / ".codex" / "hooks.json", connect.pending   # Codex's wait for its trust check
+            codex.parent.mkdir()
+            codex.write_text('{"hooks": {}}', encoding="utf-8")
+            with patch.object(wiring.connect, "pending",
+                              lambda at: [*planned(at), *([(codex, {}, ["PreToolUse 프로젝트 훅 제거"])] if at == loose.resolve() else [])]):
+                assert wiring.settle() == [f"{loose.resolve() / '.claude' / 'settings.json'}: deny 추가: {rule}"]
+            assert codex.read_text(encoding="utf-8") == '{"hooks": {}}', "Codex 훅은 [모두 다시 연결]만 뺀다"
+            codex.unlink()
+            codex.parent.rmdir()
             assert (kept / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "git 이 추적하는 파일은 사람의 것"
             assert (cased / ".claude/Settings.json").read_text(encoding="utf-8") == "{}", "다른 대소문자로 추적해도 사람의 것"
             assert (nested / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "하위 체크아웃이 추적하면 사람의 것"

@@ -288,7 +288,12 @@ def measure(repo: str, mode: str | None = None) -> None:
 
 def moved_repair(repo: str, store, why: str, _build: str = "build"):   # `holding`'s `again`: never back a stage
     with oneshot._lock:   # a stop pressed while the tree was checked holds: no build turn starts after it
-        return None if halted(repo, store) else repair(repo, {"moved": why}, "moved")
+        if halted(repo, store):
+            return None
+        # A pass of a tree that moved stands for nothing: the repair, even on the same HEAD, is measured by the
+        # machine first, and the owner's run waits for the owner's press.
+        retire(oneshot_spec.spec_of(repo), f"실측하는 동안 작업트리가 바뀌었다 — {why}")
+        return repair(repo, {"moved": why}, "moved")
 
 
 def halted(repo: str, store, hide: dict[str, str] | None = None) -> bool:

@@ -178,7 +178,10 @@ holds, `moved` for a tree that moved before, during or after a measurement,
 its reason kept in `moved`), and `oneshot_profile.turn_stage` routes that
 turn's end to the build's own check. The check's pass clears `fix` and
 measures the new HEAD. A stop pressed before the moved check, or while it
-runs, holds: no repair turn starts after it. A repair of an input the owner
+runs, holds: no repair turn starts after it. A moved tree sets aside the
+pass waiting for the owner's run (`stale`), so a repair that keeps the HEAD
+is measured by the machine first and the owner's run waits for the owner's
+press. A repair of an input the owner
 kept as it was needs a new commit, as one of a failed metric does.
 `[재개]` after a stopped repair sends the same build
 turn with the same reason, and an escalation from it reaches the spec's author
