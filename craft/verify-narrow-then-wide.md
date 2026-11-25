@@ -4,6 +4,8 @@ severity: landmine
 repeat: rule
 triggers: ["테스트를? (돌|실행)", "pytest", "전체를? 돌리", "다 돌리", "라이브를? (돌|실행)", "회차를? (돌|실행)", "게이트", "검증", "확인해 ?보", "리뷰\\s*루프", "review\\s*loop", "머지\\s*허용"]
 slots: []
+enforce:
+  pretooluse: wide_tests.py
 sources: []
 sources_withheld: true
 links: [diagnose-from-what-ran, pick-up-async-results, do-the-whole-instruction, codex-review-loop, results-stay-off-git]
@@ -53,6 +55,17 @@ one successful retry does not erase the failure or establish its cause.
 
 What goes wrong. The time spent verifying passes the time spent repairing, and
 the backlog stays exactly where it was.
+
+## How it is held
+
+The rule alone did not hold. On 2026-11-22 a round's repair in this
+repository ran fifteen-odd test files, every `test_oneshot*` among them,
+where three answered the change. `tool/wide_tests.py` runs before every
+Claude tool call. In a repository whose final run goes through
+`tool/verify.py final`, it refuses a direct pytest run that names no path, a
+folder or a glob, or more than eight files. The final gate starts its own
+pytest, which no tool call carries, so it always goes through. A product's
+own repository has no such gate, and its build agent's runs are left alone.
 
 ## Before spending the time, ask what the time buys
 

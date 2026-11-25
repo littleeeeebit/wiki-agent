@@ -25,7 +25,7 @@ from pathlib import Path
 import sys
 
 MEMBERS = ("host_boundary.py", "deny.py", "guard.py", "edit_as_diff.py", "memory_words.py",
-           "markdown_emphasis.py", "english_progress.py", "background_left.py")
+           "markdown_emphasis.py", "english_progress.py", "background_left.py", "wide_tests.py")
 
 
 def check(name: str, payload: dict) -> dict | None:

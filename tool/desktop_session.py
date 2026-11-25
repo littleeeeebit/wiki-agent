@@ -563,9 +563,26 @@ def look(root: Path, name: str, owned: bool = True, disposable: bool = False):
             raise Refused(f"{failure}; {message}") from failure
 
 
+def ended_since(record: dict) -> bool:
+    """Every job's own cleanup ran and followed every process the job counted, and the only exits it could not
+    prove then are proven now, by the identity it recorded for each (`exited`). A cleanup that never ran, a count
+    that did not match, or any other reason proves nothing."""
+
+    for entry in record["jobs"].values():
+        proof = entry.get("proof")
+        if not proof or proof.get("total") is None or proof["total"] != proof.get("joined"):
+            return False
+        for reason in proof["reasons"]:
+            pid = reason.removeprefix("no exit proven for pid ")
+            if pid == reason or not any(str(m["pid"]) == pid and exited(m) is True for m in entry["members"]):
+                return False
+    return bool(record["jobs"])
+
+
 def recover(folder: Path) -> list[str]:
-    """Settle an earlier look's record. `[]` once its proof completed, or once a new boot or the end of its
-    logon session proved its processes ended and its disposable folders are gone; otherwise why it is held."""
+    """Settle an earlier look's record. `[]` once its proof completed, or once a new boot, the end of its logon
+    session or the exits its cleanup could not prove in time (`ended_since`) proved its processes ended and its
+    disposable folders are gone; otherwise why it is held."""
 
     folder = Path(folder).absolute()
     if not _plain(folder.parent, folder):   # a link would move every removal to wherever it leads
@@ -585,20 +602,22 @@ def recover(folder: Path) -> list[str]:
         proof = "the logon session it ran in ended"
     else:
         proof = None
+    if not proof:
+        k = _native()[0]
+        for entry in record["jobs"].values():
+            for member in entry["members"]:
+                native_process.terminate(member)
+            if record["session"] == session():   # a `Local\` name means nothing in another session
+                job = k.OpenJobObjectW(0x0008, False, entry["name"])   # JOB_OBJECT_TERMINATE
+                if job:
+                    k.TerminateJobObject(job, 1)
+                    k.CloseHandle(job)
+        proof = "every process its jobs followed has exited since" if ended_since(record) else None
     if proof:
         left = _removed(folder, record["folders"])
         record.update(state="held" if left else "recovered", recovered=None if left else proof, held=left)
         save(folder, record)
         return [f"{folder.name}: {reason}" for reason in left]
-    k = _native()[0]
-    for entry in record["jobs"].values():
-        for member in entry["members"]:
-            native_process.terminate(member)
-        if record["session"] == session():   # a `Local\` name means nothing in another session
-            job = k.OpenJobObjectW(0x0008, False, entry["name"])   # JOB_OBJECT_TERMINATE
-            if job:
-                k.TerminateJobObject(job, 1)
-                k.CloseHandle(job)
     held = ["no proof its processes ended; restart the PC or sign out to release it"]
     record.update(state="held", held=held)
     save(folder, record)

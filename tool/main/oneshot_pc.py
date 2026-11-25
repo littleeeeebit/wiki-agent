@@ -53,7 +53,7 @@ _desk = threading.Lock()
 def _held() -> list[str]:
     """Why an earlier round's look, any repository's and from any run of the server, is not settled: every
     record under each repository's `looks`, through `desktop_session.recover`. That clears one only once its proof
-    completed, or once a new boot or the end of its logon session proved its processes ended. Read under
+    completed, or once a new boot, the end of its logon session or its late exits proved its processes ended. Read under
     `oneshot._lock`, which a stage folder's move between the roots takes, so none moves past the read; a folder
     that cannot be listed is a reason too."""
 
