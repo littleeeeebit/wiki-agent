@@ -143,19 +143,23 @@ def test_a_published_draft_takes_the_owners_words_before_the_old_measurement_pla
     assert o()["working"] == "retell"
 
 
-def test_words_said_while_a_stage_held_the_tree_are_taken_in_once_it_lets_go(world):  # noqa: F811 — the imported fixture, requested by name
-    from main import oneshot_review, work
-    at("measure", working="measure", built_head="b" * 40)
-    store = oneshot_spec.store("budget")
-
-    def body(store, spec, tree):   # the owner's measurement saves its result, then the owner speaks
-        store.put(working=None)
-        say("소리를 줄여")   # the tree is held: queued for the holder
-        assert o()["working"] is None and o()["tell_pending"]
-        return lambda: spec
-    with patch.object(oneshot_review, "moved", lambda *a: ""), patch.object(work, "dispatch") as dispatch:
-        oneshot_review.holding("budget", "실측", body)
-    assert o()["working"] == "retell" and not dispatch.called and store.get()["tell_pending"]
+def test_words_a_parked_run_holds_wait_for_the_owners_apply_and_a_hard_stop_is_never_cleared(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import work
+    at("measure")
+    tree = specs.load("budget", oneshot.BRANCH)["worktree"]
+    with patch.dict(work._busy, {str(tree): object()}):   # the owner's measurement still holds the tree
+        say("소리를 줄여")
+        with pytest.raises(HTTPException):
+            oneshot_tell.apply("budget")
+    assert o()["working"] is None and o()["tell_pending"]   # it let go: the run is parked with the words shown
+    oneshot_tell.apply("budget")   # `[지금 반영]`
+    assert o()["working"] == "retell"
+    at("review", stopped={"reason": "fake", "detail": "고정된 테스트가 가짜다", "state": "review"},
+       tell_pending=[{"text": "소리를 줄여", "stage": "review"}])
+    say("소리를 더 줄여")
+    with pytest.raises(HTTPException) as refused:
+        oneshot_tell.apply("budget")
+    assert "가짜" in refused.value.detail and o()["stopped"]["reason"] == "fake" and o()["working"] is None
 
 
 def test_only_a_parked_run_takes_the_words_in_at_once_and_a_stale_measure_start_never_diverts(world):  # noqa: F811 — the imported fixture, requested by name
@@ -172,17 +176,25 @@ def test_only_a_parked_run_takes_the_words_in_at_once_and_a_stale_measure_start_
     assert o()["working"] == "retell"
 
 
-def test_a_stage_that_stopped_while_it_held_the_tree_still_takes_the_words_in(world):  # noqa: F811 — the imported fixture, requested by name
-    from main import oneshot_review, work
-    at("measure", working="measure", built_head="b" * 40)
+def test_a_send_that_holds_the_tree_takes_words_said_by_then_first_and_a_rewrite_never_shares_the_tree(world):  # noqa: F811 — the imported fixture, requested by name
+    from main import work
+    at("build")
+    started = []
 
-    def body(store, spec, tree):   # the owner speaks, then the old plan cannot be read and the stage stops
-        say("계획을 바꿔")
-        store.stop("measure", "계획을 읽지 못했다")
-        return None
-    with patch.object(oneshot_review, "moved", lambda *a: ""), patch.object(work, "dispatch") as dispatch:
-        oneshot_review.holding("budget", "실측", body)
-    assert o()["working"] == "retell" and not dispatch.called
+    def tools(*a):   # the owner speaks after the send's first check, before it holds the tree: queued only
+        say("소리를 줄여")
+        return True
+    with patch.object(oneshot_build, "resolve_tools", tools), \
+         patch.object(oneshot_spec, "start", lambda repo, name: started.append(name)), \
+         patch.object(work, "session", side_effect=AssertionError("the old prompt went")):
+        oneshot_build.send("budget", "build", "BUILD")
+    tree = specs.load("budget", oneshot.BRANCH)["worktree"]
+    assert started == ["retell"] and str(tree) not in work._busy   # the tree let go before the rewrite starts
+    at("build", working="retell", tell_pending=[{"text": "소리를 줄여", "stage": "build"}])
+    with patch.dict(work._busy, {str(tree): object()}), \
+         patch.object(oneshot, "turned", side_effect=AssertionError("the design turn ran in a held tree")):
+        oneshot_tell.retell("budget")   # another turn has the tree: the words stay, the mark is let go
+    assert o()["working"] is None and o()["tell_pending"]
 
 
 def test_a_build_send_that_finds_a_rewrite_started_before_it_held_the_tree_yields(world):  # noqa: F811 — the imported fixture, requested by name

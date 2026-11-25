@@ -208,6 +208,8 @@ export const api = {
   say: (repo: string, text: string) => post(`${base(repo)}/say`, { text }).then(answer),
   // The owner's words to the build agent mid-build (`oneshot_tell.tell`).
   tell: (repo: string, text: string) => post(`${base(repo)}/tell`, { text }).then(answer),
+  // [지금 반영]: the words a parked run holds, taken in now (`oneshot_tell.apply`).
+  applyTell: (repo: string) => post(`${base(repo)}/tell/apply`, {}).then(answer),
   // A PC app's build part, confirmed exactly as offered (`oneshot_spec.confirm_build`).
   confirmBuild: (repo: string, part: string, choice: string, tools: Tool[]) =>
     post(`${base(repo)}/build`, { part, choice, tools }).then(answer),

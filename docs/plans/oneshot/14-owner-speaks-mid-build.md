@@ -45,12 +45,15 @@ running turn, and to `tell_pending` with its stage.
 - A running measurement is halted with a mark (`told`); wherever the
   measurement notices the halt, it hands the words on to the rewrite once it
   lets go of the worktree, rather than stopping the run.
-- A run parked with nothing running (stopped, or resting at a screen that
-  waits for the owner: the measurement, the conflicts, the phone and PC
-  rounds, R3) starts the rewrite at once, under the same lock as the check,
-  so two requests never both start it. Anywhere else a step is between its
-  turns, and its next start meets the words; so does a stage that held the
-  worktree when it lets go.
+- A parked run starts the rewrite at once, under the same lock as the
+  check, so two requests never both start it. Parked means nothing runs, no
+  turn holds the worktree, and the run is either stopped with a stop the
+  owner may resume or resting at a screen that waits for the owner (the
+  measurement, the conflicts, the phone and PC rounds, R3). A stop [재개]
+  refuses (`kind`, `rekind`, `fake`) is never parked: the owner's words
+  never clear it. Anywhere else a step is between its turns, and its next
+  start meets the words. A run that parks with words still waiting shows
+  them, and [지금 반영] takes them in (`POST …/tell/apply`).
 - Words said while the screens are designed with the owner (`split` to `r2`,
   `oneshot_tell.WAIT`) wait until the frontend build begins, across any
   backend rewrite before it; R2 is a conversation of its own. Words said
@@ -65,12 +68,13 @@ for a stage's worker and `oneshot_build.send` for a work turn. Both ask
 the `retell` worker in that step's place, and the step's own text is
 dropped: the rewritten design leads to a fresh build turn, and a review or
 measurement runs again after it. A step whose run a rewrite has already
-taken yields to it, since the rewrite sends the next step itself, and a work
-turn checks that again once it holds the worktree. The measurement's start
-asks before it checks its old plan, so a word that drops an input is never
-held behind that input. A stage that lets the worktree go with nothing
-following it takes in the words said while it held it
-(`oneshot_tell.settle`). The publication step asks too, so words
+taken yields to it, since the rewrite sends the next step itself. A work
+turn asks again once it holds the worktree, and lets the tree go before it
+hands the step over. The measurement's start checks the request, then asks,
+then reads its old plan, so a word that drops an input is never held behind
+that input. The rewrite holds the worktree itself through its design turn,
+its commit and its save, as a work turn does; when another turn has it, the
+words stay waiting. The publication step asks too, so words
 said by R3 are never published past. A start that meets the rewrite
 already running (a turn's handoff after a word said at its very end) leaves
 it as it is; one the server refuses otherwise (it is going down) stops the

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from . import oneshot, oneshot_build, oneshot_sheet as sheet, oneshot_spec, runtime, work
 from .oneshot_profile import STAGE_ORDER
+from .query import _lock as work_lock, hold
 
 router = APIRouter()
 MAX_TELL = 4000
@@ -32,6 +33,7 @@ WAIT = STAGE_ORDER[STAGE_ORDER.index("split"):STAGE_ORDER.index("build-front")]
 FRONT = STAGE_ORDER[STAGE_ORDER.index("build-front"):]
 # Stages a run rests at with no worker, waiting for the owner: the measurement, the conflicts, the rounds, R3.
 PARKED = ("measure", "conflict", "phone", "pc", "r3")
+HARD = ("kind", "rekind", "fake")   # stops `[재개]` refuses (`oneshot_spec.resume`): the owner's words never clear them
 STEERED = ("The owner says this to you now, while you work, in their own words:\n\n{text}\n\nAct on it in this "
            "turn. Where it changes a requirement or the design (a behaviour, a component, the model a part runs), "
            "build toward what they said rather than the design you were given: when this turn ends the server "
@@ -100,13 +102,38 @@ def tell(repo: str, body: Tell) -> dict:
             if halt := oneshot_measure.HALTS.get(repo):
                 halt.told = True   # the measurement hands the words on rather than stopping (`oneshot_measure`)
                 halt.set()
-        # Only a parked run (stopped, or idle on a screen that waits for the owner) takes the words in now; nothing
-        # else would. Anywhere else a step is between its turns, and its next start meets them (`diverted`), as does
-        # a stage that held the worktree when it lets go (`settle`).
-        if not o.get("working") and due(o) and (o.get("stopped") or stage in PARKED) \
-                and not any(Path(k) == Path(spec["worktree"]) for k in list(work._busy)):
+        # Only a parked run takes the words in now. Anywhere else a step is between its turns, and its next start
+        # meets them (`diverted`); a run that parks with words waiting shows them, and `[지금 반영]` takes them in.
+        if due(o) and not parked(spec):
             start(oneshot_spec.store(repo))
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
+
+
+@router.post("/api/oneshot/spec/{repo}/tell/apply")
+def apply(repo: str) -> dict:
+    """`[지금 반영]`: words a parked run holds, taken in now."""
+
+    with oneshot._lock:
+        spec = oneshot_spec.spec_of(repo)
+        oneshot_spec.supported(spec["oneshot"])
+        if not due(spec["oneshot"]):
+            raise HTTPException(409, "지금 반영할 말이 없다 — 화면 설계 중에 한 말은 프런트엔드 빌드에서 반영된다")
+        if why := parked(spec):
+            raise HTTPException(409, why)
+        start(oneshot_spec.store(repo))
+    return oneshot_spec.view(oneshot_spec.spec_of(repo))
+
+
+def parked(spec: dict) -> str:
+    """"" when the run rests with nothing running and nothing about to: stopped with a stop the owner may resume, or
+    resting at a screen that waits for the owner; otherwise why the words wait for the run's next start."""
+
+    o = spec["oneshot"]
+    if o.get("working") or o.get("inflight") or any(Path(k) == Path(spec["worktree"]) for k in list(work._busy)):
+        return "구현 에이전트가 일하는 중이다 — 다음 단계가 시작될 때 반영된다"
+    if (o.get("stopped") or {}).get("reason") in HARD:
+        return o["stopped"]["detail"]
+    return "" if o.get("stopped") or o.get("stage") in PARKED else "다음 단계가 시작될 때 반영된다"
 
 
 def taken(o: dict) -> list[dict]:
@@ -140,16 +167,6 @@ def handoff(store: oneshot.Store) -> bool:
     with oneshot._lock:
         start(store)
         return store.get().get("working") == "retell"
-
-
-def settle(store: oneshot.Store) -> bool:
-    """A stage let the worktree go with nothing following it, a stop included: words said meanwhile, which found
-    the tree held and had no handoff to meet, are taken in now. True when the rewrite has the run."""
-
-    with oneshot._lock:
-        o = store.get()
-        return o.get("working") == "retell" or (not o.get("working") and due(o) and not runtime.stopping.is_set()
-                                                 and handoff(store))
 
 
 def steered(spec: dict, text: str) -> bool:
@@ -196,7 +213,28 @@ def authored(store: oneshot.Store) -> oneshot.Store:
 
 
 def retell(repo: str) -> None:
-    """The design rewritten from the owner's words by the model that wrote it, and the build carried on."""
+    """The design rewritten from the owner's words by the model that wrote it, and the build carried on. The worktree
+    is held through the design turn, its commit and the save, as a work turn holds it, so no other turn writes it."""
+
+    store = oneshot_spec.store(repo)
+    try:
+        release = hold(work._busy, work_lock, str(Path(oneshot_spec.spec_of(repo)["worktree"])),
+                       "작업트리를 다른 턴이 쓰고 있다", kind="turn")
+    except HTTPException:   # another turn has it: that step's next start, or `[지금 반영]` once the run parks
+        with oneshot._lock:
+            if store.get().get("working") == "retell":
+                store.put(working=None)
+        return
+    try:
+        sent = rewritten(repo)
+    finally:
+        release()
+    if sent:
+        oneshot_build.send(repo, *sent)
+
+
+def rewritten(repo: str) -> tuple[str, str] | None:
+    """`retell`'s rewrite: the stage and text of the turn that follows, or `None` when it stopped or had nothing."""
 
     spec = oneshot_spec.spec_of(repo)
     o, reqs = spec["oneshot"], spec.get("requirements") or []
@@ -206,7 +244,7 @@ def retell(repo: str) -> None:
         with oneshot._lock:
             if store.get().get("working") == "retell":
                 store.put(working=None)
-        return
+        return None
     words = [w["text"] for w in pending]
     text = (oneshot_spec.design_text(spec) + f"\nThe current design:\n\n{json.dumps(o['design'], ensure_ascii=False)}"
             "\n\nWhile the product was being built, the owner said this, in their own words:\n\n"
@@ -220,7 +258,7 @@ def retell(repo: str) -> None:
                            lambda final, attempt: oneshot_spec.design_turn(final, attempt, spec, every),
                            Path(spec["worktree"]))
     if found is None:   # stopped with its reason; the words still wait, so `[재개]` takes them in again
-        return
+        return None
     made, new_reqs, glossary, _ = found
     old, new = sheet.every(o["design"], reqs), sheet.every(made, new_reqs)
     moved = sorted(i for i in {*old, *new} if old.get(i) != new.get(i))
@@ -229,7 +267,7 @@ def retell(repo: str) -> None:
         candidate = {**spec, "requirements": new_reqs, "oneshot": {**o, "design": made, "glossary": glossary}}
         if not (head := oneshot_spec.design_committed(repo, "Record the design the owner changed during the build",
                                                       candidate)):
-            return   # stopped with `folder`; the words still wait
+            return None   # stopped with `folder`; the words still wait
         again |= {"design": made, "glossary": glossary, "design_head": head}
         changes["requirements"] = new_reqs
     # Past the backend, the frontend build takes the words; the backend's is not walked again, nor is it left for a
@@ -247,7 +285,7 @@ def retell(repo: str) -> None:
             tell_pending=[w for w in now["oneshot"].get("tell_pending") or [] if w not in pending], stage=stage,
             retell_to=back if stage == "tests" else None,
             retold=[*(o.get("retold") or []), {"words": words, "changed": moved, "ts": time.time()}])
-    oneshot_build.send(repo, stage, oneshot_build.tests_text(spec) if stage == "tests" else next_build(spec))
+    return stage, oneshot_build.tests_text(spec) if stage == "tests" else next_build(spec)
 
 
 oneshot.DIVERTS.append(diverted)

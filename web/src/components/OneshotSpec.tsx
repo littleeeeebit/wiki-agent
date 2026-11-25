@@ -178,7 +178,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   // A screen waiting on the owner (a measurement to judge, a round, a sheet): they can still speak to the build.
   const tell = idle && TELLS.includes(view.stage) ? (
     <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4">
-      <Tell view={view} post={(text) => act(() => api.tell(repo, text))} />
+      <Tell view={view} post={(text) => act(() => api.tell(repo, text))} apply={() => act(() => api.applyTell(repo))} />
     </div>
   ) : null
   if (owns(view)) return <>{faulted}{needs}<Owner repo={repo} view={view} busy={busy} act={act} />{tell}</>

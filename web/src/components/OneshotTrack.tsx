@@ -31,25 +31,31 @@ export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
 export const TELLS = ['tests', 'build', 'measure', 'review', 'conflict', 'split', 'board', 'frontend', 'r2',
   'build-front', 'critique', 'phone', 'pc', 'r3']
 const WAITS = ['split', 'board', 'frontend', 'r2']
+const PARKED = ['measure', 'conflict', 'phone', 'pc', 'r3']
+const HARD = ['kind', 'rekind', 'fake']
 
 /** The owner's words to the build agent, any time it builds: said into the turn that runs, and the design rewritten
  *  from them before the next step, which carries on from the code as it is. `post` sends them; an idle screen
  *  passes its own, so the view the server answers with shows the rewrite starting at once; it resolves false when
  *  the server refused, and the words stay in the box. */
-export function Tell({ view, post }: { view: SpecView; post?: (text: string) => Promise<boolean> }) {
+export function Tell({ view, post, apply }: {
+  view: SpecView; post?: (text: string) => Promise<boolean>; apply?: () => Promise<boolean>
+}) {
   const o = view.oneshot
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [fault, setFault] = useState('')
-  const send = () => {
-    if (!text.trim()) return
+  const run = (fn: () => Promise<boolean>, done = () => {}) => {
     setBusy(true)
     setFault('')
-    ;(post ?? ((t: string) => api.tell(view.repo, t).then(() => true)))(text.trim())
-      .then((taken) => { if (taken) setText('') })
+    fn().then((taken) => { if (taken) done() })
       .catch((err) => setFault(String(err?.message ?? err))).finally(() => setBusy(false))
   }
+  const send = () => text.trim() && run(() => (post ?? ((t: string) => api.tell(view.repo, t).then(() => true)))(text.trim()),
+    () => setText(''))
   const waiting = o.tell_pending?.length ?? 0
+  // A parked run (`oneshot_tell.parked`) takes waiting words in only when the owner says so.
+  const parked = !view.working && (view.stopped ? !HARD.includes(view.stopped.reason) : PARKED.includes(view.stage))
   return (
     <section aria-label="구현 에이전트에게 말하기" className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3">
       <Title><span>구현 에이전트에게 말하기</span></Title>
@@ -63,6 +69,9 @@ export function Tell({ view, post }: { view: SpecView; post?: (text: string) => 
       <div className="flex flex-wrap items-center gap-3">
         <Btn disabled={busy || !text.trim()} onClick={send}>보내기</Btn>
         {waiting > 0 && <span className="text-[12.5px] text-muted-foreground">설계에 반영을 기다리는 말 {waiting}개</span>}
+        {waiting > 0 && parked && (
+          <Btn disabled={busy} onClick={() => run(apply ?? (() => api.applyTell(view.repo).then(() => true)))}>지금 반영</Btn>
+        )}
         {fault && <span role="alert" className="text-destructive">{fault}</span>}
       </div>
       {(o.retold?.length ?? 0) > 0 && (
