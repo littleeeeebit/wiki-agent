@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -194,32 +195,42 @@ def start(store: oneshot.Store) -> None:
             store.stop("restart" if runtime.stopping.is_set() else "block", str(exc.detail))
 
 
-def answered(store: oneshot.Store) -> None:
+def answered(store: oneshot.Store) -> bool:
     """A turn that stopped on its question (`asked`) let go: an answer the owner gave while it was still closing,
     which found the run busy and only queued, goes in now. Words said before the question wait for its answer, and
-    any other stop waits for `[지금 반영]`."""
+    any other stop waits for `[지금 반영]`. True while the answer still waits, held again by another turn."""
 
     with oneshot._lock:
         spec = oneshot_spec.spec_of(store.key.removeprefix("spec:"))
         o = spec["oneshot"]
-        if (o.get("stopped") or {}).get("reason") == "asked" and any(w.get("answers") for w in taken(o)) \
-                and not parked(spec):
-            start(store)
+        if (o.get("stopped") or {}).get("reason") != "asked" or not any(w.get("answers") for w in taken(o)):
+            return False
+        if parked(spec):
+            return True
+        start(store)
+        return False
 
 
 _waiting: dict[str, str] = {}   # worktree -> repo: an answer that found the tree held by another turn
 
 
-def freed(path: Path) -> None:
-    """`work.dispatch`: a turn let `path` go, whoever's it was; an answer that found it held goes in now."""
+def freed(path: Path) -> bool:
+    """`work.dispatch`: a turn let `path` go, whoever's it was; an answer that found it held goes in now. Kept for
+    the next release while another turn holds the tree again. True when the rewrite took the tree's next turn, so
+    the worktree's own queue waits for it (`work.dispatch`)."""
 
     try:
         with oneshot._lock:   # `tell` registers under it, so a release between its check and its entry is never missed
-            repo = next((_waiting.pop(k) for k in list(_waiting) if Path(k) == Path(path)), None)
-            if repo:
-                answered(oneshot_spec.store(repo))
+            key = next((k for k in list(_waiting) if Path(k) == Path(path)), None)
+            if key is None:
+                return False
+            store = oneshot_spec.store(_waiting[key])
+            if not answered(store):
+                del _waiting[key]
+            return store.get().get("working") == "retell"
     except Exception as exc:   # the worktree's own queue still goes on
         errorlog.record("tell-freed", exc, path=str(path))
+        return False
 
 
 def handoff(store: oneshot.Store) -> bool:
@@ -295,10 +306,13 @@ def retell(repo: str) -> None:
             if store.get().get("working") == "retell":
                 store.stop("block", "다른 턴이 작업트리를 쓰고 있어 주인의 말을 아직 반영하지 못했다 — 그 턴이 끝나면 [지금 반영]")
         return
+    sent = None
     try:
         sent = rewritten(repo)
     finally:
         release()
+        if not sent:   # nothing follows: an instruction queued for the tree meanwhile goes now (`freed` held it back)
+            work.dispatch(Path(oneshot_spec.spec_of(repo)["worktree"]), SimpleNamespace(halt=runtime.stopping, turn=""))
     if sent:
         oneshot_build.send(repo, *sent)
 

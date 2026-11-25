@@ -149,9 +149,12 @@ def test_an_answer_given_as_the_asking_turn_closes_goes_in_once_it_lets_go_and_o
     tree = str(specs.load("budget", oneshot.BRANCH)["worktree"])
     with patch.dict(work._busy, {tree: object()}):   # a person's ordinary turn has the tree
         say("세금 포함")
-    assert o()["working"] is None
-    work.dispatch(Path(tree), MagicMock(halt=threading.Event()))   # that turn let it go
-    assert o()["working"] == "retell"
+        work.dispatch(Path(tree), MagicMock(halt=threading.Event()))   # it let go, and another took it at once
+    assert o()["working"] is None   # the answer stays registered for that one's release
+    queued = object()
+    with patch.dict(work._queued, {tree: queued}), patch.object(work, "session", side_effect=AssertionError("queued")):
+        work.dispatch(Path(tree), MagicMock(halt=threading.Event()))   # that one let go too
+        assert o()["working"] == "retell" and work._queued[tree] is queued   # the rewrite goes first; the order waits
 
 
 def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name

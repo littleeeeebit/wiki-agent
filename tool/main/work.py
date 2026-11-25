@@ -933,15 +933,14 @@ def dispatch(path: Path, ended: Run) -> None:
     meanwhile — that turn, a person's — it waits for that turn's end. A
     stopped run drops it: a stop is not "go on"."""
 
-    for released in RELEASED:
-        released(path)
+    taken = any([released(path) for released in RELEASED])   # a hook that took the tree's next turn: the queue waits
     key = str(path)
     with _lock:
         if ended.halt.is_set():
             _queued.pop(key, None)
             return
         order = _queued.get(key)
-        if order is None or key in _busy:
+        if order is None or taken or key in _busy:
             return
         del _queued[key]
         release = hold(_busy, _lock, key, "", kind="turn")
