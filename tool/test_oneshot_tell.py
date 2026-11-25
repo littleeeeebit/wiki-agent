@@ -1,6 +1,8 @@
 """The owner speaks to a run while it is built (`docs/plans/oneshot/14-owner-speaks-mid-build.md`)."""
 
 import copy
+import threading
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -142,6 +144,14 @@ def test_an_answer_given_as_the_asking_turn_closes_goes_in_once_it_lets_go_and_o
     at("build", stopped={**asked, "reason": "block"}, tell_pending=o()["tell_pending"])
     oneshot_tell.answered(store)   # any other stop waits for `[지금 반영]`
     assert o()["working"] is None
+    from main import work
+    at("build", stopped=asked)
+    tree = str(specs.load("budget", oneshot.BRANCH)["worktree"])
+    with patch.dict(work._busy, {tree: object()}):   # a person's ordinary turn has the tree
+        say("세금 포함")
+    assert o()["working"] is None
+    work.dispatch(Path(tree), MagicMock(halt=threading.Event()))   # that turn let it go
+    assert o()["working"] == "retell"
 
 
 def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name

@@ -19,6 +19,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from common import errorlog
+
 from . import oneshot, oneshot_build, oneshot_sheet as sheet, oneshot_spec, runtime, work
 from .oneshot_profile import STAGE_ORDER
 from .query import _lock as work_lock, hold
@@ -136,6 +138,8 @@ def tell(repo: str, body: Tell) -> dict:
         # meets them (`diverted`); a run that parks with words waiting shows them, and `[지금 반영]` takes them in.
         if due(o) and not parked(spec):
             start(oneshot_spec.store(repo))
+        elif word.get("answers"):   # the tree or the turn's mark is still held: handed on when it is let go
+            _waiting[str(spec["worktree"])] = repo
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 
@@ -201,6 +205,21 @@ def answered(store: oneshot.Store) -> None:
         if (o.get("stopped") or {}).get("reason") == "asked" and any(w.get("answers") for w in taken(o)) \
                 and not parked(spec):
             start(store)
+
+
+_waiting: dict[str, str] = {}   # worktree -> repo: an answer that found the tree held by another turn
+
+
+def freed(path: Path) -> None:
+    """`work.dispatch`: a turn let `path` go, whoever's it was; an answer that found it held goes in now."""
+
+    try:
+        with oneshot._lock:   # `tell` registers under it, so a release between its check and its entry is never missed
+            repo = next((_waiting.pop(k) for k in list(_waiting) if Path(k) == Path(path)), None)
+            if repo:
+                answered(oneshot_spec.store(repo))
+    except Exception as exc:   # the worktree's own queue still goes on
+        errorlog.record("tell-freed", exc, path=str(path))
 
 
 def handoff(store: oneshot.Store) -> bool:
@@ -342,3 +361,4 @@ def rewritten(repo: str) -> tuple[str, str] | None:
 
 oneshot.DIVERTS.append(diverted)
 oneshot_spec.WORKERS["retell"] = retell
+work.RELEASED.append(freed)

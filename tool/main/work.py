@@ -60,6 +60,7 @@ _busy: dict[str, object] = {}   # worktree path -> the hold of its running turn
 _runs: dict[str, "Run"] = {}    # worktree path -> its last turn, kept until the next one starts
 _turns: dict[threading.Thread, "Run"] = {}  # includes completed turns still running their callbacks
 _queued: dict[str, "Order"] = {}   # worktree path -> the instruction waiting for it to be let go
+RELEASED: list = []   # `f(path)` once any turn let a worktree go (`dispatch`): the owner's answer that waited (`oneshot_tell`)
 READABLE: list = []   # `fn(path) -> bool`: worktrees a later module recorded (a oneshot run's), in any project
 _provider_usage: dict = {}
 _provider_usage_lock = threading.Lock()
@@ -932,6 +933,8 @@ def dispatch(path: Path, ended: Run) -> None:
     meanwhile — that turn, a person's — it waits for that turn's end. A
     stopped run drops it: a stop is not "go on"."""
 
+    for released in RELEASED:
+        released(path)
     key = str(path)
     with _lock:
         if ended.halt.is_set():

@@ -99,9 +99,13 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   useEffect(() => { if (view) onView?.(view) }, [view, onView])
   // An answer to the agent's question can wait for its turn to let go before the rewrite starts (`answered`).
   const working = !!view?.working || (view?.stopped?.reason === 'asked' && !!view.oneshot.tell_pending?.some((w) => w.answers))
+  const acted = useRef(0)   // a poll read before the owner's last action finished never replaces what it returned
   useEffect(() => {
     if (!working) return
-    const timer = window.setInterval(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, 1500)
+    const timer = window.setInterval(() => {
+      const at = acted.current
+      api.view(repo).then((v) => { if (acted.current === at) setView(v) }).catch((err) => setFault(error(err)))
+    }, 1500)
     return () => window.clearInterval(timer)
   }, [repo, working])
 
@@ -110,7 +114,9 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
     setFault('')
     setBusy(true)
     try {
-      setView(await fn())
+      const next = await fn()
+      acted.current += 1
+      setView(next)
       return true
     } catch (err) {
       setFault(error(err))
