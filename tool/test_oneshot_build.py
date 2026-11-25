@@ -183,6 +183,17 @@ def test_failing_planned_tests_are_committed_pinned_and_followed_by_the_build_tu
     assert o()["tests_head"] in sent[-1][2] and "`test_budget.py`" in sent[-1][2]
 
 
+def test_a_retold_tests_turn_that_kept_the_contract_moves_on_from_head_past_an_untracked_app_file(built_world):
+    tree, sent = built_world
+    to_build(tree, sent)
+    first = o()["tests_head"]
+    write(tree, "app.py", APP)   # the build's own file, not committed yet: the planned tests pass now
+    oneshot_spec.saved("budget", oneshot={"stage": "tests", "working": "tests"})   # the owner's rewrite kept the contract
+    then = check(tree)
+    assert then is not None and o()["stage"] == "build" and o()["tests_head"] == first
+    assert git(tree, "status", "--porcelain") == "?? app.py"   # left for the build turn after
+
+
 @pytest.mark.parametrize("files, final, said", [
     ({"test_budget.py": TESTS}, "썼다.", "`oneshot-runner` 블록이 하나 있어야 한다"),
     ({"test_budget.py": TESTS}, told(command=GATE), "`{report}`"),

@@ -721,6 +721,8 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     message = "Update the contract tests for the design the owner changed" if again else \
         "Write the contract tests before the backend"
     for args in (["add", "-A", "--", *names], ["commit", "-m", message, "--", *names]):
+        if args[0] == "commit" and not specs.sh(["git", "diff", "--cached", "--quiet", "--", *names], path).returncode:
+            break   # none of them differs from HEAD (a retold turn that kept the contract): HEAD is the tests' commit
         done = specs.sh(["git", *args], path)
         if done.returncode and "nothing to commit" not in done.stdout + done.stderr:
             raise ValueError(f"계약 테스트를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
