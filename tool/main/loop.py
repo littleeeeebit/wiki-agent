@@ -1348,7 +1348,9 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession | 
 
 
 def cloud_stop(loop: Loop, repo: Path, spec: dict, head: str, reason: str) -> bool:
-    spec = specs.load(loop.repo, loop.sid) or spec
+    spec = specs.load(loop.repo, loop.sid)
+    if spec is None or loop.born and born(spec) != loop.born:   # deleted, or made again under this ID: not this loop's
+        return False
     state = (spec.get("local_verification") or {}).get("state")
     verification.pending(repo, spec, head, reason, state if state in ("reanalysis", "unstable") else "waiting_environment")
     return stop(loop, loop.repo, loop.sid, Why.PREPARATION, "로컬 검증 준비 대기 — " + verification.redact(reason, verification.local(repo)))
@@ -2341,14 +2343,19 @@ def poll(halt: threading.Event | None = None) -> None:
                     if allowed:
                         tree = Path(spec.get("worktree") or path)
                         try:
-                            head, base = pr_head(path, spec["pr"]["number"])
-                            base_oid = specs.current_merge_base(tree, base, head)
-                            problem = verification.merge_proven(path, tree, spec, head, base_oid) if verification.cloud(spec) \
-                                else review_contract.merge_problem(path, tree, spec, head, base_oid)
-                            if problem:
-                                verification.pending(path, spec, head, problem, "waiting_review")
-                        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
-                            verification.pending(path, spec, allowed["head"], "현재 검증 상태를 확인하지 못했다", "waiting_review")
+                            try:
+                                head, base = pr_head(path, spec["pr"]["number"])
+                                base_oid = specs.current_merge_base(tree, base, head)
+                                problem = verification.merge_proven(path, tree, spec, head, base_oid) if verification.cloud(spec) \
+                                    else review_contract.merge_problem(path, tree, spec, head, base_oid)
+                                if problem:
+                                    verification.pending(path, spec, head, problem, "waiting_review")
+                            except verification.Replaced:
+                                raise
+                            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                                verification.pending(path, spec, allowed["head"], "현재 검증 상태를 확인하지 못했다", "waiting_review")
+                        except verification.Replaced:   # made again under this ID meanwhile: the next minute reads it
+                            continue
                 # A clicked merge holds `_landing` through its minutes-long `.omm` analysis;
                 # waiting here stalled every repository's loop reattach. Next minute retries.
                 if not _landing.acquire(blocking=False):
@@ -2418,8 +2425,13 @@ def merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) -> 
             specs.merge_progress(repo.name, spec["id"], "리뷰·게이트·GitHub 머지 상태 확인 중", reset=prepare)
             return _merge_spec(repo, fresh, body, prepare=prepare)
         except Exception as exc:
-            specs.update(repo.name, spec["id"], merge_request=None)
-            specs.merge_progress(repo.name, spec["id"], f"머지 중단 — {getattr(exc, 'detail', str(exc))}", "blocked")
+            with specs._files:   # only on the task this merge was asked for, never one made again under its ID
+                now = specs.load(repo.name, spec["id"])
+                if now is not None and born(now) == born(spec):
+                    specs.update(repo.name, spec["id"], merge_request=None)
+                    specs.merge_progress(repo.name, spec["id"], f"머지 중단 — {getattr(exc, 'detail', str(exc))}", "blocked")
+            if isinstance(exc, verification.Replaced):
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요") from exc
             raise
 
 
@@ -2621,9 +2633,12 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
             if not note:
                 raise HTTPException(400, "재분석 원인·근거·다음 실험을 적어야 재개한다")
             note = verification.redact(note, verification.local(repo))
-            spec = verification.keep(spec, research_note=note, needs_research=False, research=[*record.get("research", []),
-                                     {"head": record.get("head"), "note": note, "ts": time.time(),
-                                      "failure_attempts": list(range(len(record.get("failure_attempts", []))))}])
+            try:
+                spec = verification.keep(spec, research_note=note, needs_research=False, research=[*record.get("research", []),
+                                         {"head": record.get("head"), "note": note, "ts": time.time(),
+                                          "failure_attempts": list(range(len(record.get("failure_attempts", []))))}])
+            except verification.Replaced as exc:
+                raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요") from exc
     if why is Why.DISPUTE:
         if not note:
             raise HTTPException(400, "그 발견에 정한 것을 적어야 잇는다")

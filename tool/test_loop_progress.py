@@ -459,6 +459,37 @@ def test_an_external_gate_cut_between_its_receipt_and_gate_is_rebuilt_from_the_r
         assert loop.external_shipped(lp, {}, tmp_path, tmp_path, "h", "main") is False and not change.called
 
 
+def test_a_task_made_again_while_its_merge_or_poll_runs_is_left_to_its_own_loop(tmp_path):
+    """`verification.Replaced` is a `RuntimeError`: a merge request or the background poll that meets it
+    neither writes the replacement nor ends the poll thread every repository relies on."""
+    from fastapi import HTTPException
+
+    old, new = {"id": "t1", "history": [{"ts": 1.0}]}, {"id": "t1", "history": [{"ts": 2.0}]}
+    reads = iter([old])
+    with patch.object(specs, "load", side_effect=lambda *a: next(reads, new)), \
+            patch.object(specs, "merge_progress") as progress, patch.object(specs, "update") as update, \
+            patch.object(loop, "_merge_spec", side_effect=verification.Replaced("gone")):
+        with pytest.raises(HTTPException) as refused:
+            loop.merge_spec(tmp_path, old, loop.Merge(head="h"))
+    assert refused.value.status_code == 410
+    assert update.call_count == 0 and progress.call_count == 1   # only the "checking" line written before the swap
+    halt = threading.Event()
+    (tmp_path / "specs" / "proj").mkdir(parents=True)
+    task = {"id": "t1", "state": "머지 가능", "pr": {"number": 1}, "local_verification": {"state": "verified"}}
+
+    def replaced(*a, **k):
+        halt.set()   # one pass of the poll, then it stops
+        raise verification.Replaced("gone")
+
+    with patch.object(specs, "SPECS", tmp_path / "specs"), patch("main.channels.repo_for", return_value=tmp_path), \
+            patch.object(specs, "listing", return_value=[task]), patch.object(verification, "cloud", return_value=True), \
+            patch.object(specs, "approved", return_value={"head": "h"}), \
+            patch.object(loop, "pr_head", side_effect=ValueError("PR read failed")), \
+            patch.object(verification, "pending", side_effect=replaced) as pending, patch.object(loop, "POLL", 0):
+        loop.poll(halt)   # returns: the snapshot was skipped instead of raising out of the thread
+    assert pending.call_count == 1
+
+
 def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path):
     def stopped(spot, spec, path, text):
         spot.halt.set()   # the Review Loop Stop lands after the repair committed code
@@ -500,4 +531,7 @@ def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path)
             assert save.call_args[0][0]["local_verification"]["state"] == "failed"   # its own task is written
             with patch.object(loop, "stepped", side_effect=verification.Replaced("gone")):
                 assert loop.step(old) is False   # the old loop leaves; the replacement's own loop runs it
+            # A cloud stop reloads by ID: it writes no pending state of the old head onto the replacement.
+            save.reset_mock()
+            assert loop.cloud_stop(old, tmp_path, {}, "old-head", "gone") is False and not save.called
     assert update.call_count == 1   # the replacement never takes the old checkout's baseline

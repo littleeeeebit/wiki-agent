@@ -980,7 +980,10 @@ def set_config(body: LocalSettings, sid: str | None = None) -> dict:
                     selected = None if cloud(current) else [f["id"] for f in (current.get("review_contract") or {}).get("flows", [])]
                     problem = proven(repo, tree, current, record["head"], record.get("base_oid", ""), flow_ids=selected)
                     if problem:
-                        pending(repo, current, record["head"], problem, "waiting_review")
+                        try:
+                            pending(repo, current, record["head"], problem, "waiting_review")
+                        except Replaced:   # made again under its ID meanwhile: the background poll reads the new one
+                            continue
         except (OSError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
     return get_config(sid)
