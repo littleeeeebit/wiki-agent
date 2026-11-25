@@ -93,7 +93,7 @@ def settle() -> list[str]:
     old per-project hooks out and the pages' deny rules in (`connect.rewired`), so `apply.wiring_drift` finds
     nothing. Only while Claude is wired at the user level, only a file git does not track, and never while the hub
     is off main or where hooks are switched off, at the user level or the checkout's: those stay on the screen for
-    the person, and so does every Codex change (`claude_off`). What was written, as lines."""
+    the person, and so does every Codex change (`planned`). What was written, as lines."""
 
     if refused():
         return []
@@ -104,23 +104,34 @@ def settle() -> list[str]:
     done = []
     for path in paths:
         try:   # each file as it was, absent included, read before the plan: a change after it is never planned over
-            sources = {file: raw(file) for file in (path / name for name in setup_agents.SETTINGS.values())}
-            plan = connect.pending(path)
+            source = raw(path / setup_agents.SETTINGS["claude"])
+            plan = planned(path)
             if switched_off(plan):
                 continue
-            for file, settings, changes in plan:   # Claude's only (`claude_off`); Codex's wait for `[모두 다시 연결]`
-                if changes and file.parent.name == ".claude" and apply.user_wired("claude") and not claude_off() \
-                        and own(path, file) and replaced(path, file, settings, sources[file]):
+            for file, settings, changes in plan:
+                if changes and apply.user_wired("claude") and not claude_off() \
+                        and own(path, file) and replaced(path, file, settings, source):
                     done += [f"{file}: {change}" for change in changes]
         except Exception:   # noqa: BLE001 — one checkout never stops the others or the watch; the screen names it
             continue
     return done
 
 
+def planned(path: Path) -> list[tuple[Path, dict, list[str]]]:
+    """`connect.pending` for Claude alone, the one host the watch writes: a Codex file it cannot read never holds
+    Claude's repair back. Codex's checkout hooks are never the watch's: only `[모두 다시 연결]` drops them, once
+    Codex confirmed it trusts their user-level replacements."""
+
+    if "claude" not in connect.hosts(connect.adapter_of(path)[0]):
+        return []
+    file = path / setup_agents.SETTINGS["claude"]
+    settings = apply.read_json(file)
+    return [(file, settings, connect.rewired(settings, "claude"))]
+
+
 def claude_off() -> bool:
     """Claude hooks switched off at the user level (`disableAllHooks`), which Claude honours from any layer: the
-    watch then writes no Claude settings, as `setup_agents.plan_global` refuses. Codex's checkout hooks are never
-    the watch's: only `[모두 다시 연결]` drops them, once Codex confirmed it trusts their user-level replacements."""
+    watch then writes no Claude settings, as `setup_agents.plan_global` refuses."""
 
     return any(apply.read_json(file).get("disableAllHooks") for file in apply.user_files("claude"))
 
@@ -143,11 +154,12 @@ def raw(file: Path) -> bytes | None:
 def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bool:
     """`settings` staged in the folder `own` checked and swapped in whole, only if, once the staging is written,
     that folder is still the same one, the file still the checkout's own and untracked and still `source`, the
-    bytes the plan was made from (`None`: absent), with `disableAllHooks` off in both files, the hub still on main,
+    bytes the plan was made from (`None`: absent), with `disableAllHooks` off in both files and at the user level,
+    Claude still wired at the user level (else the checkout's hooks would be the only ones), the hub still on main,
     and the server not going down. An edit or removal the person made since writes nothing.
 
-    Accepted limits: the final checks read the folder, the index (one `git ls-files`), both files' opt-out and the
-    bytes once each, in that order, and no lock holds them still; an action that lands after the check that would
+    Accepted limits: the final checks read the folder, the index (one `git ls-files`), the opt-outs, the user-level
+    wiring and the bytes once each, in that order, and no lock holds them still; an action that lands after the check that would
     have seen it and before the swap is not seen, however long that window runs. A folder renamed while the staging
     is written keeps that `.part` file, which the old path no longer reaches. The watch guards against mistakes, not
     races; after a write the screens list the repositories again (`watch`), which shows the wiring as it now is."""
@@ -159,10 +171,10 @@ def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bo
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
             out.write(connect.settled(settings))
-        plan = connect.pending(repo)   # the slow read first: what the person does meanwhile, the checks below see
+        plan = planned(repo)   # the slow read first: what the person does meanwhile, the checks below see
         if runtime.stopping.is_set() or refused() or file.parent.resolve() != where \
-                or not os.path.samestat(before, os.stat(where)) \
-                or not own(repo, file) or switched_off(plan) or claude_off() or raw(file) != source:   # bytes last
+                or not os.path.samestat(before, os.stat(where)) or not own(repo, file) or switched_off(plan) \
+                or not apply.user_wired("claude") or claude_off() or raw(file) != source:   # bytes last
             return False
         os.replace(partial, where / file.name)
         return True

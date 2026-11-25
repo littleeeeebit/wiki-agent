@@ -143,15 +143,15 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
                 assert wiring.settle() == [] and (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
             finally:
                 user.write_bytes(before) if before is not None else user.unlink()
-            codex, planned = loose / ".codex" / "hooks.json", connect.pending   # Codex's wait for its trust check
+            codex = loose / ".codex" / "hooks.json"   # a Codex file it cannot read: Codex's wait for its trust check
             codex.parent.mkdir()
-            codex.write_text('{"hooks": {}}', encoding="utf-8")
-            with patch.object(wiring.connect, "pending",
-                              lambda at: [*planned(at), *([(codex, {}, ["PreToolUse 프로젝트 훅 제거"])] if at == loose.resolve() else [])]):
+            codex.write_text("[]", encoding="utf-8")
+            with patch.object(connect, "hosts", return_value=["claude", "codex"]):
                 assert wiring.settle() == [f"{loose.resolve() / '.claude' / 'settings.json'}: deny 추가: {rule}"]
-            assert codex.read_text(encoding="utf-8") == '{"hooks": {}}', "Codex 훅은 [모두 다시 연결]만 뺀다"
+            assert codex.read_text(encoding="utf-8") == "[]", "Codex 훅은 [모두 다시 연결]만 뺀다"
             codex.unlink()
             codex.parent.rmdir()
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
             assert (kept / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "git 이 추적하는 파일은 사람의 것"
             assert (cased / ".claude/Settings.json").read_text(encoding="utf-8") == "{}", "다른 대소문자로 추적해도 사람의 것"
             assert (nested / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "하위 체크아웃이 추적하면 사람의 것"
@@ -195,7 +195,7 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
                 left = loose / ".claude" / edited
                 assert (left.read_text(encoding="utf-8") if left.exists() else None) == text
             (loose / ".claude/settings.local.json").unlink(missing_ok=True)
-            planned, reads = connect.pending, []
+            planned, reads = wiring.planned, []
 
             def saving(at: Path):   # the person saves while the writer's last read of the plan runs
                 reads.append(at)
@@ -205,7 +205,7 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
                 return found
 
             (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
-            with patch.object(wiring.connect, "pending", saving):
+            with patch.object(wiring, "planned", saving):
                 assert wiring.settle() == [], "a save during the last read writes nothing"
             assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == '{"x": 1}'
             reads.clear()
@@ -217,10 +217,20 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
                 return planned(at)
 
             (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
-            with patch.object(wiring.connect, "pending", staging):
+            with patch.object(wiring, "planned", staging):
                 assert wiring.settle() == [], "a file staged during the last read is the person's"
             assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
             git(loose, "rm", "-q", "--cached", ".claude/settings.json")
+            reads.clear()
+
+            def unwiring(at: Path):   # the user-level hooks removed while the writer's last read of the plan runs
+                reads.append(at)
+                return planned(at)
+
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            with patch.object(wiring, "planned", unwiring),                     patch.object(wiring.apply, "user_wired", side_effect=lambda *a: reads.count(loose.resolve()) < 2):
+                assert wiring.settle() == [], "the checkout's hooks are never dropped once they are the only ones"
+            assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
             with patch.object(wiring.subprocess, "run", unreadable):
                 (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
                 assert wiring.settle() == [], "git 이 색인을 읽지 못하면 추적 여부를 모르니 쓰지 않는다"
