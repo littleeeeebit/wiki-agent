@@ -25,6 +25,7 @@ from .query import _lock as work_lock, hold
 
 router = APIRouter()
 MAX_TELL = 4000
+MAX_ASKED = 20000   # the questions a work-log answer carries, with every option the owner saw
 # From the first build turn to the owner's last round (R3): before it the design talk and R1 take the owner's
 # words, after it the pull request is published. Words said by then and still waiting turn the run back first.
 OPEN = STAGE_ORDER[STAGE_ORDER.index("tests"):STAGE_ORDER.index("pr")]
@@ -78,8 +79,23 @@ def next_build(spec: dict) -> str:
     return oneshot_build.build_text(spec)
 
 
+class Option(BaseModel):
+    label: str
+    note: str = ""
+
+
+class Asked(BaseModel):
+    """A question the build agent asked in its work log, as the owner saw it, with the answer they gave."""
+
+    header: str = ""
+    question: str
+    options: list[Option] = []
+    answer: str
+
+
 class Tell(BaseModel):
     text: str
+    asked: list[Asked] = []   # the words answer these: the design model never saw them
 
 
 @router.post("/api/oneshot/spec/{repo}/tell")
@@ -87,6 +103,9 @@ def tell(repo: str, body: Tell) -> dict:
     text = body.text.strip()
     if not text or len(text) > MAX_TELL:
         raise HTTPException(400, f"말은 1–{MAX_TELL}자로 적는다")
+    asked = [a.model_dump() for a in body.asked]
+    if len(json.dumps(asked, ensure_ascii=False)) > MAX_ASKED:   # bounded on its own: the answer keeps its budget
+        raise HTTPException(400, f"답한 질문은 {MAX_ASKED}자까지 싣는다")
     with oneshot._lock:   # held through the start, so two requests never both find the run idle
         spec = oneshot_spec.spec_of(repo)
         o = spec["oneshot"]
@@ -96,7 +115,7 @@ def tell(repo: str, body: Tell) -> dict:
         stage = o["stage"]
         said = {"text": text, "ts": time.time(), "stage": stage, "into_turn": steered(spec, text)}
         o = oneshot_spec.saved(repo, oneshot={"told": [*(o.get("told") or []), said], "tell_pending": [
-            *(o.get("tell_pending") or []), {"text": text, "stage": stage, "ts": said["ts"]}]})["oneshot"]
+            *(o.get("tell_pending") or []), {"text": text, "stage": stage, "ts": said["ts"], **({"asked": asked} if asked else {})}]})["oneshot"]
         if o.get("working") == "measure":   # the build goes back to work at once: the measurement stops
             from . import oneshot_measure   # it imports this module's neighbours
             if halt := oneshot_measure.HALTS.get(repo):
@@ -246,9 +265,11 @@ def rewritten(repo: str) -> tuple[str, str] | None:
                 store.put(working=None)
         return None
     words = [w["text"] for w in pending]
+    said = [{"said": w["text"], "answering": w["asked"]} if w.get("asked") else w["text"] for w in pending]
     text = (oneshot_spec.design_text(spec) + f"\nThe current design:\n\n{json.dumps(o['design'], ensure_ascii=False)}"
-            "\n\nWhile the product was being built, the owner said this, in their own words:\n\n"
-            f"{json.dumps(words, ensure_ascii=False)}\n\nChange the design where these words change it: a requirement, "
+            "\n\nWhile the product was being built, the owner said this, in their own words. An entry with `answering` "
+            "answers the build agent's questions: each with its chapter, its options as the owner saw them, and the "
+            f"answer chosen.\n\n{json.dumps(said, ensure_ascii=False)}\n\nChange the design where these words change it: a requirement, "
             "a component, a choice such as the model a part runs, and every item built on what changed. Keep every "
             "other item exactly as it is. Return every design block in full, and an `oneshot-spec` block in full when "
             "a requirement changes.\n")

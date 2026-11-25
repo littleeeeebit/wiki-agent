@@ -1,5 +1,8 @@
 import { get, json, post, type ChoiceQuestion } from '@/lib/api'
 
+/** A `choices` question answered, as the owner saw it (`oneshot_tell.Asked`). */
+export type Answered = ChoiceQuestion & { answer: string }
+
 /** The oneshot run's data past S1 and its requests (`tool/main/oneshot_spec.py` `view`). */
 
 export type Decision = { approve?: boolean; edit?: string }
@@ -207,7 +210,10 @@ export const api = {
   view: (repo: string) => get(base(repo)).then(answer),
   say: (repo: string, text: string) => post(`${base(repo)}/say`, { text }).then(answer),
   // The owner's words to the build agent mid-build (`oneshot_tell.tell`).
-  tell: (repo: string, text: string) => post(`${base(repo)}/tell`, { text }).then(answer),
+  // `asked`: the work-log questions the words answer, each with its options (`oneshot_tell.Asked`).
+  tell: (repo: string, text: string, asked?: Answered[]) => post(`${base(repo)}/tell`, {
+    text, asked: asked?.map((q) => ({ header: q.header ?? '', question: q.question, answer: q.answer,
+      options: q.options.map((o) => ({ label: o.label, note: o.note ?? '' })) })) ?? [] }).then(answer),
   // [지금 반영]: the words a parked run holds, taken in now (`oneshot_tell.apply`).
   applyTell: (repo: string) => post(`${base(repo)}/tell/apply`, {}).then(answer),
   // A PC app's build part, confirmed exactly as offered (`oneshot_spec.confirm_build`).

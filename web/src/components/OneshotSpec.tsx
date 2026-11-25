@@ -8,6 +8,7 @@ import { Owner } from '@/components/OneshotMeasure'
 import { Calls, Leaked, Needs } from '@/components/OneshotNeeds'
 import { PcApprove, PcResults } from '@/components/OneshotPc'
 import { Tell, TELLS, Track } from '@/components/OneshotTrack'
+import type { Answered } from '@/lib/oneshot'
 import { api, owns, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName,
   ownedNotice, toolText,
@@ -177,7 +178,8 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
   ) : null
   // A screen waiting on the owner (a measurement to judge, a round, a sheet), stopped or not: they can still speak
   // to the build, and take waiting words in. Each answer installs the new view, so a started rewrite is followed.
-  const told = { post: (text: string) => act(() => api.tell(repo, text)), apply: () => act(() => api.applyTell(repo)) }
+  const told = { post: (text: string, asked?: Answered[]) => act(() => api.tell(repo, text, asked)),
+    apply: () => act(() => api.applyTell(repo)) }
   const tell = !view.working && TELLS.includes(view.stage) ? (
     <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4"><Tell view={view} {...told} /></div>
   ) : null

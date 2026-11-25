@@ -126,6 +126,22 @@ def test_a_design_commit_retried_after_it_landed_returns_head_past_an_untracked_
     assert not stopped.stop.called
 
 
+def test_a_work_log_answer_carries_its_questions_to_the_design_model_within_their_own_bound(world):  # noqa: F811 — the imported fixture, requested by name
+    at("build")
+
+    def asked(chapter, answer):
+        return {"header": chapter, "question": "이 부분은 어떤 모델을 쓸까?", "answer": answer,
+                "options": [{"label": "새 모델", "note": "무손실 중간 파일을 거친다"}, {"label": "그대로"}]}
+    long = "가" * oneshot_tell.MAX_TELL   # the answer keeps its whole budget: the questions are bounded on their own
+    oneshot_tell.tell("budget", oneshot_tell.Tell(text=long, asked=[asked("재생", "새 모델"), asked("녹음", "그대로")]))
+    assert o()["tell_pending"][-1]["asked"][0]["header"] == "재생"
+    with pytest.raises(HTTPException) as refused:
+        oneshot_tell.tell("budget", oneshot_tell.Tell(text="네", asked=[asked("x" * oneshot_tell.MAX_ASKED, "네")]))
+    assert refused.value.status_code == 400 and len(o()["tell_pending"]) == 1
+    _, _, prompts = retold(sheet.parsed(DESIGN), REQS, pending=o()["tell_pending"])
+    assert "재생" in prompts[0]["text"] and "무손실 중간 파일을 거친다" in prompts[0]["text"]
+
+
 def test_words_said_while_the_screens_are_designed_wait_out_a_backend_rewrite(world):  # noqa: F811 — the imported fixture, requested by name
     sent, _, asked = retold(sheet.parsed(DESIGN), REQS, stage="split", pending=[
         {"text": "검토 때 한 말", "stage": "review"}, {"text": "화면 이야기", "stage": "split"}])

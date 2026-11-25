@@ -3,7 +3,7 @@ import { Reply } from '@/components/Agent'
 import { Btn } from '@/components/Modal'
 import { Split, Title } from '@/components/OneshotSpec'
 import { getSwitch, modeOf, type Switch, type TranslationMode } from '@/lib/api'
-import { api, stageLabel, type Critique, type Inflight, type Review, type SpecView } from '@/lib/oneshot'
+import { api, stageLabel, type Answered,type Critique, type Inflight, type Review, type SpecView } from '@/lib/oneshot'
 import { useWork } from '@/lib/work'
 import { cn } from '@/lib/utils'
 
@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
  *  against the server's caps, each review and critique with its findings, and what the run has spent. A stopped
  *  run shows the same, under its reason and `[재개]`, so why it stopped is read off what happened. */
 export function Track({ view, halt, post, apply }: {
-  view: SpecView; halt?: ReactNode; post?: (text: string) => Promise<boolean>; apply?: () => Promise<boolean>
+  view: SpecView; halt?: ReactNode; post?: (text: string, asked?: Answered[]) => Promise<boolean>; apply?: () => Promise<boolean>
 }) {
   const o = view.oneshot
   const kinds = o.intent?.kinds ?? (o.intent?.kind ? [o.intent.kind] : [])   // a record from before kinds has one
@@ -23,7 +23,7 @@ export function Track({ view, halt, post, apply }: {
         {o.inflight && <Now inflight={o.inflight} kinds={kinds} />}
         {/* As the box sends, so the pane follows the answer; with its questions, since the design model never saw them. */}
         <Log path={view.worktree ?? ''} onSend={TELLS.includes(view.stage)
-          ? (text, full) => void (post ?? ((t: string) => api.tell(view.repo, t)))(full ?? text) : undefined} />
+          ? (text, asked) => void (post ?? ((t: string, a?: Answered[]) => api.tell(view.repo, t, a)))(text, asked) : undefined} />
         {TELLS.includes(view.stage) && <Tell view={view} post={post} apply={apply} />}
       </div>
     </Split>
@@ -136,7 +136,7 @@ function Now({ inflight, kinds }: { inflight: Inflight; kinds: readonly string[]
 const SHOWN = 6   // turns kept open; earlier ones fold behind one button
 
 /** The run's worktree turns, live: the same record and stream maintenance shows for a task, read-only here. */
-function Log({ path, onSend }: { path: string; onSend?: (text: string, full?: string) => void }) {
+function Log({ path, onSend }: { path: string; onSend?: (text: string, asked?: Answered[]) => void }) {
   // Its own record: a turn the server starts here (each attempt, a review's repair) reaches it on the feed.
   const work = useWork()
   const { load, forget } = work

@@ -16,7 +16,7 @@ export type BlockProps = {
   korean: boolean
   busy: boolean
   /** Send the next thing said in this conversation. */
-  onSay: (text: string, full?: string) => void   // `full`: with each question, for a reader outside the session
+  onSay: (text: string, asked?: (ChoiceQuestion & { answer: string })[]) => void   // `asked`: the questions answered
   /** Read the spec list again: a card changed. */
   onSpecs: () => void
   /** `choice` is a survey spec's fixed work model; otherwise the empty agent pane's. */
@@ -105,7 +105,7 @@ export function Choices({ value, korean, busy, onSay }:
       multiSelect: q.multi, options: q.options.map((o) => ({ label: o.label, description: o.note, preview: o.preview })) }))}
       korean={korean} disabled={busy}
       onSubmit={(answers) => onSay(questions.length === 1 ? answers[0] : questions.map((q, i) =>
-        `${q.header || q.question}: ${answers[i]}`).join('\n'), questions.map((q, i) => `${q.question}\n→ ${answers[i]}`).join('\n\n'))} />
+        `${q.header || q.question}: ${answers[i]}`).join('\n'), questions.map((q, i) => ({ ...q, answer: answers[i] })))} />
   </div>
 }
 
