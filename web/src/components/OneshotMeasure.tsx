@@ -123,8 +123,9 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
       <p>{!owner ? (plan?.app
         ? 'PC 프로그램은 보이지 않는 별도 바탕화면에서 돈다. 창이 뜨지 않는 것이 정상이다. 프로그램에는 소리를 내지 말라고 알려 두었다. 할 일은 없다.'
         : '서버가 백엔드를 띄워 혼자 잰다. 할 일은 없다.')
-        : plan?.app ? '화면에 뜬 프로그램을 보고 소리를 듣는다.' : '아래 단계를 한다.'}</p>
-      {owner && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
+        : run?.ended ? '재기는 끝났다. 더 할 일은 없다. 결과가 뜨기를 기다린다.'
+          : plan?.app ? '화면에 뜬 프로그램을 보고 소리를 듣는다.' : '아래 단계를 한다.'}</p>
+      {owner && !run?.ended && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
       {measured.length > 0 && (
         <details>
           <summary className="cursor-pointer">재는 항목 {measured.length}개</summary>

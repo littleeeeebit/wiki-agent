@@ -399,11 +399,12 @@ def measure(repo: str, mode: str | None = None) -> None:
                     record["build"] = build
                 limit = plan["measure"]["minutes"] * 60 + 300
                 RUNNING[repo]["cut"] = time.time() + limit   # the script's own clock starts now, after the launch
-                code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
-                    "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
-                    idle=limit, hide=hide)
-                RUNNING[repo]["cut"] = None   # the script is done: what is left is the teardown and the report
-                RUNNING[repo]["ended"] = True
+                try:
+                    code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
+                        "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
+                        idle=limit, hide=hide)
+                finally:   # returned or raised, before the teardown: what is left is closing and the report
+                    RUNNING[repo].update(cut=None, ended=True)
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
         except Exception as exc:   # unforeseen: a masked owner stop once the folder is dealt with

@@ -348,6 +348,23 @@ def test_the_end_of_a_startup_log_is_cut_only_after_its_secrets_are_masked(tmp_p
         assert "end-part" not in measure.tail(log, measure.spelled({"sk-line\r\nend-part": "[K]"}))
 
 
+def test_the_running_card_drops_the_cut_off_once_the_script_returns_or_raises(at_measure):
+    given()
+    seen = []
+
+    def gate(*a, **k):
+        seen.append(dict(measure.RUNNING["budget"]))
+        if len(seen) > 1:
+            raise OSError("the script could not start")
+        return 0, "", ""
+
+    with patch.object(measure.specs, "gate", gate):
+        for _ in range(2):   # returned, then raised
+            measure.measure("budget", "owner")
+            assert measure.RUNNING["budget"]["cut"] is None and measure.RUNNING["budget"]["ended"]
+    assert all(s["cut"] and not s["ended"] for s in seen)   # while it ran, its cut-off was shown
+
+
 def test_the_scripts_output_is_masked_in_the_same_spellings_as_the_backend_log(at_measure, tmp_path):
     given()
     seen = []
