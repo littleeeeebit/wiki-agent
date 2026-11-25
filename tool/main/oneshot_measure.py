@@ -454,6 +454,11 @@ def decided(repo: str, store, record: dict, since: int, hide: dict[str, str] | N
     stored-value change takes, so a change made at any moment of the run sets it aside."""
 
     with oneshot._lock:
+        if (halt := HALTS.get(repo)) is not None and halt.is_set() and getattr(halt, "told", False) \
+                and not runtime.stopping.is_set():   # the owner spoke: their words are taken in, then built
+            store.put(working=None)
+            oneshot_spec.start(repo, "retell")
+            return None
         if (halt := HALTS.get(repo)) is not None and halt.is_set():   # `stop` sets it under this lock too
             store.stop("measure", masked("사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
                                          else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다", hide))

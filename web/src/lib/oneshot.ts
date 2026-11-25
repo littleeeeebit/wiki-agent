@@ -165,6 +165,8 @@ export type SpecView = SpecSummary & {
     /** Several kinds: where a kind's own count restarted after its cap stop. */
     critique_bases?: Record<string, number>
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
+    /** The owner's words mid-build: waiting for the design, and each set the design was rewritten from. */
+    tell_pending?: string[]; retold?: { words: string[]; changed: string[]; ts: number }[]
     spend?: { usd?: number; seconds?: number; calls?: number }
     /** The gate runs that reached each outside call (`oneshot_calls.reached`), by call id. */
     calls?: Record<string, number>; design?: { outside?: { id: string; target: string }[] }
@@ -204,6 +206,8 @@ export const oneshotSpecs = () => get('/api/oneshot-specs').then((r) => json<{ s
 export const api = {
   view: (repo: string) => get(base(repo)).then(answer),
   say: (repo: string, text: string) => post(`${base(repo)}/say`, { text }).then(answer),
+  // The owner's words to the build agent mid-build (`oneshot_tell.tell`).
+  tell: (repo: string, text: string) => post(`${base(repo)}/tell`, { text }).then(answer),
   // A PC app's build part, confirmed exactly as offered (`oneshot_spec.confirm_build`).
   confirmBuild: (repo: string, part: string, choice: string, tools: Tool[]) =>
     post(`${base(repo)}/build`, { part, choice, tools }).then(answer),

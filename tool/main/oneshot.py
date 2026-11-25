@@ -698,10 +698,21 @@ def launch(rid: str, work: str, *args, **fields) -> None:
     start_worker(run_store(rid), work, fn, (rid, *args), fields)
 
 
+# Asked before a run starts a worker or a turn: one that answers true has started something else in its place
+# (`oneshot_tell.diverted`: the owner's words, taken in first).
+DIVERTS: list = []
+
+
+def diverted(store: Store, work: str) -> bool:
+    return any(turn_aside(store, work) for turn_aside in DIVERTS)
+
+
 def start_worker(store: Store, work: str, fn, args: tuple, fields: dict) -> None:
     """One worker per store key, its state written with `working` only once it may start.
     A worker may hand its key on to the next stage's worker as its last act."""
 
+    if diverted(store, work):
+        return
     with _lock:
         if runtime.stopping.is_set():
             raise HTTPException(503, "서버가 종료 중이다. 다시 시작한 뒤 이어가라")

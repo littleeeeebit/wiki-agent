@@ -206,9 +206,9 @@ def send(repo: str, stage: str, text: str) -> None:
     """One work turn for `stage` in the spec's worktree, answering only the refusal its `text` was `composed` with;
     a turn that cannot be sent stops the stage, and the instruction the person queued for the worktree goes then."""
 
-    if stopped_for_kind(repo) or not resolve_tools(repo, stage):
-        return
     store = oneshot_spec.store(repo)
+    if stopped_for_kind(repo) or oneshot.diverted(store, stage) or not resolve_tools(repo, stage):
+        return
     spec = oneshot_spec.spec_of(repo)
     path, codex = Path(spec["worktree"]), oneshot.codex_role("build", store)
     try:
@@ -297,12 +297,18 @@ def tools_text(o: dict) -> str:
             f"nothing; if a tool is missing, say so in your answer.\n\n{names}\n")
 
 
+def owner() -> object:
+    from . import oneshot_tell   # it imports this module; what every work turn is told of the owner
+    return oneshot_tell
+
+
 def tests_text(spec: dict) -> str:
     kind = shape(spec["oneshot"])
     text = oneshot.prompt("tests", kind).replace("{tests}", json.dumps(planned(spec), ensure_ascii=False, indent=2)) \
         .replace("{profile}", environment(spec["oneshot"])).replace("{tools}", tools_text(spec["oneshot"])) \
         .replace("{needs}", oneshot_needs.told(spec))
-    return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
+    return owner().tests_told(spec["oneshot"], text.replace("{toolchain}", toolchain_text(spec)) if kind == "android"
+                              else text)
 
 
 # Every build turn ends on the real measurement it must be ready for (`oneshot_measure`).
@@ -315,7 +321,8 @@ def build_text(spec: dict) -> str:
     text = oneshot.prompt("build", kind).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o)) \
         .replace("{needs}", oneshot_needs.told(spec))
-    return (text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text) + "\n" + MEASURE_CONTRACT
+    return owner().told(o, text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text) \
+        + "\n" + MEASURE_CONTRACT
 
 
 def begin(repo: str) -> None:
@@ -542,13 +549,15 @@ def source(path: Path, file: str, root: str) -> str:
         return p.as_posix()
 
 
-def red(spec: dict, found: list[tuple[str, str, str, str]]) -> str:
-    """Why the planned tests do not all fail now, before any application exists, or empty."""
+def red(spec: dict, found: list[tuple[str, str, str, str]], again: bool = False) -> str:
+    """Why the planned tests do not all fail now, before any application exists, or empty. `again`: the design
+    changed mid-build and the application exists, so a planned test may pass; every one still runs, unskipped."""
 
     names = [t["test_name"] for t in planned(spec)]
     if missing := [n for n in names if not any(named(n, c[1]) for c in found)]:
         return "JUnit 보고서에 없는 계획 테스트: " + ", ".join(missing) + " — 테스트 이름이 `test_name` 그대로여야 한다"
-    for want, label in (("passed", "아직 구현이 없는데 통과하는 테스트는 아무것도 확인하지 않는다:"), ("skipped", "건너뛴")):
+    for want, label in (() if again else (("passed", "아직 구현이 없는데 통과하는 테스트는 아무것도 확인하지 않는다:"),)) \
+            + (("skipped", "건너뛴"),):
         if bad := sorted({c[1] for c in found if c[3] == want and any(named(n, c[1]) for n in names)}):
             return f"{label} 계획 테스트: " + ", ".join(bad)
     keys = [c[:3] for c in found if any(named(n, c[1]) for n in names)]
@@ -670,26 +679,29 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     commits the turn's files, and pins the contract files, the tool's configuration and each planned case."""
 
     o = spec["oneshot"]
+    again = bool(o.get("tests_head"))   # the design changed mid-build: the code exists, so a planned test may pass
     if specs.sh(["git", "merge-base", "--is-ancestor", o["design_head"], "HEAD"], path).returncode:
         return f"HEAD 가 승인된 설계 커밋 {o['design_head'][:12]} 위에 있지 않다"
     runner = declared(path, final, shape(o), tools(o))   # several kinds: the core's tests alone, each kind's build is 9c's
-    names = changed(path, o["design_head"])
+    names = moved = changed(path, o["design_head"])
+    if again:   # only the contract is committed here: the build's own changes stay for the build turn after
+        names = [n for n in names if n in runner["contract"] + runner["config"]]
     # Pinned by class and name, by file only when named: a planned test outside them could be weakened unseen.
     tests = [t["test_name"].lower() for t in planned(spec)]
     mentions = lambda f: (path / f).is_file() and any(   # noqa: E731
         t in (path / f).read_bytes().decode("utf-8", "ignore").lower() for t in tests)
-    if loose := [f for f in names if f not in runner["contract"] + runner["config"] and mentions(f)]:
+    if loose := [f for f in moved if f not in runner["contract"] + runner["config"] and mentions(f)]:
         return "계획 테스트 이름이 든 파일은 `contract` 에 적는다 — " + ", ".join(loose[:10])
-    before = (snapshot(path, names), head(path), names)
+    before = (snapshot(path, moved), head(path), moved)
     found = junit(path, run, spec, runner["command"])
-    if why := red(spec, found):
+    if why := red(spec, found, again):
         return why
     # A file the report names for a planned case is the case's file: one left out of `contract` is not pinned.
     if outside := sorted({source(path, c[2], runner["root"]) for c in found
                           if c[2] and any(named(t, c[1]) for t in tests)}
                          - set(runner["contract"])):
         return "계획 테스트 사례가 `contract` 에 없는 파일에서 나왔다 — " + ", ".join(outside[:10])
-    if (snapshot(path, names), head(path), changed(path, o["design_head"])) != before:
+    if (snapshot(path, moved), head(path), changed(path, o["design_head"])) != before:
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
     gate = " && ".join([runner["command"].replace("{report}", REPORT), *runner["after"]])
     adapter = path / ".wiki" / "adapter.toml"
@@ -701,7 +713,9 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     adapter.parent.mkdir(parents=True, exist_ok=True)
     adapter.write_text(connect.adapter_text({**slots, "gate_cmd": gate}, old), encoding="utf-8", newline="\n")
     names = sorted({*names, ".wiki/adapter.toml"})
-    for args in (["add", "-A", "--", *names], ["commit", "-m", "Write the contract tests before the backend", "--", *names]):
+    message = "Update the contract tests for the design the owner changed" if again else \
+        "Write the contract tests before the backend"
+    for args in (["add", "-A", "--", *names], ["commit", "-m", message, "--", *names]):
         done = specs.sh(["git", *args], path)
         if done.returncode and "nothing to commit" not in done.stdout + done.stderr:
             raise ValueError(f"계약 테스트를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
@@ -711,7 +725,8 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     scenarios = [f"{r['id']}: {r['text']}" for r in spec.get("requirements") or [] if r.get("postconditions")]
     oneshot_spec.saved(spec["repo"], done=[gate, *scenarios],
                        # the record is version 2's now, whatever version the run started at
-                       oneshot={"version": max(o.get("version", 1), 2), "stage": "build", "tests_head": tests_head, "contract": runner["contract"] + runner["config"],
+                       oneshot={"version": max(o.get("version", 1), 2), "stage": o.get("retell_to") or "build",
+                                "retell_to": None, "tests_head": tests_head, "contract": runner["contract"] + runner["config"],
                                 "runner": runner["command"], "runner_root": runner["root"], "gate": gate, "cases": pins, "attempts": 0, "working": None})
     specs.note(run, f"계약 테스트 커밋 {tests_head[:12]} · 파일 {len(runner['contract'])}개 · 테스트 {len(pins)}개 고정")
     return ""
@@ -796,5 +811,7 @@ def reviewed(repo: str) -> None:
 
 
 # A stage's turn: `(check, stop after the last refusal, its text, what follows a pass)`; later stages add theirs.
-STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, "build", build_text(oneshot_spec.spec_of(repo)))),
+# After the tests, the build of the stage they hand on to (`oneshot_tell.retell` may send them before the frontend's).
+STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, (s := oneshot_spec.spec_of(repo))["oneshot"]["stage"],
+                                                                  owner().next_build(s))),
           "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}

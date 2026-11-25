@@ -364,33 +364,50 @@ def approved(repo: str) -> None:
     """Every item approved: the design files written into the worktree and committed, and the build may begin."""
 
     spec = spec_of(repo)
-    tree, o = own_tree(spec), spec["oneshot"]
-    docs = tree and (tree / "docs" / "design").resolve()
-    if not tree or not docs.is_relative_to(tree):
-        store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
-        return
-    # A core (an Android app's, or the one several kinds share): the sheet and the module contracts the tests are
-    # written from, and a web app's endpoints among several kinds as its API.
-    cored = "modules" in o["design"]
-    written = ({"core.md": sheet.sheet, "core.json": sheet.core, **({"api.yaml": sheet.openapi} if "api" in o["design"]
-                                                                   else {})} if cored else
-               {"backend.md": sheet.sheet, "api.yaml": sheet.openapi})
-    files = [f"docs/design/{name}" for name in written]
-    if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
-        store(repo).stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {', '.join(linked)}")
-        return
-    docs.mkdir(parents=True, exist_ok=True)
-    for name, render in written.items():
-        (docs / name).write_text(render(spec), encoding="utf-8", newline="\n")
-    head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
-                                     f"(R1 round {o['r1']['round']})")
+    o = spec["oneshot"]
+    head = design_committed(repo, f"Record the approved {'core' if 'modules' in o['design'] else 'backend'} design "
+                          f"(R1 round {o['r1']['round']})")
     if head:
+        files = design_files(o)
         # What the build reads first (`handoff`): the design just committed governs, and the spec model that
         # wrote it answers the builder's escalations.
         saved(repo, task={"kind": "feature", "what": spec["goal"]},
               precedence=[{"ref": f, "role": "current", "why": "the approved design"} for f in files], escalate=[],
               author=o.get("design_author") or oneshot.role_config("design", store(repo)),
               oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
+
+
+def design_files(o: dict) -> dict:
+    """The design files a run's worktree holds, each with what renders it: a core's (an Android app's, or the one
+    several kinds share) sheet and module contracts the tests are written from, a web app's endpoints among several
+    kinds as its API; else the backend's sheet and API."""
+
+    if "modules" in o["design"]:
+        return {f"docs/design/{n}": r for n, r in {"core.md": sheet.sheet, "core.json": sheet.core,
+                                                   **({"api.yaml": sheet.openapi} if "api" in o["design"] else {})}.items()}
+    return {"docs/design/backend.md": sheet.sheet, "docs/design/api.yaml": sheet.openapi}
+
+
+def design_committed(repo: str, message: str) -> str | None:
+    """The design as the spec holds it now, written into the worktree's design files and committed with `message`:
+    the new HEAD, or `None` after stopping with `folder`. R1's approval records it, and so does a design the owner
+    changed during the build (`oneshot_tell.retell`)."""
+
+    spec = spec_of(repo)
+    tree, o = own_tree(spec), spec["oneshot"]
+    docs = tree and (tree / "docs" / "design").resolve()
+    if not tree or not docs.is_relative_to(tree):
+        store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
+        return None
+    written = design_files(o)
+    files = list(written)
+    if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
+        store(repo).stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {', '.join(linked)}")
+        return None
+    docs.mkdir(parents=True, exist_ok=True)
+    for name, render in written.items():
+        (tree / name).write_text(render(spec), encoding="utf-8", newline="\n")
+    return commit(repo, tree, files, message)
 
 
 def within(base: Path, *parts: str) -> Path | None:

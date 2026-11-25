@@ -3,7 +3,7 @@ import { Reply } from '@/components/Agent'
 import { Btn } from '@/components/Modal'
 import { Split, Title } from '@/components/OneshotSpec'
 import { getSwitch, modeOf, type Switch, type TranslationMode } from '@/lib/api'
-import { stageLabel, type Critique, type Inflight, type Review, type SpecView } from '@/lib/oneshot'
+import { api, stageLabel, type Critique, type Inflight, type Review, type SpecView } from '@/lib/oneshot'
 import { useWork } from '@/lib/work'
 import { cn } from '@/lib/utils'
 
@@ -19,9 +19,59 @@ export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
       <div className="flex flex-col gap-5 px-10 pt-5 pb-8 max-[1500px]:px-7 max-[560px]:px-4">
         {halt}
         {o.inflight && <Now inflight={o.inflight} kinds={kinds} />}
-        <Log path={view.worktree ?? ''} />
+        <Log path={view.worktree ?? ''} onSend={TELLS.includes(view.stage) ? (text) => void api.tell(view.repo, text) : undefined} />
+        {TELLS.includes(view.stage) && <Tell view={view} />}
       </div>
     </Split>
+  )
+}
+
+// The stages the owner can speak to the build agent in (`oneshot_tell.OPEN`), and those whose words wait for the
+// frontend build (`WAIT`): the screens are being designed with them then.
+const TELLS = ['tests', 'build', 'measure', 'review', 'conflict', 'split', 'board', 'frontend', 'r2', 'build-front',
+  'critique', 'phone', 'pc', 'r3', 'pr']
+const WAITS = ['split', 'board', 'frontend', 'r2']
+
+/** The owner's words to the build agent, any time it builds: said into the turn that runs, and the design rewritten
+ *  from them before the next step, which carries on from the code as it is. */
+function Tell({ view }: { view: SpecView }) {
+  const o = view.oneshot
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [fault, setFault] = useState('')
+  const send = () => {
+    if (!text.trim()) return
+    setBusy(true)
+    setFault('')
+    api.tell(view.repo, text.trim()).then(() => setText('')).catch((err) => setFault(String(err?.message ?? err)))
+      .finally(() => setBusy(false))
+  }
+  const waiting = o.tell_pending?.length ?? 0
+  return (
+    <section aria-label="구현 에이전트에게 말하기" className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3">
+      <Title><span>구현 에이전트에게 말하기</span></Title>
+      <p className="text-muted-foreground">
+        {WAITS.includes(view.stage)
+          ? '화면을 정하는 중이라, 적은 말은 프런트엔드 빌드가 시작될 때 설계에 반영된다.'
+          : '도는 작업 턴에 바로 들어가고, 다음 단계 전에 설계 모델이 이 말대로 설계를 고친다. 모델을 바꾸라는 말도 된다. 처음부터 다시 하지 않고 지금 코드에서 이어 간다.'}
+      </p>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} maxLength={4000} disabled={busy}
+        aria-label="구현 에이전트에게 할 말" className="w-full resize-y rounded-md border border-border bg-background px-3 py-2" />
+      <div className="flex flex-wrap items-center gap-3">
+        <Btn disabled={busy || !text.trim()} onClick={send}>보내기</Btn>
+        {waiting > 0 && <span className="text-[12.5px] text-muted-foreground">설계에 반영을 기다리는 말 {waiting}개</span>}
+        {fault && <span role="alert" className="text-destructive">{fault}</span>}
+      </div>
+      {(o.retold?.length ?? 0) > 0 && (
+        <ul className="flex flex-col gap-1 text-[12.5px] text-muted-foreground">
+          {o.retold!.map((r) => (
+            <li key={r.ts}>
+              반영됨 — {r.changed.length ? `바뀐 항목 ${r.changed.join(', ')}` : '설계는 그대로, 빌드에 전달'}: {r.words.join(' / ')}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 
@@ -67,7 +117,7 @@ function Now({ inflight, kinds }: { inflight: Inflight; kinds: readonly string[]
 const SHOWN = 6   // turns kept open; earlier ones fold behind one button
 
 /** The run's worktree turns, live: the same record and stream maintenance shows for a task, read-only here. */
-function Log({ path }: { path: string }) {
+function Log({ path, onSend }: { path: string; onSend?: (text: string) => void }) {
   // Its own record: a turn the server starts here (each attempt, a review's repair) reaches it on the feed.
   const work = useWork()
   const { load, forget } = work
@@ -125,6 +175,7 @@ function Log({ path }: { path: string }) {
       ) : (
         <div key={t.key} className="rounded-md border border-border bg-card px-3 py-2.5">
           <Reply turn={t} on={mode !== 'off'} progressOn={mode === 'full'} onPeek={() => {}}
+            onSend={t === turns.at(-1) ? onSend : undefined}   // a choice the build agent offered goes back as the owner's words
             onAnswer={(turn, id, allow, scope, answers, picks) => work.answer(path, turn, id, allow, scope, answers, picks)} />
         </div>
       ))}
