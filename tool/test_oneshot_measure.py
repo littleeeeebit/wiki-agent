@@ -30,7 +30,7 @@ key = os.environ.get("ENV", "")'''.replace("ENV", ENV) + '''
 if key.startswith("wrong"):
     report = {"input_error": {"input": "M2", "why": "the service refused key " + key}}
     if pathlib.Path(__file__).with_name("checked.txt").exists():   # what a build turn adds once a check shows it
-        report["input_error"]["checked"] = "서비스에 직접 물었더니 키 " + key + " 를 모른다고 했다"
+        report["input_error"]["checked"] = {"how": "서비스에 직접 물었다", "answer": "키 " + key + " 를 모른다고 했다"}
 else:
     report = {"metrics": {"total_ok": os.environ.get("BUDGET_URL") == "https://example.test/live"},
               "notes": "키 " + key + " 로 불렀다"}
@@ -226,7 +226,7 @@ def test_an_input_the_script_calls_wrong_goes_to_the_build_until_a_check_outside
     oneshot_spec.saved("budget", oneshot={"working": None})
     measure.measure("budget", "owner")
     assert o()["stopped"]["reason"] == "measure-input" and o()["stage"] == "measure" and not o()["input_sent"]
-    assert o()["stopped"]["detail"].startswith("입력 M2 이 틀렸다고 빌드가 확인했다 — 서비스에 직접 물었더니")
+    assert o()["stopped"]["detail"].startswith("입력 M2 이 틀렸다고 빌드가 확인했다 — 서비스에 직접 물었다 — 서비스의 답: 키 [")
     assert f"[{ENV}]" in o()["stopped"]["detail"] and WRONG not in json.dumps(o(), ensure_ascii=False)
     given()
     measure.start("budget", measure.Start(head=o()["built_head"]))   # one press starts it again
@@ -262,8 +262,14 @@ def test_a_dispute_stops_for_the_owner_only_once_its_own_input_was_handed_to_the
     assert measure.result("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "input",
                                             "input_error": bad}) is None
     assert o()["stopped"]["reason"] == "measure" and o()["input_sent"] == [sent]   # capped: not handed over yet
-    measure.start("budget", measure.Start(head=head))   # the retry sends it, and only then is it handed over
-    assert o()["stage"] == "build" and o()["input_sent"] == [sent, {k: bad[k] for k in measure.DISPUTED}]
+    given(key=WRONG)   # a new value: the capped report is of the one before
+    measure.start("budget", measure.Start(head=head))
+    assert o()["stage"] == "build" and o()["input_sent"] == [] and "`M2`" in at_measure[1][-1][2]   # sent, not handed
+    oneshot_spec.saved("budget", oneshot={"stage": "measure", "working": None, "measure_fails": oneshot_review.cap() - 1})
+    assert measure.result("budget", store, {"n": 2, "head": head, "mode": "auto", "status": "input",
+                                            "input_error": bad}) is None
+    measure.start("budget", measure.Start(head=head))   # the retry sends a report of this value: handed over
+    assert o()["stage"] == "build" and o()["input_sent"] == [{k: bad[k] for k in measure.DISPUTED}]
 
 
 def test_a_report_naming_no_declared_input_or_a_blank_check_is_never_the_owners(tmp_path):
@@ -277,10 +283,13 @@ def test_a_report_naming_no_declared_input_or_a_blank_check_is_never_the_owners(
     long = "sk-" + "5" * 60   # a secret longer than any cut: none of the script's words is repeated
     assert read({"input": long, "why": "x"}, {long: "[K]"}) == read({"input": "M9", "why": "x"}) and "error" in read({})
     assert "error" in read({"input": "M2"}) and "error" in read(None)   # never a passing report around it
-    assert read({"input": "M2", "why": "x", "checked": "  \n "})["input_error"]["asked"] == ""
-    assert read({"input": "M2", "why": "x", "checked": "the service said no"})["input_error"]["asked"] == ""
+    assert "error" in read({"input": "M2", "why": " \n"})   # no reason is no dispute
+    told = {"how": "서비스에 직접 물었다", "answer": "그런 키는 없다고 했다"}
+    for checked in ("서비스가 모른다고 했다", {"how": "  ", "answer": " "}, {"how": "asked the API 가", "answer": "no 나"},
+                    {"how": "확인", "answer": "없다"}, {"how": told["how"]}):   # no Korean account of a check and its answer
+        assert read({"input": "M2", "why": "x", "checked": checked})["input_error"]["asked"] == ""
     secret = "M2 이 틀렸다고"   # a secret spanning the server's words and the input's id
-    shown = read({"input": "M2", "why": "x", "checked": "서비스가 모른다고 했다"}, {secret: "[K]"})["input_error"]
+    shown = read({"input": "M2", "why": "x", "checked": told}, {secret: "[K]"})["input_error"]
     assert secret not in shown["said"] + shown["asked"] and "[K]" in shown["asked"] and shown["kind"] == "secret"
 
 

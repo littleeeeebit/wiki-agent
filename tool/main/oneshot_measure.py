@@ -433,12 +433,12 @@ def measure(repo: str, mode: str | None = None) -> None:
                 record["error"] = "변환한 소리를 들어 볼 클립이 `{out}/clips` 에 없다"
         else:
             record["status"] = "owner" if how == "owner" else "passed"
-        return lambda: decided(repo, store, record, since)
+        return lambda: decided(repo, store, record, since, hide)
 
     oneshot_review.holding(repo, "실측", body)
 
 
-def decided(repo: str, store, record: dict, since: int):
+def decided(repo: str, store, record: dict, since: int, hide: dict[str, str] | None = None):
     """`result` of a measurement whose run started at change count `since`: compared and saved under the lock every
     stored-value change takes, so a change made at any moment of the run sets it aside."""
 
@@ -449,10 +449,10 @@ def decided(repo: str, store, record: dict, since: int):
             return None
         if oneshot_needs.CHANGES.get(repo, 0) != since:
             record = {**record, "status": "stale", "error": "실측하는 동안 비밀 값이 바뀌었다 — [실측 시작]으로 다시 잰다"}
-        return result(repo, store, record)
+        return result(repo, store, record, hide)
 
 
-def result(repo: str, store, record: dict):
+def result(repo: str, store, record: dict, hide: dict[str, str] | None = None):   # `hide`: the report's mask
     """A measurement saved. One the owner must judge waits; a failure goes to the build agent, up to the review's
     round cap; a wrong input is one too, the owner's only once the build was sent it and names a check (13e)."""
 
@@ -477,14 +477,14 @@ def result(repo: str, store, record: dict):
         bad = record["input_error"]
         if bad["asked"] and {k: bad[k] for k in DISPUTED} in (o.get("input_sent") or []):   # the build was sent it
             oneshot_spec.saved(repo, oneshot={"measures": runs, "input_sent": None, "input_fails": 0})   # pressed again: the build's
-            store.stop("measure-input", bad["asked"])
+            store.stop("measure-input", masked(bad["asked"], hide))
             return None
         disputes += 1   # every input's, kept through a machine pass: one only the owner's measurement uses reaches the cap
         fails = max(fails, disputes)
-        runs[-1] = record = {**record, "status": "failed", "error": bad["said"]}
+        runs[-1] = record = {**record, "status": "failed", "error": masked(bad["said"], hide)}
     if fails >= oneshot_review.cap():   # handed to the build only when the owner's retry sends it (`start`)
         oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails, "input_fails": disputes})
-        store.stop("measure", f"실측이 {fails}번 실패했다 — {failure(record)}")
+        store.stop("measure", masked(f"실측이 {fails}번 실패했다 — {failure(record)}", hide))   # masked whole, as shown
         return None
     spec = oneshot_spec.saved(repo, oneshot={"measures": runs, "measure_fails": fails, "stage": "build", "fix": "measure",
                                              "attempts": 0, "working": "build", "input_fails": disputes, "input_sent": handed(o, record)})
@@ -581,7 +581,8 @@ def shown_input(spec: dict, plan: dict, iid: str, body: Value) -> dict:
 
 def plain_input(spec: dict, given: dict) -> dict:   # the same values again change nothing, a waiting result included
     return spec if given == kept(spec) else retire(   # a changed value is the build's to see first again (13e)
-        spec, "입력이 바뀌었다 — 이 결과는 판정하지 않고 바뀐 입력으로 다시 잰다", measure_given=given, input_sent=None, input_fails=0)
+        spec, "입력이 바뀌었다 — 이 결과는 판정하지 않고 바뀐 입력으로 다시 잰다", measure_given=given, input_sent=None, input_fails=0,
+        input_since=len(spec["oneshot"].get("measures") or []))
 
 
 def retire(spec: dict, why: str, **fields) -> dict:
@@ -782,13 +783,12 @@ def shown(spec: dict) -> dict:
 oneshot_spec.VIEWS.append(shown)
 
 
-def secret_changed(repo: str, env: str):   # the fields to put back if the store refuses, or `None`
+def secret_changed(repo: str, env: str):   # the fields to put back if the store refuses
     """A secret about to change by any route (these boxes, the R1 sheet, `forget`): a waiting result no longer ran
     with it. A running one is set aside when it ends, by `oneshot_needs.CHANGES`, counted once the store changed."""
     o = (spec := oneshot_spec.spec_of(repo))["oneshot"]   # a changed value is the build's to see first again (13e)
-    if retire(spec, "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다", **({"input_sent": None, "input_fails": 0}
-                                                                 if o.get("input_sent") or o.get("input_fails") else {})) is not spec:
-        return {"measures": o.get("measures") or [], "input_sent": o.get("input_sent"), "input_fails": o.get("input_fails")}
+    retire(spec, "비밀 값이 바뀌었다 — 이 결과는 판정하지 않고 다시 잰다", input_sent=None, input_fails=0, input_since=len(o.get("measures") or []))
+    return {"measures": o.get("measures") or [], **{k: o.get(k) for k in ("input_sent", "input_fails", "input_since")}}
 
 
 oneshot_needs.CHANGED.append(secret_changed)

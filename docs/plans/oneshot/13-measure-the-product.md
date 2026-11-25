@@ -135,8 +135,8 @@ The owner gave the input, so the script's `input_error` is not the owner's
 stop by itself. The rules:
 
 - A report with an `input_error` that names no input the plan declares, or
-  no reason, is a failed report, the build's like any other. Its error is a
-  fixed sentence: nothing the script wrote is repeated.
+  a blank reason, is a failed report, the build's like any other. Its error
+  is a fixed sentence: nothing the script wrote is repeated.
 - Otherwise the server saves a failed measurement whose `error` is a Korean
   sentence of its own. The card and every stop show only server sentences;
   the script's reason stays in the record for the build turn. The build turn
@@ -145,18 +145,26 @@ stop by itself. The rules:
 - `input_sent` lists the inputs whose dispute a build turn was actually sent,
   each by id, `env`, `what` and `kind`: the same id in a rebuilt plan is
   another input. A dispute stopped at the round cap joins it only when the
-  owner's retry sends it to the build.
+  owner's retry sends it to the build, and only if no input changed since
+  that measurement (`input_since`): a report of an earlier value still goes
+  to the build, but hands nothing over.
 - `input_fails` counts every input's disputes. A machine pass leaves it, so
   inputs only the owner's measurement uses still reach the round cap; the
   cap's retry resets it with `measure_fails`, and an owner's measurement that
   ran through every input clears it.
 - The owner is stopped only when a report on an input in `input_sent`
-  carries `checked` with a Korean account of the check made outside the
-  program and what the service answered. The owner reads a sentence the
-  server writes around it, masked as a whole.
+  carries `checked`: `how`, the check made outside the program, and
+  `answer`, what the service answered, each at least four Hangul syllables
+  and mostly Hangul among its letters, so a name or an address inside it
+  passes and an English account does not. The owner reads a sentence the
+  server writes around it, and every stop and card sentence is masked as a
+  whole with the report's mask.
+- The server reads `checked` by its shape and language, never by whether it
+  is true. That is an accepted limit: the owner reads the account, and a
+  press with the same value sends the next report to the build again.
 - Any change of an input's value, and the owner's stop itself, clear
-  `input_sent` and `input_fails`: the next such report goes to the build
-  first. Pressing `[실측 시작]` again with the same value is how the owner
+  `input_sent` and `input_fails`, and a value change sets `input_since`: the
+  next such report goes to the build first. Pressing `[실측 시작]` again with the same value is how the owner
   says it stands.
 
 A program that leaves the owner's screen empty, opens no window of its own,
