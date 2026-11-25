@@ -2339,6 +2339,8 @@ def requested_merge(repo: Path, spec: dict) -> None:
         return
     try:
         merge_spec(repo, spec, Merge(head=request["head"]), prepare=False)
+    except Deferred:
+        return   # the request and its progress stay: archived with the task, or retried by the poll if it survives
     except Exception as exc:
         errorlog.record("requested-merge", exc, repo=repo.name, spec=spec["id"])
         on_task(repo.name, spec, merge_request=None, fault=f"요청한 머지 중단 — {exc}")
@@ -2447,13 +2449,17 @@ def merge(sid: str, body: Merge) -> dict:
     return merge_spec(repo, spec, body)
 
 
+class Deferred(HTTPException):
+    """A merge given up while a delete holds its task: a queued request stays for the poll, should it survive."""
+
+
 @contextlib.contextmanager
 def admitted(repo: str, sid: str):
     """`_landing` for a merge of `sid`'s task, given up once a delete reserves that task: the delete holds
     it while it waits for the task's loop, whose own queued merge (`drive` → `requested_merge`) waits here."""
     while not _landing.acquire(timeout=0.5):
         if (repo, sid) in _deleting:
-            raise HTTPException(409, "삭제하는 중인 작업이다")
+            raise Deferred(409, "삭제하는 중인 작업이다")
     try:
         yield
     finally:

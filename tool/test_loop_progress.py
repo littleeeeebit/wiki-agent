@@ -560,6 +560,13 @@ def test_a_task_is_deleted_only_once_nothing_acts_on_it():
         with loop.deleting("proj", task):
             pass
     assert busy.halt.is_set() and merge_started == [409] and not loop._deleting   # joined, and no merge ran
+    # The queued request behind that refusal stays, with its progress: the poll retries it if the delete fails.
+    queued = {**task, "rev": 1, "pr": {"number": 7}, "merge_request": {"head": "h", "base": "main", "rev": 1, "pr": 7}}
+    with patch.object(specs, "approved", return_value={"head": "h", "base": "main"}), \
+            patch.object(loop, "merge_spec", side_effect=loop.Deferred(409, "deleting")), \
+            patch.object(loop, "on_task") as written, patch.object(specs, "merge_progress") as progress:
+        loop.requested_merge(Path("proj"), queued)
+    assert not written.called and not progress.called
     # A delete that read a task made again since (a second delete, after a re-adoption) touches nothing.
     other = loop.Loop("proj", "t1")
     other.born = 2.0
