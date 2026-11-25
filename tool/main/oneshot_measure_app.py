@@ -60,12 +60,14 @@ def folder(spec: dict) -> Path:
 
 
 def started(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide: dict, mode: str,
-            passed: dict | None = None):
+            passed: dict | None = None, seen: bool = True):
     """What the measurement runs, started for the block, which gets the frozen build or `None`: the PC program in
-    a run that builds one (`owner` starting the build the server's own measurement `passed`), else the backend."""
+    a run that builds one (`owner` starting the build the server's own measurement `passed`), else the backend.
+    `seen`: the program on the owner's screen, as every measurement shows it; the build's health check, which only
+    waits for the health address, keeps it on a desktop of its own."""
 
     if "app" in plan:
-        return running(spec, plan, tree, env, halt, log, hide, mode, passed)
+        return running(spec, plan, tree, env, halt, log, hide, mode, passed, seen)
     return served(oneshot_build.run_as(plan["serve"]["command"], spec["oneshot"], tree), tree, env,
                   plan["serve"]["health"], plan["serve"]["seconds"], halt, log, hide)
 
@@ -275,7 +277,7 @@ def changed(build) -> str:
 
 @contextmanager
 def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide: dict, mode: str,
-            passed: dict | None = None):
+            passed: dict | None = None, seen: bool = True):
     """The frozen program started with the measurement's environment and answering `health` with 200 from a
     socket its job holds, for the block, which gets the frozen build; `ValueError` with the end of its log when it
     exits or does not answer in time. `auto` freezes the built HEAD's copy anew; `owner` starts the copy the
@@ -311,7 +313,7 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
     (root / "looks").mkdir(exist_ok=True)
     output = Captured(hide)   # the program's output stays in memory until it is masked
     try:
-        with desktop_session.look(root / "looks", f"measure-{mode}-{uuid.uuid4().hex[:12]}", owned=False,
+        with desktop_session.look(root / "looks", f"measure-{mode}-{uuid.uuid4().hex[:12]}", owned=not seen,
                                   disposable=True) as look:
             try:
                 try:

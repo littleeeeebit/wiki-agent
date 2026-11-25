@@ -5,6 +5,7 @@ See `docs/plans/oneshot/13-measure-the-product.md`. The backend and script are `
 the program's desktop is replaced, since a look opens a real one.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -410,6 +411,30 @@ def test_a_gate_log_that_cannot_be_removed_stops_for_the_owner(at_measure):  # n
         removed(path)
     with patch.object(measure.shutil, "rmtree", busy_once), patch.object(measure.time, "sleep", lambda s: None):
         assert measure.serve_check(tree, run, spec()) == "" and len(tries) == 2
+
+
+def test_the_builds_health_check_keeps_the_program_off_the_owners_screen(at_measure, tmp_path):  # noqa: F811
+    tree, _ = at_measure
+    run = types.SimpleNamespace(halt=measure.Halted(), put=lambda *a, **k: None,
+                                chat=types.SimpleNamespace(id="c", parent_id=None))
+    asked = {}
+
+    @contextlib.contextmanager
+    def started(*args, seen=True, **kwargs):
+        asked["seen"] = seen
+        yield None
+    with patch.object(product, "started", started):
+        assert measure.serve_check(tree, run, spec()) == ""
+    assert asked == {"seen": False}   # only the measurement itself is shown
+    job, looked = Job(), {}
+    answers = iter([None, 200])
+    with patch.dict(sys.modules, desktop_session=session(tmp_path, job, looked)), \
+            patch.object(product, "answers", lambda url: next(answers)), \
+            patch.object(product, "vouched", lambda pids, url, status=False: True):
+        with product.running(spec(), {"app": program(tree), "inputs": []}, tree, {}, measure.Halted(),
+                             tmp_path / "h.log", {}, "auto", seen=False):
+            pass
+    assert looked["owned"]   # a desktop of its own
 
 
 def test_the_programs_output_reaches_the_disk_only_masked(at_measure, tmp_path):  # noqa: F811 — the imported fixture

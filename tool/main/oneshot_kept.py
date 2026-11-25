@@ -128,7 +128,7 @@ def clips_of(out: Path, hide: dict[str, str]) -> list[str]:
     if not plain(folder, stat.S_IFDIR):
         return []
     found = sorted(p.name for p in folder.iterdir() if plain(p) and p.suffix.lower() in CLIPS
-                   and p.stat().st_size <= MAX_CLIP and masked(p.name, hide) == p.name)
+                   and 0 < p.stat().st_size <= MAX_CLIP and masked(p.name, hide) == p.name)   # an empty one plays nothing
     return found[:MAX_CLIPS]
 
 

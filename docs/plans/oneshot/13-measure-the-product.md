@@ -81,13 +81,16 @@ reach as not reached, never as passed.
 After every build turn whose gate passes, the server measures by itself.
 
 - It launches the frozen program on the owner's desktop, so the owner sees
-  the window the measurement drives and hears its sound, and only that
-  window: every console child the server, the script and the tests start
-  runs without a window (`process.hide_child_consoles`). The clips also
-  hold what the program said.
+  the window the measurement drives and hears its sound. The server, the
+  search daemon and the tests start every console child without a window
+  (`process.hide_child_consoles`), and the contract has the script start
+  its own console helpers the same way; the owner sees the program's
+  windows and, in their own measurement, the browser pages its steps open.
+  The clips also hold what the program said.
 - A metric is read from what the program put out (the sound, the screen,
-  the file), never from its own account of what it did, and a metric with
-  nothing to measure fails.
+  the file), never from its own account of what it did. One the script
+  could not observe is left out of the report, and fails; a truth value is
+  judged only against a truth value and a number only against a number.
 - `{data}` is one folder kept for the whole run, not a fresh one per launch,
   so a sign-in the owner gave once is still there for the next build.
 - The program gets only what it needs to run, the measurement's inputs, the

@@ -52,17 +52,27 @@ def hide_child_consoles() -> None:
     and the tests, before they start anything.
     """
 
-    if os.name != "nt" or getattr(subprocess.Popen, "hides_consoles", False):
+    global _create
+    if os.name != "nt" or _create is not None:
         return
-    start = subprocess.Popen.__init__
+    import _winapi   # the call `Popen` (and asyncio's, and multiprocessing's) makes once its arguments are bound
+    _create = _winapi.CreateProcess
+    _winapi.CreateProcess = _hidden
+
+
+_create = None   # Windows' own `CreateProcess`, once `hide_child_consoles` stands in front of it
+
+
+def hidden_flags(flags):
+    """`flags` with `CREATE_NO_WINDOW`, unless they ask for a console of their own or none; anything that is not
+    a number is passed as it came, for Windows to refuse as it would."""
+
     own = subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS
+    return flags | subprocess.CREATE_NO_WINDOW if isinstance(flags, int) and not flags & own else flags
 
-    def hidden(self, *args, creationflags=0, **kwargs):
-        start(self, *args, creationflags=creationflags if creationflags & own else
-              creationflags | subprocess.CREATE_NO_WINDOW, **kwargs)
 
-    subprocess.Popen.__init__ = hidden
-    subprocess.Popen.hides_consoles = True
+def _hidden(application, command, process_attributes, thread_attributes, inherit, flags, *rest):
+    return _create(application, command, process_attributes, thread_attributes, inherit, hidden_flags(flags), *rest)
 
 
 def resumed(proc: subprocess.Popen) -> None:

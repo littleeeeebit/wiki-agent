@@ -37,6 +37,35 @@ def test_a_child_that_leads_no_group_is_not_contained_elsewhere():
         process.terminated(job)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="consoles open windows only on Windows")
+def test_every_way_of_starting_a_child_reaches_windows_with_its_console_hidden(monkeypatch):
+    import asyncio.windows_utils
+
+    process.hide_child_consoles()   # the tests' conftest did it already: a second call changes nothing
+    seen = []
+
+    class Stop(Exception):
+        pass
+
+    def capture(*args):   # Windows' own call, never reached: no child starts
+        seen.append(args[5])
+        raise Stop
+    monkeypatch.setattr(process, "_create", capture)
+
+    class Child(subprocess.Popen):
+        pass
+    positional = (["unused.exe"], -1, None, None, None, None, None, True, False, None, None, None, None, 4)
+    for call in (lambda: subprocess.Popen(*positional), lambda: Child(*positional),
+                 lambda: asyncio.windows_utils.Popen(["unused.exe"], creationflags=4),
+                 lambda: subprocess.Popen(["unused.exe"], creationflags=subprocess.CREATE_NEW_CONSOLE | 4),
+                 lambda: subprocess.Popen(["unused.exe"], creationflags=subprocess.DETACHED_PROCESS | 4)):
+        with pytest.raises(Stop):
+            call()
+    hidden = subprocess.CREATE_NO_WINDOW | 4
+    assert seen == [hidden, hidden, hidden, subprocess.CREATE_NEW_CONSOLE | 4, subprocess.DETACHED_PROCESS | 4]
+    assert process.hidden_flags(None) is None   # left for Windows to refuse, as it would
+
+
 # A parent with no console (as a test worker or the search daemon has none) starts a console child that reports
 # whether its console window is visible.
 NO_CONSOLE_PARENT = """
