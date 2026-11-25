@@ -13,7 +13,8 @@ It is refused while the hub is off main, since it would write that branch's
 wiring onto the machine, and where a repository has its hooks switched off.
 
 The part of it that touches only a checkout's own untracked Claude settings
-needs no click: `settle` writes it whenever `watch` starts or sees a change,
+needs no click (a file not there yet only where git ignores it, so a clean
+checkout stays clean): `settle` writes it whenever `watch` starts or sees a change,
 the pages' deny rules included, so a drift the lint reports is never left for
 the person to find. The user-level move and every Codex change stay the
 person's to confirm.
@@ -190,7 +191,9 @@ def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bo
 def own(repo: Path, file: Path) -> bool:
     """Whether `file` is the checkout's own untracked settings: at its own path with no link on the way, in no git
     checkout of its own (a submodule, a nested repository), and a git that read its index and lists no such file,
-    in any capitalization. Anything else is the person's to change, never the watch's."""
+    in any capitalization. A file not there yet is created only where git ignores it: a clean checkout stays clean
+    (`specs.status`), and one that does not ignore it gets the file from `[모두 다시 연결]`. Anything else is the
+    person's to change, never the watch's."""
 
     if file.is_symlink() or file.resolve() != repo / file.relative_to(repo):
         return False
@@ -201,9 +204,13 @@ def own(repo: Path, file: Path) -> bool:
                              capture_output=True, encoding="utf-8", errors="replace", env=plain)
         if top.returncode or Path(top.stdout.strip()).resolve() != repo.resolve():
             return False
-    done = subprocess.run(["git", "-C", str(repo), "ls-files", "--", f":(icase){file.relative_to(repo).as_posix()}"],
+    rel = file.relative_to(repo).as_posix()
+    done = subprocess.run(["git", "-C", str(repo), "ls-files", "--", f":(icase){rel}"],
                           capture_output=True, encoding="utf-8", errors="replace", env=plain)
-    return done.returncode == 0 and not done.stdout.strip()
+    if done.returncode or done.stdout.strip():
+        return False
+    return file.exists() or subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", "--", rel],
+                                           capture_output=True, env=plain).returncode == 0
 
 
 def switched_off(plan: list[tuple[Path, dict, list[str]]]) -> list[Path]:

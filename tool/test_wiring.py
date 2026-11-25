@@ -116,7 +116,11 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
     nested = repo("nested", "{}")   # its settings folder is a checkout of its own, as a submodule is: that one tracks it
     git(nested / ".claude", "init", "-q")
     git(nested / ".claude", "add", "settings.json")
-    rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked, cased, nested)]
+    fresh, ignoring = repo("fresh", "{}"), repo("ignoring", "{}")   # no settings yet: git ignores them in one
+    for path in (fresh, ignoring):
+        (path / ".claude/settings.json").unlink()
+    (ignoring / ".gitignore").write_text(".claude/settings.json\n", encoding="utf-8")
+    rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked, cased, nested, fresh, ignoring)]
     rule = "Bash(dos2unix*)"
     choice = connect.hosts
 
@@ -138,7 +142,9 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
             assert wiring.own(cased.resolve(), cased.resolve() / ".claude/settings.json") is False
         with patch.object(wiring, "hub_branch", return_value="main"):
             done = wiring.settle()
-            assert done == [f"{loose.resolve() / '.claude' / 'settings.json'}: deny 추가: {rule}"]
+            assert sorted(done) == [f"{p.resolve() / '.claude' / 'settings.json'}: deny 추가: {rule}" for p in (ignoring, loose)]
+            assert not (fresh / ".claude/settings.json").exists(), "a clean checkout stays clean: only an ignored file is made"
+            assert json.loads((ignoring / ".claude/settings.json").read_text(encoding="utf-8"))["permissions"]["deny"] == [rule]
             assert json.loads((loose / ".claude/settings.json").read_text(encoding="utf-8"))["permissions"]["deny"] == [rule]
             assert wiring.settle() == [], "맞춘 뒤에는 쓸 것이 없다"
             (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")

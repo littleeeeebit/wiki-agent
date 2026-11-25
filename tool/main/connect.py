@@ -229,7 +229,10 @@ def status(path: Path, wired: dict[str, bool] | None = None) -> dict:
                 "powershell": powershell}
     wired = users() if wired is None else wired
     rec = record(path.name)
-    slots = {k: str(v).strip() for k, v in (data.get("slots") or {}).items()}
+    table = data.get("slots") or {}
+    if not isinstance(table, dict):   # a `slots` of another shape: this checkout's finding, never the listing's stop
+        broken, table = broken or "adapter 의 slots 가 표가 아니다", {}
+    slots = {k: str(v).strip() for k, v in table.items()}
     agents = hosts(data)
     missing, notes = [], []
     if broken:
