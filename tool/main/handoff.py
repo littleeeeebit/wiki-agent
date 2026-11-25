@@ -388,8 +388,10 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         if name == "guidance":
             if not isinstance(value, dict) or not isinstance(value.get("text"), str) or not value["text"].strip():
                 raise ValueError("`guidance` 는 {\"text\": ...} 여야 한다")
-            specs.update(spec["repo"], spec["id"], escalations=history)
             owed = {"kind": name, "rev": spec["rev"], "text": value["text"]}
+            # One write: a loop's answer is never saved without the delivery it owes (`loop.handed`).
+            spec = specs.update(spec["repo"], spec["id"], escalations=history, **(
+                {"handoff_owed": {**owed, "report_at": spec.get("report_at")}} if looping else {})) or spec
         elif oneshot:   # a oneshot's contract is its committed design: only the person changes it mid-build
             return person(spec, run, held, f"상위 모델이 원샷 설계를 바꾸자고 답했다 ({name}) — 사람이 정한다")
         elif name == "spec-update":
@@ -399,10 +401,14 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
                 current = specs.load(spec["repo"], spec["id"])
                 if run.halt.is_set():
                     return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
+                owed = {"kind": name, "rev": current["rev"] + 1}
+                # Saved by the revision itself: it never stands without its escalation or the delivery it owes.
+                current["escalations"] = history
+                if looping:
+                    current["handoff_owed"] = {**owed, "report_at": current.get("report_at")}
                 specs.revise(repo, current, value, author=True, checkout=path)   # the tree the author read
-            # A running session keeps the system prompt it started with: the revision goes in the turn.
-            spec = specs.update(spec["repo"], spec["id"], escalations=history)
-            owed = {"kind": name, "rev": spec["rev"]}
+                # A running session keeps the system prompt it started with: the revision goes in the turn.
+                spec = specs.load(spec["repo"], spec["id"])
         elif looping:   # the person decides on a prerequisite before any card of it exists
             return person(spec, run, history, f"상위 모델이 선행 작업으로 나누자고 답했다 — 반영하지 않고 리뷰 루프를 멈췄다:\n"
                                               f"{json.dumps(value, ensure_ascii=False, indent=1)[:6000]}")
@@ -423,8 +429,7 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         return person(spec, run, [*history[:-1], {**entry, "answer": {"kind": "refused", "error": str(exc)}}],
                       f"상위 모델의 답을 적용하지 못했다 — {exc}")
     specs.note(run, f"상위 모델이 `{name}` 로 답했다 — 구현을 이어 간다")
-    if looping:   # a second sender would race the loop for the worktree; a later report is measured from here
-        specs.update(spec["repo"], spec["id"], handoff_owed={**owed, "report_at": spec.get("report_at")})
+    if looping:   # a second sender would race the loop for the worktree; `handoff_owed` is saved above
         return lambda: None
     told = turn_for(path, spec, owed)
     if oneshot:   # a Stop pressed while this turn is recorded leaves the stage resumable instead

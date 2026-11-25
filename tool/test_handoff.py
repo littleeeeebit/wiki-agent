@@ -352,12 +352,17 @@ def test_a_review_loop_takes_the_authors_revision_and_sends_its_turn_itself(task
     repo, sid = task
     specs.update("proj", sid, state="고치는 중 R1")
     update = {"rev": 1, "reason": "r", "goal": "Another goal", "out": [], "done": ["x"]}
+    saves, save = [], specs.save
     with patch.object(handoff, "ask", return_value=block("spec-update", update)), \
-         patch("main.loop.asked") as asked, patch.object(specs, "again") as again:
+         patch("main.loop.asked") as asked, patch.object(specs, "again") as again, \
+         patch.object(specs, "save", side_effect=lambda s: saves.append(dict(s)) or save(s)):
         assert specs._check(repo, Run(), block("escalation", ESCALATION))() is None
         spec = specs.load("proj", sid)
         assert (spec["rev"], spec["goal"], spec["state"]) == (2, "Another goal", "고치는 중 R1") and not asked.called
         assert spec["handoff_owed"] == {"kind": "spec-update", "rev": 2, "report_at": None}   # `loop.handed` sends it
+        # The revision's own save carries its answer and the delivery it owes: none stands without the other.
+        revised = [s for s in saves if s["rev"] == 2]
+        assert revised and all(s.get("handoff_owed") and s.get("escalations") for s in revised)
         # A split waits for the person before any card of it exists.
         split = block("split", {"reason": "first", "spec": spec_block(slug="first-thing")})
         with patch.object(handoff, "ask", return_value=split):

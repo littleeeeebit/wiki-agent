@@ -1066,6 +1066,11 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     finally:
         loop.run = None
         loop.report_at = run.report_at
+        if owed and not loop.handing:   # a turn that never carried the owed answer (cleanup): its report is no delivery
+            with specs._files:
+                fresh = specs.load(loop.repo, loop.sid) or {}
+                if fresh.get("handoff_owed") == owed and fresh.get("report_at") != owed.get("report_at"):
+                    own(loop, handoff_owed=(owed := {**owed, "report_at": fresh.get("report_at")}))
     if loop.halt.is_set():
         return None
     if run.halt.is_set():   # the work pane stopped this turn: its answer is not judged, and nothing is retried
@@ -1374,14 +1379,13 @@ def external_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, 
     try:
         sync_review(spec, path, head)
         chosen = specs.for_round(repo, path, spec, base)
-        if reusable(spec, head, chosen):
+        # The receipt is saved before `gate`: a gate cut between them is reused only once `gate` is back,
+        # which `rounded` rebuilds from that receipt, so no pass stands for a base or environment it never ran on.
+        if reusable(spec, head, chosen) and (spec.get("gate") or {}).get("head") == head:
             return True
         verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
-        # `gate` first, as `shipped` does: a Stop between the two leaves no receipt to reuse without its `gate`,
-        # so the resumed step runs the gate again instead of reusing it on every step.
-        if change(loop, gate=verdict) is None:
+        if specs.validate(loop.repo, loop.sid, loop.born, round=record) is None or change(loop, gate=verdict) is None:
             return False
-        specs.validate(loop.repo, loop.sid, loop.born, round=record)
         if not verdict["ok"]:
             return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, verdict["reason"] + "\n" + verdict["tail"])
         return True
@@ -1434,14 +1438,15 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
                                          sorted({issue for r in unresolved for issue in r["failures"]}), "unstable")
             raise ValueError(reason)
         chosen = specs.for_round(repo, path, spec, base)
-        if not reusable(spec, head, chosen):
+        if not reusable(spec, head, chosen) or (spec.get("gate") or {}).get("head") != head:   # as `external_shipped`
             settings = verification.redaction(verification.local(repo), path)
             verdict, check = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
-            spec = change(loop, gate=verdict)   # before the receipt, as in `external_shipped`
+            if specs.validate(loop.repo, loop.sid, loop.born, round=check) is None:
+                return False
+            spec = change(loop, gate=verdict)
             if spec is None:
                 return False
-            spec = specs.validate(loop.repo, loop.sid, loop.born, round=check) or spec
             if not verdict["ok"]:
                 verification.return_to_cloud(repo, spec, head, verdict["reason"] + "\n" + verdict["tail"], ["offline/round"])
                 return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "게이트 실패 — 클라우드 수정 대기")
