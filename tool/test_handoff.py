@@ -177,6 +177,16 @@ def test_the_person_decides_past_the_rounds_or_without_an_author(task):
         else:
             assert then is None and not send.called
         assert asked != "person" or "기록돼 있지 않다" in specs.load("proj", sid)["fault"]
+    # A repair at the measurement is a build turn (plan 13): it goes up, and the guidance is sent as a build turn.
+    specs.update("proj", sid, oneshot={**approved, "stage": "measure", "fix": "measure", "working": "build",
+                                       "models": {"spec": fixed}}, escalations=[], fault=None)
+    with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})) as ask, \
+         patch("main.oneshot_spec.store"), patch("main.oneshot_needs.leaked", return_value=""), \
+         patch("main.oneshot_build.send") as send, patch("main.oneshot_build.checked", return_value=None):
+        then = specs._check(repo, Run(), block("escalation", ESCALATION))
+        assert ask.called and then is not None
+        then()
+    assert send.call_args[0][1] == "build"   # never under the measurement's `working`
 
 
 def test_an_answer_outside_the_three_goes_to_the_person(task):

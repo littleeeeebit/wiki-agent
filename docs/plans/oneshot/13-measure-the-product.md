@@ -169,12 +169,20 @@ input, whatever the script says is wrong with it:
 Once the run reaches the measurement, its stage stays `measure` until the
 owner approves. A repair is a build turn sent from there: `fix` names why
 (`measure` for a failed metric or a refusal, `plan` for a plan that no longer
-holds, `moved` for a tree that moved after it was measured), and
-`oneshot_profile.turn_stage` routes that turn's end to the build's own check.
-The check's pass clears `fix` and measures the new HEAD; `[재개]` after a
-stopped repair sends the same build turn, and an escalation from it reaches
-the spec's author as any build turn's does. The screen shows the repair on
-the measurement page.
+holds, `moved` for a tree that moved before, during or after a measurement,
+its reason kept in `moved`), and `oneshot_profile.turn_stage` routes that
+turn's end to the build's own check. The check's pass clears `fix` and
+measures the new HEAD. `[재개]` after a stopped repair sends the same build
+turn with the same reason, and an escalation from it reaches the spec's author
+and comes back as a build turn, as any build turn's does. The screen shows the
+repair on the measurement page, and a repair stopped by a restart shows the
+stop with its `[재개]`.
+
+A new value given at a `measure-input` stop waits for the measurement that
+asked to let the tree go, then measures. Only a value the measurement reads
+counts as a change: forgetting a credential neither the design nor the plan
+names leaves the question as it stands. An input an earlier version disputed
+at its round cap is measured again first, so the owner is asked about it.
 
 Whatever a oneshot runs opens where the owner can see it. A desktop look has
 no desktop of its own (`desktop_session.look`), so the server's own

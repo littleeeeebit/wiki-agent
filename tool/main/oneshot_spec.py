@@ -785,10 +785,10 @@ def resume(repo: str) -> dict:
             o = saved(repo, oneshot=settle)["oneshot"]
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
-        if turn_stage(o) not in (*RUNNING, *TURNS, *SHEETS, "review", "board"):   # a measurement's repair resumes
+        if (stage := turn_stage(o)) not in (*RUNNING, *TURNS, *SHEETS, "review", "board"):   # a repair resumes
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
         # An edit turn that stopped: the sheet stands, the owner decides again. A board's stop likewise.
-        if o["stage"] in SHEETS or o["stage"] == "board":
+        if stage in SHEETS or stage == "board":
             return view(saved(repo, oneshot={"stopped": None}))
         if o["stage"] in RUNNING:
             start(repo, RUNNING[o["stage"]])

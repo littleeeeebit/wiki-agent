@@ -10,6 +10,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -168,7 +169,7 @@ def test_a_failure_at_the_round_cap_goes_to_the_build_agent_when_the_owner_start
     assert len(o()["measures"]) == runs, "the failed HEAD is never measured again as it is"
     # The build repairs it inside the measurement: the stage, and so the owner's screen, never goes back (plan 13).
     assert o()["stage"] == "measure" and o()["fix"] == "measure" and o()["measure_fails"] == 0 and not o()["stopped"]
-    assert o()["working"] == "build" and measure.oneshot_profile.turn_stage(o()) == "build"
+    assert o()["working"] == "build" and measure.oneshot_build.turn_stage(o()) == "build"
     assert sent[-1][1] == "build" and "total_ok=False" in sent[-1][2]
     # That failure still last and an input taken back: the one lock scope that would launch a worker reads the
     # failure first, so Start hands it to the build agent and measures nothing.
@@ -203,8 +204,10 @@ def test_a_failed_measurement_or_a_refusal_is_repaired_by_the_build_agent_inside
     assert o()["stage"] == "measure" and o()["working"] == "build" and "목소리가 끊긴다" in sent[-1][2]
     # A repair stopped on the way (a restart) resumes as a build turn, still at the measurement.
     oneshot_spec.saved("budget", oneshot={"working": None, "stopped": {"reason": "restart", "detail": "x", "state": "measure"}})
+    turns = len(sent)
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
         oneshot_spec.resume("budget")
+    assert len(sent) == turns + 1, "[재개] sends the repair's build turn again, never only clears the stop"
     assert o()["stage"] == "measure" and sent[-1][1] == "build" and "목소리가 끊긴다" in sent[-1][2]
 
 
@@ -344,6 +347,63 @@ def test_an_input_goes_only_into_the_box_the_owner_saw_and_a_design_secret_is_ne
     bad_op = {**plan, "metrics": [{**plan["metrics"][0], "pass": {"op": [], "value": 1}}]}
     with pytest.raises(ValueError, match="pass"):
         measure.checked(bad_op, s, tree)
+
+
+def test_a_tree_that_moves_while_it_is_measured_is_repaired_at_the_measurement_and_resumes_with_its_reason(at_measure):
+    tree, sent = at_measure
+    given()
+    calls = []
+
+    def moved(*a):   # the tree held still before the run, and moved during it
+        calls.append(1)
+        return "" if len(calls) == 1 else "stray.txt 가 새로 생겼다"
+
+    from main import oneshot_review
+
+    with patch.object(oneshot_review, "moved", moved), \
+            patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
+        measure.measure("budget", "owner")
+    assert o()["stage"] == "measure" and o()["fix"] == "moved" and o()["working"] == "build"   # never back a stage
+    assert sent[-1][1] == "build" and "stray.txt" in sent[-1][2] and "worktree moved" in sent[-1][2]
+    oneshot_spec.saved("budget", oneshot={"working": None, "stopped": {"reason": "restart", "detail": "x", "state": "measure"}})
+    turns = len(sent)
+    with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
+        oneshot_spec.resume("budget")
+    assert len(sent) == turns + 1 and "stray.txt" in sent[-1][2]   # the resumed turn is told why, as the first was
+
+
+def test_an_input_question_waits_for_its_measurement_to_end_and_counts_only_what_the_measurement_reads(at_measure):
+    from main import oneshot
+
+    given()
+    head, n = o()["built_head"], len(o().get("measures") or []) + 1
+    bad = {"input": "M2", "env": ENV, "what": "서비스 키", "kind": "secret", "why": "no", "asked": "물음"}
+    asked = {"n": n, "head": head, "mode": "auto", "status": "input", "input_error": bad}
+    stop = {"reason": "measure-input", "detail": "물음", "state": "measure"}
+    oneshot_spec.saved("budget", oneshot={"measures": [*(o().get("measures") or []), asked], "input_since": 0,
+                                          "working": None, "stopped": stop})
+    # A credential no measurement reads, forgotten: the owner's question stands as it was.
+    unused = f"UNUSED_KEY_{os.getpid()}"
+    release.secret_write(oneshot_needs.name("budget", unused), "x" * 12)
+    oneshot_needs.forget("budget", unused)
+    assert measure.kept_input(o(), o()["measures"][-1]) and o()["stopped"]["reason"] == "measure-input"
+    # A new value while the measurement that asked still lets the tree go: measured once that one has ended.
+    oneshot_spec.saved("budget", oneshot={"input_since": n})
+    ending = threading.Thread(target=threading.Event().wait, args=(0.5,))
+    ending.start()
+    oneshot._workers[oneshot_spec.store("budget").key] = ending
+    started = []
+    with patch.object(measure.oneshot, "start_worker", lambda *a: started.append(ending.is_alive())):
+        measure.remeasure("budget")
+    assert started == [False]
+    # An input an earlier version disputed at its cap (`failed` with `input_error`) is measured again first.
+    oneshot_spec.saved("budget", oneshot={"measures": [*o()["measures"][:-1], {**asked, "status": "failed"}],
+                                          "stopped": None, "working": None})
+    launched = []
+    with patch.object(measure, "launch", lambda *a: launched.append(1)), \
+            patch.object(measure.oneshot_build, "send", lambda *a: launched.append("build")):
+        measure.start("budget", measure.Start(head=head))
+    assert launched == [1] and o()["stage"] == "measure" and not o().get("fix")
 
 
 def test_a_result_set_aside_when_its_inputs_change_or_the_tree_moves_never_strands_the_run(at_measure):

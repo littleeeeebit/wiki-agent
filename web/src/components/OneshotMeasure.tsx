@@ -28,8 +28,11 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
   const last = m.runs.at(-1)
   const current = last && last.head === m.head ? last : undefined
   const waiting = !!current && verdictDue(current)
-  const failed = current?.status === 'failed'   // stopped at the cap: the button hands it to the build agent, no input needed
-  const disputed = current?.status === 'input'   // a new value measures again at once; this button keeps the value
+  // Stopped at the cap: the button hands it to the build agent, no input needed. An input an earlier version
+  // disputed this way is the owner's to answer: measured again first.
+  const failed = current?.status === 'failed' && !current.input_error
+  // A new value measures again at once; with none changed since, this button keeps the value (`kept_input`).
+  const disputed = current?.status === 'input' && (view.oneshot.input_since ?? 0) < current.n
   const missing = failed ? [] : m.plan?.inputs.filter((x) => !x.given) ?? []
   const owner = m.next === 'owner'
   return (

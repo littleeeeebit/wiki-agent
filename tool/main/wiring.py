@@ -23,6 +23,7 @@ What reaches the screen is read by a person and stays Korean.
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 from pathlib import Path
 
@@ -30,10 +31,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import apply
+import setup_agents
 from common import indexes
 from common.paths import PACKAGED
 
-from . import channels, connect, work
+from . import channels, connect, runtime, work
 from .query import ROOT
 from .refresh import Refresh
 
@@ -90,31 +92,34 @@ def settle() -> list[str]:
 
     if refused():
         return []
+    try:
+        paths = {p.resolve() for p in connected()}
+    except Exception:   # noqa: BLE001 — a listing that fails leaves the watch running; the screen names it
+        return []
     done = []
-    for path in {p.resolve() for p in connected()}:
+    for path in paths:
         try:
             plan = connect.pending(path)
             if switched_off(plan):
                 continue
-            for file, settings, changes in plan:
-                host = "claude" if file.parent.name == ".claude" else "codex"
-                if changes and apply.user_wired(host) and not tracked(path, file):
-                    file.parent.mkdir(parents=True, exist_ok=True)
-                    file.write_text(connect.settled(settings), encoding="utf-8", newline="\n")
-                    done += [f"{file}: {change}" for change in changes]
+            mine = [(file, settings, changes) for file, settings, changes in plan if changes
+                    and apply.user_wired("claude" if file.parent.name == ".claude" else "codex") and own(path, file)]
+            setup_agents.write_plan(mine, runtime.stopping.is_set)   # each file whole or as it was
+            done += [f"{file}: {change}" for file, _s, changes in mine for change in changes]
         except Exception:   # noqa: BLE001 — one checkout never stops the others or the watch; the screen names it
             continue
     return done
 
 
-def tracked(repo: Path, file: Path) -> bool:
-    """Whether git tracks `file` in `repo`: a committed settings file is the person's to change, never the watch's."""
+def own(repo: Path, file: Path) -> bool:
+    """Whether `file` is the checkout's own untracked settings: at its own path with no link on the way, and a git
+    that read its index and lists no such file. Anything else is the person's to change, never the watch's."""
 
-    import subprocess
-
-    done = subprocess.run(["git", "-C", str(repo), "ls-files", "--error-unmatch", "--", str(file)],
+    if file.is_symlink() or file.resolve() != repo / file.relative_to(repo):
+        return False
+    done = subprocess.run(["git", "-C", str(repo), "ls-files", "--", file.relative_to(repo).as_posix()],
                           capture_output=True, encoding="utf-8", errors="replace")
-    return done.returncode == 0
+    return done.returncode == 0 and not done.stdout.strip()
 
 
 def switched_off(plan: list[tuple[Path, dict, list[str]]]) -> list[Path]:

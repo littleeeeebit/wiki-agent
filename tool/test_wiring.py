@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -92,7 +93,15 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
         return path
 
     loose, kept, off = repo("loose", "{}"), repo("kept", "{}", track=True), repo("off", '{"disableAllHooks": true}')
-    rows = [{"path": str(p), "state": "일부"} for p in (loose, kept, off)]
+    bad = repo("bad", "[]")   # a settings root that is no object: unreadable, and never the others' stop
+    linked, elsewhere = tmp_path / "linked", tmp_path / "elsewhere"
+    (elsewhere / ".claude").mkdir(parents=True)
+    (elsewhere / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    linked.mkdir()
+    git(linked, "init", "-q")
+    import _winapi
+    _winapi.CreateJunction(str(elsewhere / ".claude"), str(linked / ".claude"))   # a link out of the checkout
+    rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked)]
     rule = "Bash(dos2unix*)"
     with patch.object(connect, "hosts", return_value=["claude"]), \
          patch.object(chat_channels, "projects", side_effect=lambda: list(rows)), \
@@ -107,6 +116,16 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
             assert wiring.settle() == [], "맞춘 뒤에는 쓸 것이 없다"
             assert (kept / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "git 이 추적하는 파일은 사람의 것"
             assert "permissions" not in json.loads((off / ".claude/settings.json").read_text(encoding="utf-8"))
+            assert (elsewhere / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "링크 너머는 쓰지 않는다"
+            assert (bad / ".claude/settings.json").read_text(encoding="utf-8") == "[]"
+            real = wiring.subprocess.run
+
+            def unreadable(argv, *a, **k):   # git that could not read its index
+                return SimpleNamespace(returncode=128, stdout="") if "ls-files" in argv else real(argv, *a, **k)
+
+            with patch.object(wiring.subprocess, "run", unreadable):
+                (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+                assert wiring.settle() == [], "git 이 색인을 읽지 못하면 추적 여부를 모르니 쓰지 않는다"
             with patch.object(wiring.apply, "user_wired", return_value=False):   # the checkout's own install governs
                 (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
                 assert wiring.settle() == []

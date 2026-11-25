@@ -406,6 +406,6 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         run.checked = True   # handled: the stage's finalizer records no unchecked turn
         due, more = oneshot_answers.carried(spec["oneshot"], run)   # what the escalating turn was sent, bound now
         told = oneshot_answers.composed(told + more, due)
-        return oneshot_build.unless_stopped(run, spec["repo"],
-                                            lambda: oneshot_build.send(spec["repo"], spec["oneshot"]["stage"], told))
+        stage = oneshot_build.turn_stage(spec["oneshot"])   # a repair at the measurement answers as a build turn
+        return oneshot_build.unless_stopped(run, spec["repo"], lambda: oneshot_build.send(spec["repo"], stage, told))
     return lambda: None if run.halt.is_set() else specs.again(path, run.chat, told, spec)

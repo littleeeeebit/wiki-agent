@@ -13,8 +13,8 @@
     },
     "tool/apply.py": {
       "dup": 6,
-      "lines": 884,
-      "reason": "RETIRED_DENIES and retire_denies: a checkout's settings lose a deny a page dropped (sed -i) through apply and the global install alike; user-level files keep theirs"
+      "lines": 886,
+      "reason": "PR #446 round 5: `read_json` refuses a settings root that is no JSON object as a `ValueError` its callers already catch, so one malformed checkout never stops the wiring watch's settle or the project list (two lines). Before that: RETIRED_DENIES and retire_denies: a checkout's settings lose a deny a page dropped (sed -i) through apply and the global install alike; user-level files keep theirs"
     },
     "tool/census.py": {
       "dup": 19,
