@@ -80,6 +80,9 @@ def test_a_change_of_branch_or_user_settings_tells_the_screens_once_each(tmp_pat
         wiring.watch(Changing(3), every=0)
         assert drained() == [{"kind": "connect", "repo": ""}] * 2, "설정 파일과 브랜치가 바뀔 때마다 한 번씩"
         assert settled == [1, 1, 1, 1], "시작과 바뀔 때마다 체크아웃 설정을 맞춘다"
+        with patch.object(wiring, "settle", return_value=["a: deny 추가: x"]):
+            wiring.watch(Ticks(0), every=0)
+        assert drained() == [{"kind": "connect", "repo": ""}], "시작할 때 쓴 것이 있으면 화면이 다시 읽는다"
 
 
 def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leaves_the_rest(tmp_path):
@@ -107,7 +110,10 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
     cased = repo("cased", "{}")   # git tracks it as `Settings.json`: the same file on Windows, the person's either way
     (cased / ".claude/settings.json").rename(cased / ".claude/Settings.json")
     git(cased, "add", ".claude/Settings.json")
-    rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked, cased)]
+    nested = repo("nested", "{}")   # its settings folder is a checkout of its own, as a submodule is: that one tracks it
+    git(nested / ".claude", "init", "-q")
+    git(nested / ".claude", "add", "settings.json")
+    rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked, cased, nested)]
     rule = "Bash(dos2unix*)"
     with patch.object(connect, "hosts", return_value=["claude"]), \
          patch.object(chat_channels, "projects", side_effect=lambda: list(rows)), \
@@ -122,6 +128,7 @@ def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leav
             assert wiring.settle() == [], "맞춘 뒤에는 쓸 것이 없다"
             assert (kept / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "git 이 추적하는 파일은 사람의 것"
             assert (cased / ".claude/Settings.json").read_text(encoding="utf-8") == "{}", "다른 대소문자로 추적해도 사람의 것"
+            assert (nested / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "하위 체크아웃이 추적하면 사람의 것"
             assert "permissions" not in json.loads((off / ".claude/settings.json").read_text(encoding="utf-8"))
             assert (elsewhere / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "링크 너머는 쓰지 않는다"
             assert (bad / ".claude/settings.json").read_text(encoding="utf-8") == "[]"

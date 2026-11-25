@@ -76,7 +76,8 @@ def watch(halt: threading.Event, every: float = EVERY) -> None:
     (`settle`); on a change the screens list the repositories again (`connect` on the feed)."""
 
     seen = mark()
-    settle()
+    if settle():   # a screen that listed the repositories before this write lists them again
+        work.feed.put({"kind": "connect", "repo": ""})
     while not halt.wait(every):
         now = mark()
         if now != seen:
@@ -159,11 +160,17 @@ def replaced(repo: Path, file: Path, settings: dict, source: bytes | None) -> bo
 
 
 def own(repo: Path, file: Path) -> bool:
-    """Whether `file` is the checkout's own untracked settings: at its own path with no link on the way, and a git
-    that read its index and lists no such file. Anything else is the person's to change, never the watch's."""
+    """Whether `file` is the checkout's own untracked settings: at its own path with no link on the way, in no git
+    checkout of its own (a submodule, a nested repository), and a git that read its index and lists no such file,
+    in any capitalization. Anything else is the person's to change, never the watch's."""
 
     if file.is_symlink() or file.resolve() != repo / file.relative_to(repo):
         return False
+    if file.parent.is_dir():   # the checkout its folder belongs to, which must be this one
+        top = subprocess.run(["git", "-C", str(file.parent), "rev-parse", "--show-toplevel"],
+                             capture_output=True, encoding="utf-8", errors="replace")
+        if top.returncode or Path(top.stdout.strip()).resolve() != repo.resolve():
+            return False
     done = subprocess.run(["git", "-C", str(repo), "ls-files", "--", f":(icase){file.relative_to(repo).as_posix()}"],
                           capture_output=True, encoding="utf-8", errors="replace")
     return done.returncode == 0 and not done.stdout.strip()
