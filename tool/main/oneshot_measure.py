@@ -390,7 +390,8 @@ def measure(repo: str, mode: str | None = None) -> None:
             return None
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name, "mode": how}, None
         # The card's while it runs, this worker's alone (`halt`, fresh per start): its cut-off once the script starts.
-        RUNNING[repo] = {"n": n, "head": o["built_head"], "mode": how, "ts": record["ts"], "cut": None, "halt": halt}
+        RUNNING[repo] = {"n": n, "head": o["built_head"], "mode": how, "ts": record["ts"], "cut": None, "ended": False,
+                         "halt": halt}
         try:
             with product.started(now, plan, tree, env, halt, raw / "serve.log", hide, how,
                                  (passed or {}).get("build")) as build:
@@ -401,6 +402,8 @@ def measure(repo: str, mode: str | None = None) -> None:
                 code, text, cut = specs.gate(oneshot_build.run_as(plan["measure"]["command"].replace(
                     "{out}", oneshot_build.literal(raw.as_posix())), o, tree), tree, halt, env=env, timeout=limit,
                     idle=limit, hide=hide)
+                RUNNING[repo]["cut"] = None   # the script is done: what is left is the teardown and the report
+                RUNNING[repo]["ended"] = True
         except ValueError as exc:
             code, text, cut = None, "", masked(str(exc), hide)
         except Exception as exc:   # unforeseen: a masked owner stop once the folder is dealt with

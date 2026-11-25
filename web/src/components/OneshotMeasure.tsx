@@ -116,7 +116,7 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
       {run ? (
         <p className="tabular-nums">
           {clock(run.ts)}에 시작 · {span(gone)} 지났다{minutes > 0 && <> · 보통 약 {minutes}분 걸린다</>}
-          {run.cut ? '' : ' · 프로그램을 띄우는 중'}
+          {run.ended ? ' · 재기는 끝났고 프로그램을 닫고 결과를 모으는 중' : run.cut ? '' : ' · 프로그램을 띄우는 중'}
           {late && run.cut && <span className="text-wait"> — 예상보다 오래 걸린다. {clock(run.cut)}까지 끝나지 않으면 서버가 끊고 실패로 센다.</span>}
         </p>
       ) : <p>PR #1 초안과 넣은 값을 확인하는 중이다. 곧 시작한다.</p>}
@@ -134,7 +134,7 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
         </details>
       )}
       <p className="text-muted-foreground">{owner
-        ? '끝나면: 모든 항목을 재면 결과와 클립이 이 화면에 뜨고, 보고 들은 뒤 승인하거나 거절한다. 사람이 필요 없는 항목이 실패하면 판정 없이 빌드 에이전트가 고친다.'
+        ? '끝나면: 모든 항목이 기준을 넘으면 결과와 클립이 이 화면에 뜨고, 보고 들은 뒤 승인하거나 거절한다. 어느 항목이든 기준에 못 미치면 판정 없이 빌드 에이전트가 고친다.'
         : '끝나면: 모두 통과하면 주인 실측을 부른다. 통과하지 못한 항목이 있으면 보통은 빌드 에이전트가 그 항목만 고치고 서버가 다시 잰다.'}
         {' '}실패가 회차 한도에 닿거나 입력이 틀렸다고 확인되면 멈추고, 이 화면 위에 이유와 누를 버튼이 뜬다.</p>
     </section>

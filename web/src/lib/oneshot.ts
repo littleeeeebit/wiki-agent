@@ -138,9 +138,10 @@ export type MeasureView = {
   error: string; runs: MeasureRun[]; pr: { number: number; url: string } | null; head: string
   /** The measurement [실측 시작] runs next: the server's own until it passes, then the owner's once. */
   next: 'auto' | 'owner'
-  /** The measurement running now (`oneshot_kept.shown`): its number, whose, its start in epoch seconds and, once
-   *  its script started, when the server cuts it; null while the server still sets it up. */
-  running?: { n: number; mode: 'auto' | 'owner'; ts: number; cut: number | null } | null
+  /** The measurement running now (`oneshot_kept.shown`): its number, whose, its start in epoch seconds, while its
+   *  script runs when the server cuts it, and once it ended (`ended`, the report being collected); null while the
+   *  server still sets it up. */
+  running?: { n: number; mode: 'auto' | 'owner'; ts: number; cut: number | null; ended: boolean } | null
 }
 /** An area the builder and the review could not both meet (`oneshot_review.conflicted`). */
 export type Conflict = {

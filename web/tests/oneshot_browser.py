@@ -1044,7 +1044,8 @@ def measurement():
                     v["measure"]["plan"]["inputs"][0]["given"] = True
                 if act == "measure/start":
                     v["working"] = "measure"
-                    v["measure"]["running"] = {"n": 1, "mode": "owner", "ts": time.time() - 75, "cut": time.time() + 900}
+                    v["measure"]["running"] = {"n": 1, "mode": "owner", "ts": time.time() - 75, "cut": time.time() + 900,
+                                                 "ended": False}
                 if act == "measure/stop":
                     v["working"] = None
                     v["measure"]["runs"] = [{"n": 1, "head": head, "ts": 0, "status": "owner", "mode": "owner", "clips": ["s1.wav"],
