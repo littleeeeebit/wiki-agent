@@ -125,7 +125,8 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
         : '서버가 백엔드를 띄워 혼자 잰다. 할 일은 없다.')
         : run?.ended ? '재기는 끝났다. 더 할 일은 없다. 결과가 뜨기를 기다린다.'
           : plan?.app ? '화면에 뜬 프로그램을 보고 소리를 듣는다.' : '아래 단계를 한다.'}</p>
-      {owner && !run?.ended && during.length > 0 && <><p>지금 할 일:</p><Steps steps={during} /></>}
+      {owner && !run?.ended && during.length > 0 && <>   {/* now only once the script runs, which opens what they need */}
+        <p>{run?.cut ? '지금 할 일:' : '프로그램이 뜨고 실측이 시작되면 할 일:'}</p><Steps steps={during} /></>}
       {measured.length > 0 && (
         <details>
           <summary className="cursor-pointer">재는 항목 {measured.length}개</summary>
@@ -135,7 +136,7 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
         </details>
       )}
       <p className="text-muted-foreground">{owner
-        ? '끝나면: 모든 항목이 기준을 넘으면 결과와 클립이 이 화면에 뜨고, 보고 들은 뒤 승인하거나 거절한다. 어느 항목이든 기준에 못 미치면 판정 없이 빌드 에이전트가 고친다.'
+        ? `끝나면: 모든 항목이 기준을 넘으면 ${plan?.clips ? '결과와 클립이 이 화면에 뜨고, 보고 들은 뒤' : '결과가 이 화면에 뜨고, 본 뒤'} 승인하거나 거절한다. 어느 항목이든 기준에 못 미치면 판정 없이 빌드 에이전트가 고친다.`
         : '끝나면: 모두 통과하면 주인 실측을 부른다. 통과하지 못한 항목이 있으면 보통은 빌드 에이전트가 그 항목만 고치고 서버가 다시 잰다.'}
         {' '}실패가 회차 한도에 닿거나 입력이 틀렸다고 확인되면 멈추고, 이 화면 위에 이유와 누를 버튼이 뜬다.</p>
     </section>
