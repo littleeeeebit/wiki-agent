@@ -200,7 +200,16 @@ def found(blocks: list[dict]) -> list[dict]:
 
 
 def author_of(spec: dict) -> dict:
-    return spec.get("author") or (spec.get("source") or {}).get("author") or {}
+    """Who wrote the spec. An unfinished oneshot whose design was approved before the approval kept it asks
+    what that approval keeps: the design's author, else the spec model the run fixed at its start."""
+
+    if got := spec.get("author") or (spec.get("source") or {}).get("author"):
+        return got
+    o = spec.get("oneshot") or {}
+    if o.get("stage") in (None, "done"):
+        return {}
+    from . import oneshot, oneshot_spec
+    return o.get("design_author") or oneshot.role_config("design", oneshot_spec.store(spec["repo"]))
 
 
 def question(spec: dict, escalation: dict) -> str:
