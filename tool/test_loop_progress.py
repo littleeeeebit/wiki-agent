@@ -542,9 +542,12 @@ def test_a_task_is_deleted_only_once_nothing_acts_on_it():
     busy, merge_started = loop.Loop("proj", "t1"), []
     busy.born = 1.0
 
-    def reviewing():   # the loop's exit: no merge can start while the delete waits for it
+    def reviewing():   # past its halt check, the loop enters its own queued merge while the delete holds the lock
         busy.halt.wait(5)
-        merge_started.append(loop._landing.acquire(blocking=False))
+        try:
+            loop.merge_spec(Path("proj"), task, loop.Merge(head="h"), prepare=False)
+        except HTTPException as exc:
+            merge_started.append(exc.status_code)
 
     busy.thread = threading.Thread(target=reviewing, daemon=True)
     busy.thread.start()
@@ -556,7 +559,7 @@ def test_a_task_is_deleted_only_once_nothing_acts_on_it():
         assert not busy.halt.is_set()
         with loop.deleting("proj", task):
             pass
-    assert busy.halt.is_set() and merge_started == [False] and not loop._deleting
+    assert busy.halt.is_set() and merge_started == [409] and not loop._deleting   # joined, and no merge ran
     # A delete that read a task made again since (a second delete, after a re-adoption) touches nothing.
     other = loop.Loop("proj", "t1")
     other.born = 2.0

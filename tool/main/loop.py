@@ -2447,9 +2447,22 @@ def merge(sid: str, body: Merge) -> dict:
     return merge_spec(repo, spec, body)
 
 
+@contextlib.contextmanager
+def admitted(repo: str, sid: str):
+    """`_landing` for a merge of `sid`'s task, given up once a delete reserves that task: the delete holds
+    it while it waits for the task's loop, whose own queued merge (`drive` → `requested_merge`) waits here."""
+    while not _landing.acquire(timeout=0.5):
+        if (repo, sid) in _deleting:
+            raise HTTPException(409, "삭제하는 중인 작업이다")
+    try:
+        yield
+    finally:
+        _landing.release()
+
+
 def merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) -> dict:
     """The guarded merge for a click or its explicitly authorized prepared head."""
-    with _landing:
+    with admitted(repo.name, spec["id"]):
         with specs._files:   # the check and its first progress line on the same task, never a replacement
             fresh = specs.load(repo.name, spec["id"])
             if fresh is None or fresh["history"][0]["ts"] != spec["history"][0]["ts"]:
@@ -2823,8 +2836,8 @@ def deleting(repo: str, spec: dict, *, interrupt: bool = True):
         yield
         return
     # Held from before anything stops to the end. A merge's GitHub reads can take minutes, so it is refused,
-    # not waited on; the loop never takes it (only merges, their observation, cleanup and the poll do), so the
-    # join below never waits on this delete.
+    # not waited on. The loop takes it only for its own queued merge (`drive` → `merge_spec`), which gives
+    # up once this task is reserved (`admitted`), so the join below never waits on this delete.
     if not _landing.acquire(blocking=False):
         raise HTTPException(409, "이 저장소의 머지·정리가 끝난 뒤 삭제해라")
     try:
