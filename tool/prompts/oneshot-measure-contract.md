@@ -41,8 +41,8 @@ script drives, so the window shows what the script does.
      program plays through the speakers as it would for them, and what it
      says also goes to the clips. The server starts the script without a
      console window; the script starts each console helper of its own the
-     same way (`CREATE_NO_WINDOW`, or `-WindowStyle Hidden` for PowerShell's
-     `Start-Process`), never in a window of its own. The windows the owner
+     same way (`CREATE_NO_WINDOW`, or PowerShell's hidden window style),
+     never in a window of its own. The windows the owner
      sees are the program's, and, in the owner's measurement, the browser
      pages the `during` steps open.
 
