@@ -170,9 +170,12 @@ def test_the_person_decides_past_the_rounds_or_without_an_author(task):
         with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})) as ask, \
              patch("main.oneshot_spec.store"), patch("main.oneshot_needs.leaked", return_value=""), \
              patch("main.oneshot_build.send") as send, patch("main.oneshot_build.checked", return_value=None) as check:
-            specs._check(repo, Run(person), block("escalation", ESCALATION))
+            then = specs._check(repo, Run(person), block("escalation", ESCALATION))
         assert ask.called == (asked == "author") and check.called == (asked == "check")
-        assert asked == "author" and ask.call_args[0][1] == fixed or not send.called
+        if asked == "author":   # the pinned model is asked, and its guidance is the builder's next turn
+            assert ask.call_args[0][1] == fixed and then is not None
+        else:
+            assert then is None and not send.called
         assert asked != "person" or "기록돼 있지 않다" in specs.load("proj", sid)["fault"]
 
 
