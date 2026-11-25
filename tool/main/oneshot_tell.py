@@ -122,8 +122,11 @@ def tell(repo: str, body: Tell) -> dict:
             raise HTTPException(409, "설계를 승인한 뒤부터 주인 화면 회차(R3)까지 구현 에이전트에게 말할 수 있다")
         stage = o["stage"]
         said = {"text": text, "ts": time.time(), "stage": stage, "into_turn": steered(spec, text, asked)}
-        o = oneshot_spec.saved(repo, oneshot={"told": [*(o.get("told") or []), said], "tell_pending": [
-            *(o.get("tell_pending") or []), {"text": text, "stage": stage, "ts": said["ts"], **({"asked": asked} if asked else {})}]})["oneshot"]
+        word = {"text": text, "stage": stage, "ts": said["ts"], **({"asked": asked} if asked else {}),
+                # said to a run stopped on its question: the answer, which `answered` hands on as the turn lets go
+                **({"answers": True} if (o.get("stopped") or {}).get("reason") == "asked" else {})}
+        o = oneshot_spec.saved(repo, oneshot={"told": [*(o.get("told") or []), said],
+                                              "tell_pending": [*(o.get("tell_pending") or []), word]})["oneshot"]
         if o.get("working") == "measure":   # the build goes back to work at once: the measurement stops
             from . import oneshot_measure   # it imports this module's neighbours
             if halt := oneshot_measure.HALTS.get(repo):
@@ -189,11 +192,14 @@ def start(store: oneshot.Store) -> None:
 
 def answered(store: oneshot.Store) -> None:
     """A turn that stopped on its question (`asked`) let go: an answer the owner gave while it was still closing,
-    which found the run busy and only queued, goes in now. Any other stop waits for `[지금 반영]`."""
+    which found the run busy and only queued, goes in now. Words said before the question wait for its answer, and
+    any other stop waits for `[지금 반영]`."""
 
     with oneshot._lock:
         spec = oneshot_spec.spec_of(store.key.removeprefix("spec:"))
-        if (spec["oneshot"].get("stopped") or {}).get("reason") == "asked" and due(spec["oneshot"]) and not parked(spec):
+        o = spec["oneshot"]
+        if (o.get("stopped") or {}).get("reason") == "asked" and any(w.get("answers") for w in taken(o)) \
+                and not parked(spec):
             start(store)
 
 

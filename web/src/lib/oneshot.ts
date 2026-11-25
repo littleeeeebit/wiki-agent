@@ -169,7 +169,7 @@ export type SpecView = SpecSummary & {
     critique_bases?: Record<string, number>
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
     /** The owner's words mid-build: waiting for the design, and each set the design was rewritten from. */
-    tell_pending?: { text: string; stage: string }[]; retold?: { words: string[]; changed: string[]; ts: number }[]
+    tell_pending?: { text: string; stage: string; answers?: boolean }[]; retold?: { words: string[]; changed: string[]; ts: number }[]
     spend?: { usd?: number; seconds?: number; calls?: number }
     /** The gate runs that reached each outside call (`oneshot_calls.reached`), by call id. */
     calls?: Record<string, number>; design?: { outside?: { id: string; target: string }[] }

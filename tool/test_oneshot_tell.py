@@ -129,7 +129,11 @@ def test_a_design_commit_retried_after_it_landed_returns_head_past_an_untracked_
 def test_an_answer_given_as_the_asking_turn_closes_goes_in_once_it_lets_go_and_only_an_asked_stop_does(world):  # noqa: F811 — the imported fixture, requested by name
     store = oneshot_spec.store("budget")
     asked = {"reason": "asked", "detail": "묻는다", "state": "build"}
-    at("build", stopped=asked, inflight={"turn": "t"})   # the question's turn has not let go yet
+    at("build", stopped=asked, inflight={"turn": "t"}, tell_pending=[{"text": "세금을 더해", "stage": "build"}])
+    store.put(inflight=None)
+    oneshot_tell.answered(store)   # words said before the question never answer it
+    assert o()["working"] is None and o()["stopped"]["reason"] == "asked"
+    store.put(inflight={"turn": "t"})   # the question's turn has not let go yet
     say("세금 포함")
     assert o()["working"] is None and o()["tell_pending"]   # busy: only queued
     store.put(inflight=None)

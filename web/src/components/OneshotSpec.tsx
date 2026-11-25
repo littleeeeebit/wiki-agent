@@ -97,7 +97,8 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
 
   useEffect(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, [repo])
   useEffect(() => { if (view) onView?.(view) }, [view, onView])
-  const working = !!view?.working
+  // An answer to the agent's question can wait for its turn to let go before the rewrite starts (`answered`).
+  const working = !!view?.working || (view?.stopped?.reason === 'asked' && !!view.oneshot.tell_pending?.some((w) => w.answers))
   useEffect(() => {
     if (!working) return
     const timer = window.setInterval(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, 1500)
