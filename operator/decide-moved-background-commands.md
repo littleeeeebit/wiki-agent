@@ -36,11 +36,14 @@ is left on the list, only those deciding tools go through.
 
 The first call reads the whole transcript; later calls read only what was
 added, from a scan kept under the temporary folder, so a command moved long
-ago stays on the list. A rewritten transcript is read again from its start.
+ago stays on the list. A transcript replaced by another file, or changed in
+its first 4 KB or in the 4 KB before where the last scan stopped, is read
+again from its start. Beyond that the scan trusts Claude to only append.
 Parallel decisions and notices settle by task: a failed call undoes nothing
 another call decided. A command counts only while its output file is seen
-held open for writing, which Windows shows; a reader looking at it does not
-count. A command whose process has ended holds
+held open for writing, which Windows shows. A reader looking at it does not
+count, nor does one that keeps others from reading it, since that shows no
+writer. A command whose process has ended holds
 nothing, as when a resumed session's earlier process ended without a notice.
 Elsewhere nothing shows a held file, so nothing is held.
 

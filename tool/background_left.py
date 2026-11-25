@@ -173,12 +173,17 @@ def running(output: str) -> bool:
     k32.CreateFileW.restype = wintypes.HANDLE
     k32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
                                 wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
-    # Read access, sharing read only: an open that has write access conflicts, a reader does not.
-    handle = k32.CreateFileW(output, 0x80000000, 0x1, None, 3, 0x80, None)
-    if handle == wintypes.HANDLE(-1).value:
-        return ctypes.get_last_error() == 32   # ERROR_SHARING_VIOLATION: a writer holds it
-    k32.CloseHandle(handle)
-    return False
+    def conflicts(share: int) -> bool:   # an open for reading with `share` meets ERROR_SHARING_VIOLATION
+        handle = k32.CreateFileW(output, 0x80000000, share, None, 3, 0x80, None)
+        if handle == wintypes.HANDLE(-1).value:
+            return ctypes.get_last_error() == 32
+        k32.CloseHandle(handle)
+        return False
+
+    # Sharing read and write, only an open that denies others reading conflicts: whoever it is, nothing
+    # shows a writer. Past that, sharing read alone, only an open with write access conflicts. A running
+    # command's writer lets others read (its output is read while it runs), so it shows here.
+    return not conflicts(0x3) and conflicts(0x1)
 
 
 def left(transcript: Path) -> list[str]:

@@ -208,6 +208,28 @@ def test_a_reader_of_an_ended_tasks_output_does_not_hold_the_session(tmp_path, m
         assert not denied(path)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="share modes tell a held output file only on Windows")
+def test_a_reader_that_denies_sharing_does_not_count_as_a_writer(tmp_path, monkeypatch):
+    import ctypes
+    from ctypes import wintypes
+
+    monkeypatch.setattr(background_left, "running", SHOWN_RUNNING)
+    output = tmp_path / "task1.output"
+    output.write_text("finished", encoding="utf-8")
+    path = transcript(tmp_path, moved("task1", output=str(output)))
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                   wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel.CreateFileW(str(output), 0x80000000, 0, None, 3, 0x80, None)   # read, sharing nothing
+    assert handle != wintypes.HANDLE(-1).value
+    try:
+        assert not denied(path)
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def test_where_a_held_output_file_cannot_be_seen_nothing_is_held(tmp_path, monkeypatch):
     monkeypatch.setattr(background_left, "running", SHOWN_RUNNING)
     monkeypatch.setattr(background_left, "LIVENESS", False)
