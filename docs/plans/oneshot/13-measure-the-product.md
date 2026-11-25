@@ -154,11 +154,15 @@ stop by itself. The rules:
   ran through every input clears it.
 - The owner is stopped only when a report on an input in `input_sent`
   carries `checked`: `how`, the check made outside the program, and
-  `answer`, what the service answered, each at least four Hangul syllables
-  and mostly Hangul among its letters, so a name or an address inside it
-  passes and an English account does not. The owner reads a sentence the
-  server writes around it, and every stop and card sentence is masked as a
-  whole with the report's mask.
+  `answer`, what the service answered, each at least four Hangul syllables,
+  Hangul at least half of its letters in any script, and at most 600
+  characters. A name or an address inside it passes; an account in another
+  language, or a longer one, goes back to the build. The owner reads both
+  parts whole, in a sentence the server writes around them. Every sentence
+  a measurement's card or stop shows, the owner's stop, a set-aside result
+  and a halt included, is masked as a whole with the report's mask.
+- The owner's stop also resets `measure_fails`: their press sends the next
+  report to the build, never straight to the round cap.
 - The server reads `checked` by its shape and language, never by whether it
   is true. That is an accepted limit: the owner reads the account, and a
   press with the same value sends the next report to the build again.

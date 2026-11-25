@@ -444,11 +444,11 @@ def decided(repo: str, store, record: dict, since: int, hide: dict[str, str] | N
 
     with oneshot._lock:
         if (halt := HALTS.get(repo)) is not None and halt.is_set():   # `stop` sets it under this lock too
-            store.stop("measure", "사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
-                       else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다")
+            store.stop("measure", masked("사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
+                                         else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다", hide))
             return None
-        if oneshot_needs.CHANGES.get(repo, 0) != since:
-            record = {**record, "status": "stale", "error": "실측하는 동안 비밀 값이 바뀌었다 — [실측 시작]으로 다시 잰다"}
+        if oneshot_needs.CHANGES.get(repo, 0) != since:   # every sentence the owner reads masked whole (13e)
+            record = {**record, "status": "stale", "error": masked("실측하는 동안 비밀 값이 바뀌었다 — [실측 시작]으로 다시 잰다", hide)}
         return result(repo, store, record, hide)
 
 
@@ -470,13 +470,14 @@ def result(repo: str, store, record: dict, hide: dict[str, str] | None = None): 
         return None
     if record["status"] == "stale":   # an input changed while it ran: no fault of the build, measured again
         oneshot_spec.saved(repo, oneshot={"measures": runs})
-        store.stop("measure", record["error"])
+        store.stop("measure", masked(record["error"], hide))
         return None
     fails, disputes = int(o.get("measure_fails") or 0) + 1, int(o.get("input_fails") or 0)
     if record["status"] == "input":   # the owner gave it: the build proves it wrong before the owner is asked
         bad = record["input_error"]
-        if bad["asked"] and {k: bad[k] for k in DISPUTED} in (o.get("input_sent") or []):   # the build was sent it
-            oneshot_spec.saved(repo, oneshot={"measures": runs, "input_sent": None, "input_fails": 0})   # pressed again: the build's
+        # The build was sent it: the owner's. Their press sends the next report to the build, all counts from zero.
+        if bad["asked"] and {k: bad[k] for k in DISPUTED} in (o.get("input_sent") or []):
+            oneshot_spec.saved(repo, oneshot={"measures": runs, "input_sent": None, "input_fails": 0, "measure_fails": 0})
             store.stop("measure-input", masked(bad["asked"], hide))
             return None
         disputes += 1   # every input's, kept through a machine pass: one only the owner's measurement uses reaches the cap

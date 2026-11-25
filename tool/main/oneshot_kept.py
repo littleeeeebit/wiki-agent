@@ -274,13 +274,16 @@ def account(checked) -> str:
     """`checked` as the owner may read it: the check made (`how`) and the service's answer (`answer`), each said
     mostly in Korean, or ``""``. The server reads its shape and language, never whether it is true (13e)."""
 
-    def korean(text: str) -> bool:   # a name or an address inside it is fine; an English account is not
+    def korean(text: str) -> bool:   # a name or an address inside it is fine; an account in another language is not
         hangul = sum("가" <= ch <= "힣" for ch in text)
-        return hangul >= 4 and 2 * hangul >= hangul + sum(ch.isascii() and ch.isalpha() for ch in text)
+        return hangul >= 4 and 2 * hangul >= sum(ch.isalpha() for ch in text) and len(text) <= ACCOUNT
 
     parts = [v.strip() if isinstance(v := (checked or {}).get(k) if isinstance(checked, dict) else None, str) else ""
-             for k in ("how", "answer")]
+             for k in ("how", "answer")]   # each bounded whole, never cut: the owner reads both
     return f"{parts[0]} — 서비스의 답: {parts[1]}" if all(map(korean, parts)) else ""
+
+
+ACCOUNT = 600   # the longest `how` or `answer` the owner is shown; a longer one goes back to the build
 
 
 def input_report(bad, plan: dict, hide: dict[str, str], limit: int) -> dict:
@@ -291,7 +294,7 @@ def input_report(bad, plan: dict, hide: dict[str, str], limit: int) -> dict:
     x = next((x for x in plan["inputs"] if isinstance(bad, dict) and x["id"] == bad.get("input")), None)
     if x is None or not (isinstance(why := bad.get("why"), str) and why.strip()):   # nothing the script wrote is repeated
         return {"error": masked("`report.json` 의 input_error 가 실측 계획의 입력과 이유(why)를 가리키지 않는다", hide)}
-    checked = masked(account(bad.get("checked")), hide)[:limit]
+    checked = masked(account(bad.get("checked")), hide)   # bounded by `ACCOUNT`, so never cut here
     return {"input_error": {
         "input": x["id"], "env": x["env"], "what": x["what"], "kind": x["kind"], "why": masked(why, hide)[:limit],
         "said": masked(f"실측 스크립트가 주인이 넣은 입력 {x['id']} 이 틀렸다고 했다 — 빌드가 프로그램부터 고친다", hide),

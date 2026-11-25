@@ -226,6 +226,7 @@ def test_an_input_the_script_calls_wrong_goes_to_the_build_until_a_check_outside
     oneshot_spec.saved("budget", oneshot={"working": None})
     measure.measure("budget", "owner")
     assert o()["stopped"]["reason"] == "measure-input" and o()["stage"] == "measure" and not o()["input_sent"]
+    assert o()["measure_fails"] == 0   # the owner's press sends the next report to the build, never to the cap
     assert o()["stopped"]["detail"].startswith("입력 M2 이 틀렸다고 빌드가 확인했다 — 서비스에 직접 물었다 — 서비스의 답: 키 [")
     assert f"[{ENV}]" in o()["stopped"]["detail"] and WRONG not in json.dumps(o(), ensure_ascii=False)
     given()
@@ -272,6 +273,16 @@ def test_a_dispute_stops_for_the_owner_only_once_its_own_input_was_handed_to_the
     assert o()["stage"] == "build" and o()["input_sent"] == [{k: bad[k] for k in measure.DISPUTED}]
 
 
+def test_a_stop_or_a_set_aside_result_shows_the_owner_its_sentence_masked_whole(at_measure, monkeypatch):
+    store, head, hide = oneshot_spec.store("budget"), o()["built_head"], {"비밀 값이": "[K]"}
+    measure.decided("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "passed"}, -1, hide)
+    assert o()["measures"][-1]["status"] == "stale" and "비밀 값이" not in json.dumps(o(), ensure_ascii=False)
+    monkeypatch.setitem(measure.HALTS, "budget", halted := measure.Halted())
+    halted.set()
+    measure.decided("budget", store, {"n": 2, "head": head, "mode": "auto", "status": "passed"}, 0, {"실측을 멈췄다": "[K]"})
+    assert "실측을 멈췄다" not in o()["stopped"]["detail"]
+
+
 def test_a_report_naming_no_declared_input_or_a_blank_check_is_never_the_owners(tmp_path):
     plan = {"inputs": [{"id": "M2", "env": "K", "what": "키", "kind": "secret"}],
             "metrics": [{"id": "ok", "person": False, "pass": {"op": "==", "value": True}}]}
@@ -286,7 +297,8 @@ def test_a_report_naming_no_declared_input_or_a_blank_check_is_never_the_owners(
     assert "error" in read({"input": "M2", "why": " \n"})   # no reason is no dispute
     told = {"how": "서비스에 직접 물었다", "answer": "그런 키는 없다고 했다"}
     for checked in ("서비스가 모른다고 했다", {"how": "  ", "answer": " "}, {"how": "asked the API 가", "answer": "no 나"},
-                    {"how": "확인", "answer": "없다"}, {"how": told["how"]}):   # no Korean account of a check and its answer
+                    {"how": "확인", "answer": "없다"}, {"how": told["how"]}, {**told, "how": "가나다라 サービスに直接問い合わせた"},
+                    {**told, "how": "서비스에 직접 물었다" * 60}):   # no Korean account of a check and its answer, whole
         assert read({"input": "M2", "why": "x", "checked": checked})["input_error"]["asked"] == ""
     secret = "M2 이 틀렸다고"   # a secret spanning the server's words and the input's id
     shown = read({"input": "M2", "why": "x", "checked": told}, {secret: "[K]"})["input_error"]
