@@ -464,7 +464,8 @@ def test_the_fixture_refuses_every_change_paints_its_marks_and_the_helper_reads_
 
         # Both checks of the window pass after those requests. On the input desktop the blit holds every mark the
         # fixture paints, where it paints it, and that frame is kept: the fixture is topmost, and no other topmost
-        # window covers it here (`oneshot_fixture.py`); one that did would leave the check pending instead.
+        # window covers it here (`oneshot_fixture.py`). One that covered a mark would leave the check pending; the
+        # marks run along the edges only, so one inside them alone would be in the kept frame.
         assert surface("surface") == {"read": True, "width": 640, "height": 360, "kept": True}
         # A window region set on the fixture, which its marks along the edges would not show: never undone by the
         # fixture, so the helper's check right after the blit always finds it.
