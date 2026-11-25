@@ -459,8 +459,7 @@ def decided(repo: str, store, record: dict, since: int, hide: dict[str, str] | N
         if (halt := HALTS.get(repo)) is not None and halt.is_set() and getattr(halt, "told", False) \
                 and not runtime.stopping.is_set():   # the owner spoke: their words are taken in, then built
             from . import oneshot_tell   # it imports this module's neighbours
-            oneshot_tell.start(store)
-            return None
+            return lambda: oneshot_tell.handoff(store)   # run once `holding` lets the tree go
         if (halt := HALTS.get(repo)) is not None and halt.is_set():   # `stop` sets it under this lock too
             store.stop("measure", masked("사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
                                          else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다", hide))
@@ -607,15 +606,16 @@ def plain_input(spec: dict, given: dict) -> dict:   # the same values again chan
         input_since=len(spec["oneshot"].get("measures") or []))
 
 
-def retire(spec: dict, why: str, **fields) -> dict:
+def retire(spec: dict, why: str, top: dict | None = None, **fields) -> dict:
     """The result waiting for the owner, their verdict or their measurement after the server's own pass, set
-    aside (`stale`) with `why`, saved with `fields`: what it measured is no longer what would be judged."""
+    aside (`stale`) with `why`, saved with `fields` (and the spec's own `top` fields) in one save: what it
+    measured is no longer what would be judged."""
 
     runs = list(spec["oneshot"].get("measures") or [])
     if runs and runs[-1]["status"] in ("owner", "passed") and not runs[-1].get("owner"):
         runs[-1] = {**runs[-1], "status": "stale", "error": why}
         fields["measures"] = runs
-    return oneshot_spec.saved(spec["repo"], oneshot=fields) if fields else spec
+    return oneshot_spec.saved(spec["repo"], oneshot=fields, **(top or {})) if fields or top else spec
 
 
 @router.post("/api/oneshot/spec/{repo}/measure/inputs/{iid}")

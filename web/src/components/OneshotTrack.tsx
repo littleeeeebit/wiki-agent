@@ -34,8 +34,9 @@ const WAITS = ['split', 'board', 'frontend', 'r2']
 
 /** The owner's words to the build agent, any time it builds: said into the turn that runs, and the design rewritten
  *  from them before the next step, which carries on from the code as it is. `post` sends them; an idle screen
- *  passes its own, so the view the server answers with shows the rewrite starting at once. */
-export function Tell({ view, post }: { view: SpecView; post?: (text: string) => Promise<unknown> }) {
+ *  passes its own, so the view the server answers with shows the rewrite starting at once; it resolves false when
+ *  the server refused, and the words stay in the box. */
+export function Tell({ view, post }: { view: SpecView; post?: (text: string) => Promise<boolean> }) {
   const o = view.oneshot
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -44,7 +45,8 @@ export function Tell({ view, post }: { view: SpecView; post?: (text: string) => 
     if (!text.trim()) return
     setBusy(true)
     setFault('')
-    ;(post ?? ((t: string) => api.tell(view.repo, t)))(text.trim()).then(() => setText(''))
+    ;(post ?? ((t: string) => api.tell(view.repo, t).then(() => true)))(text.trim())
+      .then((taken) => { if (taken) setText('') })
       .catch((err) => setFault(String(err?.message ?? err))).finally(() => setBusy(false))
   }
   const waiting = o.tell_pending?.length ?? 0

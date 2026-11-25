@@ -92,7 +92,7 @@ def tell(repo: str, body: Tell) -> dict:
         stage = o["stage"]
         said = {"text": text, "ts": time.time(), "stage": stage, "into_turn": steered(spec, text)}
         o = oneshot_spec.saved(repo, oneshot={"told": [*(o.get("told") or []), said], "tell_pending": [
-            *(o.get("tell_pending") or []), {"text": text, "stage": stage}]})["oneshot"]
+            *(o.get("tell_pending") or []), {"text": text, "stage": stage, "ts": said["ts"]}]})["oneshot"]
         if o.get("working") == "measure":   # the build goes back to work at once: the measurement stops
             from . import oneshot_measure   # it imports this module's neighbours
             if halt := oneshot_measure.HALTS.get(repo):
@@ -103,23 +103,38 @@ def tell(repo: str, body: Tell) -> dict:
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 
-def due(o: dict) -> bool:
-    """Words wait to be taken in: always, but while the screens are designed with the owner, only those said
-    before it (a backend review's, which the screens must not be designed past)."""
+def taken(o: dict) -> list[dict]:
+    """The waiting words a rewrite takes in now: all of them, but while the screens are designed with the owner,
+    only those said before it (a backend review's, which the screens must not be designed past). The others wait
+    for the frontend build."""
 
     pending = o.get("tell_pending") or []
-    return bool(pending) and o.get("stage") != "done" and not (
-        o.get("stage") in WAIT and all(w["stage"] in WAIT for w in pending))
+    return [w for w in pending if w["stage"] not in WAIT] if o.get("stage") in WAIT else pending
+
+
+def due(o: dict) -> bool:
+    return o.get("stage") != "done" and bool(taken(o))
 
 
 def start(store: oneshot.Store) -> None:
-    """`retell` started under `oneshot._lock`; a start refused (the server going down) stops the run with its
-    reason, so no `working` is left without a worker."""
+    """`retell` started under `oneshot._lock`. A worker already running (the rewrite, which a turn's handoff met)
+    is left as it is; a start refused otherwise (the server going down) stops the run with its reason, so no
+    `working` is left without a worker."""
 
     try:
         oneshot_spec.start(store.key.removeprefix("spec:"), "retell")
     except HTTPException as exc:
-        store.stop("restart" if runtime.stopping.is_set() else "block", str(exc.detail))
+        if exc.status_code != 409:
+            store.stop("restart" if runtime.stopping.is_set() else "block", str(exc.detail))
+
+
+def handoff(store: oneshot.Store) -> bool:
+    """A stage that held the worktree passes the run to the rewrite once it let the tree go: true when the rewrite
+    took it, so the instruction queued for the worktree waits for the rewrite's own turn (`oneshot_review.holding`)."""
+
+    with oneshot._lock:
+        start(store)
+        return store.get().get("working") == "retell"
 
 
 def steered(spec: dict, text: str) -> bool:
@@ -167,7 +182,7 @@ def retell(repo: str) -> None:
 
     spec = oneshot_spec.spec_of(repo)
     o, reqs = spec["oneshot"], spec.get("requirements") or []
-    pending = list(o.get("tell_pending") or [])
+    pending = taken(o)
     store, kind = oneshot_spec.store(repo), oneshot_spec.kinds_of(o)
     if not pending:   # nothing to take in: only this worker's own mark is let go
         with oneshot._lock:
@@ -191,25 +206,29 @@ def retell(repo: str) -> None:
     made, new_reqs, glossary, _ = found
     old, new = sheet.every(o["design"], reqs), sheet.every(made, new_reqs)
     moved = sorted(i for i in {*old, *new} if old.get(i) != new.get(i))
-    again = {"attempts": 0, "fix": None, "measure_fails": 0, "working": None}
+    again, changes = {"attempts": 0, "fix": None, "measure_fails": 0, "working": None}, {}
     if moved:   # committed before the run's record holds it: a failed commit leaves the record as the files are
         candidate = {**spec, "requirements": new_reqs, "oneshot": {**o, "design": made, "glossary": glossary}}
         if not (head := oneshot_spec.design_committed(repo, "Record the design the owner changed during the build",
                                                       candidate)):
             return   # stopped with `folder`; the words still wait
-        oneshot_spec.saved(repo, requirements=new_reqs)
         again |= {"design": made, "glossary": glossary, "design_head": head}
+        changes["requirements"] = new_reqs
     # Past the backend, the frontend build takes the words; the backend's is not walked again, nor is it left for a
     # frontend whose tests are being rewritten (`retell_to`). A changed design, or contract tests not committed yet,
     # has the tests turn first, which hands on to that build.
     back = o.get("retell_to") or ("build-front" if o["stage"] in FRONT else "build")
     stage = back if o.get("tests_head") and not moved and o["stage"] != "tests" else "tests"
-    with oneshot._lock:   # only the words taken in leave the queue: one said during the turn waits for the next
-        rest = (store.get().get("tell_pending") or [])[len(pending):]
-        spec = oneshot_spec.saved(repo, oneshot={**again, "tell_pending": rest, "stage": stage,
-                                                 "retell_to": back if stage == "tests" else None,
-                                                 "retold": [*(o.get("retold") or []),
-                                                            {"words": words, "changed": moved, "ts": time.time()}]})
+    # One save: the design, its requirements and head, the queue and the stage stand or fall together. Only the words
+    # taken in leave the queue; one said during the turn, or kept for the frontend build, waits. A result that
+    # waited for the owner's verdict no longer stands for what is built next.
+    from . import oneshot_measure   # it imports this module's neighbours
+    with oneshot._lock:
+        now = oneshot_spec.spec_of(repo)
+        spec = oneshot_measure.retire(now, "주인의 말로 설계를 다시 썼다 — 다시 빌드한 뒤 다시 잰다", changes, **again,
+            tell_pending=[w for w in now["oneshot"].get("tell_pending") or [] if w not in pending], stage=stage,
+            retell_to=back if stage == "tests" else None,
+            retold=[*(o.get("retold") or []), {"words": words, "changed": moved, "ts": time.time()}])
     oneshot_build.send(repo, stage, oneshot_build.tests_text(spec) if stage == "tests" else next_build(spec))
 
 

@@ -60,9 +60,11 @@ for a stage's worker and `oneshot_build.send` for a work turn. Both ask
 the `retell` worker in that step's place, and the step's own text is
 dropped: the rewritten design leads to a fresh build turn, and a review or
 measurement runs again after it. The publication step asks too, so words
-said by R3 are never published past. A start the server refuses (it is
-going down) stops the run with its reason, so no `working` is left without
-a worker.
+said by R3 are never published past. A start that meets the rewrite
+already running (a turn's handoff after a word said at its very end) leaves
+it as it is; one the server refuses otherwise (it is going down) stops the
+run with its reason, so no `working` is left without a worker. A
+measurement hands the words on only once it has let go of the worktree.
 
 ### The rewrite
 
@@ -83,9 +85,13 @@ accepts it.
   that turn hands on to.
 
 Either way `retold` records the words and the item ids that changed, the
-card lists them, and `attempts`, `fix` and `measure_fails` restart. Only the
-words taken in leave `tell_pending`: words said while the design turn ran
-wait for the next one.
+card lists them, and `attempts`, `fix` and `measure_fails` restart. The
+design, its requirements and head, the queue and the next stage are recorded
+in one save, so they stand or fall together. A result waiting for the
+owner's verdict is set aside (`oneshot_measure.retire`): it no longer
+stands for what is built next. Only the words taken in leave
+`tell_pending`: words said while the design turn ran wait for the next one,
+and a rewrite during the screen design takes only the words said before it.
 
 ### The tests turn after a rewrite
 
