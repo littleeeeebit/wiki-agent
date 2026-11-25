@@ -254,3 +254,32 @@ def kept_from(raw: Path, out: Path, hide: dict[str, str]) -> str:
     except Exception as exc:   # a failed disk read or write, or anything unforeseen: `raw` is removed all the same
         why = f"실측 결과를 보관하지 못했다 ({type(exc).__name__}) — 디스크를 확인하고 [실측 시작]을 누른다"
     return removed(raw) or why
+
+
+#: What names an input across a dispute (plan 13e): another plan's input under the same id is another input.
+DISPUTED = ("input", "env", "what", "kind")
+
+
+def handed(o: dict, record: dict) -> list[dict]:
+    """The inputs whose dispute the build agent was sent, `record`'s included: saved with the turn that sends it."""
+
+    sent = list(o.get("input_sent") or [])
+    if (bad := record.get("input_error")) and (x := {k: bad[k] for k in DISPUTED}) not in sent:
+        sent.append(x)
+    return sent
+
+
+def input_report(bad, plan: dict, hide: dict[str, str], limit: int) -> dict:
+    """A report's `input_error`, read against the plan (13e): `error` when it names no input the plan declares or
+    no reason, else the input's identity, the script's reason for the build, and the two sentences the owner may
+    read, written by the server and masked whole. `asked` is empty unless `checked` gives a Korean account."""
+
+    x = next((x for x in plan["inputs"] if isinstance(bad, dict) and x["id"] == bad.get("input")), None)
+    if x is None or not isinstance(bad.get("why"), str):   # nothing the script wrote is repeated
+        return {"error": "`report.json` 의 input_error 가 실측 계획의 입력과 이유(why)를 가리키지 않는다"}
+    checked = masked(c.strip() if isinstance(c := bad.get("checked"), str) else "", hide)[:limit]
+    korean = any("가" <= ch <= "힣" for ch in checked)
+    return {"input_error": {
+        "input": x["id"], "env": x["env"], "what": x["what"], "kind": x["kind"], "why": masked(bad["why"], hide)[:limit],
+        "said": masked(f"실측 스크립트가 주인이 넣은 입력 {x['id']} 이 틀렸다고 했다 — 빌드가 프로그램부터 고친다", hide),
+        "asked": korean and masked(f"입력 {x['id']} 이 틀렸다고 빌드가 확인했다 — {checked} — 고쳐 넣고 [실측 시작]을 누른다", hide) or ""}}

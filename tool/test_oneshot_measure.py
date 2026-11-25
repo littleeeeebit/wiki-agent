@@ -206,7 +206,8 @@ def test_an_input_the_script_calls_wrong_goes_to_the_build_until_a_check_outside
     given(key=WRONG)
     measure.measure("budget", "owner")
     last = o()["measures"][-1]
-    assert o()["stage"] == "build" and o()["input_sent"]["input"] == "M2" and o()["measure_fails"] == 1   # never the owner's
+    assert o()["stage"] == "build" and o()["measure_fails"] == o()["input_fails"] == 1   # never the owner's
+    assert o()["input_sent"] == [{"input": "M2", "env": ENV, "what": "서비스 키", "kind": "secret"}]
     assert last["status"] == "failed" and last["error"].startswith("실측 스크립트가 주인이 넣은 입력 M2")
     assert "refused" not in last["error"]   # the card shows the server's Korean; the script's reason is the build's
     assert "the service refused" in sent[-1][2] and '"checked"' in sent[-1][2] and WRONG not in sent[-1][2]
@@ -214,7 +215,7 @@ def test_an_input_the_script_calls_wrong_goes_to_the_build_until_a_check_outside
     check(tree, "고쳤다.\n" + report())
     oneshot_spec.saved("budget", oneshot={"working": None})
     given(key=WRONG + "9")   # a changed value is the build's to see first again
-    assert not o().get("input_sent")
+    assert not o().get("input_sent") and not o()["input_fails"]
     given(key=WRONG)
     measure.measure("budget", "owner")
     assert o()["stage"] == "build" and o()["measure_fails"] == 2 and not o().get("stopped")
@@ -238,31 +239,49 @@ def test_an_input_disputed_only_in_the_owners_measurement_reaches_the_cap_throug
     from main import oneshot_review
 
     store, head = oneshot_spec.store("budget"), o()["built_head"]
-    bad = {"input": "M2", "env": ENV, "what": "서비스 키", "why": "no", "said": "말", "asked": ""}
+    bad = [{"input": i, "env": i, "what": "값", "kind": "text", "why": "no", "said": "말", "asked": ""} for i in ("M1", "M2")]
+
+    def owner(n):   # two inputs in turn: the count is every input's
+        return measure.result("budget", store, {"n": n, "head": head, "mode": "owner", "status": "input",
+                                                "input_error": bad[n % 2]})
+
     for n in range(1, oneshot_review.cap()):
-        assert measure.result("budget", store, {"n": 2 * n, "head": head, "mode": "owner", "status": "input",
-                                                "input_error": bad}) is not None
-        assert o()["input_sent"]["fails"] == n and o()["measure_fails"] == n
-        measure.result("budget", store, {"n": 2 * n + 1, "head": head, "mode": "auto", "status": "passed"})
-        assert o()["measure_fails"] == 0   # a machine pass, the dispute's own count kept
-    assert measure.result("budget", store, {"n": 99, "head": head, "mode": "owner", "status": "input",
+        assert owner(n) is not None and o()["input_fails"] == o()["measure_fails"] == n
+        measure.result("budget", store, {"n": 50 + n, "head": head, "mode": "auto", "status": "passed"})
+        assert o()["measure_fails"] == 0 and o()["input_fails"] == n   # a machine pass leaves the disputes' count
+    assert owner(98) is None and o()["stopped"]["reason"] == "measure" and f"{oneshot_review.cap()}번" in o()["stopped"]["detail"]
+
+
+def test_a_dispute_stops_for_the_owner_only_once_its_own_input_was_handed_to_the_build(at_measure):
+    from main import oneshot_review
+
+    store, head = oneshot_spec.store("budget"), o()["built_head"]
+    sent = {"input": "M2", "env": ENV, "what": "서비스 키", "kind": "text"}   # a plan before, the same id as text
+    bad = {**sent, "kind": "secret", "why": "no", "said": "말", "asked": "주인에게 묻는 말"}
+    oneshot_spec.saved("budget", oneshot={"input_sent": [sent], "measure_fails": oneshot_review.cap() - 1})
+    assert measure.result("budget", store, {"n": 1, "head": head, "mode": "auto", "status": "input",
                                             "input_error": bad}) is None
-    assert o()["stopped"]["reason"] == "measure" and f"{oneshot_review.cap()}번" in o()["stopped"]["detail"]
+    assert o()["stopped"]["reason"] == "measure" and o()["input_sent"] == [sent]   # capped: not handed over yet
+    measure.start("budget", measure.Start(head=head))   # the retry sends it, and only then is it handed over
+    assert o()["stage"] == "build" and o()["input_sent"] == [sent, {k: bad[k] for k in measure.DISPUTED}]
 
 
 def test_a_report_naming_no_declared_input_or_a_blank_check_is_never_the_owners(tmp_path):
-    plan = {"inputs": [{"id": "M2", "env": "K", "what": "키"}], "metrics": []}
+    plan = {"inputs": [{"id": "M2", "env": "K", "what": "키", "kind": "secret"}],
+            "metrics": [{"id": "ok", "person": False, "pass": {"op": "==", "value": True}}]}
 
     def read(bad, hide=None):
-        (tmp_path / "report.json").write_text(json.dumps({"input_error": bad}), encoding="utf-8")
+        (tmp_path / "report.json").write_text(json.dumps({"input_error": bad, "metrics": {"ok": True}}), encoding="utf-8")
         return measure.report_of(tmp_path, plan, hide or {})
 
-    assert "실측 계획에 없는 입력" in read({"input": "M9", "why": "x", "checked": "y"})["error"]
-    assert "error" in read({"why": "x", "checked": "y"})
+    long = "sk-" + "5" * 60   # a secret longer than any cut: none of the script's words is repeated
+    assert read({"input": long, "why": "x"}, {long: "[K]"}) == read({"input": "M9", "why": "x"}) and "error" in read({})
+    assert "error" in read({"input": "M2"}) and "error" in read(None)   # never a passing report around it
     assert read({"input": "M2", "why": "x", "checked": "  \n "})["input_error"]["asked"] == ""
+    assert read({"input": "M2", "why": "x", "checked": "the service said no"})["input_error"]["asked"] == ""
     secret = "M2 이 틀렸다고"   # a secret spanning the server's words and the input's id
-    shown = read({"input": "M2", "why": "x", "checked": "y"}, {secret: "[K]"})["input_error"]
-    assert secret not in shown["said"] + shown["asked"] and "[K]" in shown["asked"]
+    shown = read({"input": "M2", "why": "x", "checked": "서비스가 모른다고 했다"}, {secret: "[K]"})["input_error"]
+    assert secret not in shown["said"] + shown["asked"] and "[K]" in shown["asked"] and shown["kind"] == "secret"
 
 
 def test_the_backend_that_never_answers_fails_the_measurement(at_measure):

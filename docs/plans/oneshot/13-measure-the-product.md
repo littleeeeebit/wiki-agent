@@ -134,23 +134,30 @@ same way.
 The owner gave the input, so the script's `input_error` is not the owner's
 stop by itself. The rules:
 
-- A report whose `input_error` names no input the plan declares is a failed
-  report, the build's like any other.
-- Otherwise the server saves a failed measurement whose `error`, what the
-  card shows, is a Korean sentence of its own; the script's reason goes only
-  to the build turn. The build turn is told the input stands, to check it
-  against the service by a call outside the program and to fix the program.
-- `input_sent` names the input sent (its id, `env` and `what`) with its own
-  failure count. A machine pass leaves that count, so an input only the
-  owner's measurement uses still reaches the round cap; the cap's retry
-  resets it with `measure_fails`.
-- The owner is stopped only when a report on that same input carries a
-  non-blank `checked`, the Korean account of the check made outside the
+- A report with an `input_error` that names no input the plan declares, or
+  no reason, is a failed report, the build's like any other. Its error is a
+  fixed sentence: nothing the script wrote is repeated.
+- Otherwise the server saves a failed measurement whose `error` is a Korean
+  sentence of its own. The card and every stop show only server sentences;
+  the script's reason stays in the record for the build turn. The build turn
+  is told the input stands, to check it against the service by a call
+  outside the program and to fix the program.
+- `input_sent` lists the inputs whose dispute a build turn was actually sent,
+  each by id, `env`, `what` and `kind`: the same id in a rebuilt plan is
+  another input. A dispute stopped at the round cap joins it only when the
+  owner's retry sends it to the build.
+- `input_fails` counts every input's disputes. A machine pass leaves it, so
+  inputs only the owner's measurement uses still reach the round cap; the
+  cap's retry resets it with `measure_fails`, and an owner's measurement that
+  ran through every input clears it.
+- The owner is stopped only when a report on an input in `input_sent`
+  carries `checked` with a Korean account of the check made outside the
   program and what the service answered. The owner reads a sentence the
   server writes around it, masked as a whole.
 - Any change of an input's value, and the owner's stop itself, clear
-  `input_sent`: the next such report goes to the build first. Pressing
-  `[실측 시작]` again with the same value is how the owner says it stands.
+  `input_sent` and `input_fails`: the next such report goes to the build
+  first. Pressing `[실측 시작]` again with the same value is how the owner
+  says it stands.
 
 A program that leaves the owner's screen empty, opens no window of its own,
 or plays no sound the owner can hear is the owner's to refuse; the note says
