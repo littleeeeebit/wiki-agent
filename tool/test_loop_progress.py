@@ -430,7 +430,16 @@ def test_a_review_loop_stop_keeps_a_committed_repairs_cleanup_baseline(tmp_path)
         spot.halt.set()   # the Review Loop Stop lands after the repair committed code
         return None
 
+    task = {"cleanup_owed": "base", "history": [{"ts": 1.0}], "worktree": "w"}
     with patch.object(loop, "turn", stopped), patch.object(sweep, "owed", return_value=True), \
-            patch.object(specs, "load", return_value={"cleanup_owed": "base"}), patch.object(specs, "update") as update:
+            patch.object(specs, "load", side_effect=lambda *a: dict(task)), patch.object(specs, "update") as update:
         assert loop.told(loop.Loop("proj", "t1"), {}, tmp_path, "fix R1") is None
-    update.assert_called_once_with("proj", "t1", cleanup_owed="base")   # on the stopped spec, its state untouched
+        update.assert_called_once_with("proj", "t1", cleanup_owed="base")   # on the stopped spec, its state untouched
+
+        def replaced(spot, spec, path, text):   # deleted and adopted again under the same ID meanwhile
+            task["history"] = [{"ts": 2.0}]
+            return stopped(spot, spec, path, text)
+
+        with patch.object(loop, "turn", replaced):
+            assert loop.told(loop.Loop("proj", "t1"), {}, tmp_path, "fix R1") is None
+    assert update.call_count == 1   # the replacement never takes the old checkout's baseline

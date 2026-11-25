@@ -974,8 +974,17 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
                                "nothing more is sent to that provider")
         return turn(loop, specs.load(loop.repo, loop.sid) or spec, path, t)
 
+    def born(s: dict) -> tuple:   # a task made again under the same ID has another first moment or checkout
+        return (s.get("history") or [{}])[0].get("ts"), s.get("worktree")
+
+    mine = born(specs.load(loop.repo, loop.sid) or spec)
+
     def keep(fields: dict):   # a Review Loop Stop's baseline lands on the stopped spec too, never reopening it
-        return change(loop, **fields) or (loop.halt.is_set() and specs.update(loop.repo, loop.sid, **fields))
+        if (kept := change(loop, **fields)) is not None or not loop.halt.is_set():
+            return kept
+        with specs._files:
+            now = specs.load(loop.repo, loop.sid)
+            return specs.update(loop.repo, loop.sid, **fields) if now and born(now) == mine else None
 
     return sweep.held(path, text, follow, lambda answer: block("test-cleanup", answer),
                       lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), keep,
