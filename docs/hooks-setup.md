@@ -147,8 +147,8 @@ Effects come from:
   destination (`-t`'s folder, else the last operand), and `mv` deletes its
   sources. Each source's last name is written below the destination too,
   since an earlier command may have made it a folder (`cp x .` writes `./x`;
-  `cp verification.toml new` is denied, as it may write
-  `new/verification.toml`); a destination that is a folder now, or ends in a
+  `cp -r .claude new` is denied, as it may write
+  `new/.claude`); a destination that is a folder now, or ends in a
   separator, is written only that way. `curl` writes its `-o`, `-D`, `-c`,
   trace and other file options and, with `-O`, the last name of each URL
   (`--url` too), each prefixed with its operation's `--output-dir` (an
@@ -172,7 +172,7 @@ Effects come from:
 | Effect | Denied when |
 |---|---|
 | `write`, `delete` | the path resolves (links, junctions and `..` followed) outside every write root: the checkout, or only the spec's `artifact_root` for a plan task; the temporary directories (`TEMP`, `TMP`, Python's); the session's `memory` folder |
-| — always | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and `verification.toml` of the checkout and its main clone, and any write or delete of a folder that holds them (`echo x > .wiki`). Below a write root, the same names at any depth (with the trailing dots or spaces Windows drops, too), and a folder named `.wiki`. A delete is also denied when anything below it is one of those names, a link or a junction, or when the folder has more than 20,000 entries to look through. Only git's own write of the repository it runs in is judged by place alone, and every git write is denied while `core.hooksPath` may point inside a write root |
+| — always | `.git`, `.claude`, `.codex`, `.wiki/adapter.toml` and the ignored `.wiki/verification.toml` of the checkout and its main clone (the tracked `verification.toml` is a task's to write), and any write or delete of a folder that holds them (`echo x > .wiki`). Below a write root, the same names at any depth (with the trailing dots or spaces Windows drops, too), and a folder named `.wiki`. A delete is also denied when anything below it is one of those names, a link or a junction, or when the folder has more than 20,000 entries to look through. Only git's own write of the repository it runs in is judged by place alone, and every git write is denied while `core.hooksPath` may point inside a write root |
 | `network` | the host is neither the loopback nor a host a configured git remote names |
 | `spawn`, `top` | never |
 
