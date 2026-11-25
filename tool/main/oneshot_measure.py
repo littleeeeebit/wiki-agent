@@ -522,6 +522,7 @@ def take_back(repo: str, iid: str, head: str = "", env: str = "", kind: str = ""
 
 class Start(BaseModel):
     head: str = ""   # the built HEAD the owner saw; any other is refused with 409
+    n: int = 0   # the measurement whose result the owner saw: a repair it sends is of that one, never a later one
 
 
 @router.post("/api/oneshot/spec/{repo}/measure/start")
@@ -538,6 +539,8 @@ def start(repo: str, body: Start) -> dict:
                                                            or kept_input(o, last)):
             # The capped failure, or an input the owner kept as it was, goes to the build agent, never measured again;
             # an input an earlier version disputed at its cap is measured again, so the owner is asked about it.
+            if body.n != last["n"]:   # a screen that never showed this result: the owner answers it first
+                raise HTTPException(409, "그 사이 새 실측 결과가 나왔다 — 다시 불러와 그 결과를 보고 고른다")
             then = repair(repo, {"measure_fails": 0})
         else:   # the same lock scope decides and launches: no other request's result slips in between
             if last and last["status"] == "failed" and last.get("input_error"):   # its count was the disputes'

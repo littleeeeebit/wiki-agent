@@ -233,7 +233,8 @@ export const api = {
   measureTakeBack: (repo: string, head: string, x: MeasureInput) => post(
     `${base(repo)}/measure/inputs/${x.id}?${new URLSearchParams({ head, env: x.env, kind: x.kind })}`, undefined, 'DELETE')
     .then(answer),
-  measureStart: (repo: string, head: string) => post(`${base(repo)}/measure/start`, { head }).then(answer),
+  // `n`: the measurement whose result the screen shows, so a repair it sends is of that result and no later one.
+  measureStart: (repo: string, head: string, n = 0) => post(`${base(repo)}/measure/start`, { head, n }).then(answer),
   measureStop: (repo: string) => post(`${base(repo)}/measure/stop`, {}).then(answer),
   measureDecide: (repo: string, run: MeasureRun, approve: boolean, note: string) =>
     post(`${base(repo)}/measure/decide`, { head: run.head, n: run.n, approve, note }).then(answer),

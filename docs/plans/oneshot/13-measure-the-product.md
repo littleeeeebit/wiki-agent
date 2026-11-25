@@ -150,7 +150,10 @@ input, whatever the script says is wrong with it:
   below its number) says the value stands. The report then goes to the build
   agent as a failed measurement, told the owner kept the input: it checks it
   against the service outside the code that refused it and fixes the
-  program.
+  program. The press names the measurement whose result the screen showed
+  (`Start.n`). It sends a repair, of a kept input or a capped failure, only
+  for that measurement, and a screen that never showed it is refused with
+  409.
 - `checked` is optional: `how`, the check made outside the program, and
   `answer`, what the service answered. `why`, `how` and `answer` are shown
   only when each has at least four Hangul syllables, Hangul at least half of

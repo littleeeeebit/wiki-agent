@@ -78,7 +78,7 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
           <Metrics run={current} plan={m.plan.metrics} />
           <div className="flex flex-wrap items-center gap-3">
             <Btn tone="wait" disabled={busy || !!view.working || missing.length > 0 || waiting}
-              onClick={() => void act(() => api.measureStart(repo, m.head))}>
+              onClick={() => void act(() => api.measureStart(repo, m.head, current?.n ?? 0))}>
               {failed ? '빌드 에이전트에게 고치게 하기' : disputed ? '이 값이 맞다 — 빌드 에이전트에게 고치게 하기'
                 : owner ? '주인 실측 시작' : '자동 실측 시작'}</Btn>
             {missing.length > 0 && <span className="text-wait">아직 넣지 않은 값: {missing.map((x) => x.id).join(', ')}</span>}

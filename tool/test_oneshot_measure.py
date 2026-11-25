@@ -165,7 +165,7 @@ def test_a_failure_at_the_round_cap_goes_to_the_build_agent_when_the_owner_start
     assert o()["stage"] == "measure" and o()["stopped"] and o()["measures"][-1]["status"] == "failed"
     runs = len(o()["measures"])
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)):
-        measure.start("budget", measure.Start(head=o()["built_head"]))
+        measure.start("budget", measure.Start(head=o()["built_head"], n=runs))
     assert len(o()["measures"]) == runs, "the failed HEAD is never measured again as it is"
     # The build repairs it inside the measurement: the stage, and so the owner's screen, never goes back (plan 13).
     assert o()["stage"] == "measure" and o()["fix"] == "measure" and o()["measure_fails"] == 0 and not o()["stopped"]
@@ -178,7 +178,7 @@ def test_a_failure_at_the_round_cap_goes_to_the_build_agent_when_the_owner_start
     started = []
     with patch.object(measure.oneshot_build, "send", lambda *a: sent.append(a)), \
             patch.object(measure.oneshot, "start_worker", lambda *a, **k: started.append(a)):
-        measure.start("budget", measure.Start(head=o()["built_head"]))
+        measure.start("budget", measure.Start(head=o()["built_head"], n=runs))
     assert not started and o()["stage"] == "measure" and o()["working"] == "build"
 
 
@@ -226,8 +226,12 @@ def test_an_input_the_script_calls_wrong_stops_for_the_owner_and_a_new_value_mea
     assert detail.startswith("실측 스크립트가 주인이 넣은 입력 M2(서비스 키)이 틀렸다고 했다")
     assert "한국어로 적지 않았다" in detail and "새 값을 넣으면 바로 다시 잰다" in detail   # the reason was English
     assert WRONG not in json.dumps(o(), ensure_ascii=False)
+    # A screen that still shows the start before this result (another window) never answers the question for the owner.
+    with pytest.raises(HTTPException) as stale:
+        measure.start("budget", measure.Start(head=o()["built_head"], n=last["n"] - 1))
+    assert stale.value.status_code == 409 and o()["stopped"]["reason"] == "measure-input" and not o().get("fix")
     # The same value kept: `[실측 시작]` hands the report to the build, which repairs inside the measurement.
-    measure.start("budget", measure.Start(head=o()["built_head"]))
+    measure.start("budget", measure.Start(head=o()["built_head"], n=last["n"]))
     assert o()["stage"] == "measure" and o()["working"] == "build" and o()["fix"] == "measure"
     assert "kept the input as it is" in sent[-1][2] and "the service refused" in sent[-1][2] and WRONG not in sent[-1][2]
     then = check(tree, "확인했다.\n" + report())   # the kept dispute's HEAD with no commit: sent back, never measured
