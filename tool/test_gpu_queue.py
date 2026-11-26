@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -201,7 +202,7 @@ def test_the_servers_launch_waits_in_line_and_stops_there(queue):
     first.set()
     t.join(30)
     a.join(30)
-    assert done[-1] == "ran" and counts[-1] == 0
+    assert done[-1] == "ran" and counts[-1] is None   # the card's wait goes once the launch may go
 
 
 # -- The holder note ---------------------------------------------------------------------------------------------
@@ -214,15 +215,92 @@ def test_a_note_left_by_an_unproven_end_holds_the_next_holder(queue):
             holder.root(member)
             holder.ended({"clean": False, "total": 1, "joined": 1, "members": [member]})
         assert json.loads((queue / "holder").read_text(encoding="utf-8"))["processes"] == [member]
-        lines, order = Lines(), []
-        t, _ = background("next", lines=lines, order=order)
+        lines, order, waits = Lines(), [], []
+        t, _ = background("next", lines=lines, order=order, ahead=waits.append)
         until(lambda: any(f"{proc.pid}" in line for line in lines))
         assert order == []
         proc.kill()
         t.join(30)
         assert order == ["next"] and not (queue / "holder").exists()
+        # the card's wait at the head names the processes, and goes only when the launch may go
+        assert any(isinstance(w, str) and str(proc.pid) in w for w in waits) and waits[-1] is None
     finally:
         proc.kill()
+
+
+def test_a_holder_stopped_while_it_waits_on_an_earlier_note_leaves_that_note(queue):
+    proc = sleeper()
+    try:
+        member = native_process.identity(proc.pid)
+        with gpu_queue.held("server", say=Lines()) as holder:
+            holder.root(member)
+            holder.ended({"clean": False, "total": 1, "joined": 1, "members": [member]})
+        note = (queue / "holder").read_text(encoding="utf-8")
+        lines, halt = Lines(), threading.Event()
+        t, raised = background("next", halt=halt, lines=lines)
+        until(lambda: any(f"{proc.pid}" in line for line in lines))
+        halt.set()
+        t.join(30)
+        assert isinstance(raised[0], gpu_queue.Stopped)
+        assert (queue / "holder").read_text(encoding="utf-8") == note   # still the earlier holder's, unresolved
+    finally:
+        proc.kill()
+
+
+def test_a_member_is_gone_only_when_its_exit_is_proven(queue, monkeypatch):
+    proc = sleeper()
+    try:
+        member = native_process.identity(proc.pid)
+        assert not gpu_queue.gone(member)
+        assert gpu_queue.gone({**member, "created": member["created"] + 1})   # the pid is another process's now
+        real = native_process._kernel
+
+        def unopenable():
+            k, w = real()
+            return types.SimpleNamespace(OpenProcess=lambda *a: 0, CloseHandle=k.CloseHandle), w
+        with monkeypatch.context() as m:
+            m.setattr(native_process, "_kernel", unopenable)
+            m.setattr(native_process.ctypes, "get_last_error", lambda: 5)   # ERROR_ACCESS_DENIED: still unresolved
+            assert not gpu_queue.gone(member)
+            m.setattr(native_process.ctypes, "get_last_error", lambda: 87)   # no process has the pid
+            assert gpu_queue.gone(member)
+    finally:
+        proc.kill()
+    proc.wait(30)
+    assert gpu_queue.gone(member)
+
+
+def test_a_place_anyone_can_see_already_has_its_stop_event_and_its_session(queue, monkeypatch):
+    seen, real = [], gpu_queue.K.CreateFileW
+
+    def creating(path, *rest):   # the moment the place file appears
+        counter = int(Path(path).name)
+        event = gpu_queue.K.OpenEventW(0x0002, False, gpu_queue.stop_event(counter))
+        seen.append((bool(event), Path(path).with_name(f"{counter}.who").exists()))
+        if event:
+            gpu_queue.K.CloseHandle(event)
+        return real(path, *rest)
+    monkeypatch.setattr(gpu_queue.K, "CreateFileW", creating)
+    holder = gpu_queue.Holder("job", say=Lines())
+    try:
+        holder.take()
+    finally:
+        holder.finish()
+    assert seen == [(True, True)]
+
+
+def test_a_store_shells_command_runs_through_an_installed_shell_in_its_own_syntax(monkeypatch):
+    from common import shell as shells
+
+    store = r"C:\Program Files\WindowsApps\Microsoft.PowerShell_7.5.0.0_x64__8wekyb3d8bbwe\pwsh.exe"
+    classic = shells.PowerShell(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", "5.1.26100", 5)
+    monkeypatch.setattr(shells, "detect", lambda **k: (shells.PowerShell(store, "7.5.0", 7), classic))
+    exe, text = gpu_run.runnable(store, "ps", "python a.py && python b.py")
+    assert exe == classic.executable and "&&" not in shells.command_syntax(text)[0] and not shells.seven_only(text)
+    with pytest.raises(ValueError, match="5.1"):
+        gpu_run.runnable(store, "ps", "$x = $y ?? 1")
+    installed = r"C:\Program Files\PowerShell\7\pwsh.exe"
+    assert gpu_run.runnable(installed, "ps", "a && b") == (installed, "a && b")
 
 
 def test_an_inconclusive_end_stops_the_queue_until_the_owner_deletes_the_note(queue):

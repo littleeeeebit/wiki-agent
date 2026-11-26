@@ -204,10 +204,10 @@ def ancestry(pid: int | None = None) -> tuple[dict | None, list[dict]]:
 # -- The note's processes ---------------------------------------------------------------------------------------------
 
 def gone(member: dict) -> bool:
-    """`member` (an identity) has exited: no process has its pid, or the one that has is another."""
+    """`member` (an identity) is proven to have exited: no process has its pid, the one that has is another, or
+    it has ended. One that cannot be read (access refused) is not: the note stays until that is proven."""
 
-    now = native_process.identity(int(member["pid"]))
-    return not native_process.same(member, now)
+    return native_process.exited(member)
 
 
 def unproven(proof: dict | None, members: list[dict]) -> tuple[list[dict], bool]:
@@ -229,7 +229,9 @@ def unproven(proof: dict | None, members: list[dict]) -> tuple[list[dict], bool]
 class Holder:
     """One job's place, lease and note. Every method but `stop_line` runs on one thread: the lease is that
     thread's. `watch` is [(name, handle)] that end the wait when signalled (the stop event, the shell, the session);
-    `halt` an Event checked between waits. `say` gets each line for whoever watches; `ahead` the count in front."""
+    `halt` an Event checked between waits. `say` gets each line for whoever watches; `ahead` what the wait is for
+    the card: the count of places in front, a short reason once at the head (the lease, a note, the floor), and
+    `None` only when the launch may go."""
 
     def __init__(self, label: str, watch=(), halt=None, floor: bool = True, say=print, ahead=None, who: dict | None = None):
         if why := joinable():
@@ -239,7 +241,8 @@ class Holder:
         self.folder = home()
         self.lease_name, self.queue_name, self.stop_prefix = names(self.folder)
         (self.folder / "queue").mkdir(parents=True, exist_ok=True)
-        self.counter = self.place = self.lease = None
+        self.counter = self.place = self.lease = self.stop_handle = None
+        self.noted = False   # this holder wrote the note: until then the note is an earlier holder's, left alone
         self.root_identity, self.proof, self.members = None, None, []
         self.me = native_process.identity(os.getpid())
 
@@ -288,7 +291,8 @@ class Holder:
             K.CloseHandle(mutex)
 
     def take(self) -> int:
-        """A place: the counter raised and the place file created with no sharing, held open; its `.who` after."""
+        """A place: the counter raised, then its stop event and `.who`, then the place file created with no
+        sharing, held open. All under the queue mutex, so a place anyone can see can be stopped and checked."""
 
         def taken():
             counter_file = self.folder / "next"
@@ -302,15 +306,21 @@ class Holder:
             part.write_text(str(counter), encoding="utf-8")
             os.replace(part, counter_file)
             path = self.folder / "queue" / str(counter)
+            event = K.CreateEventW(None, True, False, stop_event(counter, self.folder))
+            if not event:
+                raise Refused(f"cannot create the stop event of place {counter}: Windows error {ctypes.get_last_error()}")
+            self.stop_handle = event
+            who = path.with_name(f"{counter}.who")
+            who.write_text(json.dumps({**self.who, "label": self.label, "holder": self.me}), encoding="utf-8")
             # GENERIC_READ | DELETE, no sharing, CREATE_NEW, deleted on close: held only while this process is.
             handle = K.CreateFileW(str(path), 0x80000000 | 0x00010000, 0, None, 1, 0x80 | 0x04000000, None)
             if handle == BAD or not handle:
+                who.unlink(missing_ok=True)
                 raise Refused(f"cannot create the place `{path}`: Windows error {ctypes.get_last_error()}")
             return counter, handle
 
         self.counter, self.place = self._locked(taken)
-        who = self.folder / "queue" / f"{self.counter}.who"
-        who.write_text(json.dumps({**self.who, "label": self.label, "holder": self.me}), encoding="utf-8")
+        self.watch.insert(0, ("stop", self.stop_handle))
         return self.counter
 
     def _scan(self) -> tuple[int, list[str]]:
@@ -354,9 +364,12 @@ class Holder:
             if line != shown:
                 self.say(line)
                 shown = line
-            if self.ahead_to:
-                self.ahead_to(ahead + len(stuck))
+            self._waiting("판단할 수 없는 자리가 있다 — 확인 후 지우기" if stuck else ahead)
             self._pause()
+
+    def _waiting(self, what) -> None:
+        if self.ahead_to:
+            self.ahead_to(what)
 
     def take_lease(self) -> None:
         """The lease, then the note any earlier holder left, then the floor; the note names this holder."""
@@ -365,18 +378,19 @@ class Holder:
         if not mutex:
             raise Refused(f"cannot open the GPU lease: Windows error {ctypes.get_last_error()}")
         try:
-            while self._wait([mutex], None) is None:
-                pass
+            if self._wait([mutex], 0) is None:
+                self._waiting("GPU를 지금 쓰는 작업이 끝나기를 기다린다")
+                while self._wait([mutex], None) is None:
+                    pass
         except BaseException:
             K.CloseHandle(mutex)
             raise
         self.lease = mutex
-        if self.ahead_to:
-            self.ahead_to(0)
         self._settle_note()
         if self.use_floor:
             self._floor()
         self._write_note([self.me])
+        self._waiting(None)
 
     def _settle_note(self) -> None:
         note, shown = self.folder / "holder", None
@@ -389,6 +403,7 @@ class Holder:
                 left = {"inconclusive": True, "processes": []}
             if left.get("inconclusive"):
                 line = f"{INCONCLUSIVE}: `{note}`"
+                self._waiting(line)
             else:
                 alive = [p for p in left.get("processes") or [] if not gone(p)]
                 if not alive:
@@ -396,6 +411,8 @@ class Holder:
                     return
                 line = "GPU lease waits for the last holder's processes to exit: " + ", ".join(
                     f"{Path(p.get('exe') or '?').name} {p['pid']}" for p in alive)
+                self._waiting("앞 작업의 프로세스가 끝나기를 기다린다 — " + ", ".join(
+                    f"{Path(p.get('exe') or '?').name} {p['pid']}" for p in alive))
             if line != shown:
                 self.say(line)
                 shown = line
@@ -408,6 +425,7 @@ class Holder:
             if not short:
                 return
             line = f"GPU job waits for free memory: {short}"
+            self._waiting(f"남는 메모리를 기다린다 — {short}")
             if (key := re.sub(r"[\d.]+", "#", line)) != shown:   # said again when what is short changes
                 self.say(line)
                 shown = key
@@ -420,6 +438,7 @@ class Holder:
                                     "processes": [p for p in processes if p], "inconclusive": inconclusive}),
                         encoding="utf-8")
         os.replace(part, note)
+        self.noted = True
 
     # What the caller reports about its job.
     def root(self, identity: dict) -> None:
@@ -438,7 +457,7 @@ class Holder:
         place. Every step is tried whatever an earlier one did."""
 
         try:
-            if self.lease is not None:
+            if self.lease is not None and self.noted:   # stopped before its own note: an earlier one stays
                 if self.root_identity is None or (self.proof or {}).get("clean"):
                     (self.folder / "holder").unlink(missing_ok=True)
                 else:
@@ -460,6 +479,9 @@ class Holder:
                 self.drop()
 
     def drop(self) -> None:
+        if self.stop_handle is not None:
+            K.CloseHandle(self.stop_handle)
+            self.stop_handle = None
         if self.place is not None:
             K.CloseHandle(self.place)   # deleted on close
             self.place = None
@@ -524,13 +546,14 @@ def stop(counter: int, session: dict | None, say=print) -> int:
         return 2
     folder = home()
     place, who = folder / "queue" / str(counter), folder / "queue" / f"{counter}.who"
-    try:
+    try:   # written before its place appears (`Holder.take`): a live place whose session cannot be read is refused
         named = json.loads(who.read_text(encoding="utf-8")).get("session")
-    except FileNotFoundError:
-        named = None
     except (OSError, ValueError):
-        named = {}
-    if named and not native_process.same(named, session):
+        named = None
+    if not native_process.same(named, session):
+        if probe(place) == "gone":
+            say(f"place {counter} is gone")
+            return 0
         say(f"place {counter} belongs to another session; not stopped")
         return 3
     event = K.OpenEventW(0x0002, False, stop_event(counter, folder))   # EVENT_MODIFY_STATE

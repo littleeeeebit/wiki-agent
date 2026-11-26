@@ -322,4 +322,4 @@ def shown(spec: dict) -> dict:
     return {"measure": {"plan": plan and {**plan, "inputs": inputs}, "error": error, "runs": runs,
                         "pr": o.get("pr1"), "head": o["built_head"], "next": next_mode(o),
                         "running": {**{k: r[k] for k in ("n", "mode", "ts", "cut", "ended")},
-                                    **({"gpu": r["gpu"]} if r.get("gpu") else {})} if live else None}}
+                                    **({"gpu": r["gpu"]} if r.get("gpu") is not None else {})} if live else None}}

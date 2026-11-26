@@ -94,11 +94,66 @@ def test_the_watch_says_clean_changed_or_incomplete(tree, tmp_path):
     until(lambda: watch.result()["state"] == "changed")
     result = watch.close()
     assert any(p.endswith("data.db") for p in result["paths"]) and len(result["paths"]) <= owner_data.MOST
-    assert "data.db" in owner_data.reason(result, found) and watch.close() == result   # a second close says it again
-    assert owner_data.reason(owner_data.Watch(found).close(), found) == ""
+    assert "data.db" in owner_data.reason(result) and watch.close() == result   # a second close says it again
+    assert owner_data.reason(owner_data.Watch(found).close()) == ""
     missing = [tmp_path / "gone" / "budget"]   # no folder to watch from: never taken for clean
     incomplete = owner_data.Watch(missing).close()
-    assert incomplete["state"] == "incomplete" and "감시하지 못했다" in owner_data.reason(incomplete, missing)
+    assert incomplete["state"] == "incomplete" and "감시하지 못했다" in owner_data.reason(incomplete)
+
+
+def test_a_write_finished_before_a_read_is_in_that_read(tree):
+    found = owner_data.roots(tree)
+    found[0].mkdir()
+    for i in range(20):   # no wait between the write and the read: the read takes what was delivered first
+        watch = owner_data.Watch(found)
+        (found[0] / f"f{i}").write_text("x", encoding="utf-8")
+        assert watch.settled()["state"] == "changed", i
+        watch.close()
+
+
+def test_a_failed_wait_is_never_taken_for_a_clean_window(tree, monkeypatch):
+    real = owner_data._k32
+
+    class Failing:   # the kernel, but every wait fails
+        def __init__(self):
+            self.k = real()
+
+        def __getattr__(self, name):
+            return getattr(self.k, name)
+
+        def WaitForMultipleObjects(self, *args):  # noqa: N802 -- the kernel's own name
+            return 0xFFFFFFFF   # WAIT_FAILED
+
+    monkeypatch.setattr(owner_data, "_k32", Failing)
+    watch = owner_data.Watch(owner_data.roots(tree))
+    until(lambda: watch.result()["state"] == "incomplete")
+    result = watch.close()
+    assert result["state"] == "incomplete" and "감시가 멈췄다" in owner_data.reason(result)
+
+
+def test_a_root_named_during_the_window_is_covered(tree, tmp_path):
+    local, conf = tmp_path / "AppData" / "Local", tree / "src-tauri" / "tauri.conf.json"
+    watch = owner_data.Watch(owner_data.roots(tree))
+    conf.write_text(json.dumps({"identifier": "com.example.renamed"}), encoding="utf-8")   # the turn renames the app
+    (local / "com.example.renamed").mkdir()   # and its program makes its data folder
+    result = watch.settled(owner_data.roots(tree))
+    assert result["state"] == "changed" and any(r.endswith("com.example.renamed") for r in result["roots"])
+    watch.close()
+    (local / "com.example.older").mkdir()   # a name whose folder was there before the window: never watched inside
+    watch = owner_data.Watch(owner_data.roots(tree))
+    conf.write_text(json.dumps({"identifier": "com.example.older"}), encoding="utf-8")
+    assert watch.close(owner_data.roots(tree))["state"] == "incomplete"
+    watch = owner_data.Watch(owner_data.roots(tree))   # a name whose folder never came: nothing to see
+    conf.write_text(json.dumps({"identifier": "com.example.never"}), encoding="utf-8")
+    assert watch.close(owner_data.roots(tree))["state"] == "clean"
+
+
+def test_off_windows_nothing_is_watched_and_nothing_is_claimed(monkeypatch):
+    monkeypatch.setattr(owner_data, "_k32", lambda: pytest.fail("the Windows watch was started"))
+    with monkeypatch.context() as m:
+        m.setattr(owner_data.os, "name", "posix")
+        watch = owner_data.Watch([])
+    assert watch.settled()["state"] == "clean" and watch.close()["state"] == "clean"
 
 
 @pytest.mark.parametrize("change", ["created", "replaced", "removed"])

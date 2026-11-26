@@ -112,6 +112,30 @@ def test_a_program_in_a_worktree_is_a_gpu_job(tmp_path, monkeypatch):
     exe.write_bytes(b"")
     assert gpu_job.kind(["./target/release/app.exe"], str(top), {}) == "gpu"
     assert gpu_job.kind([str(env(tmp_path / "cuda", "cuda"))], str(top), {}) == "gpu"
+    named = top / "bin" / "cat.exe"   # a program named like an inspection: by its path it is that file
+    named.parent.mkdir()
+    named.write_bytes(b"")
+    assert gpu_job.kind(["./bin/cat.exe"], str(top), {}) == "gpu"
+    assert gpu_job.kind([str(named)], str(top), {}) == "gpu"
+    assert gpu_job.kind(["cat", "x"], str(top), {}) == "inspect"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows jobs")
+def test_a_new_mark_removes_the_marks_whose_jobs_are_gone(tmp_path, monkeypatch):
+    monkeypatch.setenv("WIKI_AGENT_GPU_HOME", str(tmp_path / "gpu"))
+    live = f"live{os.getpid()}x{time.time_ns()}"
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], creationflags=process.SUSPENDED)
+    job = process.contained(proc, f"Local\\wiki-agent-session-{live}")
+    try:
+        closed = gpu_queue.wrapped("closed" + live)   # an owner's session that queued a job and closed
+        closed.parent.mkdir(parents=True)
+        closed.write_text("", encoding="utf-8")
+        gpu_queue.wrapped(live).write_text("", encoding="utf-8")
+        monkeypatch.setenv("WIKI_AGENT_JOB", f"Local\\wiki-agent-session-mine{live}")
+        gpu_job.mark()
+        assert sorted(p.name for p in closed.parent.iterdir()) == sorted([live, "mine" + live])
+    finally:
+        process.terminated(job)
 
 
 def test_inspection_gets_nothing_and_a_program_gets_the_load_line(repo):

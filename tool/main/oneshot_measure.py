@@ -245,13 +245,13 @@ def measure(repo: str, mode: str | None = None) -> None:
             store.stop("measure", why)
             return None
         record, failed = {"n": n, "head": o["built_head"], "ts": time.time(), "folder": out.name, "mode": how}, None
+        watch = oneshot_owner_data.measured(tree)   # the owner's real folders, over the whole measurement
         # The card's while it runs, this worker's alone (`halt`, fresh per start): its cut-off once the script starts.
         RUNNING[repo] = {"n": n, "head": o["built_head"], "mode": how, "ts": record["ts"], "cut": None, "ended": False,
                          "halt": halt}
-        watch, roots = oneshot_owner_data.measured(tree)   # the owner's real folders, over the whole measurement
         try:   # the GPU lease before the launch and the script's deadline; the owner's round skips the floor
             with gpu_queue.launched(f"measure {n}", halt, floor=how != "owner",
-                                    ahead=lambda count: RUNNING[repo].update(gpu=count or None)) as holder, \
+                                    ahead=lambda wait: RUNNING[repo].update(gpu=wait)) as holder, \
                     product.started(now, plan, tree, env, halt, raw / "serve.log", hide, how,
                                     (passed or {}).get("build"), holder=holder) as build:
                 if build:   # the frozen copy measured: the owner's measurement starts this one, never a new one
@@ -269,7 +269,7 @@ def measure(repo: str, mode: str | None = None) -> None:
         except Exception as exc:   # unforeseen: a masked owner stop once the folder is dealt with
             failed = exc
         finally:
-            seen = owner_data.reason(watch.close(), roots)   # a change fails this measurement as a metric does
+            seen = owner_data.reason(watch.close())   # a change fails this measurement as a metric does
             try:
                 found = report_of(raw, plan, hide)
             finally:

@@ -273,15 +273,17 @@ the mark. This is the crash path on purpose, as for a trial: each runner's
 holder note stays, and the gate waits on it until those processes have
 exited, or stops for the owner on an `inconclusive` one as any holder does.
 A session that wrapped nothing keeps its CLI. Outside build sessions nothing
-reads the marks; `ChatSession` removes its own session's mark when it closes
-its CLI. The next turn starts the CLI
+reads the marks. A mark whose named job no longer exists (its CLI closed or
+crashed) has no reader, and each new mark removes those. The next turn starts the CLI
 again with `--resume`. This is the app's turn boundary and is separate from
 the Codex transcript check above.
 
-Each place also has a readable `gpu\queue\<counter>.who`, written right
-after the place and removed with it, naming the session process its runner
-watches. It is what `--stop` checks and what the queue's line shows; no
-decision about running reads it.
+Each place also has a readable `gpu\queue\<counter>.who`, naming the session
+process its runner watches, and its stop event. Both are created under the
+queue mutex before the place file, and removed with it, so any place that
+can be seen can be stopped and checked. `--stop` refuses a live place whose
+`.who` cannot be read. It is what `--stop` checks and what the queue's line
+shows; no decision about running reads it.
 
 ### The queue's order and the lease
 
@@ -355,7 +357,8 @@ One protocol serves the runners and the server alike, in
   (15b). The owner's round takes the lease and a place too but skips the
   floor: the owner is there and decides. Their wait comes before their
   launch and script deadlines start. The measurement card shows `GPU 대기 중
-  — 앞에 N개`.
+  — 앞에 N개`, and at the head what it still waits for (the lease, the last
+  holder's processes, free memory) until the launch may go.
 
 ### The runner leaves nothing behind
 
@@ -442,7 +445,13 @@ elsewhere is not covered until its kind names the place.
    watches the root's subtree with `ReadDirectoryChangesW` (names, sizes,
    writes), and the root's parent, not recursively, for the root itself
    being renamed, removed or replaced. For a root that does not exist, it
-   watches the parent for its creation. Nothing is walked: the vtuber root
+   watches the parent for its creation. The parent watch keeps every name
+   it sees, and each read takes the roots as they are then: a root the turn
+   named (a new `tauri.conf.json` identifier) is a change when its folder
+   came or went in the window, and `incomplete` when it already existed,
+   unwatched. Each read first reads every change already delivered, so a
+   write that finished before the check is never read after it. Off Windows
+   nothing is watched. Nothing is walked: the vtuber root
    holds 200,024 files now, and one metadata walk of it took 20 s. Junctions
    inside a root are not followed.
 4. What the watch can say. `clean`; `changed` with up to five paths, or with

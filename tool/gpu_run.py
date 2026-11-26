@@ -44,13 +44,28 @@ def stop_command(counter: int) -> str:
     return f"& '{sys.executable}' '{HERE / 'gpu_run.py'}' --stop {counter}"
 
 
-def runnable(shell: str) -> str:
-    """The shell that runs the job: the caller's own, except a packaged (Store) one, which Windows will not create
-    inside a job; Windows PowerShell runs it then."""
+def runnable(shell: str, dialect: str, command: str) -> tuple[str, str]:
+    """(the shell that runs the job, the text it runs): the caller's own, except a packaged (Store) PowerShell,
+    which Windows will not create inside a job. Then the newest installed one that is not packaged, chosen as the
+    shared launch code chooses (`common.shell`): on 5.1 the pipeline chains are lowered, and text only 7 runs is
+    refused (`ValueError`) before anything is queued."""
 
-    if "\\windowsapps\\" not in shell.lower():
-        return shell
-    return str(Path(os.environ.get("SystemRoot") or "C:\\Windows") / "System32/WindowsPowerShell/v1.0/powershell.exe")
+    if dialect != "ps" or "windowsapps" not in {part.lower() for part in Path(shell).parts}:
+        return shell, command
+    from common import shell as shells
+
+    owned = [s for s in shells.detect() if "windowsapps" not in {part.lower() for part in Path(s.executable).parts}]
+    if not owned:
+        raise ValueError("the shell is a Store PowerShell, which cannot run inside the job, and no other PowerShell "
+                         "is installed")
+    chosen = max(owned, key=lambda s: s.major)
+    if chosen.form == "ps5":
+        command = shells.ps5_chains(command)
+        if needs := shells.seven_only(command):
+            raise ValueError(f"the shell is a Store PowerShell, which cannot run inside the job, and Windows "
+                             f"PowerShell 5.1 cannot run this command ({', '.join(needs)}); install PowerShell 7 "
+                             "outside the Store")
+    return chosen.executable, command
 
 
 def shell_argv(shell: str, dialect: str, command: str) -> list[str]:
@@ -89,6 +104,11 @@ def hold(args) -> int:
     if not shell or not me or shell["created"] > me["created"] or Path(shell["exe"]).name.lower() not in SHELLS[args.dialect]:
         say("cannot find the shell that started this GPU job; nothing ran.")
         return 1
+    try:
+        exe, text = runnable(shell["exe"], args.dialect, command)
+    except ValueError as why:
+        say(f"{why}; nothing ran.")
+        return 1
     watch = []
     for name, identity in (("session", session), ("shell", shell)):
         handle = opened(identity)
@@ -100,12 +120,7 @@ def hold(args) -> int:
     holder = gpu_queue.Holder("agent job", watch=watch, say=say, who=who)
     stopped, code, job = None, 1, None
     try:
-        counter = holder.take()
-        event = gpu_queue.K.CreateEventW(None, True, False, gpu_queue.stop_event(counter, holder.folder))
-        if not event:
-            say(f"cannot create this place's stop event: Windows error {ctypes.get_last_error()}; nothing ran.")
-            return 1
-        holder.watch.insert(0, ("stop", event))
+        counter = holder.take()   # its stop event is watched from the moment the place exists
         if args.codex:
             say(f"stop: {stop_command(counter)}" + ("   (run it with `require_escalated` too)" if args.escalated else ""))
         holder.lead()
@@ -117,10 +132,10 @@ def hold(args) -> int:
         def last() -> None:   # every watched process alive and no stop set, or the root never runs
             holder._wait([], 0)
 
-        if (exe := runnable(shell["exe"])) != shell["exe"]:
+        if exe != shell["exe"]:
             say(f"the shell is a Store app, which cannot run inside the job: {Path(exe).name} runs the command")
         try:
-            root = job.start(shell_argv(exe, args.dialect, command), os.getcwd(), dict(os.environ),
+            root = job.start(shell_argv(exe, args.dialect, text), os.getcwd(), dict(os.environ),
                              None, sys.stdout, before_resume=holder.root, last=last)
         except gpu_queue.Stopped as stop:
             stopped = (BEFORE, str(stop))

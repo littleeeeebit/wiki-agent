@@ -6,8 +6,9 @@ and `productName` of each `tauri.conf.json` in the worktree. A product keeping i
 
 - `verdict`, a pretool check on both hosts in a build session (`WIKI_AGENT_ROLE=build`): a shell call whose text
   names a root in any spelling, or an edit inside one, is refused. Naming only the variable is not.
-- `Watch`: `ReadDirectoryChangesW` on each root's subtree, and on its parent for the root itself being created,
-  renamed, removed or replaced. Nothing is walked; junctions are not followed. It says `clean`, `changed` with up
+- `Watch`: `ReadDirectoryChangesW` on each root's subtree, and on each base folder for a root itself being created,
+  renamed, removed or replaced, a root named only during the window included. Nothing is walked; junctions are
+  not followed. It says `clean`, `changed` with up
   to five paths (none for an overflow or the root itself), or `incomplete`.
 """
 
@@ -175,22 +176,34 @@ SUBTREE = 0x1 | 0x2 | 0x8 | 0x10   # FILE_NOTIFY_CHANGE_FILE_NAME | DIR_NAME | S
 
 class Watch:
     """The roots watched from construction until `close`. The first read of every directory is issued before
-    the constructor returns, so nothing written after it goes unseen."""
+    the constructor returns, so nothing written after it goes unseen. Off Windows nothing is watched.
+
+    Each base folder (the roots' parents) is watched for every directory name created, renamed or removed in
+    it, so a root that only came to exist during the window (a `tauri.conf.json` identifier the turn added) is
+    covered too: `settled(now)` and `close(now)` take the roots as they are now. One of them seen at its base is
+    a change; one that already existed, and so had no watch of its own, leaves the window `incomplete`."""
 
     def __init__(self, found: list[Path]):
-        self.k = _k32()
-        self.lock = threading.Lock()
+        self.lock, self.sync_lock = threading.Lock(), threading.Lock()
         self.state, self.paths, self.why = "clean", [], []
+        self.found, self.seen, self.bases = list(found), {}, set()
+        self.threads, self.syncs, self.stop, self.k = [], [], None, None
+        if os.name != "nt":
+            return
+        self.k = _k32()
         self.stop = self.k.CreateEventW(None, True, False, None)
-        self.threads = []
+        if not self.stop:
+            self._fail(f"감시를 시작하지 못했다 (Windows error {ctypes.get_last_error()})")
+            return
+        for base in dict.fromkeys(root.parent for root in found):
+            if base.is_dir():
+                self.bases.add(base)
+                self._start(base, False)
+            else:
+                self._fail(f"`{base}` 가 없어 감시하지 못했다")
         for root in found:
             if root.is_dir():
-                self._start(root, True, None)
-                self._start(root.parent, False, root.name)
-            elif root.parent.is_dir():
-                self._start(root.parent, False, root.name)
-            else:
-                self._fail(f"`{root.parent}` 가 없어 감시하지 못했다")
+                self._start(root, True)
 
     def _fail(self, why: str) -> None:
         with self.lock:
@@ -204,15 +217,37 @@ class Watch:
             if path is not None and len(self.paths) < MOST and path not in self.paths:
                 self.paths.append(path)
 
-    def _start(self, folder: Path, recursive: bool, only: str | None) -> None:
+    def _named(self, base: Path, name: str) -> None:
+        """A directory name created, renamed or removed in a base folder: a change when it is a root's."""
+
+        with self.lock:
+            self.seen.setdefault(base, set()).add(name.lower())
+            hit = any(r.parent == base and r.name.lower() == name.lower() for r in self.found)
+        if hit:
+            self._changed(None)   # the root itself was created, renamed, removed or replaced
+
+    def _cover(self, now: list[Path]) -> None:
+        with self.lock:
+            new = [r for r in now if r not in self.found]
+            self.found += new
+            seen = {base: set(names) for base, names in self.seen.items()}
+        for root in new:
+            if root.parent not in self.bases:
+                self._fail(f"`{root}` 는 이 구간 중에 생긴 이름이고, 그 상위 폴더는 감시하지 않았다")
+            elif root.name.lower() in seen.get(root.parent, ()):
+                self._changed(None)
+            elif root.exists():
+                self._fail(f"`{root}` 는 이 구간 중에 생긴 이름이라 그 안은 감시하지 못했다")
+
+    def _start(self, folder: Path, recursive: bool) -> None:
         ready = threading.Event()
-        thread = threading.Thread(target=self._run, args=(folder, recursive, only, ready), daemon=True,
+        thread = threading.Thread(target=self._run, args=(folder, recursive, ready, self.stop), daemon=True,
                                   name=f"owner-watch-{folder.name}")
         thread.start()
         ready.wait()
         self.threads.append(thread)
 
-    def _run(self, folder: Path, recursive: bool, only: str | None, ready: threading.Event) -> None:
+    def _run(self, folder: Path, recursive: bool, ready: threading.Event, stop) -> None:
         k = self.k
         handle = k.CreateFileW(str(folder), 0x1, 0x7, None, 3, 0x02000000 | 0x40000000, None)
         if not handle or handle == w.HANDLE(-1).value:
@@ -220,9 +255,17 @@ class Watch:
             ready.set()
             return
         event = k.CreateEventW(None, True, False, None)
+        sync = k.CreateEventW(None, False, False, None)   # `settled` asks; answered once nothing delivered is unread
+        acked = threading.Event()
+        entry = (sync, acked)
         buffer = ctypes.create_string_buffer(64 * 1024)
         overlapped = _Overlapped(event=event)
         try:
+            if not event or not sync:
+                self._fail(f"`{folder}` 를 감시하지 못했다 (Windows error {ctypes.get_last_error()})")
+                return
+            with self.lock:
+                self.syncs.append(entry)
             while True:
                 k.ResetEvent(event)
                 if not k.ReadDirectoryChangesW(handle, buffer, len(buffer), recursive, SUBTREE if recursive else 0x2,
@@ -230,11 +273,16 @@ class Watch:
                     self._fail(f"`{folder}` 의 변경을 읽지 못했다 (Windows error {ctypes.get_last_error()})")
                     return
                 ready.set()
-                found = k.WaitForMultipleObjects(2, (w.HANDLE * 2)(event, self.stop), False, 0xFFFFFFFF)
-                size = w.DWORD()
-                if found != 0:   # closing: the read is cancelled and waited for before its buffer goes
+                # The lowest signalled handle wins: a delivered change is read before a sync is answered.
+                while (found := k.WaitForMultipleObjects(3, (w.HANDLE * 3)(event, stop, sync), False,
+                                                         0xFFFFFFFF)) == 2:
+                    acked.set()
+                error, size = ctypes.get_last_error(), w.DWORD()
+                if found != 0:   # closing, or the wait failed: the read is cancelled and waited for first
                     k.CancelIoEx(handle, ctypes.byref(overlapped))
                     k.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(size), True)
+                    if found != 1:
+                        self._fail(f"`{folder}` 의 감시가 멈췄다 (wait {found:#x}, Windows error {error})")
                     return
                 if not k.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(size), False):
                     self._fail(f"`{folder}` 의 변경을 읽지 못했다 (Windows error {ctypes.get_last_error()})")
@@ -243,30 +291,57 @@ class Watch:
                     self._changed(None)
                     continue
                 for name in _names(buffer.raw[:size.value]):
-                    if only is None:
+                    if recursive:
                         self._changed(folder / name)
-                    elif name.lower() == only.lower():
-                        self._changed(None)   # the root itself was created, renamed, removed or replaced
+                    else:
+                        self._named(folder, name)
         finally:
+            with self.lock:
+                if entry in self.syncs:
+                    self.syncs.remove(entry)
+            acked.set()
             ready.set()
-            k.CloseHandle(event)
-            k.CloseHandle(handle)
+            for h in (event, sync, handle):
+                if h:
+                    k.CloseHandle(h)
 
     def result(self) -> dict:
         with self.lock:
-            return {"state": self.state, "paths": [str(p) for p in self.paths], "why": list(self.why)}
+            return {"state": self.state, "paths": [str(p) for p in self.paths], "why": list(self.why),
+                    "roots": [str(r) for r in self.found]}
 
-    def close(self) -> dict:
-        """End every read and say what was seen; a second call only says it again."""
+    def settled(self, now: list[Path] | None = None) -> dict:
+        """What the window holds so far, once every change already delivered has been read; `now`, the roots as
+        they are now. A check reads this right before it saves."""
 
-        if self.stop is not None:
-            self.k.SetEvent(self.stop)
-            for thread in self.threads:
-                thread.join(10)
-                if thread.is_alive():
-                    self._fail("감시를 끝내지 못했다")
-            self.k.CloseHandle(self.stop)
-            self.stop = None
+        with self.sync_lock:
+            if self.stop is not None:
+                with self.lock:
+                    pending = list(self.syncs)
+                for sync, acked in pending:
+                    acked.clear()
+                    self.k.SetEvent(sync)
+                if not all(acked.wait(10) for _, acked in pending):
+                    self._fail("감시가 제때 답하지 않았다")
+        if now is not None:
+            self._cover(now)
+        return self.result()
+
+    def close(self, now: list[Path] | None = None) -> dict:
+        """End every read, each after the changes already delivered, and say what was seen; a second call only
+        says it again."""
+
+        with self.sync_lock:
+            if self.stop is not None:
+                self.k.SetEvent(self.stop)
+                for thread in self.threads:
+                    thread.join(10)
+                    if thread.is_alive():
+                        self._fail("감시를 끝내지 못했다")
+                self.k.CloseHandle(self.stop)
+                self.stop = None
+        if now is not None:
+            self._cover(now)
         return self.result()
 
 
@@ -283,12 +358,12 @@ def _names(raw: bytes) -> list[str]:
     return out
 
 
-def reason(result: dict, found: list[Path]) -> str:
+def reason(result: dict) -> str:
     """"" for `clean`; else the refusal's text, with the folders and the paths."""
 
     if result["state"] == "clean":
         return ""
-    folders = ", ".join(f"`{r}`" for r in found) or "(없음)"
+    folders = ", ".join(f"`{r}`" for r in result["roots"]) or "(없음)"
     if result["state"] == "changed":
         paths = "; ".join(f"`{p}`" for p in result["paths"]) or "(경로를 알 수 없다: 변경이 너무 많거나 폴더 자체가 바뀌었다)"
         return f"이 턴 동안 주인의 실제 데이터 폴더가 바뀌었다 — {folders}: {paths}. 빌드는 그 폴더를 쓰지 않는다"

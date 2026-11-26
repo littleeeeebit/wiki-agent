@@ -82,6 +82,25 @@ def identity(pid: int, handle=None, tree: dict[int, int] | None = None) -> dict 
         k.CloseHandle(opened)
 
 
+def exited(recorded: dict) -> bool:
+    """The process `recorded` names is proven gone: no process has its pid, the one that has it is another
+    (created at another time), or it has ended. A process that cannot be read is not proven gone."""
+
+    k, w = _kernel()
+    handle = k.OpenProcess(QUERY, False, int(recorded["pid"]))
+    if not handle:
+        return ctypes.get_last_error() == 87   # ERROR_INVALID_PARAMETER: no process has this pid
+    try:
+        times, code = [w.FILETIME() for _ in range(4)], w.DWORD()
+        if not k.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]):
+            return False
+        if (times[0].dwHighDateTime << 32 | times[0].dwLowDateTime) != recorded["created"]:
+            return True
+        return bool(k.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value != 259   # STILL_ACTIVE
+    finally:
+        k.CloseHandle(handle)
+
+
 def same(recorded: dict | None, now: dict | None) -> bool:
     """`now` is the process `recorded` names: the same pid, creation time and image. A reused pid is not."""
 

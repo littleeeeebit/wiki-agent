@@ -557,3 +557,54 @@ def test_a_value_half_written_in_json_escapes_is_never_shown():
     assert "\\u0044" not in captured.text()   # five of its letters, each written as six characters
     captured.writer.write(f'{escaped[30:]}"}}'.encode())
     assert captured.text(5) == '{"key": "[M7]"}'
+
+
+class Backend:
+    """An `owned_job.Job` stand-in for the Windows backend: its start calls both callbacks before the resume, as
+    the real one does under its gate."""
+
+    def __init__(self, clean: bool = True):
+        self.clean, self.resumed = clean, False
+
+    def start(self, argv, cwd, env, desktop, log, before_resume=None, last=None):
+        root = {"pid": 1, "created": 1, "exe": "serve.exe"}
+        before_resume(root)
+        last()
+        self.resumed = True
+        return root
+
+    def code(self, root):
+        return None
+
+    def members(self):
+        return []
+
+    def end(self, seconds):
+        return {"clean": self.clean, "reasons": ["a process outlived the job"], "members": []}
+
+    def close(self):
+        pass
+
+
+def backend(tmp_path: Path, job: Backend, halt, holder) -> None:
+    with patch.object(owned_job, "Job", lambda: job), patch.object(product, "answers", lambda health: 200), \
+            patch.object(product, "vouched", lambda *a, **k: True), \
+            contextlib.contextmanager(product.owned_backend)(["serve"], tmp_path, {}, "http://127.0.0.1:9/h", 5,
+                                                             halt, tmp_path / "serve.log", {}, holder):
+        pass
+
+
+def test_a_stop_accepted_while_the_backend_is_prepared_never_resumes_it(tmp_path):
+    halt, job = measure.Halted(), Backend()
+    holder = types.SimpleNamespace(root=lambda identity: halt.set(), ended=lambda proof: None)
+    with pytest.raises(ValueError, match="사람이 멈췄다"):
+        backend(tmp_path, job, halt, holder)
+    assert not job.resumed
+
+
+def test_a_backend_that_did_not_end_fails_its_caller_after_the_holder_is_told(tmp_path):
+    told = []
+    holder = types.SimpleNamespace(root=lambda identity: None, ended=told.append)
+    with pytest.raises(RuntimeError, match="백엔드를 끝내지 못했다"):
+        backend(tmp_path, Backend(clean=False), measure.Halted(), holder)
+    assert [proof["clean"] for proof in told] == [False]

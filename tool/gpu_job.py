@@ -196,11 +196,13 @@ def kind(words: list[str], cwd: str, roots: dict) -> str:
     if not words:
         return "builtin"
     first = name(words[0])
-    if first in INSPECT or first == "sed" and "-n" in words[1:]:
+    if re.search(r"[\\/]", words[0]):
+        pass   # a program named by its path is that file, whatever its name: resolved below, never exempted by name
+    elif first in INSPECT or first == "sed" and "-n" in words[1:]:
         return "inspect"
-    if first in NOT_PROGRAMS or first in SHELLS:
+    elif first in NOT_PROGRAMS or first in SHELLS:
         return "builtin"
-    if not re.search(r"[\\/.]", words[0]) and re.match(r"^[a-z]+-[a-z]", words[0], re.I):
+    elif "." not in words[0] and re.match(r"^[a-z]+-[a-z]", words[0], re.I):
         return "builtin"   # a PowerShell cmdlet, which starts no program
     if stop_call(words, cwd):
         return "program"
@@ -358,14 +360,28 @@ def wrapped(command: str, dialect: str, session: dict, host: str, given: dict, p
 
 def mark() -> None:
     """`gpu\\wrapped\\<uuid>` for the app's session, written before the wrapped call can start: the server ends a
-    build turn's runners at its boundary by it. No variable, no mark."""
+    build turn's runners at its boundary by it. No variable, no mark. A mark whose named job no longer exists
+    (its CLI closed or crashed, an owner's session included) has no reader: each new mark removes those."""
 
     job_name = os.environ.get("WIKI_AGENT_JOB")
     if not job_name:
         return
-    found = gpu_queue.wrapped(job_name.rsplit("-", 1)[-1])
+    prefix, own = job_name.rsplit("-", 1)
+    found = gpu_queue.wrapped(own)
     found.parent.mkdir(parents=True, exist_ok=True)
     found.write_text("", encoding="utf-8")
+    import ctypes
+    from ctypes import wintypes as w
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.OpenJobObjectW.argtypes, k.OpenJobObjectW.restype = (w.DWORD, w.BOOL, w.LPCWSTR), w.HANDLE
+    for other in found.parent.iterdir():
+        if other.name == own:
+            continue
+        if job := k.OpenJobObjectW(0x0004, False, f"{prefix}-{other.name}"):   # JOB_OBJECT_QUERY
+            k.CloseHandle(job)
+        elif ctypes.get_last_error() == 2:   # ERROR_FILE_NOT_FOUND: no such job any more
+            other.unlink(missing_ok=True)
 
 
 def refused(reason: str) -> dict:

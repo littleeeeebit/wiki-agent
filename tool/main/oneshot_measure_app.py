@@ -139,11 +139,15 @@ def owned_backend(argv: list[str], path: Path, env: dict, health: str, seconds: 
     except ImportError:
         raise ValueError("psutil 이 설치되지 않았다 — `pip install -r requirements-chat.txt` 로 다시 설치한다") from None
     job = owned_job.Job()
+
+    def last() -> None:   # under the start's gate, through the resume: a stop accepted by now never runs it
+        if halt.is_set():
+            raise ValueError("사람이 멈췄다")
     try:
         with log.open("wb") as output:
             try:
                 root = job.start(argv, path, {**env, "PYTHONUNBUFFERED": "1"}, None, output,
-                                 before_resume=holder.root if holder is not None else None)
+                                 before_resume=holder.root if holder is not None else None, last=last)
             except owned_job.Refused as exc:
                 raise ValueError(f"백엔드 프로세스를 묶어 둘 수 없었다 — {exc}") from None
         try:
@@ -154,6 +158,8 @@ def owned_backend(argv: list[str], path: Path, env: dict, health: str, seconds: 
             proof = job.end(END_SECONDS)
             if holder is not None:
                 holder.ended(proof)
+        if not proof["clean"]:   # as the PC program's: a check or measurement never passes over an unended backend
+            raise RuntimeError(f"백엔드를 끝내지 못했다 — {'; '.join(proof.get('reasons') or [])}")
     finally:
         job.close()
 
