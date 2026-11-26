@@ -61,7 +61,27 @@ def test_a_move_the_shell_may_skip_or_undo_leaves_every_folder_it_may_run_in(tmp
                     "false && cd ..; python -m pytest -q"):
         assert ask(command, gated), command
     assert ask("pushd .. && python -m pytest -q && popd", gated) is None
-    assert ask("cd .. || exit 1; python -m pytest -q", gated) is None   # a move is taken to succeed
+    assert ask("cd .. || exit 1; python -m pytest -q", gated) is None   # `..` exists, so the move succeeds
+    for command in ("cd ../absent; python -m pytest -k test",   # a move that fails stays
+                    "cd .. && cd - && python -m pytest -k test",   # `cd -` returns
+                    "false &&\n  cd ..; python -m pytest -k test",   # a list broken after `&&` goes on
+                    "false && \\\n cd ..; python -m pytest -k test"):   # and so does a continued line
+        assert ask(command, gated), command
+    assert ask("mkdir -p ../made && cd ../made && python -m pytest -q", gated) is None   # it exists by then
+
+
+def test_a_comment_runs_nothing_and_selects_nothing(tmp_path):
+    root = repo(tmp_path)
+    assert ask("python -m pytest tool/test_hook.py # selected file", root) is None
+    assert ask("echo ready # comment; python -m pytest -k test", root) is None
+    assert ask('echo "a #b"; python -m pytest -q', root)   # a `#` inside quotes hides nothing after them
+    assert ask("python -m pytest -q \\\n  tool/test_a.py", root) is None   # one command over two lines
+
+
+def test_a_quoted_folder_before_the_interpreter_is_still_a_pytest_run(tmp_path):
+    root = repo(tmp_path)
+    assert ask('"/c/Program Files/Python"/python.exe -m pytest -k test', root)
+    assert ask("'C:/Py thon'/Scripts/pytest.exe -q tool/test_a.py", root) is None
 
 
 def test_each_run_is_read_where_the_cds_before_it_left_the_shell(tmp_path):

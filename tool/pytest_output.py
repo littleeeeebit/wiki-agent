@@ -14,11 +14,15 @@ _QUOTED = {
 }
 
 
-def runs_pytest(stage: str) -> bool:
-    try:
-        words = [word.strip("\"'") for word in shlex.split(stage, posix=False)]
-    except ValueError:
-        return False
+def runs_pytest(stage: str, words: list[str] | None = None) -> bool:
+    """`stage` runs pytest directly; `words`, when given, is its argv as the shell splits it."""
+    if words is not None:
+        words = list(words)
+    else:
+        try:
+            words = [word.strip("\"'") for word in shlex.split(stage, posix=False)]
+        except ValueError:
+            return False
     # shortcut: inspect direct argv, not nested shell scripts or env -S strings; extend for observed commands.
     while words:
         if re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
