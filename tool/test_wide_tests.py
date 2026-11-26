@@ -51,6 +51,12 @@ def test_an_operator_inside_quotes_is_text_and_splits_no_command(tmp_path):
     assert ask("cd .. && python -m pytest -q tool/test_a.py & wait", root) is None   # and runs it where it moved
 
 
+def test_a_pipe_of_both_streams_is_a_pipe_and_not_the_background(tmp_path):
+    gated = repo(tmp_path / "top" / "gated")
+    assert ask("cd .. && python --version |& tee python-version.log && python -m pytest -q", gated) is None
+    assert ask("python -m pytest -q |& tee all.log", gated)   # still the whole set, in the checkout
+
+
 def test_joining_a_long_command_takes_time_in_proportion_to_its_length():
     import time
     from wide_tests import joined

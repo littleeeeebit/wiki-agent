@@ -23,7 +23,7 @@ from pytest_output import _QUOTED, _blank, runs_pytest
 
 LIMIT = 8
 STAGES = {   # in Bash a lone `&` runs what is before it in the background; `2>&1` and `&>` are redirections
-    "posix": re.compile(r"&&|\|\||(?<![<>&])&(?![>&])|[;|\n]"),
+    "posix": re.compile(r"&&|\|\||\|&|(?<![<>&])&(?![>&])|[;|\n]"),   # `|&` pipes both streams
     "ps": re.compile(r"&&|\|\||[;|\n]"),   # PowerShell's `&` calls the command after it
 }
 MOVED = re.compile(r"(cd|sl|Set-Location|pushd|Push-Location)(?:\s+(\S.*))?", re.IGNORECASE)
@@ -160,7 +160,7 @@ def stages(command: str, dialect: str) -> list[tuple[str, str]]:
     blank, cuts, ops = _blank(command, dialect), [0], [""]
     for match in STAGES[dialect].finditer(blank):   # the same length as `command`, so its places are `command`'s
         cuts += [match.start(), match.end()]
-        ops.append(match[0])
+        ops.append("|" if match[0] == "|&" else match[0])
     cuts.append(len(command))
     split, carried = [], None
     for op, a, b in zip(ops, cuts[::2], cuts[1::2]):
