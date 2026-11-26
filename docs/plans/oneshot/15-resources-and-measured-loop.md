@@ -471,9 +471,10 @@ elsewhere is not covered until its kind names the place.
    folder is held without delete sharing for the window, so Windows refuses
    to move or remove it or its parent, and no other folder takes its path
    while its handle watches the old one. Every base and root watcher, at each
-   answer and at its end, compares the folder its handle holds with where
-   its path resolves then: a junction naming another folder, a root's folder
-   moved, or a path that cannot be resolved, is `incomplete`. A program holding a base open
+   answer and at its end, compares the file identity (volume and file ID)
+   of the folder its handle holds with that of the folder its path opens
+   then, never a spelling: a junction naming another folder, a root's folder
+   moved, or a path that cannot be opened, is `incomplete`. A program holding a base open
    with delete access makes the watch fail to start, which is `incomplete`.
    A promotion whose answer was lost never reads as a confirmed draft, and
    an undone draft is read back off GitHub. Each read first reads every change already delivered, so a

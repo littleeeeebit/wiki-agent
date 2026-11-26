@@ -102,11 +102,19 @@ def _confs(tree: Path):
             yield conf
 
 
-def _real(folder: Path) -> str | None:
-    try:
-        return os.path.normcase(os.path.realpath(folder, strict=True))
-    except OSError:
+def _file_id(k, what) -> tuple[int, bytes] | None:
+    """The volume and 128-bit file ID of an open handle, or of the folder a path leads to now (opened for it)."""
+
+    handle = what if isinstance(what, int) else k.CreateFileW(str(what), 0x80, 0x7, None, 3, 0x02000000, None)
+    if not handle or handle == w.HANDLE(-1).value:
         return None
+    try:
+        info = _FileId()
+        ok = k.GetFileInformationByHandleEx(handle, 18, ctypes.byref(info), ctypes.sizeof(info))   # FileIdInfo
+        return (info.volume, bytes(info.id)) if ok else None
+    finally:
+        if handle is not what:
+            k.CloseHandle(handle)
 
 
 def _state(conf: Path) -> tuple[bytes, int] | None:
@@ -188,6 +196,10 @@ def agent_folder(tree: Path) -> str:
 
 # -- The watch --------------------------------------------------------------------------------------------------------
 
+class _FileId(ctypes.Structure):   # FILE_ID_INFO
+    _fields_ = [("volume", ctypes.c_ulonglong), ("id", ctypes.c_ubyte * 16)]
+
+
 class _Overlapped(ctypes.Structure):
     _fields_ = [("internal", ctypes.c_size_t), ("internal_high", ctypes.c_size_t), ("offset", w.DWORD),
                 ("offset_high", w.DWORD), ("event", w.HANDLE)]
@@ -206,8 +218,7 @@ def _k32():
     k.WaitForMultipleObjects.argtypes = (w.DWORD, ctypes.POINTER(w.HANDLE), w.BOOL, w.DWORD)
     k.WaitForMultipleObjects.restype = w.DWORD
     k.WaitForSingleObject.argtypes, k.WaitForSingleObject.restype = (w.HANDLE, w.DWORD), w.DWORD
-    k.GetFinalPathNameByHandleW.argtypes = (w.HANDLE, w.LPWSTR, w.DWORD, w.DWORD)
-    k.GetFinalPathNameByHandleW.restype = w.DWORD
+    k.GetFileInformationByHandleEx.argtypes = (w.HANDLE, ctypes.c_int, w.LPVOID, w.DWORD)
     return k
 
 
@@ -341,8 +352,8 @@ class Watch:
         # window, so the folder at its path stays the one its handle watches. What is inside changes as ever. The
         # cost: a program holding the base itself open with delete access makes the watch fail to start
         # (`incomplete`), and one opening it so during the window gets a sharing error. The hold keeps only the
-        # folder the path resolved to, so each answer and the end compare the handle's own folder with where the
-        # path leads then (`placed`): a junction naming another, or a root's folder moved, is never taken for it.
+        # folder the path resolved to, so each answer and the end compare the handle's own folder with the one the
+        # path opens then (`answer`): a junction naming another, or a root's folder moved, is never taken for it.
         handle = k.CreateFileW(str(folder), 0x1, 0x3 if mode == "base" else 0x7, None, 3, 0x02000000 | 0x40000000,
                                None)
         if not handle or handle == w.HANDLE(-1).value:
@@ -353,14 +364,11 @@ class Watch:
         sync = k.CreateEventW(None, False, False, None)   # `settled` asks; answered once nothing delivered is unread
         acked = threading.Event()
 
-        def answer():   # first, the folder this handle watches is still the one its path leads to
-            if mode != "tree":
-                text = ctypes.create_unicode_buffer(32768)
-                held = text.value if 0 < k.GetFinalPathNameByHandleW(handle, text, 32768, 0) < 32768 else ""
-                held = "\\" + held[8:] if held.startswith("\\\\?\\UNC\\") else held.removeprefix("\\\\?\\")
-                if not held or (now := _real(folder)) is None:
+        def answer():   # first, the folder this handle watches is still the one its path leads to: the same file
+            if mode != "tree":   # identity, never a spelling, so no case, prefix or alias can equate two folders
+                if (held := _file_id(k, handle)) is None or (now := _file_id(k, folder)) is None:
                     self._fail(f"`{folder}` 가 가리키는 폴더를 확인하지 못했다")
-                elif os.path.normcase(held) != now:
+                elif held != now:
                     self._fail(f"`{folder}` 가 가리키는 폴더가 이 구간 중에 바뀌어, 그 안은 감시하지 못했다")
             acked.set()
         entry = (sync, acked)

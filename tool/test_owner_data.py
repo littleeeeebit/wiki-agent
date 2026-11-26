@@ -285,6 +285,33 @@ def test_a_root_whose_junction_target_is_replaced_is_incomplete(tree, tmp_path):
     assert result["state"] == "incomplete" and "가리키는 폴더가" in owner_data.reason(result)
 
 
+def test_a_base_spelled_with_the_extended_prefix_reads_as_itself(tree, tmp_path, monkeypatch):
+    roaming, local = tmp_path / "AppData" / "Roaming", tmp_path / "AppData" / "Local"
+    monkeypatch.setattr(owner_data, "bases", lambda: [roaming, Path("\\\\?\\" + str(local))])
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    assert watch.settled()["state"] == "clean" and watch.close()["state"] == "clean"
+
+
+def test_a_junction_moved_to_a_folder_differing_only_in_case_is_incomplete(tree, tmp_path, monkeypatch):
+    first, second, local, link = junctioned(tmp_path, monkeypatch)
+    folders = tmp_path / "cased"
+    folders.mkdir()
+    made = subprocess.run(["fsutil", "file", "setCaseSensitiveInfo", str(folders), "enable"], capture_output=True)
+    if made.returncode:
+        pytest.skip("this volume makes no case-sensitive folder")
+    (folders / "Original").mkdir()
+    (folders / "original").mkdir()
+    os.rmdir(local)
+    link(folders / "Original")
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    os.rmdir(local)
+    link(folders / "original")   # left there: the path now leads to the other folder
+    (local / "com.example.budget").mkdir()
+    states = watch.settled()["state"], watch.close()["state"]
+    os.rmdir(local)
+    assert "clean" not in states
+
+
 def test_a_root_named_during_the_window_is_covered(tree, tmp_path):
     local, conf = tmp_path / "AppData" / "Local", tree / "src-tauri" / "tauri.conf.json"
     watch = owner_data.Watch(owner_data.roots(tree))
