@@ -69,8 +69,18 @@ def test_each_spelling_of_a_root_is_refused_and_a_variable_alone_is_not(tree, tm
     for command in spellings:
         reason = denied(shell(tree, command, host))
         assert "주인의 실제 데이터 폴더" in reason, command
-    for command in ("echo $APPDATA", "ls %LOCALAPPDATA%", f"cat {roaming}\\budgetary\\x", "cat budget/x"):
+    for command in ("echo $APPDATA", "ls %LOCALAPPDATA%", f"cat {roaming}\\budgetary\\x", "cat budget/x",
+                    f"cat '{roaming}\\Budget. Notes\\x'"):   # a sibling whose name only starts like the product's
         assert not denied(shell(tree, command, host)), command
+    for command in (f"cat '{roaming}\\Budget.\\x'", f'type "{roaming}\\budget. "'):   # Win32 drops the trailing run
+        assert "주인의 실제 데이터 폴더" in denied(shell(tree, command, host)), command
+
+
+def test_a_base_at_a_drive_or_share_root_is_matched_by_its_absolute_path():
+    for base in (Path("D:\\"), Path("\\\\server\\share\\")):
+        found = [base / "budget"]
+        assert owner_data.named(f"cat {base / 'budget' / 'db.sqlite'}", found) == found
+        assert owner_data.named(f"cat {base / 'budgetary' / 'x'}", found) == []
 
 
 @pytest.mark.parametrize("host", ["claude", "codex"])
@@ -82,6 +92,20 @@ def test_a_redirected_local_folder_keeps_its_variable_refusal(tree, tmp_path, mo
     for command in ("cat $LOCALAPPDATA/budget/x", "Get-Content ${env:LOCALAPPDATA}\\com.example.budget\\x"):
         assert "주인의 실제 데이터 폴더" in denied(shell(tree, command, host)), command
     assert not denied(shell(tree, "ls $LOCALAPPDATA", host))
+
+
+def test_a_file_already_at_a_roots_path_leaves_the_window_clean(tree, tmp_path):
+    (tmp_path / "AppData" / "Local" / "com.example.budget").write_text("x", encoding="utf-8")   # untouched
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    assert watch.settled()["state"] == "clean" and watch.close()["state"] == "clean"
+
+
+def test_a_name_in_short_form_is_incomplete(tree):
+    conf = tree / "src-tauri" / "tauri.conf.json"
+    conf.write_text(json.dumps({"identifier": "BUDGET~1"}), encoding="utf-8")   # may stand for a long name
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    result = watch.close()
+    assert result["state"] == "incomplete" and "짧은 이름 꼴" in owner_data.reason(result)
 
 
 def test_a_name_win32_stores_under_another_spelling_is_still_watched(tree, tmp_path):

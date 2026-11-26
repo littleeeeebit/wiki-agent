@@ -150,13 +150,17 @@ def named(text: str, found: list[Path]) -> list[Path]:
     plain = _plain(text)
     out = []
     for root in found:
-        tail = re.escape(_alias(root.name)) + r"[. ]*"   # every spelling Win32 stores as the same name
-        end = r"(?![\w.-])"
-        absolute = re.escape(_plain(str(root.parent))) + "/" + tail
+        # The name, or the name with the trailing dots and spaces Win32 drops, but only where the component ends
+        # there (a separator, a quote or the end): `Budget. Notes` is another folder. An unquoted argument ending
+        # in such a run before more text is not told from that sibling; the refusal catches mistakes, and the
+        # watch sees what any spelling writes.
+        tail = re.escape(_alias(root.name)) + r"""(?:[. ]+(?=[/"'`]|$)|(?![\w.-]))"""
+        # The parent without its own trailing separator, so a drive or share root is not doubled.
+        absolute = re.escape(_plain(str(root.parent)).rstrip("/")) + "/" + tail
         # Either variable, whatever the base is called: a redirected Local folder keeps its refusal, and a
         # Roaming name spelled through the Local variable is the same product's, refused as well.
-        spelled = rf"(%(local)?appdata%|\$\{{?(env:)?(local)?appdata\}}?)/{tail}{end}"
-        if re.search(absolute + end, plain) or re.search(spelled, plain):
+        spelled = rf"(%(local)?appdata%|\$\{{?(env:)?(local)?appdata\}}?)/{tail}"
+        if re.search(absolute, plain) or re.search(spelled, plain):
             out.append(root)
     return out
 
@@ -273,8 +277,8 @@ class Watch:
         for root in found:
             if root.is_dir():
                 self._start(root, "root")
-            else:   # the base watch's; and one there at a verdict was made during the window, whatever its spelling
-                self.absent.append(root)
+            elif not root.exists():   # the base watch's; one there at a verdict was made in the window
+                self._absent(root)
         if tree is not None:
             for conf in _confs(tree):
                 self.confs[str(conf)] = _state(conf)
@@ -302,6 +306,15 @@ class Watch:
         if hit:
             self._changed(None)   # the root itself was created, renamed, removed or replaced
 
+    def _absent(self, root: Path) -> None:
+        """A root with no folder yet, left to its base's watch. A name in 8.3 short form (`BUDGET~1`) may stand
+        for a folder whose notices carry its long name, so its base cannot see it come and go: `incomplete`."""
+
+        if re.search(r"~\d", root.name):
+            self._fail(f"`{root}` 는 짧은 이름 꼴이라, 그 폴더가 생기고 지워지는 것을 볼 수 없다")
+        with self.lock:
+            self.absent.append(root)
+
     def _cover(self, now: list[Path]) -> None:
         """Roots not watched so far. One whose folder exists had no watch of its own until now, and nothing orders
         a product's run after this: its inside went unwatched. One whose folder does not is the base watch's."""
@@ -319,8 +332,7 @@ class Watch:
             elif root.exists():
                 self._fail(f"`{root}` 는 이 구간 중에 생긴 이름이라 그 안은 감시하지 못했다")
             else:
-                with self.lock:
-                    self.absent.append(root)
+                self._absent(root)
 
     def _reread(self, conf: Path, lost: bool = False) -> None:
         """A `tauri.conf.json` changed (`lost`: maybe, its notices lost): each name it gives now is a root from now
