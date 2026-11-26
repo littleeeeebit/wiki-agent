@@ -192,24 +192,49 @@ on and reads it with `write_stdin` (the tool's own declaration, in the
 2. The runner waits for its place in the foreground of its own exec
    session, and runs the job there once it is the head and holds the lease.
    It watches the shell that session started and the Codex process, as on
-   Claude, so a `/stop` of the terminal or the end of the session ends it
-   the normal way.
-3. Codex has no hook that holds the agent's other tools while a call is
+   Claude, so the end of the session ends it the normal way.
+3. Codex 0.166 has no operation that stops one exec session. So the runner
+   reads its own standard input, which its command never gets, and the line
+   `stop` ends its command the normal way, waiting or running. On Codex the
+   agent sends it with `write_stdin`; the context and the runner's output
+   say so. On Claude, `TaskStop` ends the shell as today.
+4. Codex has no hook that holds the agent's other tools while a call is
    still running, as `background_left` does on Claude. ponytail: a Codex
    agent can go on to other work while its GPU job waits; a second GPU job
    it starts queues behind the first, and the own-holder refusal stops one
    that would share the GPU with its own idle server. Holding Codex there
    needs a Codex hook on `write_stdin` and on the turn's end.
-4. A Codex command that runs under the sandbox's separate account cannot
-   join the queue (below). Its runner, started under that account, runs
-   nothing and says so, and that it must run outside the sandbox
-   (`require_escalated`), which the approval policy then asks the owner
-   about. The app's own Codex cells run with full
-   access, so this touches the owner's sandboxed sessions only.
-5. Before 15a is built, a real Codex 0.166 transcript is checked for the
-   two facts the queue relies on: a command still running past its yield
-   comes back as a session id and is not ended, and it survives the end of
-   its turn. If either fails, 15a stops there and goes to the owner.
+5. A Codex command that runs under the sandbox's separate account cannot
+   join the queue (below), on any host. Its runner, started under that
+   account, runs nothing and says so. Where the session's approval policy
+   can ask, it says to run the job outside the sandbox
+   (`require_escalated`), which then asks the owner; a session that cannot
+   ask, such as the Cloud verification cell (`workspace-write`, approval
+   `never`), simply cannot run GPU jobs. The app's normal implementation
+   cells run with full access, so they are not touched.
+6. Before 15a is built, a real Codex 0.166 transcript is checked for what
+   the queue relies on: a command still running past its yield comes back
+   as a session id and is not ended; it survives the end of its turn; and
+   `write_stdin` with `stop` ends a waiting runner's shell and the runner,
+   and a running one's job, lease and children. If any fails, 15a stops
+   there and goes to the owner.
+
+### A build turn's GPU jobs end with the turn
+
+A build turn's answer can arrive while one of its GPU runners still waits or
+runs: Codex's app session keeps its CLI alive after a successful turn, and a
+Claude background task can outlive a closing answer. The server's own
+checks then queue behind it, `serve_check` among them, while the turn still
+holds the worktree, and no later turn could stop it. So every place and
+every holder note also records the session process its runner watches.
+When a build turn's answer is in, before `checked` runs any server command,
+the server looks in the queue for a live place or a holder note of that
+session. If there is one, it closes the worktree's cached CLI
+(`ChatSession.close`), which ends the CLI's job and every runner in it. This
+is the crash path on purpose, as for a trial: each runner's note stays, and
+the gate's wait on it lasts only until those processes have exited. The
+next turn starts the CLI again with `--resume`. This is the app's turn
+boundary and is separate from the Codex transcript check above.
 
 ### The queue's order and the lease
 
@@ -333,7 +358,8 @@ One protocol serves the runners and the server alike, in
   waited on one by one; the floor is what keeps the next job off memory it
   still holds.
 - In the app the session is also inside `ChatSession`'s job, which ends
-  what a finished turn left.
+  everything in it when the CLI is closed. A finished turn does not close
+  it by itself; a build turn's runners are ended at its boundary (above).
 
 ### The owner's real data folder, in a build session
 
@@ -453,8 +479,15 @@ Tests show:
   build;
 - a Codex GPU job wrapped by `codex_pretool`, waiting for its place past
   its yield as a running exec session, run once it is the head, ended by a
-  `/stop` of its terminal and by the session's end, and a sandboxed Codex
-  runner running nothing with its reason; a DeepSeek session's GPU job
+  `stop` line on its input while waiting and while running (lease released,
+  children ended) and by the session's end, and a sandboxed Codex runner
+  running nothing with its reason, the escalation hint only where the
+  policy can ask;
+- a successful Codex build report with a live GPU job that ends only when
+  stopped: the server closes the CLI before `checked`, and `serve_check`
+  then runs; the same for a Claude turn whose background runner outlives
+  its closing answer; a build turn with no live place left untouched;
+- a DeepSeek session's GPU job
   queued as Claude's; a holder waiting on a note whose root has exited
   while a child it names lives;
 - a proof failed on the job's count with every known member gone writing
@@ -748,5 +781,5 @@ The full gate passes once after the reviewer allows the merge.
 
 | # | Step | Status |
 | --- | --- | --- |
-| 15a | The machine line, the load line, the two GPU-job kinds, the session's own processes and the refusal behind them, the queue on Claude, DeepSeek and Codex, the lease and the queue's order shared with the server's launches, the runner, the owner's data folder refused and watched over every build turn and server launch, the prompt section | Not started |
+| 15a | The machine line, the load line, the two GPU-job kinds, the session's own processes and the refusal behind them, the queue on Claude, DeepSeek and Codex, a build turn's GPU jobs ended at its boundary, the lease and the queue's order shared with the server's launches, the runner, the owner's data folder refused and watched over every build turn and server launch, the prompt section | Not started |
 | 15b | The check that gates it, `measure-request` and the trial measurement with its own state and card, the build's own measurement refused, the logs for the next note, three launches on their own desktop and muted, [보기], the pages rewritten | Not started |
