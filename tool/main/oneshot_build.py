@@ -88,11 +88,12 @@ class Turn(work.Run):
         with oneshot._lock:
             current = store.get()
             mine = (current.get("inflight") or {}).get("turn") == self.token
-            store.put(**({"inflight": None} if mine else {}),
+            stop = {"working": None, "stopped": {   # in the same save as its charge: never one without the other
+                "reason": "restart" if runtime.stopping.is_set() else "block", "detail": f"작업 턴이 멈췄다 — {error}",
+                "state": current.get("stage")}} if not self.checked and mine and current.get("working") == self.stage else {}
+            store.put(**({"inflight": None} if mine else {}), **stop,
                       spend=charged(current.get("spend"), self.stage, self.codex,
                                     (done.get("meta") or {}).get("cost_usd"), time.time() - self.started_at))
-            if not self.checked and mine and current.get("working") == self.stage:
-                store.stop("restart" if runtime.stopping.is_set() else "block", f"작업 턴이 멈췄다 — {error}")
             if mine:   # the owner answered the turn's question as it ended: the answer goes in now
                 owner().answered(store)
 
@@ -279,7 +280,7 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
 
 
 def ending(path: Path) -> bool:
-    """`work.RELEASED`: a build turn let this tree go and has not ended yet. Its end, which clears its marks,
+    """`work.WAITS`: a build turn let this tree go and has not ended yet. Its end, which clears its marks,
     dispatches the queued instruction. Read in memory, so there is nothing to fail to read."""
 
     turn = work._runs.get(str(path))
@@ -314,7 +315,7 @@ def reclaimed(path: Path, run=None) -> None:
     is opened on a guess."""
 
     if ending(path) and work._runs.get(str(path)) is not run:   # its end dispatches the queue
-        raise work.Deferred(409, "앞선 빌드 턴이 아직 끝나는 중이다 — 끝나면 기다리던 지시가 이어 간다")
+        raise HTTPException(409, "앞선 빌드 턴이 아직 끝나는 중이다 — 끝나면 기다리던 지시가 이어 간다")
     mine = getattr(run, "token", None)
     with oneshot._lock:   # `Turn.finish` writes its marks under it
         if not (found := record(path)):
@@ -348,9 +349,13 @@ def admitted(path: Path, run) -> None:
 
 def unstuck(repo: str) -> None:
     """For `[재개]` and the owner's answer: clear a stopped run's marks left by a turn that is gone, holding
-    the tree. A tree in use, or a turn still ending, is left to that turn."""
+    the tree. Only marks a turn left are worth the hold, so a healthy run's follow-up never finds its tree
+    taken. A tree in use, or a turn still ending, is left to that turn."""
 
-    tree = Path(oneshot_spec.spec_of(repo)["worktree"])
+    spec = oneshot_spec.spec_of(repo)
+    tree, flight = Path(spec["worktree"]), (spec["oneshot"].get("inflight") or {})
+    if not flight.get("turn") or ending(tree):
+        return
     try:
         release = hold(work._busy, work_lock, str(tree), "", kind="turn")
     except HTTPException:
@@ -941,4 +946,4 @@ STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, (s := o
                                                                   owner().next_build(s))),
           "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}
 work.ADMITS.append(admitted)
-work.RELEASED.append(ending)
+work.WAITS.append(ending)

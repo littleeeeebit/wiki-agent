@@ -436,15 +436,20 @@ def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_opens_nothing_o
             oneshot_build.admitted(Path(tree), work.Run(MagicMock()))
             assert not live() and not o().get("inflight") and o()["working"] is None
             assert o()["stopped"]["reason"] == "block"   # a stop `[재개]` takes on
+            with patch.object(work, "dispatch") as dispatched, patch.object(oneshot_build, "hold") as taken:
+                oneshot_build.unstuck("budget")   # nothing left to clear: the tree stays free for the run's follow-up
+            assert not taken.called and not dispatched.called
+            real("budget", adapter=turn.token, oneshot={"inflight": stale, "working": None})
             with patch.object(work, "dispatch") as dispatched:   # the repair's hold hands the queue on as it goes
                 oneshot_build.unstuck("budget")
-            assert dispatched.call_args[0][0] == Path(tree)
-            still, seen = MagicMock(spec=oneshot_build.Turn, over=False, done=True), iter([False])
-            # The hook looked before a newer build turn let the tree go, and that turn is still ending.
+            assert dispatched.call_args[0][0] == Path(tree) and not o().get("inflight")
+            # The release hooks looked before a newer build turn let the tree go, and that turn is still ending:
+            # read again as the order is taken, under the queue's lock, so the order is never taken to be refused.
+            still = MagicMock(spec=oneshot_build.Turn, over=False, done=True)
             with patch.dict(work._runs, {tree: still}), patch.dict(work._queued, {tree: order}), \
-                 patch.object(work, "RELEASED", [lambda p: next(seen, None) is None and oneshot_build.ending(p)]):
+                 patch.object(work, "RELEASED", []), patch.object(work, "begin") as started:
                 work.dispatch(Path(tree), MagicMock(halt=threading.Event()))
-                assert work._queued[tree] is order and tree not in work._busy   # kept for that turn's end
+                assert work._queued[tree] is order and tree not in work._busy and not started.called
             broken[0] = True
         with patch.object(work, "begin", side_effect=RuntimeError("refused")):
             oneshot_build.send("budget", "build", "BUILD")   # refused at launch, its clearing failing too

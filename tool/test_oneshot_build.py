@@ -654,9 +654,13 @@ def test_a_turn_that_ends_without_its_check_stops_the_stage_and_is_charged(built
         turn = oneshot_build.Turn(chat, "budget", "tests", False)
         oneshot_spec.saved("budget", oneshot={"inflight": {"role": "tests", "turn": turn.token}})   # as `send` writes it
         turn.put({"kind": "error", "text": "사람이 멈춤", "meta": {}})
-        elsewhere(turn.finish)
+        real, saves = oneshot_spec.saved, []
+        with patch.object(oneshot_spec, "saved", lambda repo, **f: saves.append(f) or real(repo, **f)):
+            elsewhere(turn.finish)
     assert o()["stopped"] == {**o()["stopped"], "reason": "block"} and "사람이 멈춤" in o()["stopped"]["detail"]
     assert o()["spend"]["calls"] == 1 and o()["spend"]["unknown"] == 1
+    # its charge, its cleared mark and its stop in one save: a failure leaves all three or none
+    assert [set(s["oneshot"]) >= {"spend", "inflight", "stopped", "working"} for s in saves if "spend" in s.get("oneshot", {})] == [True]
 
 
 def test_a_late_end_of_an_earlier_turn_leaves_the_resumed_turn_alone(built_world):
