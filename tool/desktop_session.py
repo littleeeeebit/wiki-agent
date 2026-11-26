@@ -543,9 +543,8 @@ def ended_since(record: dict) -> bool:
     proof, jobs = record.get("proof"), record["jobs"]
     if not proof or not jobs:
         return False
-    members = [member for entry in jobs.values() for member in entry["members"]]
 
-    def gone(pid: str) -> bool:
+    def gone(pid: str, members: list[dict]) -> bool:   # only the members of the job the reason names
         known = [member for member in members if str(member["pid"]) == pid]
         return all(exited(member) is True for member in known) if known else vacant(int(pid))
 
@@ -553,14 +552,17 @@ def ended_since(record: dict) -> bool:
         own = entry.get("proof")
         if not own or own.get("total") is None or own["total"] != own.get("joined"):
             return False
-        if not all((late := LATE.fullmatch(reason)) and not late["key"] and gone(late["pid"])
+        if not all((late := LATE.fullmatch(reason)) and not late["key"] and gone(late["pid"], entry["members"])
                    for reason in own["reasons"]):
             return False
+    everyone = [member for entry in jobs.values() for member in entry["members"]]   # what `_exits` checked
     for reason in proof["reasons"]:
         if reason.startswith("folder "):   # `_removed`'s own answer, which `recover` asks again
             continue
-        late = LATE.fullmatch(reason) or UNSEEN.fullmatch(reason)
-        if not late or late.groupdict().get("key", "") not in (*jobs, "") or not gone(late["pid"]):
+        if late := LATE.fullmatch(reason):
+            if late["key"] not in jobs or not gone(late["pid"], jobs[late["key"]]["members"]):
+                return False
+        elif not (unseen := UNSEEN.fullmatch(reason)) or not gone(unseen["pid"], everyone):
             return False
     return True
 

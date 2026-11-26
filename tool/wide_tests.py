@@ -23,9 +23,11 @@ from pytest_output import _blank, runs_pytest
 
 LIMIT = 8
 STAGES = re.compile(r"&&|\|\||[;|\n]")
-MOVED = re.compile(r"(?:cd|pushd|Set-Location|sl)\s+(\S.*)", re.IGNORECASE)
+MOVED = re.compile(r"(cd|sl|Set-Location|pushd|Push-Location)\s+(\S.*)", re.IGNORECASE)
+POPPED = re.compile(r"(?:popd|Pop-Location)(?:\s.*)?", re.IGNORECASE)
 # Every option pytest and the plugins installed here read a value from the next word, from pytest's own parser on
-# 2026-11-26; an option whose value is optional (`--debug`, `--cache-show`) takes none that stands apart.
+# 2026-11-26. An option whose value is optional takes the next word too, unless it reads as another option.
+OPTIONAL = {"--debug", "--cache-show"}
 VALUED = set("""-W -c -k -m -n -o -p -r --assert --basetemp --capture --code-highlight --color --confcutdir
     --config-file --deselect --dist --doctest-glob --doctest-report --durations --durations-min --ignore
     --ignore-glob --import-mode --junit-prefix --junit-xml --junitprefix --junitxml --last-failed-no-failures --lfnf
@@ -49,31 +51,44 @@ def guarded(folder: Path) -> bool:
     return False
 
 
-def selected(stage: str) -> list[str]:
+def argv(text: str, posix: bool) -> list[str]:
+    """`text` as the shell hands it on, one word per argument: a quote inside a word (`--junitxml="a b"`) joins
+    it. PowerShell has no backslash escape, so a Windows path keeps its separators."""
+
+    lexer = shlex.shlex(text, posix=True)
+    lexer.whitespace_split, lexer.commenters = True, ""
+    if not posix:
+        lexer.escape = ""
+    return list(lexer)
+
+
+def selected(stage: str, posix: bool = True) -> list[str]:
     """The paths a pytest stage names, options and their values left out."""
 
     try:
-        words = [w.strip("\"'") for w in shlex.split(stage, posix=False)]
+        words = argv(stage, posix)
     except ValueError:
         return []
-    start = next((i + 1 for i, w in enumerate(words) if w == "pytest" or re.search(r"pytest(\.exe)?$", w)), len(words))
-    paths, skip = [], False
+    start = next((i + 1 for i, w in enumerate(words) if re.search(r"(^|[\\/])pytest(\.exe)?$", w)), len(words))
+    paths, skip, target = [], False, False
     for word in words[start:]:
-        if skip:
+        if target:
+            target = False
+        elif re.match(r"\d*[<>]", word):   # a redirection, which pytest never sees, and its target apart
+            target = bool(re.fullmatch(r"\d*(>>?|<)", word))
+        elif skip and not (skip == "optional" and word.startswith("-")):
             skip = False
-        elif re.match(r"\d*[<>]", word):   # a redirection, and its target when it stands apart
-            skip = bool(re.fullmatch(r"\d*(>>?|<)", word))
         elif word.startswith("-"):
-            skip = word in VALUED
+            skip = word in VALUED or ("optional" if word in OPTIONAL else False)
         else:
             paths.append(word)
     return paths
 
 
-def wide(stage: str) -> str:
+def wide(stage: str, posix: bool = True) -> str:
     """Why the pytest run in `stage` is the wide one, or ""."""
 
-    paths = selected(stage)
+    paths = selected(stage, posix)
     if not paths:
         return "경로 없이 전체"
     files = {p.split("::")[0] for p in paths}
@@ -82,14 +97,48 @@ def wide(stage: str) -> str:
     return f"파일 {len(files)}개" if len(files) > LIMIT else ""
 
 
-def stages(command: str, dialect: str) -> list[str]:
-    """`command` split where the shell runs a new command: an operator inside quotes or a heredoc is text."""
+def stages(command: str, dialect: str) -> list[tuple[str, str]]:
+    """`command` split where the shell runs a new command, each stage with the operator before it ("" first): an
+    operator inside quotes or a heredoc is text."""
 
-    blank, cuts = _blank(command, dialect), [0]
+    blank, cuts, ops = _blank(command, dialect), [0], [""]
     for match in STAGES.finditer(blank):   # the same length as `command`, so its places are `command`'s
         cuts += [match.start(), match.end()]
+        ops.append(match[0])
     cuts.append(len(command))
-    return [command[a:b].strip() for a, b in zip(cuts[::2], cuts[1::2])]
+    return [(op, command[a:b].strip()) for op, a, b in zip(ops, cuts[::2], cuts[1::2])]
+
+
+def places(command: str, posix: bool, here: Path):
+    """Each stage of `command` with every folder it may run in. The shell is followed as a set of states, each a
+    folder and its `pushd` stack, split by how the last stage may have ended: `&&` runs the next only where it
+    succeeded, `||` only where it failed, anything else everywhere. A move is taken to succeed; any other stage
+    may end either way. Where a move cannot be read, it is `None`: the rest runs somewhere unknown."""
+
+    ok, failed = {(Path(os.path.abspath(here)), ())}, set()
+    split = stages(command, "posix" if posix else "ps")
+    for i, (op, stage) in enumerate(split):
+        runs = ok if op == "&&" else failed if op == "||" else ok | failed
+        kept_ok, kept_failed = (set(), failed) if op == "&&" else (ok, set()) if op == "||" else (set(), set())
+        yield stage, {folder for folder, _ in runs}
+        # Bash runs each part of a pipeline in a subshell, so no move made there outlives it
+        piped = posix and "|" in (op, split[i + 1][0] if i + 1 < len(split) else "")
+        if not piped and (m := MOVED.fullmatch(stage)):
+            try:
+                to = argv(m[2], posix)[0]
+            except (ValueError, IndexError):
+                return
+            if os.name == "nt":
+                to = re.sub(r"^/([A-Za-z])(?=/|$)", r"\1:", to)   # Git Bash's `/c/...`
+            pushed = m[1].lower() in ("pushd", "push-location")
+            moved = {(Path(os.path.abspath(folder / os.path.expanduser(to))), (*stack, folder) if pushed else stack)
+                     for folder, stack in runs}
+        elif not piped and POPPED.fullmatch(stage):
+            moved = {(stack[-1], stack[:-1]) if stack else (folder, stack) for folder, stack in runs}
+        else:
+            ok, failed = runs | kept_ok, runs | kept_failed
+            continue
+        ok, failed = moved | kept_ok, kept_failed
 
 
 def verdict(payload: dict) -> dict | None:
@@ -99,17 +148,9 @@ def verdict(payload: dict) -> dict | None:
     command = str((payload.get("tool_input") or {}).get("command") or "")
     if "pytest" not in command:
         return None
-    here = Path(str(payload.get("cwd") or Path.cwd()))
-    for stage in stages(command, "ps" if tool == "PowerShell" else "posix"):
-        if moved := MOVED.fullmatch(stage):   # each stage runs where the `cd`s before it left the shell
-            try:
-                to = shlex.split(moved[1], posix=tool != "PowerShell")[0].strip("\"'")
-            except (ValueError, IndexError):
-                return None   # a `cd` read no further: where the rest runs is unknown, so nothing is refused
-            to = re.sub(r"^/([A-Za-z])(?=/|$)", r"\1:", to)   # Git Bash's `/c/...`
-            here = Path(os.path.abspath(here / os.path.expanduser(to)))
-            continue
-        if runs_pytest(stage) and guarded(Path(os.path.abspath(here))) and (what := wide(stage)):
+    posix = tool != "PowerShell"
+    for stage, folders in places(command, posix, Path(str(payload.get("cwd") or Path.cwd()))):
+        if runs_pytest(stage) and any(guarded(folder) for folder in folders) and (what := wide(stage, posix)):
             output = {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                       "permissionDecisionReason": REASON.format(what=what, limit=LIMIT)}
             return {"hookSpecificOutput": output, "systemMessage": f"넓은 테스트 실행 거부: {what}"}

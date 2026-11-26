@@ -700,6 +700,18 @@ def test_an_exit_whose_process_was_never_recorded_is_proven_only_by_an_empty_pid
     assert desktop_session.recover(folder) == []
 
 
+def test_another_jobs_process_under_the_same_pid_proves_nothing_for_this_one(tmp_path, monkeypatch):
+    folder = late_record(tmp_path, monkeypatch, [], [])   # `app` never recorded its pid 9
+    record = desktop_session.load(folder)
+    record["jobs"]["helper"] = {"name": "Local\\other", "uptime": 1, "root": None,
+                                "members": [{"pid": 9, "created": 1}],   # an older process the pid once named
+                                "proof": {"clean": True, "reasons": [], "joined": 1, "total": 1, "active": 0}}
+    desktop_session.save(folder, record)
+    monkeypatch.setattr(desktop_session, "vacant", lambda pid: False)   # something runs under pid 9 now
+
+    assert "restart the PC or sign out" in desktop_session.recover(folder)[0]
+
+
 def test_a_cleanup_failure_other_than_a_late_exit_keeps_the_look_held(tmp_path, monkeypatch):
     folder = late_record(tmp_path, monkeypatch, [{"pid": 9, "created": 1}],
                          ["cannot read the listeners: OSError(22, 'table')"])

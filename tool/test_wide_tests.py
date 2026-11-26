@@ -1,5 +1,6 @@
 """A repair round's pytest run names the touched files, never the whole set (`tool/wide_tests.py`)."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -47,6 +48,20 @@ def test_every_option_that_takes_a_value_has_it_read_as_the_value(tmp_path):
     assert ask("python -m pytest --override-ini addopts=-x tool/test_hook.py", root) is None
     assert ask("py -m pytest -k test --junit-xml report.py", root)   # `report.py` is the report, not a test
     assert ask("python -m pytest --import-mode importlib --color yes tool/test_a.py", root) is None
+    assert ask('python -m pytest --junitxml="review results.xml" tool/test_hook.py', root) is None   # one word
+    assert ask("python -m pytest -k test --debug debug.py", root)   # an optional value is taken when it stands apart
+    assert ask("python -m pytest --debug -q tool/test_a.py 2>&1", root) is None   # but never another option
+
+
+def test_a_move_the_shell_may_skip_or_undo_leaves_every_folder_it_may_run_in(tmp_path):
+    gated = repo(tmp_path / "top" / "gated")
+    for command in ("true || cd ..; python -m pytest -k test",   # `cd` runs only if `true` fails
+                    "pushd .. >/dev/null && popd >/dev/null && python -m pytest -k test",   # back where it began
+                    "cd .. | cat; python -m pytest -q",   # a pipeline's `cd` stays in its subshell
+                    "false && cd ..; python -m pytest -q"):
+        assert ask(command, gated), command
+    assert ask("pushd .. && python -m pytest -q && popd", gated) is None
+    assert ask("cd .. || exit 1; python -m pytest -q", gated) is None   # a move is taken to succeed
 
 
 def test_each_run_is_read_where_the_cds_before_it_left_the_shell(tmp_path):
@@ -56,8 +71,9 @@ def test_each_run_is_read_where_the_cds_before_it_left_the_shell(tmp_path):
     assert ask("cd top && cd gated && python -m pytest -q", tmp_path)   # two steps in
     assert ask("cd ../loose && python -m pytest -q", gated) is None
     assert ask(f"cd {gated.as_posix()} ; python -m pytest -q", tmp_path / "top" / "loose")
-    drive = gated.as_posix()   # Git Bash writes `C:/x` as `/c/x`
-    assert ask(f"cd /{drive[0].lower()}{drive[2:]} && python -m pytest -q", tmp_path)
+    if os.name == "nt":   # Git Bash writes `C:/x` as `/c/x`
+        drive = gated.as_posix()
+        assert ask(f"cd /{drive[0].lower()}{drive[2:]} && python -m pytest -q", tmp_path)
     moved = {"tool_name": "PowerShell", "cwd": str(tmp_path / "top"),
              "tool_input": {"command": "Set-Location 'gated'; python -m pytest -q 'a;b'"}}
     assert verdict(moved)   # `'a;b'` is one word to PowerShell too
