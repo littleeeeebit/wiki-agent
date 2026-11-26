@@ -169,15 +169,20 @@ def final(k32, handle) -> str:
     return name.value
 
 
+class Unsure(Exception):
+    """A file whose deletion may or may not still happen: past it, the count no longer says what is on the disk. Not
+    an `OSError`, so no handler meant for one file's failure takes it."""
+
+
 def gone(path: str) -> bool:
-    """Whether nothing is at `path`, known for sure: a lookup that fails for any other reason is not an answer."""
+    """Whether nothing is at `path`, known for sure: only the system's own not-found answers (`ERROR_FILE_NOT_FOUND`,
+    `ERROR_PATH_NOT_FOUND`). Python raises `FileNotFoundError` for an unreachable network path too, and any other
+    failed lookup is not an answer either."""
 
     try:
         os.lstat(path)
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
+    except OSError as exc:
+        return getattr(exc, "winerror", None) in (2, 3)
     return False
 
 
@@ -212,7 +217,10 @@ def removed(path) -> tuple | None:
         try:
             where = final(k32, handle)   # marked, it cannot move from here
         except OSError:
-            marked(k32, handle, False)   # its going could not be checked: it stays
+            try:
+                marked(k32, handle, False)   # its going could not be checked: it stays
+            except OSError as undo:   # and if the mark will not come off, whether it goes is unknown
+                raise Unsure(f"{path} may be deleted unseen") from undo
             raise
     finally:
         os.close(fd)   # the system deletes the file this handle opened, once no handle holds it
@@ -368,13 +376,18 @@ def trimmed(tree: Path, cap: int) -> int:
         for _, _, cache, ident in sorted(sized, key=lambda c: c[0]):   # oldest first
             if total <= cap:
                 break
-            went = set()
+            went, unsure = set(), False
             try:
                 wiped(cache, ident, went)
+            except Unsure as exc:   # the count no longer says what is on the disk: nothing more goes on it
+                errorlog.record("build-cache", exc, path=str(cache))
+                unsure = partial = True
             except OSError as exc:   # it failed partway: what went still counts, and the next gets its turn
                 errorlog.record("build-cache", exc, path=str(cache))
             gone = sum(files.pop(f) for f in went if f in files)
             total, freed = total - gone, freed + gone
+            if unsure:
+                break
         partial = partial or short
         for exc in unread:   # a folder discovery could not read: the count may be short of the disk
             errorlog.record("build-cache", exc, path=str(tree))

@@ -295,13 +295,35 @@ def test_a_file_whose_going_cannot_be_checked_stays(tmp_path):
 
 
 def test_only_a_name_known_to_be_missing_counts_as_gone(tmp_path):
+    import ctypes
     at = tmp_path / "f"
-    assert build_cache.gone(str(at))
+    assert build_cache.gone(str(at)) and build_cache.gone(str(tmp_path / "no" / "f"))   # not found, path not found
     at.write_bytes(b"x")
     assert not build_cache.gone(str(at))
     at.unlink()
-    with patch("os.lstat", side_effect=PermissionError(13, "denied")):   # a share that went away, say
-        assert not build_cache.gone(str(at))
+    for code in (5, 53, 67):   # denied; an unreachable network path or share, which Python also calls not found
+        with patch("os.lstat", side_effect=ctypes.WinError(code)):
+            assert not build_cache.gone(str(at))
+
+
+def test_a_mark_that_will_not_come_off_stops_the_trim_on_that_count(tmp_path):
+    tree = tmp_path / "tree"
+    for name, age in (("a", 300), ("b", 200), ("c", 100)):
+        cache(tree, name, age)
+    real_final, real_marked = build_cache.final, build_cache.marked
+
+    def final(k32, handle):   # `b`'s file: where it is cannot be read
+        if "\\b\\" in real_final(k32, handle):
+            raise OSError(5, "Access is denied")
+        return real_final(k32, handle)
+
+    def marked(k32, handle, delete):   # and its mark will not come off
+        if not delete:
+            raise OSError(64, "The specified network name is no longer available")
+        return real_marked(k32, handle, delete)
+    with patch.multiple(build_cache, final=final, marked=marked):
+        assert build_cache.pruned(tree, cap=0) == 100   # `a` went and counts; past `b`, nothing more goes
+    assert caches(tree) == ["b", "c"]   # `b` left where the trim stopped, `c` never tried
 
 
 def test_a_handle_no_descriptor_took_is_closed_at_once(tmp_path):
