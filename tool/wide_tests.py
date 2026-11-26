@@ -82,8 +82,8 @@ def selected(stage: str, posix: bool = True) -> list[str]:
     for word in words[start:]:
         if target:
             target = False
-        elif re.match(r"\d*[<>]", word):   # a redirection, which pytest never sees, and its target apart
-            target = bool(re.fullmatch(r"\d*(>>?|<)", word))
+        elif re.match(r"(\d*|&)[<>]", word):   # a redirection (`&>` too), which pytest never sees, and its target
+            target = bool(re.fullmatch(r"(\d*|&)(>>?|<)", word))
         elif skip and not (skip == "optional" and word.startswith("-")):
             skip = False
         elif word.startswith("-"):
@@ -165,7 +165,7 @@ def stages(command: str, dialect: str) -> list[tuple[str, str]]:
     split, carried = [], None
     for op, a, b in zip(ops, cuts[::2], cuts[1::2]):
         op = carried if carried and op == "\n" else op
-        carried = op if op in ("&&", "||", "|") else None
+        carried = op if op in ("&&", "||", "|", "&") else None   # a newline after `&` keeps it backgrounded
         if text := command[a:b].strip():
             split.append((op, text))
             carried = None
@@ -182,13 +182,20 @@ def places(command: str, posix: bool, here: Path):
 
     ok, failed = {(Path(os.path.abspath(here)), (), None)}, set()
     split = stages(command, "posix" if posix else "ps")
+    # A Bash list (stages joined by `&&`, `||` or `|`) that `&` ends runs whole in a subshell: its moves hold
+    # inside it, and the shell goes on after it from where the list began.
+    ends = [i + 1 == len(split) or split[i + 1][0] in (";", "\n", "&") for i in range(len(split))]
+    background = [posix and end and i + 1 < len(split) and split[i + 1][0] == "&" for i, end in enumerate(ends)]
+    before = None
     for i, (op, stage) in enumerate(split):
+        if i == 0 or ends[i - 1]:
+            before = ok | failed   # where this list begins
         runs = ok if op == "&&" else failed if op == "||" else ok | failed
         kept_ok, kept_failed = (set(), failed) if op == "&&" else (ok, set()) if op == "||" else (set(), set())
         yield stage, {folder for folder, _, _ in runs}
-        # Bash runs each part of a pipeline, and a stage sent to the background, in a subshell: no move outlives it
+        # Bash runs each part of a pipeline in a subshell: no move made there outlives it
         after = split[i + 1][0] if i + 1 < len(split) else ""
-        piped = posix and ("|" in (op, after) or after == "&")
+        piped = posix and "|" in (op, after)
         moved = None if piped else MOVED.fullmatch(stage)
         if moved:
             try:
@@ -213,6 +220,8 @@ def places(command: str, posix: bool, here: Path):
         else:
             went = stayed = runs
         ok, failed = went | kept_ok, stayed | kept_failed
+        if background[i]:   # launched, the list leaves the shell where it was, and `&` itself succeeds
+            ok, failed = before, set()
 
 
 def verdict(payload: dict) -> dict | None:

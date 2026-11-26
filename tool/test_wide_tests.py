@@ -44,6 +44,11 @@ def test_an_operator_inside_quotes_is_text_and_splits_no_command(tmp_path):
     assert ask("python -m pytest tool/test_hook.py > hook-tests.log 2>&1 &", root) is None   # sent to the background
     assert ask("python -m pytest -q &> all.log & wait", root)   # `&>` is a redirection; the run is still wide
     assert ask("cd .. & python -m pytest -q", root)   # a move sent to the background stays in its subshell
+    assert ask("python -m pytest tool/test_hook.py &> hook-tests.log & wait", root) is None   # `&>` and its file
+    assert ask("python -m pytest tool/test_hook.py &>> hook-tests.log", root) is None
+    assert ask("cd .. &\npython -m pytest -k test", root)   # still in the background across the newline
+    assert ask("cd .. && python -m pytest -q & python -m pytest -k test; wait", root)   # `&` takes the whole list
+    assert ask("cd .. && python -m pytest -q tool/test_a.py & wait", root) is None   # and runs it where it moved
 
 
 def test_joining_a_long_command_takes_time_in_proportion_to_its_length():
