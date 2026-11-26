@@ -294,8 +294,8 @@ def ending(path: Path) -> bool:
 
 
 def record(path: Path) -> tuple[str, dict] | None:
-    """The oneshot run whose worktree is `path`, read now. Raises when the folder or a record cannot be
-    read: a refused read is never "no run" (`specs.load` and `glob` both hide one)."""
+    """The oneshot run whose worktree is `path`, read now; an empty or zeroed record (a power loss) is no run. Raises
+    when the folder or a record cannot be read: a refused read is never "no run" (`specs.load` and `glob` hide one)."""
 
     key = path.resolve()
     with specs._files:
@@ -304,8 +304,8 @@ def record(path: Path) -> tuple[str, dict] | None:
         except FileNotFoundError:
             return None
         for entry in entries:
-            try:
-                spec = json.loads((Path(entry.path) / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8"))
+            try:   # an empty or zeroed record reads as JSON `null`
+                spec = json.loads((Path(entry.path) / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8").strip("\0 \t\r\n") or "null")
             except FileNotFoundError:
                 continue
             if isinstance(spec, dict) and spec.get("worktree") and Path(spec["worktree"]).resolve() == key:
