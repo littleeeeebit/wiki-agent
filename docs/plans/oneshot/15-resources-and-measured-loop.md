@@ -467,7 +467,9 @@ elsewhere is not covered until its kind names the place.
    a program built earlier under a name the window never shows; a name given
    and then replaced by another, both before one read; and a config whose
    whole life (its folder moved in and out included) falls inside lost
-   notices. A config's names are taken from the bytes the read kept. Each read first reads every change already delivered, so a
+   notices. A config's names are taken from the bytes the read kept. A watched
+   folder replaced by another at its path (its file identity changed) is
+   `incomplete`, since its handle follows the old folder. Each read first reads every change already delivered, so a
    write that finished before the check is never read after it. Off Windows
    nothing is watched. Nothing is walked: the vtuber root
    holds 200,024 files now, and one metadata walk of it took 20 s. Junctions
@@ -493,7 +495,10 @@ elsewhere is not covered until its kind names the place.
      again after its publication commands: its pull request is a draft until
      then (the measured draft, or one opened as a draft; one found ready is
      made a draft again before anything is pushed), and leaves draft only on
-     a clean read and with no stop set, under the turn's save lock. `changed` or `incomplete` at either read refuses the turn
+     a clean read and with no stop set, under the turn's save lock. Making it
+     ready is the window's last server command, so the watch is read once
+     more after it: a change makes the pull request a draft again and stops
+     the stage before `done`. `changed` or `incomplete` at either read refuses the turn
      with the folder and the paths, before any stage is saved, and that is
      the next build turn's note.
    - Every other way a check ends counts too: a failed or stopped gate, a

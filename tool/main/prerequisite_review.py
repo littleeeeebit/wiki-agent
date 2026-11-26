@@ -128,11 +128,13 @@ def leaked(path: Path, spec: dict) -> str:
     return ""
 
 
-def push(path: Path, spec: dict, command: list[str]) -> subprocess.CompletedProcess:
-    """Every server push of a task branch: refused, as a failed push, while declared evidence leaked."""
+def push(path: Path, spec: dict, command: list[str], halt=None) -> subprocess.CompletedProcess:
+    """Every server push of a task branch: refused, as a failed push, while declared evidence leaked, and when
+    `halt` was set while the scans ran."""
     from . import specs
 
     why = leaked(path, spec) or oneshot(path, spec)
+    why = why or ("사람이 멈춤 — push 하지 않았다" if halt is not None and halt.is_set() else "")
     return subprocess.CompletedProcess(command, 1, "", why) if why else specs.sh(command, path, 120)
 
 

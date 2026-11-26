@@ -11,6 +11,7 @@ From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summa
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -732,6 +733,11 @@ def handed(path: Path, run, spec: dict, final: str):
                 why = f"{type(exc).__name__}: {exc}"
             if why:
                 oneshot_spec.store(repo).stop(STAGE, f"PR #{fresh['pr']['number']} 의 초안을 풀지 못했다 — {why}")
+                return None
+            if seen := oneshot_owner_data.read(repo):   # its last server command ran: the window is judged again
+                with contextlib.suppress(OSError, subprocess.TimeoutExpired):   # a draft again, as far as it goes
+                    specs.sh(["gh", "pr", "ready", str(fresh["pr"]["number"]), "--undo"], path, 60)
+                oneshot_spec.store(repo).stop(STAGE, seen)
                 return None
             oneshot_spec.saved(repo, oneshot={"stage": "done", "working": None, "pr": fresh["pr"]})
     elif not fresh.get("writing"):   # neither open nor asked again: the reason is the spec's fault

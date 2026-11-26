@@ -204,6 +204,16 @@ def test_a_read_that_completes_while_the_close_cancels_it_is_still_read(tree, tm
     assert closing.result["state"] == "changed"
 
 
+def test_a_base_folder_replaced_by_another_is_never_taken_for_watched(tree, tmp_path):
+    local = tmp_path / "AppData" / "Local"
+    watch = owner_data.Watch(owner_data.roots(tree), tree)   # `com.example.budget` has no folder yet
+    local.rename(tmp_path / "AppData" / "Local-aside")   # the watched base moved away, its handle with it
+    (local / "com.example.budget").mkdir(parents=True)   # a new base in its place, and the product's folder in it
+    (local / "com.example.budget" / "settings.json").write_text("{}", encoding="utf-8")
+    result = watch.close()
+    assert result["state"] == "incomplete" and "다른 폴더로 바뀌어" in owner_data.reason(result)
+
+
 def test_a_root_named_during_the_window_is_covered(tree, tmp_path):
     local, conf = tmp_path / "AppData" / "Local", tree / "src-tauri" / "tauri.conf.json"
     watch = owner_data.Watch(owner_data.roots(tree))

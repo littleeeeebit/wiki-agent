@@ -1523,10 +1523,16 @@ def existing_pr(path: Path, branch: str, base: str, only: int | None = None) -> 
     return (int(rows[0]["number"]), rows[0]["url"]) if rows else None
 
 
-def pull_request(path: Path, branch: str, base: str, title: str, body: str, only=None, draft=False) -> tuple[int, str]:
+def pull_request(path: Path, branch: str, base: str, title: str, body: str, only=None, draft=False,
+                 halt=None) -> tuple[int, str]:
     """Return an existing or new PR's `(number, url)`; refresh reused metadata. `draft`: a new one is a draft.
-    Never retry a failed/timed-out create: re-list because its reply may be lost.
+    Never retry a failed/timed-out create: re-list because its reply may be lost. `halt`: checked right before
+    each write, so none starts once it is set.
     Raise `RuntimeError` when publication cannot complete."""
+
+    def unstopped():
+        if halt is not None and halt.is_set():
+            raise RuntimeError("사람이 멈춤 — push 는 했고 PR 은 만들거나 고치지 않았다")
 
     # GitHub refuses a title over 256 characters; a spec's goal can run longer, and the body carries it whole.
     title = title if len(title) <= 256 else title[:255] + "…"
@@ -1535,6 +1541,7 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str, only
         fh.write(body)
     try:
         if not found:
+            unstopped()
             try:
                 made = sh(["gh", "pr", "create", "--base", base, "--head", branch,
                            "--title", title, "--body-file", fh.name, *(["--draft"] if draft else [])], path, 120)
@@ -1549,6 +1556,7 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str, only
                 raise RuntimeError(f"PR 을 만들지 못했다 — {why}")
         # The agent may have opened it early, or GitHub accepted a timed-out
         # create. In both cases publish the current requirements and evidence.
+        unstopped()
         try:
             edited = sh(["gh", "pr", "edit", str(found[0]), "--title", title, "--body-file", fh.name], path, 120)
         except subprocess.TimeoutExpired as exc:
@@ -1582,7 +1590,7 @@ def _opened(repo: Path, path: Path, run, spec: dict):
     if run.halt.is_set():   # again: the preflight above talks to GitHub, and a Stop may have come meanwhile
         return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
     note(run, f"push · origin {branch}")
-    pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch])
+    pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch], run.halt)
     if pushed.returncode:
         return failed(run, spec, f"push 실패 — {said(pushed)}")
     base = base_of(spec, path)
@@ -1595,7 +1603,7 @@ def _opened(repo: Path, path: Path, run, spec: dict):
         o = spec.get("oneshot") or {}   # a oneshot's opens as a draft: it leaves draft after its watch's read
         n, url = pull_request(path, branch, base.stdout.strip(), pr_text.title_of(spec),
                               body_of(spec, "" if files.returncode else files.stdout), (o.get("pr1") or {}).get("number"),
-                              draft=bool(o))
+                              draft=bool(o), halt=run.halt)
     except RuntimeError as exc:
         return failed(run, spec, str(exc))
     plan = spec["source"].get("plan")

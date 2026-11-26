@@ -308,9 +308,12 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the watch is Windows'")
-@pytest.mark.parametrize("measured", [True, False])   # the measured draft reused, or the first one opened here
+# The write lands while the measured draft is edited, while the first one is created here, or while it is made
+# ready, the window's last server command.
+@pytest.mark.parametrize("publication", ["edit", "create", "ready"])
 def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(finished, tmp_path, monkeypatch,
-                                                                            measured):
+                                                                            publication):
+    measured = publication != "create"
     import owner_data
     from main import oneshot_owner_data
 
@@ -326,10 +329,10 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
         check(tree, answer(report()))()
     oneshot_owner_data.begin("budget", tree, oneshot_spec.store("budget"), "turn", "x", None)
     remote = Remote()
-    answering, publication = (listing(remote, 7), "edit") if measured else (remote, "create")
+    answering = listing(remote, 7) if measured else remote
 
     def publishing(args, cwd, timeout=60):
-        if args[:3] == ["gh", "pr", publication]:   # a publication command, after the turn's own read
+        if args[:3] == ["gh", "pr", publication] and "--undo" not in args:   # a publication command
             (roaming / tree.name / "cache.bin").write_text("x", encoding="utf-8")
         return answering(args, cwd, timeout)
     try:
@@ -339,7 +342,9 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
         oneshot_owner_data.cleared("budget")
     made = [c for c in remote.calls if c[:3] == ["gh", "pr", publication]]
     assert made and (measured or "--draft" in made[0])   # a pull request opened here opens as a draft
-    assert not any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls)   # the draft stays a draft
+    readied = [c for c in remote.calls if c[:3] == ["gh", "pr", "ready"]]
+    # The draft stays a draft: never made ready, or made a draft again right after.
+    assert not readied if publication != "ready" else readied[-1][-1] == "--undo"
     assert o()["stage"] == "pr" and "주인의 실제 데이터 폴더가 바뀌었다" in o()["stopped"]["detail"]
 
 
@@ -375,27 +380,37 @@ def test_a_stop_during_the_push_preflight_is_never_followed_by_a_push(finished, 
     assert not remote.pushes() and not remote.created()
 
 
-@pytest.mark.parametrize("when", ["view", "diff"])   # reading the draft's state, or the diff after the push
+# While: the draft's state is read, the push's own scans run, the diff after the push runs, or the pull request
+# is looked up right before it is edited (the measured draft) or created (none recorded).
+@pytest.mark.parametrize("when", ["view", "scan", "diff", "lookup", "lookup-new"])
 def test_a_stop_during_publication_changes_nothing_on_github_after_it(finished, monkeypatch, when):
+    from main import prerequisite_review
+
     tree, sent = finished
     readme(tree)
-    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    if when != "lookup-new":
+        oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     run, remote = Run(), Remote(draft=False)
-    open7 = listing(remote, 7)
+    answering, stops = (remote if when == "lookup-new" else listing(remote, 7)), []
 
     def stopping(args, cwd, timeout=60):
-        if args[:3] == ["gh", "pr", "view"] if when == "view" else args[:3] == ["git", "diff", "--numstat"]:
+        diffed = any(c[:3] == ["git", "diff", "--numstat"] for c in remote.calls)
+        if (when == "view" and args[:3] == ["gh", "pr", "view"]) or (when == "diff" and args[:3] == ["git", "diff", "--numstat"]) \
+                or (when.startswith("lookup") and diffed and args[:3] == ["gh", "pr", "list"]):
             run.halt.set()   # the owner's Stop, while this command runs
-        return open7(args, cwd, timeout)
+            stops.append(len(remote.calls))
+        return answering(args, cwd, timeout)
+    scan = prerequisite_review.oneshot
+    if when == "scan":
+        monkeypatch.setattr(prerequisite_review, "oneshot", lambda *a: run.halt.set() or stops.append(len(remote.calls))
+                            or scan(*a))
     with patch.object(specs, "sh", stopping):
         oneshot_build.checked(tree, run, spec(), SUMMARIZED)
-    at = next(i for i, c in enumerate(remote.calls) if c[:3] == (["gh", "pr", "view"] if when == "view"
-                                                                 else ["git", "diff", "--numstat"]))
-    after = [c for c in remote.calls[at:] if c[:3] in (["gh", "pr", "ready"], ["gh", "pr", "edit"], ["gh", "pr", "create"])
-             or c[:2] == ["git", "push"]]
-    assert not after and (when == "diff" or not remote.pushes())
+    after = [c for c in remote.calls[stops[0]:] if c[:2] == ["git", "push"]
+             or c[:3] in (["gh", "pr", "ready"], ["gh", "pr", "edit"], ["gh", "pr", "create"])]
+    assert not after and (when not in ("view", "scan") or not remote.pushes())
 
 
 def test_a_stop_while_s8_reads_its_watch_keeps_the_draft(finished, monkeypatch):
