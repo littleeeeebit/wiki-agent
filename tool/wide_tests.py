@@ -24,7 +24,9 @@ from pytest_output import _QUOTED, _blank, runs_pytest
 LIMIT = 8
 STAGES = re.compile(r"&&|\|\||[;|\n]")
 MOVED = re.compile(r"(cd|sl|Set-Location|pushd|Push-Location)(?:\s+(\S.*))?", re.IGNORECASE)
+ENDED = re.compile(r"(?:exit|logout|throw)(?:\s.*)?", re.IGNORECASE)
 COMMENT = re.compile(r"(?:^|(?<=[\s;&|(]))#[^\n]*")
+HIDDEN = {"posix": re.compile(_QUOTED["posix"].pattern + r"|\\.", re.DOTALL), "ps": _QUOTED["ps"]}
 POPPED = re.compile(r"(?:popd|Pop-Location)(?:\s.*)?", re.IGNORECASE)
 # Every option pytest and the plugins installed here read a value from the next word, from pytest's own parser on
 # 2026-11-26. An option whose value is optional takes the next word too, unless it reads as another option.
@@ -98,13 +100,33 @@ def wide(stage: str, posix: bool = True) -> str:
     return f"파일 {len(files)}개" if len(files) > LIMIT else ""
 
 
-def stages(command: str, dialect: str) -> list[tuple[str, str]]:
-    """`command` split where the shell runs a new command, each stage with the operator before it ("" first). An
-    operator inside quotes or a heredoc is text, a comment is nothing, and a line continued (`\\` in Bash, a
-    backtick in PowerShell) or broken after `&&`, `||` or `|` goes on the same list."""
+def joined(command: str, posix: bool) -> str:
+    """`command` with its continued lines joined as the shell joins them: Bash drops `\\` and the newline, so a
+    word may go on across it; PowerShell's backtick and newline part words."""
 
-    command = re.sub(r"\\\r?\n" if dialect == "posix" else r"`\r?\n", lambda m: " " * len(m[0]), command)
-    masked = _QUOTED[dialect].sub(lambda m: "x" * len(m[0]), command)   # a `#` inside quotes starts nothing
+    return re.sub(r"\\\r?\n", "", command) if posix else re.sub(r"`\r?\n", " ", command)
+
+
+def target(rest: str, posix: bool) -> str:
+    """The folder a move names: its first operand, past switches (`cd -P`, `Set-Location -PassThru`), or the value
+    of PowerShell's `-Path` or `-LiteralPath`. `-` is `cd -`; none at all is home."""
+
+    words = iter(argv(rest, posix))
+    for word in words:
+        name, colon, value = word.partition(":")
+        if not posix and name.lower() in ("-path", "-literalpath", "-pspath", "-lp"):
+            return value if colon else next(words, "~")
+        if word == "-" or not word.startswith("-"):
+            return word
+    return "~"
+
+
+def stages(command: str, dialect: str) -> list[tuple[str, str]]:
+    """`command`, already `joined`, split where the shell runs a new command, each stage with the operator before
+    it ("" first). An operator inside quotes or a heredoc is text, a comment is nothing, and a line broken after
+    `&&`, `||` or `|` goes on the same list."""
+
+    masked = HIDDEN[dialect].sub(lambda m: "x" * len(m[0]), command)   # a `#` quoted or escaped starts nothing
     for m in COMMENT.finditer(masked):
         command = command[:m.start()] + " " * len(m[0]) + command[m.end():]
     blank, cuts, ops = _blank(command, dialect), [0], [""]
@@ -141,18 +163,20 @@ def places(command: str, posix: bool, here: Path):
         moved = None if piped else MOVED.fullmatch(stage)
         if moved:
             try:
-                to = argv(moved[2], posix)[0] if moved[2] else "~"
-            except (ValueError, IndexError):
+                to = target(moved[2] or "", posix)
+            except ValueError:
                 return
             if os.name == "nt":
                 to = re.sub(r"^/([A-Za-z])(?=/|$)", r"\1:", to)   # Git Bash's `/c/...`
             pushed, went, stayed = moved[1].lower() in ("pushd", "push-location"), set(), set()
             for state in runs:
                 folder, stack, previous = state
-                target = (previous or folder) if to == "-" else Path(os.path.abspath(folder / os.path.expanduser(to)))
-                went.add((target, (*stack, folder) if pushed else stack, folder))
-                if not target.is_dir():
+                into = (previous or folder) if to == "-" else Path(os.path.abspath(folder / os.path.expanduser(to)))
+                went.add((into, (*stack, folder) if pushed else stack, folder))
+                if not into.is_dir():
                     stayed.add(state)
+        elif not piped and ENDED.fullmatch(stage):   # the shell stops here, on this branch
+            went = stayed = set()
         elif not piped and POPPED.fullmatch(stage):
             went = {(stack[-1], stack[:-1], folder) if stack else (folder, stack, previous)
                     for folder, stack, previous in runs}
@@ -166,10 +190,10 @@ def verdict(payload: dict) -> dict | None:
     tool = payload.get("tool_name")
     if tool not in ("Bash", "PowerShell"):
         return None
-    command = str((payload.get("tool_input") or {}).get("command") or "")
+    posix = tool != "PowerShell"
+    command = joined(str((payload.get("tool_input") or {}).get("command") or ""), posix)
     if "pytest" not in command:
         return None
-    posix = tool != "PowerShell"
     for stage, folders in places(command, posix, Path(str(payload.get("cwd") or Path.cwd()))):
         try:
             words = argv(stage, posix)

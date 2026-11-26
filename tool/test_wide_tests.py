@@ -68,6 +68,14 @@ def test_a_move_the_shell_may_skip_or_undo_leaves_every_folder_it_may_run_in(tmp
                     "false && \\\n cd ..; python -m pytest -k test"):   # and so does a continued line
         assert ask(command, gated), command
     assert ask("mkdir -p ../made && cd ../made && python -m pytest -q", gated) is None   # it exists by then
+    assert ask("mkdir -p ../new && cd ../new || exit 1; python -m pytest -q", gated) is None   # failing, it ends
+    assert ask("cd -P .. && python -m pytest -q", gated) is None   # a switch is not the folder
+    for command, expected in (("Set-Location -LiteralPath ..; python -m pytest -q", None),
+                              ("Set-Location -Path:..; python -m pytest -q", None),
+                              ("Set-Location -PassThru ..; python -m pytest -q", None),
+                              ("cd ..; Set-Location -LiteralPath gated; python -m pytest -q", "deny")):
+        payload = {"tool_name": "PowerShell", "cwd": str(gated), "tool_input": {"command": command}}
+        assert bool(verdict(payload)) == bool(expected), command
 
 
 def test_a_comment_runs_nothing_and_selects_nothing(tmp_path):
@@ -76,6 +84,8 @@ def test_a_comment_runs_nothing_and_selects_nothing(tmp_path):
     assert ask("echo ready # comment; python -m pytest -k test", root) is None
     assert ask('echo "a #b"; python -m pytest -q', root)   # a `#` inside quotes hides nothing after them
     assert ask("python -m pytest -q \\\n  tool/test_a.py", root) is None   # one command over two lines
+    assert ask("py\\\nthon -m py\\\ntest -k test", root)   # Bash joins a word across its continued line
+    assert ask("echo build\\ #1; python -m pytest -k test", root)   # an escaped space keeps `#1` in its word
 
 
 def test_a_quoted_folder_before_the_interpreter_is_still_a_pytest_run(tmp_path):
