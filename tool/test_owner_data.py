@@ -70,9 +70,10 @@ def test_each_spelling_of_a_root_is_refused_and_a_variable_alone_is_not(tree, tm
         reason = denied(shell(tree, command, host))
         assert "주인의 실제 데이터 폴더" in reason, command
     for command in ("echo $APPDATA", "ls %LOCALAPPDATA%", f"cat {roaming}\\budgetary\\x", "cat budget/x",
-                    f"cat '{roaming}\\Budget. Notes\\x'"):   # a sibling whose name only starts like the product's
+                    f"cat '{roaming}\\Budget. Notes\\x'", f'type "{roaming}\\Budget Notes\\x"'):   # siblings
         assert not denied(shell(tree, command, host)), command
-    for command in (f"cat '{roaming}\\Budget.\\x'", f'type "{roaming}\\budget. "'):   # Win32 drops the trailing run
+    for command in (f"cat '{roaming}\\Budget.\\x'", f'type "{roaming}\\budget. "',   # Win32 drops the trailing run
+                    f"dir {roaming}\\Budget. /s", f"cd {roaming}\\budget&&dir"):
         assert "주인의 실제 데이터 폴더" in denied(shell(tree, command, host)), command
 
 
@@ -98,6 +99,27 @@ def test_a_file_already_at_a_roots_path_leaves_the_window_clean(tree, tmp_path):
     (tmp_path / "AppData" / "Local" / "com.example.budget").write_text("x", encoding="utf-8")   # untouched
     watch = owner_data.Watch(owner_data.roots(tree), tree)
     assert watch.settled()["state"] == "clean" and watch.close()["state"] == "clean"
+
+
+def test_a_file_at_a_roots_path_replaced_by_a_folder_is_changed(tree, tmp_path):
+    root = tmp_path / "AppData" / "Local" / "com.example.budget"
+    root.write_text("x", encoding="utf-8")
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    root.unlink()
+    root.mkdir()
+    (root / "db.sqlite").write_text("x", encoding="utf-8")
+    assert watch.settled()["state"] == "changed" and watch.close()["state"] == "changed"
+
+
+def test_a_long_name_with_a_tilde_is_not_taken_for_a_short_one(tmp_path, monkeypatch):
+    roaming, local = tmp_path / "AppData" / "Roaming", tmp_path / "AppData" / "Local"
+    roaming.mkdir(parents=True)
+    local.mkdir()
+    monkeypatch.setattr(owner_data, "bases", lambda: [roaming, local])
+    top = tmp_path / "budget~2026-tools"   # a checkout's own name, its folders absent
+    subprocess.run(["git", "init", "-q", str(top)], check=True)
+    watch = owner_data.Watch(owner_data.roots(top), top)
+    assert watch.close()["state"] == "clean"
 
 
 def test_a_name_in_short_form_is_incomplete(tree):

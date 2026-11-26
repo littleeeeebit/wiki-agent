@@ -143,24 +143,26 @@ def _plain(text: str) -> str:
     return re.sub(r"(?<![\w:])/([a-z])/", r"\1:/", text)
 
 
-def named(text: str, found: list[Path]) -> list[Path]:
-    """The roots `text` names: by absolute path or through `%APPDATA%`, `$LOCALAPPDATA`, `$env:LOCALAPPDATA`
-    or `${env:APPDATA}`, either slash, any case. A variable alone names none."""
+_TOKEN = re.compile(r""""[^"]*"|'[^']*'|[^\s"']+""")   # a quoted string is one token, spaces and all
 
-    plain = _plain(text)
+
+def named(text: str, found: list[Path], shell: bool = True) -> list[Path]:
+    """The roots `text` names: by absolute path or through `%APPDATA%`, `$LOCALAPPDATA`, `$env:LOCALAPPDATA`
+    or `${env:APPDATA}`, either slash, any case. A variable alone names none. A shell command is read as its
+    tokens, quotes dropped; other text (a file path, a patch) line by line."""
+
+    pieces = [_plain(t.strip("\"'")) for t in (_TOKEN.findall(text) if shell else text.splitlines())]
     out = []
     for root in found:
-        # The name, or the name with the trailing dots and spaces Win32 drops, but only where the component ends
-        # there (a separator, a quote or the end): `Budget. Notes` is another folder. An unquoted argument ending
-        # in such a run before more text is not told from that sibling; the refusal catches mistakes, and the
-        # watch sees what any spelling writes.
-        tail = re.escape(_alias(root.name)) + r"""(?:[. ]+(?=[/"'`]|$)|(?![\w.-]))"""
+        # The name, or the name with the trailing dots and spaces Win32 drops, as a whole component: it ends at
+        # a separator, a shell operator or the token's end, so `Budget Notes` and `Budget. Notes` are others.
+        tail = re.escape(_alias(root.name)) + r"[. ]*(?=[/;|&<>]|$)"
         # The parent without its own trailing separator, so a drive or share root is not doubled.
         absolute = re.escape(_plain(str(root.parent)).rstrip("/")) + "/" + tail
         # Either variable, whatever the base is called: a redirected Local folder keeps its refusal, and a
         # Roaming name spelled through the Local variable is the same product's, refused as well.
         spelled = rf"(%(local)?appdata%|\$\{{?(env:)?(local)?appdata\}}?)/{tail}"
-        if re.search(absolute, plain) or re.search(spelled, plain):
+        if any(re.search(absolute, p) or re.search(spelled, p) for p in pieces):
             out.append(root)
     return out
 
@@ -184,7 +186,7 @@ def verdict(payload: dict) -> dict | None:
     else:
         return None
     tree = Path(str(payload.get("cwd") or os.getcwd()))
-    hit = named(text, roots(tree))
+    hit = named(text, roots(tree), shell=tool in SHELLS)
     if not hit:
         return None
     reason = REFUSED.format(roots=", ".join(f"`{r}`" for r in hit), agent=agent_folder(tree) or "measure-app\\agent")
@@ -277,8 +279,8 @@ class Watch:
         for root in found:
             if root.is_dir():
                 self._start(root, "root")
-            elif not root.exists():   # the base watch's; one there at a verdict was made in the window
-                self._absent(root)
+            else:   # nothing, or a file: the base watch's, and judged again at each verdict
+                self._absent(root, root.exists())
         if tree is not None:
             for conf in _confs(tree):
                 self.confs[str(conf)] = _state(conf)
@@ -306,14 +308,17 @@ class Watch:
         if hit:
             self._changed(None)   # the root itself was created, renamed, removed or replaced
 
-    def _absent(self, root: Path) -> None:
-        """A root with no folder yet, left to its base's watch. A name in 8.3 short form (`BUDGET~1`) may stand
-        for a folder whose notices carry its long name, so its base cannot see it come and go: `incomplete`."""
+    def _absent(self, root: Path, file: bool = False) -> None:
+        """A root with no folder yet (nothing at its path, or a `file`), left to its base's watch; at a verdict,
+        anything new there (a folder where the file was) was made in the window. A name in 8.3 short form
+        (`BUDGET~1`) may stand for a folder whose notices carry its long name, so its base cannot see it come and
+        go: `incomplete`."""
 
-        if re.search(r"~\d", root.name):
+        stem, _, ext = root.name.partition(".")
+        if re.fullmatch(r"[^~]{1,6}~\d+", stem) and len(stem) <= 8 and len(ext) <= 3 and "." not in ext:
             self._fail(f"`{root}` 는 짧은 이름 꼴이라, 그 폴더가 생기고 지워지는 것을 볼 수 없다")
         with self.lock:
-            self.absent.append(root)
+            self.absent.append((root, file))
 
     def _cover(self, now: list[Path]) -> None:
         """Roots not watched so far. One whose folder exists had no watch of its own until now, and nothing orders
@@ -357,7 +362,7 @@ class Watch:
             self._reread(Path(conf), lost=True)
         with self.lock:
             absent = list(self.absent)
-        if any(root.exists() for root in absent):   # Win32 resolves its spelling: made in the window
+        if any(root.is_dir() if file else root.exists() for root, file in absent):   # Win32 resolves its spelling
             self._changed(None)
         return now if now is not None or self.tree is None else roots(self.tree)
 
