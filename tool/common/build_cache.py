@@ -15,7 +15,8 @@ folder with a file open in it cannot be renamed or removed (discovery only gathe
 - Each folder below is read, and removed, under its own pin: a file created there, never one already there, and
   deleted by the system when its handle closes, so no pin is ever removed by name. The folder is checked again once
   its pin holds, and a link met anywhere goes as a link. A cache whose name no longer holds the folder measured is
-  left. After each removal the pinned `incremental` folders are counted again, and only the drop is freed.
+  left. After each removal the pinned `incremental` folders are counted again, and only the drop is freed; a count
+  that cannot read what the first could ends the trim there.
 
 Elsewhere an open file pins nothing, and the oneshot builds on Windows, so nothing is trimmed there.
 """
@@ -208,17 +209,17 @@ def pruned(tree: Path, cap: int = CAP) -> int:
     return freed
 
 
-def counted(incs: list[Path], before: list = ()) -> tuple[list, bool]:
-    """Every cache in the pinned `incremental` folders, `(newest file, bytes, path, which folder)`, and whether one
-    could not be read. One that cannot be read now keeps what `before` counted at its path: unread is not freed."""
+def counted(incs: list[Path]) -> tuple[list, set]:
+    """Every cache in the pinned `incremental` folders, `(newest file, bytes, path, which folder)`, and the paths that
+    could not be read."""
 
-    found, short, last = [], False, {c[2]: c for c in before}
+    found, failed = [], set()
     for inc in incs:
         try:
             entries = folders(inc)
         except OSError as exc:
             errorlog.record("build-cache", exc, path=str(inc))
-            short = True
+            failed.add(inc)
             continue
         for e in entries:
             try:
@@ -227,10 +228,8 @@ def counted(incs: list[Path], before: list = ()) -> tuple[list, bool]:
                     found.append((when, bytes_, Path(e.path), ident))
             except OSError as exc:
                 errorlog.record("build-cache", exc, path=e.path)
-                short = True
-                if Path(e.path) in last:
-                    found.append(last[Path(e.path)])
-    return found, short
+                failed.add(Path(e.path))
+    return found, failed
 
 
 def key(c) -> tuple:
@@ -259,26 +258,33 @@ def trimmed(tree: Path, cap: int) -> int:
                 errorlog.record("build-cache", exc, path=str(build))
                 partial = True
         # Every removal is followed by a fresh count of the pinned folders, and only the drop in that count is freed:
-        # a session or cache moved within them meanwhile is still counted where it went.
+        # a session or cache moved within them meanwhile is still counted where it went. A count that cannot read
+        # what the first one could ends the trim at the last full count: the drop then is not known to be freed.
         # ponytail: re-measures every cache per removal, O(caches²); a worktree holds tens of them.
-        sized, short = counted(incs)
+        sized, unseen = counted(incs)   # what cannot be read now is in no count, and never credited
+        first = {(c[3].st_dev, c[3].st_ino) for c in sized}
         tried, start = set(), sum(c[1] for c in sized)
         total, turns = start, 2 * len(sized)   # each cache, and once more where it moved to
         while total > cap and turns:
-            # one try per folder at each name: a cache moved meanwhile gets its turn where it went
-            rest = [c for c in sorted(sized, key=lambda c: c[0]) if key(c) not in tried]
+            # one try per folder at each name, oldest first, the first count's own before any that came since: a
+            # cache moved meanwhile gets its turn where it went
+            rest = sorted((c for c in sized if key(c) not in tried),
+                          key=lambda c: ((c[3].st_dev, c[3].st_ino) not in first, c[0]))
             if not rest:   # every one tried: what is left would not go, for the next turn's end
                 break
             tried.add(key(rest[0]))
             turns -= 1
-            _, _, cache, ident = rest[0]   # the oldest not yet tried
+            _, _, cache, ident = rest[0]
             try:
                 wiped(cache, ident)
             except OSError as exc:
                 errorlog.record("build-cache", exc, path=str(cache))
-            sized, more = counted(incs, sized)
-            short, total = short or more, sum(c[1] for c in sized)
-        freed, partial = max(start - total, 0), partial or short
+            now, failed = counted(incs)
+            if failed - unseen:   # something read before is not now: stop at the last full count, for the next turn
+                partial = True
+                break
+            sized, total = now, sum(c[1] for c in now)
+        freed, partial = max(start - total, 0), partial or bool(unseen)
         for exc in unread:   # a folder discovery could not read: the count may be short of the disk
             errorlog.record("build-cache", exc, path=str(tree))
         partial = partial or bool(unread)
