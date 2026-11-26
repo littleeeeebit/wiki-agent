@@ -213,10 +213,13 @@ One protocol serves the runners and the server alike, in
   and start time, and the job's root process's pid and start time. It
   clears the note only after the end the next section proves; an end it
   cannot prove replaces the note's processes with those not proven to have
-  exited. When the proof failed on the job's count, not on a known process
-  (the count is above the members it reported joining, or could not be
-  read), there is no process to name, and the note says `inconclusive`
-  instead. Only the lease's owner ever writes or clears the note. Every
+  exited. When the proof cannot cover every process, the note says
+  `inconclusive`: the count is above the members the job reported joining,
+  the count could not be read, or a member has no usable identity (a root
+  rolled back before its identity was taken). That holds even when the same
+  proof also names known processes; they stay in the note for diagnosis,
+  but their exit never clears it. Only the lease's owner ever writes or
+  clears the note. Every
   acquisition, abandoned or not, reads the note right after it owns the
   lease. Windows may have destroyed the mutex with its last handle, so a
   fresh acquisition can follow a crash, and the note is what tells. A note
@@ -282,9 +285,9 @@ One protocol serves the runners and the server alike, in
   member the job reported joining, and an accounting total that covers every
   one of them. Only then does it clear the holder note, release the lease
   and drop its place. If the proof does not come, it writes the processes
-  not proven to have exited into the note, or `inconclusive` when the count
-  failed it, then releases the lease and drops its place, and its output
-  names them. The next holder waits on
+  not proven to have exited into the note, marked `inconclusive` when the
+  proof could not cover every process, then releases the lease and drops
+  its place, and its output names them. The next holder waits on
   them as on any leftover note, visibly, and nothing is timed out. So no
   thread has to stay alive holding the lease for a job it could not end.
 - The server's launches end the same way, on the measurement worker's
@@ -428,7 +431,9 @@ Tests show:
   exited while a child it names lives;
 - a proof failed on the job's count with every known member gone writing
   `inconclusive`, the queue stopping on it with its line, and running again
-  once the owner deletes the note;
+  once the owner deletes the note; a missed join with a named member still
+  alive, the queue still stopped after that member exits; a rolled-back
+  root with no identity writing `inconclusive`;
 - the GPU unreadable, RAM unreadable, and two adapters;
 - each spelling of a root refused on both hosts, the watch's three results
   on an answered, a failed and a stopped turn, a root replaced during a
@@ -480,6 +485,17 @@ the crash path's stated descendant limit. So the trial never waits behind
 the build's own leftover for longer than its processes take to exit. The
 next turn on the worktree, the build's or the owner's, starts the CLI again
 with `--resume`.
+
+An owner's words during the turn (plan 14's steer) must not make this wait
+for good. Today any steer in a turn makes a closing answer wait for every
+background task (`ChatSession`'s `_steered`, marked `ponytail:` there),
+because a steer's replay says only that it was read. 15b narrows that as
+the mark names: a closing answer counts once every steer's replay of the
+turn came before it, since the model wrote that answer with the words in
+front of it. A steer whose replay comes after the closing answer, or lands
+after the check, still holds the turn as today (`_closing`), so the owner's
+unread words are never lost. This is the one closing rule, so it applies to
+every closing block, not only `measure-request`.
 
 Where it is accepted: a build turn whose effective stage is `build`, or a
 repair turn sent from `measure`, in a run whose `HEAD` holds the measurement
@@ -668,7 +684,9 @@ Tests show:
 - a turn closing with `measure-request` while a background helper and its
   GPU runner with a child still run: the turn settles, closing the CLI ends
   them with the runner's note left standing, and the trial waits on that
-  note and then runs;
+  note and then runs; the same after an owner's steer answered earlier in
+  the turn; a steer replayed after the closing answer still holding the
+  turn;
 - a contract whose `{out}` is not in its chain's last command refused with
   the reason;
 - each spelling of the variable refused, the contract's command refused as
@@ -695,4 +713,4 @@ The full gate passes once after the reviewer allows the merge.
 | # | Step | Status |
 | --- | --- | --- |
 | 15a | The machine line, the load line, the two GPU-job kinds, the session's own processes and the refusal behind them, the Claude queue and the Codex run-now-or-refuse, the lease and the queue's order shared with the server's launches, the runner, the owner's data folder refused and watched over every build turn and server launch, the prompt section | Not started |
-| 15b | The check that gates it, `measure-request` and the trial measurement with its own state and card, the build's own measurement refused, the logs for the next note, three launches on their own desktop and muted, [보기], the pages rewritten | Not started |
+| 15b | The check that gates it, `measure-request` and the trial measurement with its own state and card, the closing rule after a steer, the build's own measurement refused, the logs for the next note, three launches on their own desktop and muted, [보기], the pages rewritten | Not started |
