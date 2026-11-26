@@ -218,16 +218,16 @@ A refusal comes back with the reason, at most three times in all.
 
 - Commit everything and leave nothing uncommitted, then end with the
   `done-report`{end_blocks}.
-- Do not push, open a pull request, or ask the person anything: nobody answers
-  until the next review. Decide within the approved design.
+- Do not push or open a pull request. Decide within the approved design; ask
+  the owner only a decision that is theirs, as the end of this message says.
 - Running the gate command or the host-side tests is fine. Install nothing.
 <!-- kind:android -->
 - Do not start an emulator or address a device: the server's emulator is the
   only one used.
 <!-- /kind -->
 <!-- kind:desktop -->
-- Do not start the PC app on the owner's desktop: the server's own desktop is
-  the only one it runs on.
+- Do not start the PC app yourself: the server starts it, on the owner's
+  desktop where they see it, and only there.
 <!-- /kind -->
 - Visible text follows the profile's `ui_language`; Korean text is written
   directly in Korean, never translated from English.

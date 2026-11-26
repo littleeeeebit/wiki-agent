@@ -229,7 +229,10 @@ def status(path: Path, wired: dict[str, bool] | None = None) -> dict:
                 "powershell": powershell}
     wired = users() if wired is None else wired
     rec = record(path.name)
-    slots = {k: str(v).strip() for k, v in (data.get("slots") or {}).items()}
+    table = data.get("slots", {})
+    if not isinstance(table, dict):   # a `slots` of another shape: this checkout's finding, never the listing's stop
+        broken, table = broken or "adapter 의 slots 가 표가 아니다", {}
+    slots = {k: str(v).strip() for k, v in table.items()}
     agents = hosts(data)
     missing, notes = [], []
     if broken:
@@ -244,9 +247,9 @@ def status(path: Path, wired: dict[str, bool] | None = None) -> dict:
     for host in agents:
         if not wired.get(host):
             missing.append(f"사용자 단위 hook 없음 ({LABEL[host]})")
-        try:
+        try:   # hooks of another shape (an array of them, a string) are as unreadable as broken JSON
             old = leftover(path, host)
-        except (OSError, ValueError):
+        except (OSError, ValueError, AttributeError, TypeError):
             old = ["읽지 못함"]
         if old:
             missing.append(f"옛 hook 남음 ({LABEL[host]})")

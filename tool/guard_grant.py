@@ -202,6 +202,17 @@ def plan_root(top: Path, spec: dict) -> Path | None:
     return top / root if contained(str(top / root), [str(top)]) else top
 
 
+def live(spec: dict) -> bool:
+    """Whether the spec opens its checkout's adapter now: a survey's or a slot spec's grant (`True`) for all its
+    turns, a oneshot turn's (its token, `oneshot_build.send`) only while that turn is the run's `inflight`, so a
+    grant its end could not clear opens nothing to the turns after."""
+
+    grant, run = spec.get("adapter"), spec.get("oneshot")
+    inflight = run.get("inflight") if isinstance(run, dict) else None
+    return grant is True or isinstance(grant, str) and bool(grant) and isinstance(inflight, dict) \
+        and grant == inflight.get("turn")
+
+
 def grant(cwd: Path, payload: dict) -> Grant | None:
     """What this task may do, computed for this call; `None` where no repository is attached."""
 
@@ -225,7 +236,7 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
                 or contained(h, [str(r) for r in roots]) and not any(contained(h, [p]) for p in protected)]
     # The survey and a spec in a repository with no `gate_cmd` exist to fill the slots: the hub's spec
     # (never a model) opens this checkout's adapter to them, and review and [Merge] judge what they wrote.
-    fills = str(top / ".wiki/adapter.toml") if spec.get("adapter") is True else ""
+    fills = str(top / ".wiki/adapter.toml") if live(spec) else ""
     return Grant([str(r) for r in roots], protected, hosts, remotes, top.as_posix(),
                  writable[0] if writable else "", fills)
 

@@ -60,6 +60,10 @@ _busy: dict[str, object] = {}   # worktree path -> the hold of its running turn
 _runs: dict[str, "Run"] = {}    # worktree path -> its last turn, kept until the next one starts
 _turns: dict[threading.Thread, "Run"] = {}  # includes completed turns still running their callbacks
 _queued: dict[str, "Order"] = {}   # worktree path -> the instruction waiting for it to be let go
+RELEASED: list = []   # `f(path)` once any turn let a worktree go (`dispatch`): the owner's answer that waited (`oneshot_tell`)
+ADMITS: list = []   # `f(path, run)` before any turn starts (`begin`); raises to refuse it (`oneshot_build.admitted`)
+# `f(path)`, read under the queue's lock with no I/O: a turn still ending there, whose end dispatches the queue
+WAITS: list = []   # (`oneshot_build.ending`). Checked as the order is taken, so admission never refuses it after
 READABLE: list = []   # `fn(path) -> bool`: worktrees a later module recorded (a oneshot run's), in any project
 _provider_usage: dict = {}
 _provider_usage_lock = threading.Lock()
@@ -931,14 +935,15 @@ def dispatch(path: Path, ended: Run) -> None:
     meanwhile — that turn, a person's — it waits for that turn's end. A
     stopped run drops it: a stop is not "go on"."""
 
+    taken = any([released(path) for released in RELEASED])   # a hook that took the tree's next turn: the queue waits
     key = str(path)
-    with _lock:
-        if ended.halt.is_set():
+    with _lock:   # the tree's latest turn stopped: the order drops, whichever turn's dispatcher gets here
+        if ended.halt.is_set() or ((latest := _runs.get(key)) is not None and latest.halt.is_set()):
             _queued.pop(key, None)
             return
         order = _queued.get(key)
-        if order is None or key in _busy:
-            return
+        if order is None or taken or key in _busy or any(wait(path) for wait in WAITS):
+            return   # held from here, the tree takes no new turn: one still ending can only end
         del _queued[key]
         release = hold(_busy, _lock, key, "", kind="turn")
     try:
@@ -1018,6 +1023,8 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
         raise HTTPException(409, "계획이 이 작업트리를 쓰고 있다 — 질문은 계획 카드에서 답하고, "
                                  "PR 을 올리거나 멈춘 뒤 지시하라")
     run = run or Run(chat)
+    for admit in ADMITS:
+        admit(path, run)
     try:
         run.diff_base = diff_git(path, "rev-parse", "HEAD").strip()
     except (OSError, RuntimeError, subprocess.TimeoutExpired):

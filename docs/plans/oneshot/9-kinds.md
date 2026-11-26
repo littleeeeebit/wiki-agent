@@ -203,14 +203,14 @@ installer).
   scenario and shoots each screen and state, then closes everything it
   started.
 
-The session is a Win32 desktop the run owns inside the owner's session: the
-app starts on it in a kill-on-close job, a driver on the same desktop reads
-its UI Automation tree and acts only through automation patterns, and
-`PrintWindow` shoots it. The design, what was measured on this PC, the
-refusals and the cleanup proof are in the research note
-[oneshot-desktop-session](../../research/oneshot-desktop-session.md). On the
-owned desktop, a GDI copy of the screen fails, and Windows Graphics Capture
-gave an empty item for a fixture window. An overlay's constant-alpha
+The session runs on the owner's own desktop, where the owner sees it (plan
+13, "nothing runs out of sight"): the app starts in a kill-on-close job, a
+driver beside it reads its UI Automation tree and acts only through
+automation patterns, and `PrintWindow` shoots it, a shot kept only while its
+window is still the app's after it is drawn. The design, what was measured on
+this PC, the refusals and the cleanup proof are in the research note
+[oneshot-desktop-session](../../research/oneshot-desktop-session.md), measured
+on a desktop of the look's own before plan 13. An overlay's constant-alpha
 composition can be reconstructed from `PrintWindow` shots. A check that needs
 more, such as a screen capture or a per-pixel-alpha overlay, runs in the
 owner's desktop round below.
@@ -308,7 +308,7 @@ source, and the server assigns it:
 - `look`, when the postcondition is a UI Automation state the driver reads: an
   element with a stable `AutomationId` and its name, value or toggle state
   after a scenario.
-- `owner`, when the postcondition needs what the owned desktop cannot show: a
+- `owner`, when the postcondition needs what the driver's shots cannot show: a
   capture of another program's window or the screen, or how a per-pixel-alpha
   overlay composes. Its postcondition is observed, never inferred from the
   app's own controls:
@@ -468,8 +468,8 @@ app in one run keep both previews, and R2's edits and approval carry each.
 A PC preview writes `<screen id>.png` no larger than the `window` and at least
 90% of each side. The title bar and borders are the stack's, so the exact
 frame is checked in S7, where the driver reads it back. Every `desktop`
-preview command runs inside a look on an owned desktop, whatever its
-descriptor says, so one that opens a window never opens it on the owner's.
+preview command runs inside a look on the owner's desktop, whatever its
+descriptor says, so a window it opens is one the owner sees.
 
 S7's coverage reads the R2-approved screen map. It applies the research
 note's placement rules by each feature's `AutomationId`:

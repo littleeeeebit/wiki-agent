@@ -124,9 +124,10 @@ class Store:
     def __init__(self, key: str, get, put, state: str, folder: Path, active) -> None:
         self.key, self.get, self.put, self.state, self.folder, self.active = key, get, put, state, folder, active
 
-    def stop(self, reason: str, detail: str) -> dict:
+    def stop(self, reason: str, detail: str, **more) -> dict:
         with _lock:
-            return self.put(working=None, stopped={"reason": reason, "detail": detail, "state": self.get()[self.state]})
+            return self.put(working=None, stopped={"reason": reason, "detail": detail, "state": self.get()[self.state],
+                                                   **more})
 
     def profile(self) -> dict | None:
         """The profile whose ceilings bind this store's turns, or `None` before the card is confirmed."""
@@ -698,10 +699,21 @@ def launch(rid: str, work: str, *args, **fields) -> None:
     start_worker(run_store(rid), work, fn, (rid, *args), fields)
 
 
+# Asked before a run starts a worker or a turn: one that answers true has started something else in its place
+# (`oneshot_tell.diverted`: the owner's words, taken in first).
+DIVERTS: list = []
+
+
+def diverted(store: Store, work: str) -> bool:
+    return any(turn_aside(store, work) for turn_aside in DIVERTS)
+
+
 def start_worker(store: Store, work: str, fn, args: tuple, fields: dict) -> None:
     """One worker per store key, its state written with `working` only once it may start.
     A worker may hand its key on to the next stage's worker as its last act."""
 
+    if diverted(store, work):
+        return
     with _lock:
         if runtime.stopping.is_set():
             raise HTTPException(503, "서버가 종료 중이다. 다시 시작한 뒤 이어가라")
@@ -753,11 +765,19 @@ def restarted(store: Store) -> None:
 
     with _lock:
         current = store.get()
-        if inflight := current.get("inflight"):
-            sent = float(inflight.get("sent") or time.time())
-            elapsed, lived = max(0.0, time.time() - sent), max(0.0, float(inflight.get("seen") or sent) - sent)
-            store.put(inflight=None, spend=cut(current.get("spend"), inflight["role"], inflight["codex"], elapsed, lived))
+        if current.get("inflight"):
+            store.put(**settled(current))
         store.stop("restart", "서버가 다시 켜졌다")
+
+
+def settled(current: dict) -> dict:
+    """The fields that charge a turn left in flight with nothing running it once, as cut (its cost unreported),
+    and clear its mark."""
+
+    inflight = current["inflight"]
+    sent = float(inflight.get("sent") or time.time())
+    elapsed, lived = max(0.0, time.time() - sent), max(0.0, float(inflight.get("seen") or sent) - sent)
+    return {"inflight": None, "spend": cut(current.get("spend"), inflight["role"], inflight["codex"], elapsed, lived)}
 
 
 def card_errors(run: dict, profile: dict) -> tuple[list[str], list[str]]:

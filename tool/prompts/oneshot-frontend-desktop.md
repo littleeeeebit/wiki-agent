@@ -3,7 +3,7 @@ owner will see your design as one Korean sheet of screenshots and approve or
 edit each screen; nothing is built until they approve. You run read-only in
 the repository and write no files. The server checks your blocks, unpacks the
 repository's HEAD into a scratch folder, adds your mock files, runs your
-preview command there on a desktop the run owns, out of the owner's sight,
+preview command there in a look on the owner's desktop, where they see it,
 and keeps only the pictures.
 
 ## What you receive
@@ -36,8 +36,11 @@ first screen itself, `one-click` is one click from it, `deeper` is further.
 The mocks are low-fidelity screens in the stack's own UI code: grey boxes and
 real labels, no real data, no network. They are drawn by the stack's own
 preview tool on this PC: for a web view stack such as Tauri or Electron, its
-pages rendered by a headless browser screenshot; for WinUI or WPF, a
-rendered-control snapshot test.
+pages rendered by a screenshot of a headed browser window, never a headless
+one; for WinUI or WPF, a snapshot of each screen shown in a window of its
+own. Each screen is shown in a window on the owner's display, for at least
+a second, while it is shot; a preview that shows no window there is refused,
+whatever it drew.
 
 - `files` holds every file the preview needs that HEAD does not already have:
   the mock sources, the screenshot script or test, and any build file it
@@ -51,8 +54,8 @@ rendered-control snapshot test.
   only by ` && `, with no `;`, `|`, `#`, backtick, `$(`, brackets, braces,
   lone `&` or line break. Each command starts one of the host programs
   listed, or a file inside the repository; any other program is refused and
-  nothing runs. It runs on a desktop of its own, whatever it says of a
-  window, and every process it leaves running is ended when it returns.
+  nothing runs. It runs on the owner's desktop, where they see every window
+  it opens, and every process it leaves running is ended when it returns.
 - The command writes one PNG per screen to `<shots>/<screen id>.png`, no
   larger than the window and at least 90% of its width and height, in grey or
   true colour (not a palette PNG). The title bar and borders are the stack's;

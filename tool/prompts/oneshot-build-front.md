@@ -68,8 +68,8 @@ A refusal comes back with the reason, at most three times in all.
 
 - Commit everything and leave nothing uncommitted, then end with the
   `done-report`.
-- Do not push, open a pull request, or ask the person anything: nobody answers
-  until the next review. Decide within the approved design.
+- Do not push or open a pull request. Decide within the approved design; ask
+  the owner only a decision that is theirs, as the end of this message says.
 - Visible text follows the profile's `ui_language`; Korean text is written
   directly in Korean, never translated from English.
 - Build and test with the gate command's own package selection, features and profile

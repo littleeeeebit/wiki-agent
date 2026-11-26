@@ -3,7 +3,7 @@ import { Reply } from '@/components/Agent'
 import { Btn } from '@/components/Modal'
 import { Split, Title } from '@/components/OneshotSpec'
 import { getSwitch, modeOf, type Switch, type TranslationMode } from '@/lib/api'
-import { stageLabel, type Critique, type Inflight, type Review, type SpecView } from '@/lib/oneshot'
+import { api, stageLabel, type Answered,type Critique, type Inflight, type Review, type SpecView } from '@/lib/oneshot'
 import { useWork } from '@/lib/work'
 import { cn } from '@/lib/utils'
 
@@ -11,7 +11,10 @@ import { cn } from '@/lib/utils'
  *  how long, the run's work turns as they stream in its worktree, and beside them the stage's record — its tries
  *  against the server's caps, each review and critique with its findings, and what the run has spent. A stopped
  *  run shows the same, under its reason and `[재개]`, so why it stopped is read off what happened. */
-export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
+export function Track({ view, halt, post, apply }: {
+  view: SpecView; halt?: ReactNode; post?: (text: string, asked?: Answered[], turn?: string) => Promise<boolean>
+  apply?: () => Promise<boolean>
+}) {
   const o = view.oneshot
   const kinds = o.intent?.kinds ?? (o.intent?.kind ? [o.intent.kind] : [])   // a record from before kinds has one
   return (
@@ -19,9 +22,77 @@ export function Track({ view, halt }: { view: SpecView; halt?: ReactNode }) {
       <div className="flex flex-col gap-5 px-10 pt-5 pb-8 max-[1500px]:px-7 max-[560px]:px-4">
         {halt}
         {o.inflight && <Now inflight={o.inflight} kinds={kinds} />}
-        <Log path={view.worktree ?? ''} />
+        {/* As the box sends, so the pane follows the answer; with its questions, since the design model never saw them. */}
+        <Log path={view.worktree ?? ''} asking={view.stopped?.reason === 'asked' ? view.stopped.turn : undefined}
+          onSend={TELLS.includes(view.stage) ? (text, asked, turn) => void (post ?? ((t: string, a?: Answered[], n?: string) =>
+            api.tell(view.repo, t, a, n)))(text, asked, turn) : undefined} />
+        {TELLS.includes(view.stage) && <Tell view={view} post={post} apply={apply} />}
       </div>
     </Split>
+  )
+}
+
+// The stages the owner can speak to the build agent in (`oneshot_tell.OPEN`), and those whose words wait for the
+// frontend build (`WAIT`): the screens are being designed with them then.
+export const TELLS = ['tests', 'build', 'measure', 'review', 'conflict', 'split', 'board', 'frontend', 'r2',
+  'build-front', 'critique', 'phone', 'pc', 'r3']
+const WAITS = ['split', 'board', 'frontend', 'r2']
+const PARKED = ['measure', 'conflict', 'phone', 'pc', 'r3']
+const FRONT = ['build-front', 'critique', 'phone', 'pc', 'r3', 'pr', 'done']
+const HARD = ['kind', 'rekind', 'fake']
+
+/** The owner's words to the build agent, any time it builds: said into the turn that runs, and the design rewritten
+ *  from them before the next step, which carries on from the code as it is. `post` sends them; an idle screen
+ *  passes its own, so the view the server answers with shows the rewrite starting at once; it resolves false when
+ *  the server refused, and the words stay in the box. */
+export function Tell({ view, post, apply }: {
+  view: SpecView; post?: (text: string) => Promise<boolean>; apply?: () => Promise<boolean>
+}) {
+  const o = view.oneshot
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [fault, setFault] = useState('')
+  const run = (fn: () => Promise<boolean>, done = () => {}) => {
+    setBusy(true)
+    setFault('')
+    fn().then((taken) => { if (taken) done() })
+      .catch((err) => setFault(String(err?.message ?? err))).finally(() => setBusy(false))
+  }
+  const send = () => text.trim() && run(() => (post ?? ((t: string) => api.tell(view.repo, t).then(() => true)))(text.trim()),
+    () => setText(''))
+  const waiting = o.tell_pending?.length ?? 0
+  // A parked run (`oneshot_tell.parked`) takes waiting words in only when the owner says so, and only words a
+  // rewrite would take now (`oneshot_tell.taken`): those said while the screens are designed wait for their build.
+  const parked = !view.working && (view.stopped ? !HARD.includes(view.stopped.reason) : PARKED.includes(view.stage))
+  const due = (o.tell_pending ?? []).some((w) => !WAITS.includes(w.stage) || FRONT.includes(view.stage))
+  return (
+    <section aria-label="구현 에이전트에게 말하기" className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3">
+      <Title><span>구현 에이전트에게 말하기</span></Title>
+      <p className="text-muted-foreground">
+        {WAITS.includes(view.stage)
+          ? '화면을 정하는 중이라, 적은 말은 프런트엔드 빌드가 시작될 때 설계에 반영된다.'
+          : '도는 작업 턴에 바로 들어가고, 다음 단계 전에 설계 모델이 이 말대로 설계를 고친다. 모델을 바꾸라는 말도 된다. 처음부터 다시 하지 않고 지금 코드에서 이어 간다.'}
+      </p>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} maxLength={4000} disabled={busy}
+        aria-label="구현 에이전트에게 할 말" className="w-full resize-y rounded-md border border-border bg-background px-3 py-2" />
+      <div className="flex flex-wrap items-center gap-3">
+        <Btn disabled={busy || !text.trim()} onClick={send}>보내기</Btn>
+        {waiting > 0 && <span className="text-[12.5px] text-muted-foreground">설계에 반영을 기다리는 말 {waiting}개</span>}
+        {due && parked && (
+          <Btn disabled={busy} onClick={() => run(apply ?? (() => api.applyTell(view.repo).then(() => true)))}>지금 반영</Btn>
+        )}
+        {fault && <span role="alert" className="text-destructive">{fault}</span>}
+      </div>
+      {(o.retold?.length ?? 0) > 0 && (
+        <ul className="flex flex-col gap-1 text-[12.5px] text-muted-foreground">
+          {o.retold!.map((r) => (
+            <li key={r.ts}>
+              반영됨 — {r.changed.length ? `바뀐 항목 ${r.changed.join(', ')}` : '설계는 그대로, 빌드에 전달'}: {r.words.join(' / ')}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 
@@ -67,7 +138,10 @@ function Now({ inflight, kinds }: { inflight: Inflight; kinds: readonly string[]
 const SHOWN = 6   // turns kept open; earlier ones fold behind one button
 
 /** The run's worktree turns, live: the same record and stream maintenance shows for a task, read-only here. */
-function Log({ path }: { path: string }) {
+// `asking`: the turn a run stopped on its question waits on; only its form answers, whatever turn came after.
+function Log({ path, asking, onSend }: {
+  path: string; asking?: string; onSend?: (text: string, asked?: Answered[], turn?: string) => void
+}) {
   // Its own record: a turn the server starts here (each attempt, a review's repair) reaches it on the feed.
   const work = useWork()
   const { load, forget } = work
@@ -125,6 +199,9 @@ function Log({ path }: { path: string }) {
       ) : (
         <div key={t.key} className="rounded-md border border-border bg-card px-3 py-2.5">
           <Reply turn={t} on={mode !== 'off'} progressOn={mode === 'full'} onPeek={() => {}}
+            // a choice the build agent offered goes back as the owner's words; streamed or read back from the record
+            onSend={onSend && asking && (t.turn ?? t.record) === asking   // only the question the run waits on
+              ? (text, asked) => onSend(text, asked, t.turn ?? t.record) : undefined}
             onAnswer={(turn, id, allow, scope, answers, picks) => work.answer(path, turn, id, allow, scope, answers, picks)} />
         </div>
       ))}

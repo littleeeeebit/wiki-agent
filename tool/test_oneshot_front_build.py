@@ -255,8 +255,9 @@ def test_the_grant_opens_the_worktrees_adapter_only_while_a_build_turn_runs(link
          patch.object(work, "begin", lambda path, chat, text, release, turn: begun.append((turn, release))), \
          patch.object(work, "notice", lambda *a: None):
         oneshot_build.send("budget", "build-front", "build")
-        assert spec()["adapter"] is True and writes(tree) and not writes(original)
         turn, release = begun[0]
+        # the grant names its turn: it opens the adapter only while that turn is the run's (`guard_grant.live`)
+        assert spec()["adapter"] == turn.token and writes(tree) and not writes(original)
         ending(turn)
         release()   # the server lets the tree go before it tells the end: the next turn there gets no grant
         assert spec()["adapter"] is False and not writes(tree)
@@ -270,6 +271,15 @@ def test_a_restart_clears_a_grant_its_turn_never_cleared(linked):
     assert writes(tree)
     oneshot_spec.recover()
     assert spec()["adapter"] is False and not writes(tree)
+    # A run stopped on its question whose turn's end could not clear its mark either: nothing runs at start,
+    # so the turn is charged once as cut and `[재개]` and the owner's answer are not held by it.
+    oneshot_spec.store("budget").stop("asked", "묻는다", turn="t1")
+    oneshot_spec.saved("budget", adapter="tok", oneshot={"working": None, "inflight": {
+        "turn": "tok", "role": "build-front", "codex": False}})
+    before = o().get("spend")
+    oneshot_spec.recover()
+    assert spec()["adapter"] is False and not o().get("inflight") and o()["stopped"]["reason"] == "asked"
+    assert o().get("spend") != before   # charged once, as a cut turn
 
 
 def test_resuming_a_stopped_build_front_sends_its_turn_again(staged):

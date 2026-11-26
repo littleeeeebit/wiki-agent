@@ -90,7 +90,7 @@ def test_a_failed_machine_metric_goes_back_alone_and_the_server_measures_again(w
     given(url="https://example.test/other")
     started_once()
     run = o()["measures"][-1]
-    assert run["mode"] == "auto" and run["status"] == "failed" and o()["stage"] == "build" and o()["fix"] == "measure"
+    assert run["mode"] == "auto" and run["status"] == "failed" and o()["stage"] == "measure" and o()["fix"] == "measure"
     text = sent[-1][2]
     assert "total_ok=False" in text and "signed_in" not in text   # only what failed, never the person metric
     assert [m["id"] for m in measure.failed_metrics(run)] == ["total_ok"]
@@ -174,10 +174,10 @@ def session(tmp_path: Path, job: Job, seen: dict):
     refused = owned_job.Refused
 
     class Look:
-        def __init__(self, root, name, owned, disposable):
+        def __init__(self, root, name, disposable):
             self.folder, self.jobs = Path(root) / name, {}
             (self.folder / "evidence").mkdir(parents=True)
-            seen.update(owned=owned, disposable=disposable)
+            seen.update(disposable=disposable)
 
         def start(self, key, argv, cwd, extra, halt=None, output=None):
             if seen.get("refuse"):
@@ -193,8 +193,8 @@ def session(tmp_path: Path, job: Job, seen: dict):
     from contextlib import contextmanager
 
     @contextmanager
-    def look(root, name, owned=True, disposable=False):
-        yield Look(root, name, owned, disposable)
+    def look(root, name, disposable=False):   # as `desktop_session.look`: no desktop of its own to ask for
+        yield Look(root, name, disposable)
 
     return types.SimpleNamespace(look=look, Halted=type("Halted", (Exception,), {}), Refused=refused)
 
@@ -213,7 +213,7 @@ def test_the_frozen_program_starts_with_its_data_the_inputs_and_whose_measuremen
         with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "auto") as build:
             assert not job.ended
     data = product.folder(s) / "data"
-    assert not seen["owned"] and seen["disposable"] and seen["key"] == "app"   # auto too: the owner's own screen
+    assert seen["disposable"] and seen["key"] == "app"   # auto too: on the owner's screen, never out of sight
     assert Path(seen["argv"][0]).name == "app.exe" and product.folder(s) in Path(seen["argv"][0]).parents
     assert seen["argv"][1:] == ["--data", str(data)] and data.is_dir()
     assert seen["extra"]["ONESHOT_MEASURE"] == "auto" and seen["extra"]["BUDGET_URL"] == "https://example.test/live"
@@ -230,7 +230,7 @@ def test_the_frozen_program_starts_with_its_data_the_inputs_and_whose_measuremen
             patch.object(product, "vouched", lambda pids, url, status=False: True):
         with product.running(s, plan, tree, env, halt, tmp_path / "out" / "serve.log", {}, "owner", build) as same:
             assert same == build
-    assert not seen["owned"] and seen["extra"]["ONESHOT_MEASURE"] == "owner"   # the owner's own screen
+    assert seen["disposable"] and seen["extra"]["ONESHOT_MEASURE"] == "owner"   # the owner's own screen
     assert seen["argv"][0] == str(Path(build["folder"]) / "app.exe")   # the copy that passed
     assert (data / "kept.txt").read_text(encoding="utf-8") == "sign-in"   # one data folder for the whole run
     (Path(build["folder"]) / "app.exe").write_bytes(b"changed")   # the frozen copy itself changed
@@ -413,28 +413,28 @@ def test_a_gate_log_that_cannot_be_removed_stops_for_the_owner(at_measure):  # n
         assert measure.serve_check(tree, run, spec()) == "" and len(tries) == 2
 
 
-def test_the_builds_health_check_keeps_the_program_off_the_owners_screen(at_measure, tmp_path):  # noqa: F811
+def test_the_builds_health_check_runs_the_program_on_the_owners_screen_too(at_measure, tmp_path):  # noqa: F811
     tree, _ = at_measure
     run = types.SimpleNamespace(halt=measure.Halted(), put=lambda *a, **k: None,
                                 chat=types.SimpleNamespace(id="c", parent_id=None))
-    asked = {}
+    asked = []
 
     @contextlib.contextmanager
-    def started(*args, seen=True, **kwargs):
-        asked["seen"] = seen
+    def started(*args, **kwargs):
+        asked.append(kwargs)
         yield None
     with patch.object(product, "started", started):
         assert measure.serve_check(tree, run, spec()) == ""
-    assert asked == {"seen": False}   # only the measurement itself is shown
+    assert asked == [{}]   # nothing asks for the program out of sight: no run of it is hidden (plan 13f)
     job, looked = Job(), {}
     answers = iter([None, 200])
     with patch.dict(sys.modules, desktop_session=session(tmp_path, job, looked)), \
             patch.object(product, "answers", lambda url: next(answers)), \
             patch.object(product, "vouched", lambda pids, url, status=False: True):
         with product.running(spec(), {"app": program(tree), "inputs": []}, tree, {}, measure.Halted(),
-                             tmp_path / "h.log", {}, "auto", seen=False):
+                             tmp_path / "h.log", {}, "auto"):
             pass
-    assert looked["owned"]   # a desktop of its own
+    assert looked["disposable"] and "owned" not in looked   # the owner's own desktop, as every run's
 
 
 def test_the_programs_output_reaches_the_disk_only_masked(at_measure, tmp_path):  # noqa: F811 — the imported fixture
@@ -473,8 +473,7 @@ def test_a_stop_accepted_before_the_outcome_is_saved_holds(with_person):
     measure.stop("budget")
     record = {"n": before + 1, "head": o()["built_head"], "ts": 1, "folder": "m", "mode": "auto", "status": "passed"}
     try:
-        assert measure.decided("budget", oneshot_spec.store("budget"), record,
-                               measure.oneshot_needs.CHANGES.get("budget", 0)) is None
+        assert measure.decided("budget", oneshot_spec.store("budget"), record, ({ENV}, 0)) is None
     finally:
         measure.HALTS.pop("budget", None)   # one process's tests share it: the next run starts unstopped
     assert len(o().get("measures") or []) == before and o()["stopped"]["reason"] == "measure"

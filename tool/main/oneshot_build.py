@@ -24,12 +24,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
-from common import masked
+from common import errorlog, masked
 from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_calls, oneshot_needs, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled
+from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled, turn_stage
 from .query import ROOT, _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
@@ -49,12 +49,16 @@ class Turn(work.Run):
     """A work turn the oneshot sent: charged to the run's ledger when it ends,
     and a turn that ended without reaching its check stops the stage with the reason."""
 
+    alive: set[str] = set()   # the tokens of turns whose end has not run yet, whatever their conversation does
+
     def __init__(self, chat, repo: str, stage: str, codex: bool) -> None:
         super().__init__(chat, task=True)
         self.repo, self.stage, self.codex, self.checked = repo, stage, codex, False
         self.token = uuid.uuid4().hex   # names this turn's `inflight`, so a late end clears only its own
+        Turn.alive.add(self.token)   # before `send` writes it: a token on record no live turn holds is stale
         self.sender = threading.get_ident()   # `work.begin` ends a turn it could not start on this thread
         self.ended = threading.Event()
+        self.over = False   # its end has run, whatever it managed to write (`ending`)
         # The session is the worktree's, the person's turns included: this turn's closing block is its own.
         block = CLOSES.get(stage)
         self.closes = chat.settled = (re.compile(rf"^```(?:done-report|disposition|{block})[ \t]*\r?$", re.M).search
@@ -69,6 +73,13 @@ class Turn(work.Run):
             self.chat.settled = work.SETTLING.search
 
     def finish(self) -> None:
+        try:
+            self.closing()
+        finally:
+            self.over = True
+            Turn.alive.discard(self.token)
+
+    def closing(self) -> None:
         super().finish()
         self.settle()
         if threading.get_ident() == self.sender:   # never started: no model ran, so nothing is charged
@@ -81,11 +92,14 @@ class Turn(work.Run):
         with oneshot._lock:
             current = store.get()
             mine = (current.get("inflight") or {}).get("turn") == self.token
-            store.put(**({"inflight": None} if mine else {}),
+            stop = {"working": None, "stopped": {   # in the same save as its charge: never one without the other
+                "reason": "restart" if runtime.stopping.is_set() else "block", "detail": f"작업 턴이 멈췄다 — {error}",
+                "state": current.get("stage")}} if not self.checked and mine and current.get("working") == self.stage else {}
+            store.put(**({"inflight": None} if mine else {}), **stop,
                       spend=charged(current.get("spend"), self.stage, self.codex,
                                     (done.get("meta") or {}).get("cost_usd"), time.time() - self.started_at))
-            if not self.checked and mine and current.get("working") == self.stage:
-                store.stop("restart" if runtime.stopping.is_set() else "block", f"작업 턴이 멈췄다 — {error}")
+            if mine:   # the owner answered the turn's question as it ended: the answer goes in now
+                owner().answered(store)
 
     def unsent(self) -> None:
         """`work.begin` refused the turn before it took it: no model ran, so nothing is charged."""
@@ -93,11 +107,13 @@ class Turn(work.Run):
         self.settle()
         self.ended.set()
         store = oneshot_spec.store(self.repo)
-        with oneshot._lock:
-            if self.stage in GRANTS:
-                oneshot_spec.saved(self.repo, adapter=False)
-            if (store.get().get("inflight") or {}).get("turn") == self.token:
-                store.put(inflight=None)
+        try:
+            with oneshot._lock:   # the grant is cleared by `send`'s release, which follows on every way out
+                if (store.get().get("inflight") or {}).get("turn") == self.token:
+                    store.put(inflight=None)
+        finally:
+            self.over = True
+            Turn.alive.discard(self.token)
 
 
 def stopped_for_kind(repo: str) -> bool:
@@ -202,27 +218,46 @@ def run_as(command: str, o: dict, path: Path) -> str:
     return "&&".join(parts)
 
 
-def send(repo: str, stage: str, text: str) -> None:
+def send(repo: str, stage: str, text: str, held=None) -> None:
     """One work turn for `stage` in the spec's worktree, answering only the refusal its `text` was `composed` with;
-    a turn that cannot be sent stops the stage, and the instruction the person queued for the worktree goes then."""
+    a turn that cannot be sent stops the stage, and the instruction the person queued for the worktree goes then.
+    `held`: the hold a rewrite hands on, so no turn comes between; let go on any way out that sends no turn."""
 
-    if stopped_for_kind(repo) or not resolve_tools(repo, stage):
-        return
-    store = oneshot_spec.store(repo)
-    spec = oneshot_spec.spec_of(repo)
-    path, codex = Path(spec["worktree"]), oneshot.codex_role("build", store)
+    let_go = held or (lambda: None)
     try:
-        held = hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
+        store = oneshot_spec.store(repo)
+        if stopped_for_kind(repo) or (not held and oneshot.diverted(store, stage)) or not resolve_tools(repo, stage):
+            return let_go()
+        spec = oneshot_spec.spec_of(repo)
+        path, codex = Path(spec["worktree"]), oneshot.codex_role("build", store)
+    except BaseException:
+        let_go()
+        raise
+    try:
+        held = held or hold(work._busy, work_lock, str(path), "작업트리를 다른 턴이 쓰고 있다", kind="turn")
     except HTTPException as exc:   # whoever holds it sends the queued instruction when it lets go
         store.stop("block", str(exc.detail))
         return
+    with oneshot._lock:   # held now, a tell only queues (`oneshot_tell`): words said by now, or a rewrite, go first
+        try:
+            o = store.get()
+        except BaseException:   # an unreadable run: the hold goes with it, never left without a turn
+            held()
+            raise
+        if o.get("working") == "retell" or owner().due(o):
+            owner().start(store, held)   # the hold goes on to the rewrite, or back when one already runs
+            return
 
     def release() -> None:   # the grant and the closing block go before the tree does: the next turn there,
-        if turn is not None:   # a person's included, never finds them set (`work.run_turn` lets go first)
-            turn.settle()
-        if stage in GRANTS:
-            oneshot_spec.saved(repo, adapter=False)
-        held()
+        try:   # a person's included, never finds them set (`work.run_turn` lets go first)
+            if turn is not None:
+                turn.settle()
+            if stage in GRANTS:
+                oneshot_spec.saved(repo, adapter=False)
+        except Exception as exc:   # the tree still goes and the turn still ends; a grant it could not clear names
+            errorlog.record("oneshot-grant", exc, repo=repo)   # this turn, and opens nothing once it is gone
+        finally:
+            held()
 
     release.held = held.held
     turn = None
@@ -231,19 +266,115 @@ def send(repo: str, stage: str, text: str) -> None:
         cfg = oneshot.role_config("build", store)
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
-        store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
-                  inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
-                  sent_refusal=due and {**due, "turn": turn.token})
-        if stage in GRANTS and GRANTS[stage](spec):   # set as the turn starts, a resumed one included; its end clears it
-            oneshot_spec.saved(repo, adapter=True)
+        with oneshot._lock:   # one step against `unstuck`, which reads and clears an ended turn's marks under it
+            store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
+                      inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
+                      sent_refusal=due and {**due, "turn": turn.token})
+            grant = stage in GRANTS and GRANTS[stage](spec)   # set as the turn starts, a resumed one included, naming
+            if grant or spec.get("adapter"):   # the turn: it opens the adapter only while that turn is `inflight`
+                oneshot_spec.saved(repo, adapter=turn.token if grant else False)   # (`guard_grant.live`); its end clears it
         work.begin(path, chat, text, release, turn)
     except BaseException as exc:
-        if turn is not None:
-            turn.unsent()
-        release()
+        try:
+            if turn is not None:
+                turn.unsent()
+        finally:
+            release()
         store.stop("restart" if runtime.stopping.is_set() else "block",
                    f"작업 턴을 보내지 못했다 — {getattr(exc, 'detail', exc)}")
         idle(path)
+
+
+def ending(path: Path) -> bool:
+    """`work.WAITS`: a build turn let this tree go and has not ended yet. Its end, which clears its marks,
+    dispatches the queued instruction. Read in memory, so there is nothing to fail to read."""
+
+    turn = work._runs.get(str(path))
+    return isinstance(turn, Turn) and not turn.over
+
+
+def record(path: Path) -> tuple[str, dict] | None:
+    """The oneshot run whose worktree is `path`, read now. Raises when the folder or a record cannot be
+    read: a refused read is never "no run" (`specs.load` and `glob` both hide one)."""
+
+    key = path.resolve()
+    with specs._files:
+        try:
+            entries = [e for e in os.scandir(specs.SPECS) if e.is_dir()]
+        except FileNotFoundError:
+            return None
+        for entry in entries:
+            try:
+                spec = json.loads((Path(entry.path) / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            if isinstance(spec, dict) and spec.get("worktree") and Path(spec["worktree"]).resolve() == key:
+                return entry.name, spec
+    return None
+
+
+def reclaimed(path: Path, run=None, gone: str | None = None) -> None:
+    """Clear the marks a build turn's end failed to clear, once that turn is gone.
+
+    Revoke its grant and, on a run nothing works on, charge the turn once as cut, in one save, under the lock
+    `send` writes a new turn's marks under. Only a turn whose end has run (not in `Turn.alive`) is charged
+    here: one still closing, its conversation reset or not, charges itself. With `gone`, only that turn's
+    marks. Raise when the record cannot be read or saved: nothing is opened on a guess."""
+
+    if gone is None and ending(path) and work._runs.get(str(path)) is not run:   # its end dispatches the queue
+        raise HTTPException(409, "앞선 빌드 턴이 아직 끝나는 중이다 — 끝나면 기다리던 지시가 이어 간다")
+    mine = getattr(run, "token", None)
+    with oneshot._lock:   # `Turn.finish` writes its marks under it
+        if not (found := record(path)):
+            return
+        repo, spec = found
+        o, grant = spec.get("oneshot") or {}, spec.get("adapter")
+        flight = o.get("inflight") or {}
+
+        def stale(token) -> bool:
+            return bool(token) and token != mine and gone in (None, token)
+
+        import guard_grant   # the guard's own rule for what is open; a grant goes once its turn let the tree go
+        fields = {"adapter": False} if isinstance(grant, str) and stale(grant) and guard_grant.live(spec) else {}
+        ended = stale(token := flight.get("turn")) and token not in Turn.alive
+        if ended and not o.get("working"):
+            fields["oneshot"] = oneshot.settled(o)
+        elif ended and o["working"] == flight.get("role"):
+            fields["oneshot"] = {**oneshot.settled(o), "working": None, "stopped": {   # its end failed before its stop
+                "reason": "block", "detail": "작업 턴이 끝났지만 그 끝을 기록하지 못했다 — [재개]로 다시 보낸다",
+                "state": o.get("stage")}}
+        if fields:
+            oneshot_spec.saved(repo, **fields)
+
+
+def admitted(path: Path, run) -> None:
+    """`work.ADMITS`: no other turn starts in a tree whose build turn's marks are not cleared."""
+
+    try:
+        reclaimed(path, run)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        errorlog.record("oneshot-grant", exc, path=str(path))
+        raise HTTPException(409, "실행 기록을 읽거나 고치지 못했다 — 잠시 뒤 다시 보낸다") from exc
+
+
+def unstuck(repo: str) -> None:
+    """For `[재개]` and the owner's answer: clear the marks a build turn left that could not clear them.
+
+    A token on record that no live turn holds (`Turn.alive`: its end has run, or its turn never got one) is
+    cleared, by that token alone, under the lock a new turn writes its own under. No hold is taken, so a run's
+    follow-up never finds its tree taken, and a turn still closing, its conversation reset or not, is left to
+    charge itself."""
+
+    spec = oneshot_spec.spec_of(repo)
+    tree, token = Path(spec["worktree"]), (spec["oneshot"].get("inflight") or {}).get("turn")
+    if not token or token in Turn.alive:
+        return
+    try:
+        reclaimed(tree, gone=token)
+    except Exception as exc:
+        errorlog.record("oneshot-grant", exc, repo=repo)
 
 
 def idle(path: Path) -> None:
@@ -297,12 +428,18 @@ def tools_text(o: dict) -> str:
             f"nothing; if a tool is missing, say so in your answer.\n\n{names}\n")
 
 
+def owner() -> object:
+    from . import oneshot_tell   # it imports this module; what every work turn is told of the owner
+    return oneshot_tell
+
+
 def tests_text(spec: dict) -> str:
     kind = shape(spec["oneshot"])
     text = oneshot.prompt("tests", kind).replace("{tests}", json.dumps(planned(spec), ensure_ascii=False, indent=2)) \
         .replace("{profile}", environment(spec["oneshot"])).replace("{tools}", tools_text(spec["oneshot"])) \
         .replace("{needs}", oneshot_needs.told(spec))
-    return text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text
+    return owner().tests_told(spec["oneshot"], text.replace("{toolchain}", toolchain_text(spec)) if kind == "android"
+                              else text)
 
 
 # Every build turn ends on the real measurement it must be ready for (`oneshot_measure`).
@@ -315,7 +452,8 @@ def build_text(spec: dict) -> str:
     text = oneshot.prompt("build", kind).replace("{tests_head}", o["tests_head"]).replace("{gate}", o["gate"]) \
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o)) \
         .replace("{needs}", oneshot_needs.told(spec))
-    return (text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text) + "\n" + MEASURE_CONTRACT
+    return owner().told(o, text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text) \
+        + "\n" + MEASURE_CONTRACT
 
 
 def begin(repo: str) -> None:
@@ -329,7 +467,7 @@ def resume(repo: str) -> None:
     if stopped_for_kind(repo):
         return
     spec = oneshot_spec.saved(repo, oneshot={"attempts": 0})   # the owner's resume starts the attempts afresh
-    stage = spec["oneshot"]["stage"]
+    stage = turn_stage(spec["oneshot"])
     send(repo, stage, STAGES[stage][2](spec))
 
 
@@ -542,13 +680,15 @@ def source(path: Path, file: str, root: str) -> str:
         return p.as_posix()
 
 
-def red(spec: dict, found: list[tuple[str, str, str, str]]) -> str:
-    """Why the planned tests do not all fail now, before any application exists, or empty."""
+def red(spec: dict, found: list[tuple[str, str, str, str]], again: bool = False) -> str:
+    """Why the planned tests do not all fail now, before any application exists, or empty. `again`: the design
+    changed mid-build and the application exists, so a planned test may pass; every one still runs, unskipped."""
 
     names = [t["test_name"] for t in planned(spec)]
     if missing := [n for n in names if not any(named(n, c[1]) for c in found)]:
         return "JUnit 보고서에 없는 계획 테스트: " + ", ".join(missing) + " — 테스트 이름이 `test_name` 그대로여야 한다"
-    for want, label in (("passed", "아직 구현이 없는데 통과하는 테스트는 아무것도 확인하지 않는다:"), ("skipped", "건너뛴")):
+    for want, label in (() if again else (("passed", "아직 구현이 없는데 통과하는 테스트는 아무것도 확인하지 않는다:"),)) \
+            + (("skipped", "건너뛴"),):
         if bad := sorted({c[1] for c in found if c[3] == want and any(named(n, c[1]) for n in names)}):
             return f"{label} 계획 테스트: " + ", ".join(bad)
     keys = [c[:3] for c in found if any(named(n, c[1]) for n in names)]
@@ -612,13 +752,18 @@ def owns(spec: dict) -> bool:
 
 def checked(path: Path, run, spec: dict, final: str):
     """`specs._check`'s hand-over: the stage's check, then the next turn; a person's turn, or one S4 does not own, is left."""
-    repo, stage = spec["repo"], spec["oneshot"]["stage"]
+    repo, stage = spec["repo"], turn_stage(spec["oneshot"])
     if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
     hide = getattr(run.chat, "hide", None)
     why = oneshot_needs.leaked(path, spec, hide, final)   # before any check reads it; again at the turn's end
     if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
+    if not why and stage in owner().OPEN and specs.asks(final):   # the owner answers it in the work log (`oneshot_tell`)
+        oneshot_spec.store(repo).stop("asked", "구현 에이전트가 묻는다 — 작업 로그에서 답하면 설계에 반영하고 이어 간다",
+                                      turn=run.turn)   # the turn whose question it is: only its answer counts
+        run.checked = True   # once its stop is saved: a failed save leaves the turn's end its own stop
+        return None
     run.checked = True
     check, stop, _, after = STAGES[stage]
     try:
@@ -670,26 +815,29 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     commits the turn's files, and pins the contract files, the tool's configuration and each planned case."""
 
     o = spec["oneshot"]
+    again = bool(o.get("tests_head"))   # the design changed mid-build: the code exists, so a planned test may pass
     if specs.sh(["git", "merge-base", "--is-ancestor", o["design_head"], "HEAD"], path).returncode:
         return f"HEAD 가 승인된 설계 커밋 {o['design_head'][:12]} 위에 있지 않다"
     runner = declared(path, final, shape(o), tools(o))   # several kinds: the core's tests alone, each kind's build is 9c's
-    names = changed(path, o["design_head"])
+    names = moved = changed(path, o["design_head"])
+    if again:   # only the contract is committed here: the build's own changes stay for the build turn after
+        names = [n for n in names if n in runner["contract"] + runner["config"]]
     # Pinned by class and name, by file only when named: a planned test outside them could be weakened unseen.
     tests = [t["test_name"].lower() for t in planned(spec)]
     mentions = lambda f: (path / f).is_file() and any(   # noqa: E731
         t in (path / f).read_bytes().decode("utf-8", "ignore").lower() for t in tests)
-    if loose := [f for f in names if f not in runner["contract"] + runner["config"] and mentions(f)]:
+    if loose := [f for f in moved if f not in runner["contract"] + runner["config"] and mentions(f)]:
         return "계획 테스트 이름이 든 파일은 `contract` 에 적는다 — " + ", ".join(loose[:10])
-    before = (snapshot(path, names), head(path), names)
+    before = (snapshot(path, moved), head(path), moved)
     found = junit(path, run, spec, runner["command"])
-    if why := red(spec, found):
+    if why := red(spec, found, again):
         return why
     # A file the report names for a planned case is the case's file: one left out of `contract` is not pinned.
     if outside := sorted({source(path, c[2], runner["root"]) for c in found
                           if c[2] and any(named(t, c[1]) for t in tests)}
                          - set(runner["contract"])):
         return "계획 테스트 사례가 `contract` 에 없는 파일에서 나왔다 — " + ", ".join(outside[:10])
-    if (snapshot(path, names), head(path), changed(path, o["design_head"])) != before:
+    if (snapshot(path, moved), head(path), changed(path, o["design_head"])) != before:
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
     gate = " && ".join([runner["command"].replace("{report}", REPORT), *runner["after"]])
     adapter = path / ".wiki" / "adapter.toml"
@@ -701,7 +849,11 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
     adapter.parent.mkdir(parents=True, exist_ok=True)
     adapter.write_text(connect.adapter_text({**slots, "gate_cmd": gate}, old), encoding="utf-8", newline="\n")
     names = sorted({*names, ".wiki/adapter.toml"})
-    for args in (["add", "-A", "--", *names], ["commit", "-m", "Write the contract tests before the backend", "--", *names]):
+    message = "Update the contract tests for the design the owner changed" if again else \
+        "Write the contract tests before the backend"
+    for args in (["add", "-A", "--", *names], ["commit", "-m", message, "--", *names]):
+        if args[0] == "commit" and not specs.sh(["git", "diff", "--cached", "--quiet", "--", *names], path).returncode:
+            break   # none of them differs from HEAD (a retold turn that kept the contract): HEAD is the tests' commit
         done = specs.sh(["git", *args], path)
         if done.returncode and "nothing to commit" not in done.stdout + done.stderr:
             raise ValueError(f"계약 테스트를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
@@ -709,9 +861,10 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
         raise ValueError(f"계약 테스트 커밋 뒤에도 바뀐 파일이 남았다 — {left[:300]}")
     tests_head, pins = head(path), cases(spec, found)
     scenarios = [f"{r['id']}: {r['text']}" for r in spec.get("requirements") or [] if r.get("postconditions")]
-    oneshot_spec.saved(spec["repo"], done=[gate, *scenarios],
+    oneshot_spec.saved(spec["repo"], done=spec.get("done") if o.get("retell_to") == "build-front" else [gate, *scenarios],   # R2's screens stay
                        # the record is version 2's now, whatever version the run started at
-                       oneshot={"version": max(o.get("version", 1), 2), "stage": "build", "tests_head": tests_head, "contract": runner["contract"] + runner["config"],
+                       oneshot={"version": max(o.get("version", 1), 2), "stage": o.get("retell_to") or "build",
+                                "retell_to": None, "tests_head": tests_head, "contract": runner["contract"] + runner["config"],
                                 "runner": runner["command"], "runner_root": runner["root"], "gate": gate, "cases": pins, "attempts": 0, "working": None})
     specs.note(run, f"계약 테스트 커밋 {tests_head[:12]} · 파일 {len(runner['contract'])}개 · 테스트 {len(pins)}개 고정")
     return ""
@@ -796,5 +949,9 @@ def reviewed(repo: str) -> None:
 
 
 # A stage's turn: `(check, stop after the last refusal, its text, what follows a pass)`; later stages add theirs.
-STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, "build", build_text(oneshot_spec.spec_of(repo)))),
+# After the tests, the build of the stage they hand on to (`oneshot_tell.retell` may send them before the frontend's).
+STAGES = {"tests": (tested, "tests", tests_text, lambda repo: send(repo, (s := oneshot_spec.spec_of(repo))["oneshot"]["stage"],
+                                                                  owner().next_build(s))),
           "build": (built, "gate", lambda spec: review_module().build_turn(spec), reviewed)}
+work.ADMITS.append(admitted)
+work.WAITS.append(ending)
