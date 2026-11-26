@@ -58,3 +58,8 @@ A refusal comes back with the reason, at most three times in all.
   the owner only a decision that is theirs, as the end of this message says.
 - Running the gate command or the tests in this repository is fine. Do not
   start an emulator, address a device or open a window.
+- Build and test with the gate command's own package selection, features and profile
+  each time: every other flag set builds its own copy of the dependencies, and
+  the next build starts from that copy instead of what was just built. Never
+  clean the build cache (`cargo clean`, deleting `target`, `gradle clean`):
+  a warm cache rebuilds only the modules a fix changed (on Windows the server bounds Cargo's incremental cache).

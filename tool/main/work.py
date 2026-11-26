@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, deepseek, output_of
 from common.process import background_options
 from common.paths import RAW
-from common import Veil, errorlog, masked
+from common import Veil, build_cache, errorlog, masked
 from secrets_held import SECRETS_HELD
 from workspace import remove, worktrees
 
@@ -899,9 +899,8 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
         finally:
             from . import oneshot_needs   # a failed, stopped or person's turn: its history checked while it holds the tree
             then = then if oneshot_needs.settle(path, run, final, moving=bool(then)) else None   # refused: stops
-            # Released before the end is told, so a screen that sees the end
-            # can send the next instruction at once.
-            release()
+            build_cache.pruned(path)   # while the turn still holds the tree, so no build of it runs
+            release()   # before the end is told, so a screen that sees the end can send the next instruction at once
             try:
                 run.finish()
                 feed.put({"kind": "work-record", "path": str(path)})
