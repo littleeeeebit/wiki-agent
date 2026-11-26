@@ -1,4 +1,4 @@
-# Step 15 — A fix rebuilds only what it changed
+# Step 16 — A fix rebuilds only what it changed
 
 The overall design is in the [overview](0-overview.md). A build turn that
 fixes one thing should compile that one thing, not the whole program again.
@@ -64,4 +64,4 @@ The `vtuber-ko-dub` run's work-turn log
 
 | # | Step | Status |
 | --- | --- | --- |
-| 15a | Incremental compilation on, the cache bounded at each turn's end, the build prompts' flag line | In this pull request |
+| 16a | Incremental compilation on, the cache bounded at each turn's end, the build prompts' flag line | In this pull request |
