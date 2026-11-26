@@ -72,7 +72,7 @@ memory `N/A` is still a holder.
 A shell call gets the line when it starts a program. A call whose program
 words are all inspection gets nothing: `git`, `grep`, `rg`, `ls`, `cat`,
 `head`, `tail`, `sed -n`, `find`, `wc`, `nvidia-smi`, `tasklist`, `netstat`,
-`Get-Process`, `Get-Content`, `Select-String`. Program words are read as
+and PowerShell's own reads of processes and files. Program words are read as
 `guard` reads them, nested shells included.
 
 ### Which commands are GPU jobs
@@ -297,8 +297,8 @@ measurement.
 ### The build's own measurement is refused
 
 In a build session, on Claude and on Codex, a shell call is refused when its
-text sets `ONESHOT_MEASURE` (`ONESHOT_MEASURE=`, `$env:ONESHOT_MEASURE =`,
-`set ONESHOT_MEASURE=`, `export ONESHOT_MEASURE=`) or runs the contract's
+text sets `ONESHOT_MEASURE` (a `VAR=` prefix, `set`, `export`, or a
+PowerShell `$env:` assignment, in any case) or runs the contract's
 measurement command as the contract writes it. Reading the contract or the
 script passes, and so does a test that sets the variable in its own code.
 
