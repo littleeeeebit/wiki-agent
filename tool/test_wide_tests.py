@@ -86,12 +86,19 @@ def test_a_comment_runs_nothing_and_selects_nothing(tmp_path):
     assert ask("python -m pytest -q \\\n  tool/test_a.py", root) is None   # one command over two lines
     assert ask("py\\\nthon -m py\\\ntest -k test", root)   # Bash joins a word across its continued line
     assert ask("echo build\\ #1; python -m pytest -k test", root)   # an escaped space keeps `#1` in its word
+    assert ask("# Windows build output: .\\bin\\\npython -m pytest -k test", root)   # no escape in a comment
+    assert ask("echo 'a \\\n'; python -m pytest -k test", root)   # nor inside single quotes
+    assert ask('echo a#b \\\n tool/x.py; python -m pytest -q', root)   # a `#` inside a word joins nothing
 
 
 def test_a_quoted_folder_before_the_interpreter_is_still_a_pytest_run(tmp_path):
     root = repo(tmp_path)
     assert ask('"/c/Program Files/Python"/python.exe -m pytest -k test', root)
     assert ask("'C:/Py thon'/Scripts/pytest.exe -q tool/test_a.py", root) is None
+    for command, wide in (("& 'C:\\Program Files\\Python\\python.EXE' -m pytest -k test", True),
+                          ("& 'C:\\Program Files\\Python\\python.exe' -m pytest tool\\test_a.py", False)):
+        payload = {"tool_name": "PowerShell", "cwd": str(root), "tool_input": {"command": command}}
+        assert bool(verdict(payload)) == wide, command
 
 
 def test_each_run_is_read_where_the_cds_before_it_left_the_shell(tmp_path):

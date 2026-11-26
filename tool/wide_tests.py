@@ -25,8 +25,10 @@ LIMIT = 8
 STAGES = re.compile(r"&&|\|\||[;|\n]")
 MOVED = re.compile(r"(cd|sl|Set-Location|pushd|Push-Location)(?:\s+(\S.*))?", re.IGNORECASE)
 ENDED = re.compile(r"(?:exit|logout|throw)(?:\s.*)?", re.IGNORECASE)
-COMMENT = re.compile(r"(?:^|(?<=[\s;&|(]))#[^\n]*")
-HIDDEN = {"posix": re.compile(_QUOTED["posix"].pattern + r"|\\.", re.DOTALL), "ps": _QUOTED["ps"]}
+READ = {   # what `joined` stops at, in each shell: a quoted span, an escaped character, a `#`
+    True: re.compile(rf"(?P<quote>{_QUOTED['posix'].pattern})|(?P<escape>\\(?:\r\n|.))|(?P<hash>#)", re.DOTALL),
+    False: re.compile(rf"(?P<quote>{_QUOTED['ps'].pattern})|(?P<escape>`(?:\r\n|.))|(?P<hash>#)", re.DOTALL),
+}
 POPPED = re.compile(r"(?:popd|Pop-Location)(?:\s.*)?", re.IGNORECASE)
 # Every option pytest and the plugins installed here read a value from the next word, from pytest's own parser on
 # 2026-11-26. An option whose value is optional takes the next word too, unless it reads as another option.
@@ -72,7 +74,7 @@ def selected(stage: str, posix: bool = True) -> list[str]:
         words = argv(stage, posix)
     except ValueError:
         return []
-    start = next((i + 1 for i, w in enumerate(words) if re.search(r"(^|[\\/])pytest(\.exe)?$", w)), len(words))
+    start = next((i + 1 for i, w in enumerate(words) if re.search(r"(?i)(^|[\\/])pytest(\.exe)?$", w)), len(words))
     paths, skip, target = [], False, False
     for word in words[start:]:
         if target:
@@ -101,10 +103,29 @@ def wide(stage: str, posix: bool = True) -> str:
 
 
 def joined(command: str, posix: bool) -> str:
-    """`command` with its continued lines joined as the shell joins them: Bash drops `\\` and the newline, so a
-    word may go on across it; PowerShell's backtick and newline part words."""
+    """`command` read left to right as the shell reads it, quotes, escapes and comments in turn: a comment at the
+    start of a word goes, to its line's end, a backslash in it escaping nothing; a continued line is joined (Bash
+    drops `\\` and the newline, so a word may go on across it; PowerShell's backtick and newline part words); a
+    quoted or escaped `#` stays text."""
 
-    return re.sub(r"\\\r?\n", "", command) if posix else re.sub(r"`\r?\n", " ", command)
+    out, at, glued = [], 0, -1   # `glued`: where the last quote or escape ended; a `#` right there is in a word
+    while m := READ[posix].search(command, at):
+        out.append(command[at:m.start()])
+        start, at = m.start(), m.end()
+        if m["hash"]:
+            if start == 0 or (command[start - 1] in " \t\r\n;&|(" and glued != start):
+                end = command.find("\n", start)
+                at = len(command) if end < 0 else end   # the newline stays: it ends the comment's line
+            else:
+                out.append("#")
+        elif m["escape"]:
+            out.append(("" if posix else " ") if m[0][1:] in ("\n", "\r\n") else m[0])
+            glued = at
+        else:
+            out.append(re.sub(r"\\\r?\n", "", m[0]) if posix and m[0].startswith('"') else m[0])
+            glued = at
+    out.append(command[at:])
+    return "".join(out)
 
 
 def target(rest: str, posix: bool) -> str:
@@ -123,12 +144,9 @@ def target(rest: str, posix: bool) -> str:
 
 def stages(command: str, dialect: str) -> list[tuple[str, str]]:
     """`command`, already `joined`, split where the shell runs a new command, each stage with the operator before
-    it ("" first). An operator inside quotes or a heredoc is text, a comment is nothing, and a line broken after
-    `&&`, `||` or `|` goes on the same list."""
+    it ("" first). An operator inside quotes or a heredoc is text, and a line broken after `&&`, `||` or `|` goes
+    on the same list."""
 
-    masked = HIDDEN[dialect].sub(lambda m: "x" * len(m[0]), command)   # a `#` quoted or escaped starts nothing
-    for m in COMMENT.finditer(masked):
-        command = command[:m.start()] + " " * len(m[0]) + command[m.end():]
     blank, cuts, ops = _blank(command, dialect), [0], [""]
     for match in STAGES.finditer(blank):   # the same length as `command`, so its places are `command`'s
         cuts += [match.start(), match.end()]
@@ -199,6 +217,8 @@ def verdict(payload: dict) -> dict | None:
             words = argv(stage, posix)
         except ValueError:
             continue
+        if not posix and words[:1] == ["&"]:   # PowerShell's call operator, before a quoted interpreter's path
+            words = words[1:]
         if runs_pytest(stage, words) and any(guarded(f) for f in folders) and (what := wide(stage, posix)):
             output = {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                       "permissionDecisionReason": REASON.format(what=what, limit=LIMIT)}

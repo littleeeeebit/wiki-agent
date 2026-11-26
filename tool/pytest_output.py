@@ -45,7 +45,7 @@ def runs_pytest(stage: str, words: list[str] | None = None) -> bool:
             del words[:1]
     if not words:
         return False
-    executable = words[0].replace("\\", "/").rsplit("/", 1)[-1]
+    executable = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower()   # Windows names `python.EXE` too
     if re.fullmatch(r"pytest(?:\.exe)?", executable):
         return True
     if re.fullmatch(r"(?:python[\d.]*|py)(?:\.exe)?", executable):
