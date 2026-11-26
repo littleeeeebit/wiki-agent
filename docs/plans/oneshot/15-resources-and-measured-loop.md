@@ -486,16 +486,19 @@ the build's own leftover for longer than its processes take to exit. The
 next turn on the worktree, the build's or the owner's, starts the CLI again
 with `--resume`.
 
-An owner's words during the turn (plan 14's steer) must not make this wait
-for good. Today any steer in a turn makes a closing answer wait for every
-background task (`ChatSession`'s `_steered`, marked `ponytail:` there),
-because a steer's replay says only that it was read. 15b narrows that as
-the mark names: a closing answer counts once every steer's replay of the
-turn came before it, since the model wrote that answer with the words in
-front of it. A steer whose replay comes after the closing answer, or lands
-after the check, still holds the turn as today (`_closing`), so the owner's
-unread words are never lost. This is the one closing rule, so it applies to
-every closing block, not only `measure-request`.
+An owner's words during the turn (plan 14's steer) keep today's protection
+unchanged. Any steer in a turn makes a closing answer wait for every
+background task (`ChatSession`'s `_steered`), because the provider gives no
+sign that a result answers the steer rather than coming from before it:
+Claude can replay the steer and then send the old result
+(`test_a_closing_answer_does_not_drop_a_steer_already_read`). So a steered
+turn that closes with `measure-request` while background tasks run waits
+for them, and the card shows the turn waiting on them. Its request is read
+when the turn ends, and the trial is dispatched then. ponytail: a helper
+that never ends holds such a turn until the owner stops it in the work
+panel, and a stopped turn's request is dropped, so the next build turn asks
+again; narrowing it needs a provider signal tying a result to the steer it
+answers.
 
 Where it is accepted: a build turn whose effective stage is `build`, or a
 repair turn sent from `measure`, in a run whose `HEAD` holds the measurement
@@ -684,9 +687,9 @@ Tests show:
 - a turn closing with `measure-request` while a background helper and its
   GPU runner with a child still run: the turn settles, closing the CLI ends
   them with the runner's note left standing, and the trial waits on that
-  note and then runs; the same after an owner's steer answered earlier in
-  the turn; a steer replayed after the closing answer still holding the
-  turn;
+  note and then runs; a steered turn closing with `measure-request` still
+  waiting for its background tasks, its request dispatched when they end,
+  and the existing old-result-after-replay test unchanged;
 - a contract whose `{out}` is not in its chain's last command refused with
   the reason;
 - each spelling of the variable refused, the contract's command refused as
@@ -713,4 +716,4 @@ The full gate passes once after the reviewer allows the merge.
 | # | Step | Status |
 | --- | --- | --- |
 | 15a | The machine line, the load line, the two GPU-job kinds, the session's own processes and the refusal behind them, the Claude queue and the Codex run-now-or-refuse, the lease and the queue's order shared with the server's launches, the runner, the owner's data folder refused and watched over every build turn and server launch, the prompt section | Not started |
-| 15b | The check that gates it, `measure-request` and the trial measurement with its own state and card, the closing rule after a steer, the build's own measurement refused, the logs for the next note, three launches on their own desktop and muted, [보기], the pages rewritten | Not started |
+| 15b | The check that gates it, `measure-request` and the trial measurement with its own state and card, the build's own measurement refused, the logs for the next note, three launches on their own desktop and muted, [보기], the pages rewritten | Not started |
