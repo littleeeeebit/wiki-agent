@@ -24,13 +24,13 @@ The `vtuber-ko-dub` run's work-turn log
   setting wins either way.
 - At the end of every work turn, while the turn still holds its worktree,
   `common.build_cache.pruned` removes the least recently used incremental
-  caches until the rest fit in 6 GB. It finds every Cargo build folder in the
+  caches, by their newest file, until the rest fit in 6 GB. It finds every Cargo build folder in the
   worktree (`.cargo-lock` beside `incremental`) whatever its target folder is
   called, one inside another included, up to eight folders down, through real
   folders only. It touches only a build folder whose Cargo lock it takes, so no
   Cargo build runs there meanwhile, whoever started it. One a build holds stays
-  whole for the next turn's end, but its size counts toward the bound. Nothing
-  is deleted through a link or outside the worktree. The open lock file pins
+  whole and unread for the next turn's end, and the count is logged as partial.
+  Nothing is deleted or read through a link or outside the worktree. The open lock file pins
   the path down to the build folder before that path is checked against the
   root the trim began on. Each folder below is removed under its own pin, a
   file the trim creates and the system deletes when its handle closes. Only

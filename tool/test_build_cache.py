@@ -23,7 +23,7 @@ def cache(root, name, age, size=100, build="target/debug"):
     session = root / build / "incremental" / name / "s-1"
     session.mkdir(parents=True)
     (session / "f").write_bytes(b"x" * size)
-    os.utime(session, (time.time() - age, time.time() - age))
+    os.utime(session / "f", (time.time() - age, time.time() - age))   # when rustc last wrote this session
 
 
 def caches(tree):
@@ -47,8 +47,8 @@ def test_the_oldest_caches_go_until_the_rest_fit_wherever_cargo_built_and_nothin
     (outside / "keep" / "f").write_bytes(b"x")
     link(tree / "app" / "target", outside / "target")
     link(tree / "target/debug/incremental/old/s-1/shared", outside / "keep")   # a link inside a cache that goes
-    os.utime(tree / "target/debug/incremental/old/s-1", (time.time() - 400, time.time() - 400))   # dated as before
     assert build_cache.pruned(tree, cap=10_000) == 0   # under the cap: every cache stays warm
+    assert build_cache.pruned(tree, cap=10_000) == 0   # and its pins left the order as it was: read again below
     assert build_cache.pruned(tree, cap=250) == 300   # the three oldest, however deep their build folders
     assert caches(tree) == ["inner", "new"]
     assert (outside / "target/debug/incremental/theirs/s-1/f").exists() and (outside / "keep" / "f").exists()
@@ -93,7 +93,7 @@ def test_a_folder_replaced_before_its_pin_loses_nothing_and_a_pin_never_removes_
     assert (outside / build_cache.PIN).read_text() == "theirs" if theirs else not (outside / build_cache.PIN).exists()
 
 
-def test_a_build_cargo_holds_is_left_whole_but_counted_and_a_cache_that_will_not_go_leaves_the_next_its_turn(tmp_path):
+def test_a_build_cargo_holds_is_left_whole_and_unread_and_a_cache_that_will_not_go_leaves_the_next_its_turn(tmp_path):
     tree = tmp_path / "tree"
     cache(tree, "running", 500, build="target/release")
     cache(tree, "stuck", 400)
@@ -103,14 +103,32 @@ def test_a_build_cargo_holds_is_left_whole_but_counted_and_a_cache_that_will_not
     real = build_cache.wiped
     try:
         build_cache.lock(fd, True)
-        with patch.object(build_cache, "wiped", lambda c: None if c.name == "stuck" else real(c)):   # a file held open
-            assert build_cache.pruned(tree, cap=200) == 200   # only what really went, the busy build counted
-        assert caches(tree) == ["running", "stuck"]   # the held build untouched, the next ones taken instead
+        with patch.object(build_cache, "wiped", lambda c: True if c.name == "stuck" else real(c)):   # a file held open
+            assert build_cache.pruned(tree, cap=200) == 100   # only what really went; the busy build not read
+        assert caches(tree) == ["new", "running", "stuck"]   # the held build untouched, the next one taken instead
     finally:
         build_cache.lock(fd, False)
         os.close(fd)
-    assert build_cache.pruned(tree, cap=150) == 100   # its build done: the oldest goes first again
-    assert caches(tree) == ["stuck"]
+    assert build_cache.pruned(tree, cap=150) == 200   # its build done: the oldest go first again
+    assert caches(tree) == ["new"]
+
+
+def test_a_cache_moved_away_for_a_link_is_never_counted_as_freed(tmp_path):
+    tree, outside = tmp_path / "tree", tmp_path / "outside"
+    cache(tree, "old", 300)
+    cache(tree, "new", 100)
+    outside.mkdir()
+    (outside / "f").write_bytes(b"x" * 10)
+    inc, real = tree / "target/debug/incremental", build_cache.wiped
+
+    def swapped(c):   # after it was measured: moved to another name in the same folder, a junction in its place
+        if c.name == "old":
+            os.rename(c, inc / "kept")
+            link(c, outside)
+        return real(c)
+    with patch.object(build_cache, "wiped", swapped):
+        assert build_cache.pruned(tree, cap=100) == 100   # only `new` really went; the junction went as itself
+    assert caches(tree) == ["kept"] and (outside / "f").exists()
 
 
 def test_a_lock_entry_that_is_not_the_file_opened_is_never_trusted(tmp_path):
