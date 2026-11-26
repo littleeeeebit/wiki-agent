@@ -76,12 +76,13 @@ def product_names(tree: Path) -> list[str]:
     return list(dict.fromkeys(n for n in names if n and n not in (".", "..")))
 
 
-def conf_names(conf: Path) -> list[str]:
-    """One `tauri.conf.json`'s `identifier` and `productName`; none when it cannot be read."""
+def conf_names(conf: Path | bytes | None) -> list[str]:
+    """One `tauri.conf.json`'s `identifier` and `productName`, from the file or the bytes read of it; none when
+    it cannot be read."""
 
     try:
-        value = json.loads(conf.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        value = json.loads(conf if isinstance(conf, bytes) else Path(conf).read_bytes())
+    except (OSError, ValueError, TypeError):
         return []
     return [str(value[k]) for k in ("identifier", "productName") if isinstance(value, dict) and value.get(k)
             and str(value[k]) not in (".", "..")]
@@ -197,6 +198,7 @@ def _k32():
     k.SetEvent.argtypes = k.ResetEvent.argtypes = k.CloseHandle.argtypes = (w.HANDLE,)
     k.WaitForMultipleObjects.argtypes = (w.DWORD, ctypes.POINTER(w.HANDLE), w.BOOL, w.DWORD)
     k.WaitForMultipleObjects.restype = w.DWORD
+    k.WaitForSingleObject.argtypes, k.WaitForSingleObject.restype = (w.HANDLE, w.DWORD), w.DWORD
     return k
 
 
@@ -219,8 +221,9 @@ class Watch:
     program makes that folder before it writes in it. One whose folder exists had no watch of its own, and nothing
     orders a product's run after this read, so the window is `incomplete`. A change no read saw is `incomplete`
     too: a config read back as it was although it was written (a name given and taken back before the read), one
-    made and removed before it, and one changed while the tree's watch overflowed. A name given and replaced by
-    another, both before one read, is beyond this: a product is built with its name, which takes far longer."""
+    made and removed before it, and one changed while the tree's watch overflowed. The scope is the names the
+    window shows (the owner's decision, plan 15a): a program built earlier under another name, a name given and
+    replaced by another before one read, and a config whose whole life falls in lost notices are beyond it."""
 
     def __init__(self, found: list[Path], tree: Path | None = None):
         self.lock, self.sync_lock = threading.Lock(), threading.Lock()
@@ -298,7 +301,7 @@ class Watch:
             return
         if lost or (now is None and last == "unseen") or (now and last and last != "unseen" and now[0] == last[0]):
             self._fail(f"`{conf}` 가 이 구간 중에 바뀌었고, 그동안 쓰인 제품 이름을 다 알 수 없다")
-        self._cover([base / name for name in conf_names(conf) for base in bases()])
+        self._cover([base / name for name in conf_names(now and now[0]) for base in bases()])   # the bytes kept
 
     def _now(self, now: list[Path] | None) -> list[Path] | None:
         """The roots as they are now; first, after the tree's notices were lost, every config read again."""
@@ -341,13 +344,27 @@ class Watch:
                 return
             with self.lock:
                 self.syncs.append(entry)
+            # A stream of changes keeps the event signalled, so a stop or sync seen between batches (`owed`) is
+            # answered once a read issued after it caught up: after its batch (`due`), or when nothing came.
+            owed, due = set(), set()
             while True:
+                if "stop" in due:
+                    return
+                if due:
+                    acked.set()
                 k.ResetEvent(event)
                 if not k.ReadDirectoryChangesW(handle, buffer, len(buffer), recursive, which,
                                                None, ctypes.byref(overlapped), None):
                     self._fail(f"`{folder}` 의 변경을 읽지 못했다 (Windows error {ctypes.get_last_error()})")
                     return
                 ready.set()
+                if owed and k.WaitForSingleObject(event, 100) != 0:   # caught up: nothing before them is unread
+                    if "stop" in owed:
+                        k.CancelIoEx(handle, ctypes.byref(overlapped))
+                        k.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(w.DWORD()), True)
+                        return
+                    acked.set()
+                    owed = set()
                 # The lowest signalled handle wins: a delivered change is read before a sync is answered.
                 while (found := k.WaitForMultipleObjects(3, (w.HANDLE * 3)(event, stop, sync), False,
                                                          0xFFFFFFFF)) == 2:
@@ -362,6 +379,8 @@ class Watch:
                 if not k.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(size), False):
                     self._fail(f"`{folder}` 의 변경을 읽지 못했다 (Windows error {ctypes.get_last_error()})")
                     return
+                due, owed = owed, {name for name, h in (("stop", stop), ("sync", sync))
+                                   if k.WaitForSingleObject(h, 0) == 0}
                 if size.value == 0:   # the buffer overflowed: what changed is not known
                     if mode == "tree":   # every config is read again at the next read; the watch goes on
                         with self.lock:

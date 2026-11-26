@@ -1571,8 +1571,11 @@ def opened(repo: Path, path: Path, run, spec: dict):
     from . import oneshot_publish   # it imports this module
     if spec.get("oneshot") and (why := oneshot_publish.unready(spec, path)):   # its draft, never a ready one
         return failed(run, spec, why)
-    note(run, f"push · origin {branch}")
-    pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch])
+    with getattr(run, "saving", threading.Lock()):   # as `work.stop` orders: one past this check waits for the push
+        if run.halt.is_set():   # again: the preflight above talks to GitHub, and a Stop may have come meanwhile
+            return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
+        note(run, f"push · origin {branch}")
+        pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch])
     if pushed.returncode:
         return failed(run, spec, f"push 실패 — {said(pushed)}")
     base = base_of(spec, path)

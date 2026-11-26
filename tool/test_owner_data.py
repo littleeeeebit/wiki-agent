@@ -219,6 +219,38 @@ def test_a_config_changed_while_the_trees_notices_were_lost_is_incomplete(tree, 
     assert watch.close()["state"] == "changed"   # the watch went on
 
 
+def test_a_stream_of_a_builds_writes_never_holds_up_a_read_or_the_close(tree):
+    watch, going = owner_data.Watch(owner_data.roots(tree), tree), threading.Event()
+    out = tree / "target" / "debug"
+    out.mkdir(parents=True)
+
+    def build():   # a build's own writes, without a pause, for the whole read and close
+        i = 0
+        while not going.is_set():
+            (out / f"o{i % 50}.rlib").write_bytes(b"x" * 64)
+            i += 1
+    writer = threading.Thread(target=build)
+    writer.start()
+    try:
+        time.sleep(0.3)
+        began = time.monotonic()
+        assert watch.settled()["state"] == "clean" and time.monotonic() - began < 5
+        began = time.monotonic()
+        assert watch.close()["state"] == "clean" and time.monotonic() - began < 5
+    finally:
+        going.set()
+        writer.join(10)
+
+
+def test_the_names_taken_are_the_ones_in_the_bytes_kept(tree, tmp_path, monkeypatch):
+    conf = tree / "src-tauri" / "tauri.conf.json"
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    # The file is saved again between the read of its bytes and anything that would read it a second time.
+    monkeypatch.setattr(owner_data, "_state", lambda c: (json.dumps({"identifier": "com.example.first"}).encode(), 1))
+    watch._reread(conf)
+    assert str(tmp_path / "AppData" / "Local" / "com.example.first") in watch.close()["roots"]
+
+
 def test_a_name_given_and_taken_back_before_its_notice_is_read_is_incomplete(tree, monkeypatch):
     conf = tree / "src-tauri" / "tauri.conf.json"
     original, held = conf.read_text(encoding="utf-8"), kernel(tree, monkeypatch, overflow=False)

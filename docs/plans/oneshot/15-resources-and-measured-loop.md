@@ -461,9 +461,13 @@ elsewhere is not covered until its kind names the place.
    the window is `incomplete`. So is a change no read saw: a config read back
    as it was although its write time moved (a name given and taken back
    before the read), one made and removed before it, and one changed while
-   the worktree's notices were lost. A name given and then replaced by
-   another, both before one read, is the one case left: a product is built
-   with its name, which takes far longer than the read. Each read first reads every change already delivered, so a
+   the worktree's notices were lost. What is protected is the folders of the
+   names this worktree is seen to give during the window, and the owner
+   decided (2026-11-26) that this is the scope. Left outside it, as limits:
+   a program built earlier under a name the window never shows; a name given
+   and then replaced by another, both before one read; and a config whose
+   whole life (its folder moved in and out included) falls inside lost
+   notices. A config's names are taken from the bytes the read kept. Each read first reads every change already delivered, so a
    write that finished before the check is never read after it. Off Windows
    nothing is watched. Nothing is walked: the vtuber root
    holds 200,024 files now, and one metadata walk of it took 20 s. Junctions

@@ -363,6 +363,18 @@ def test_a_ready_pull_request_is_made_a_draft_before_any_head_goes_up(finished):
     assert not remote.pushes()
 
 
+def test_a_stop_during_the_push_preflight_is_never_followed_by_a_push(finished, monkeypatch):
+    tree, sent = finished
+    readme(tree)
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    run, remote = Run(), Remote()
+    monkeypatch.setattr(oneshot_publish, "unready", lambda spec, path: run.halt.set() or "")   # Stop meanwhile
+    with patch.object(specs, "sh", remote):
+        oneshot_build.checked(tree, run, spec(), SUMMARIZED)
+    assert not remote.pushes() and not remote.created()
+
+
 def test_a_stop_while_s8_reads_its_watch_keeps_the_draft(finished, monkeypatch):
     from main import oneshot_owner_data
 
