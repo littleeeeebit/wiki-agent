@@ -73,6 +73,31 @@ def test_each_spelling_of_a_root_is_refused_and_a_variable_alone_is_not(tree, tm
         assert not denied(shell(tree, command, host)), command
 
 
+@pytest.mark.parametrize("host", ["claude", "codex"])
+def test_a_redirected_local_folder_keeps_its_variable_refusal(tree, tmp_path, monkeypatch, host):
+    redirected = tmp_path / "RedirectedData"   # the known Local folder and the variable both point here
+    redirected.mkdir()
+    monkeypatch.setattr(owner_data, "bases", lambda: [redirected])
+    monkeypatch.setenv("LOCALAPPDATA", str(redirected))
+    for command in ("cat $LOCALAPPDATA/budget/x", "Get-Content ${env:LOCALAPPDATA}\\com.example.budget\\x"):
+        assert "주인의 실제 데이터 폴더" in denied(shell(tree, command, host)), command
+    assert not denied(shell(tree, "ls $LOCALAPPDATA", host))
+
+
+def test_a_name_win32_stores_under_another_spelling_is_still_watched(tree, tmp_path):
+    local = tmp_path / "AppData" / "Local"
+    conf = tree / "src-tauri" / "tauri.conf.json"
+    conf.write_text(json.dumps({"identifier": "Spending."}), encoding="utf-8")   # no folder by it yet
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    (local / "Spending").mkdir()   # the folder Win32 stores for `Spending.`
+    (local / "Spending" / "db.sqlite").write_text("x", encoding="utf-8")
+    k = owner_data._k32()
+    assert owner_data._file_id(k, local / "Spending.") == owner_data._file_id(k, local / "Spending") is not None
+    states = watch.settled()["state"], watch.close()["state"]
+    assert "clean" not in states
+    assert "주인의 실제 데이터 폴더" in denied(shell(tree, f"cat {local}\\Spending\\db.sqlite", "claude"))
+
+
 def test_an_edit_inside_a_root_is_refused_only_in_a_build_session(tree, tmp_path, monkeypatch):
     target = tmp_path / "AppData" / "Local" / "Budget" / "settings.json"
     payload = {"tool_name": "Write", "tool_input": {"file_path": str(target), "content": "{}"}, "cwd": str(tree)}
@@ -245,9 +270,9 @@ def test_a_base_reached_through_a_junction_named_elsewhere_is_incomplete(tree, t
         link(first)
     result = watch.close()
     os.rmdir(local)
-    # Left on the new folder, the window is incomplete. Put back, the owner's folder the path names at both reads
-    # was watched throughout, and the write went elsewhere: it is not that folder's change.
-    assert (result["state"] == "incomplete" and "가리키는 폴더가" in owner_data.reason(result)) if left else \
+    # Left on the new folder, the window is refused (the base named elsewhere, and the root there now). Put back,
+    # the owner's folder the path names at both reads was watched throughout, and the write went elsewhere.
+    assert result["state"] != "clean" if left else \
         result["state"] == "clean" and not (first / "com.example.budget").exists()
 
 

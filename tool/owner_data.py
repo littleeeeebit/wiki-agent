@@ -100,6 +100,13 @@ def _confs(tree: Path):
             yield conf
 
 
+def _alias(name: str) -> str:
+    """A name as Win32 may store it for another spelling: no trailing dots or spaces, case folded. Matching more
+    often only makes a hit, never a clean window."""
+
+    return name.rstrip(". ").casefold()
+
+
 def _file_id(k, what) -> tuple[int, bytes] | None:
     """The volume and 128-bit file ID of an open handle, or of the folder a path leads to now (opened for it)."""
 
@@ -132,7 +139,7 @@ def roots(tree: Path) -> list[Path]:
 def _plain(text: str) -> str:
     """One spelling of a path: forward slashes, no doubled ones, Git Bash's `/c/` as `c:/`, lower case."""
 
-    text = re.sub(r"/+", "/", text.replace("\\", "/")).lower()
+    text = re.sub(r"/+", "/", text.replace("\\", "/")).casefold()
     return re.sub(r"(?<![\w:])/([a-z])/", r"\1:/", text)
 
 
@@ -143,11 +150,12 @@ def named(text: str, found: list[Path]) -> list[Path]:
     plain = _plain(text)
     out = []
     for root in found:
-        tail = re.escape(root.name.lower())
+        tail = re.escape(_alias(root.name)) + r"[. ]*"   # every spelling Win32 stores as the same name
         end = r"(?![\w.-])"
-        absolute = re.escape(_plain(str(root)))
-        variable = "local" if root.parent.name.lower() == "local" else ""
-        spelled = rf"(%{variable}appdata%|\$\{{?(env:)?{variable}appdata\}}?)/{tail}{end}"
+        absolute = re.escape(_plain(str(root.parent))) + "/" + tail
+        # Either variable, whatever the base is called: a redirected Local folder keeps its refusal, and a
+        # Roaming name spelled through the Local variable is the same product's, refused as well.
+        spelled = rf"(%(local)?appdata%|\$\{{?(env:)?(local)?appdata\}}?)/{tail}{end}"
         if re.search(absolute + end, plain) or re.search(spelled, plain):
             out.append(root)
     return out
@@ -246,7 +254,7 @@ class Watch:
     def __init__(self, found: list[Path], tree: Path | None = None):
         self.lock, self.sync_lock = threading.Lock(), threading.Lock()
         self.state, self.paths, self.why = "clean", [], []
-        self.found, self.seen, self.bases, self.tree = list(found), {}, set(), tree
+        self.found, self.seen, self.bases, self.tree, self.absent = list(found), {}, set(), tree, []
         self.threads, self.syncs, self.stop, self.k = [], [], None, None
         self.confs, self.lost = {}, False   # each config as last read (its bytes and write time); notices lost
         if os.name != "nt":
@@ -265,6 +273,8 @@ class Watch:
         for root in found:
             if root.is_dir():
                 self._start(root, "root")
+            else:   # the base watch's; and one there at a verdict was made during the window, whatever its spelling
+                self.absent.append(root)
         if tree is not None:
             for conf in _confs(tree):
                 self.confs[str(conf)] = _state(conf)
@@ -287,8 +297,8 @@ class Watch:
         """A directory name created, renamed or removed in a base folder: a change when it is a root's."""
 
         with self.lock:
-            self.seen.setdefault(base, set()).add(name.lower())
-            hit = any(r.parent == base and r.name.lower() == name.lower() for r in self.found)
+            self.seen.setdefault(base, set()).add(_alias(name))
+            hit = any(r.parent == base and _alias(r.name) == _alias(name) for r in self.found)
         if hit:
             self._changed(None)   # the root itself was created, renamed, removed or replaced
 
@@ -304,10 +314,13 @@ class Watch:
         for root in new:
             if str(root.parent) not in self.bases:
                 self._fail(f"`{root}` 는 이 구간 중에 생긴 이름이고, 그 상위 폴더는 감시하지 않았다")
-            elif root.name.lower() in seen.get(root.parent, ()):
+            elif _alias(root.name) in seen.get(root.parent, ()):
                 self._changed(None)
             elif root.exists():
                 self._fail(f"`{root}` 는 이 구간 중에 생긴 이름이라 그 안은 감시하지 못했다")
+            else:
+                with self.lock:
+                    self.absent.append(root)
 
     def _reread(self, conf: Path, lost: bool = False) -> None:
         """A `tauri.conf.json` changed (`lost`: maybe, its notices lost): each name it gives now is a root from now
@@ -330,6 +343,10 @@ class Watch:
             lost, self.lost, known = self.lost, False, list(self.confs)
         for conf in {*map(str, _confs(self.tree)), *known} if lost else ():
             self._reread(Path(conf), lost=True)
+        with self.lock:
+            absent = list(self.absent)
+        if any(root.exists() for root in absent):   # Win32 resolves its spelling: made in the window
+            self._changed(None)
         return now if now is not None or self.tree is None else roots(self.tree)
 
     def _start(self, folder: Path, mode: str) -> None:

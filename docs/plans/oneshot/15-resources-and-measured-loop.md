@@ -474,7 +474,10 @@ elsewhere is not covered until its kind names the place.
    answer and at its end, compares the file identity (volume and file ID)
    of the folder its handle holds with that of the folder its path opens
    then, never a spelling: a junction naming another folder, a root's folder
-   moved, or a path that cannot be opened, is `incomplete`. A program holding a base open
+   moved, or a path that cannot be opened, is `incomplete`. A root with no
+   folder at the start that has one at a verdict, under whatever spelling
+   Win32 stored, is `changed`. The command refusal accepts either AppData
+   variable for every root, whatever its base folder is called. A program holding a base open
    with delete access makes the watch fail to start, which is `incomplete`.
    A promotion whose answer was lost never reads as a confirmed draft, and
    an undone draft is read back off GitHub. Each read first reads every change already delivered, so a
