@@ -452,14 +452,18 @@ elsewhere is not covered until its kind names the place.
    named (a new `tauri.conf.json` identifier) is a change when its folder
    came or went in the window, and `incomplete` when it already existed,
    unwatched. Every name a product is given in the window counts, one used
-   only between two reads included: the folder of each `tauri.conf.json` is
-   watched, the file is read again on each change to it, and each name it
-   gives is a root from then on. A root whose folder does not exist is the
-   base watch's, since a program makes that folder before it writes in it.
-   A root whose folder exists had no watch of its own, and nothing orders a
-   product's run after the read, so the window is `incomplete`. So is one
-   whose config watch overflowed, since names given and taken back in it are
-   lost. Each read first reads every change already delivered, so a
+   only between two reads included: all of the worktree is watched, a
+   `tauri.conf.json` is read again on each change to it (a new one in a new
+   folder included), and each name it gives is a root from then on. A root
+   whose folder does not exist is the base watch's, since a program makes
+   that folder before it writes in it. A root whose folder exists had no
+   watch of its own, and nothing orders a product's run after the read, so
+   the window is `incomplete`. So is a change no read saw: a config read back
+   as it was although its write time moved (a name given and taken back
+   before the read), one made and removed before it, and one changed while
+   the worktree's notices were lost. A name given and then replaced by
+   another, both before one read, is the one case left: a product is built
+   with its name, which takes far longer than the read. Each read first reads every change already delivered, so a
    write that finished before the check is never read after it. Off Windows
    nothing is watched. Nothing is walked: the vtuber root
    holds 200,024 files now, and one metadata walk of it took 20 s. Junctions
@@ -483,8 +487,9 @@ elsewhere is not covered until its kind names the place.
      (`HANDOVERS`, S8's PR text) and the stop for a question, read it before
      they save; a change refuses the turn in their place. S8's PR text is read
      again after its publication commands: its pull request is a draft until
-     then (the measured draft, or one opened as a draft), and leaves draft
-     only on a clean read. `changed` or `incomplete` at either read refuses the turn
+     then (the measured draft, or one opened as a draft; one found ready is
+     made a draft again before anything is pushed), and leaves draft only on
+     a clean read and with no stop set, under the turn's save lock. `changed` or `incomplete` at either read refuses the turn
      with the folder and the paths, before any stage is saved, and that is
      the next build turn's note.
    - Every other way a check ends counts too: a failed or stopped gate, a

@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -172,11 +173,12 @@ def test_a_name_used_only_between_two_reads_is_never_taken_for_clean(tree, tmp_p
     assert result["state"] == "incomplete" and "com.example.older" in owner_data.reason(result)
 
 
-class Overflowing:
-    """kernel32, with every read of one folder's watch delivering an overflow."""
+class Kernel:
+    """kernel32, with every read of one folder's watch delivering an overflow (`overflow`), or held until `go`
+    is set, as a delivery that comes late."""
 
-    def __init__(self, k, folder: Path):
-        self.k, self.folder, self.handles = k, str(folder), set()
+    def __init__(self, k, folder: Path, overflow: bool):
+        self.k, self.folder, self.handles, self.overflow, self.go = k, str(folder), set(), overflow, threading.Event()
 
     def __getattr__(self, name):
         return getattr(self.k, name)
@@ -188,22 +190,54 @@ class Overflowing:
         return handle
 
     def GetOverlappedResult(self, handle, overlapped, size, wait):
+        if not wait and handle in self.handles and not self.overflow:
+            self.go.wait(30)
         ok = self.k.GetOverlappedResult(handle, overlapped, size, wait)
-        if ok and not wait and handle in self.handles:
+        if ok and not wait and handle in self.handles and self.overflow:
             size._obj.value = 0
         return ok
 
 
-def test_an_overflowed_config_watch_is_incomplete_and_the_watch_goes_on(tree, tmp_path, monkeypatch):
-    conf, real = tree / "src-tauri" / "tauri.conf.json", owner_data._k32
-    monkeypatch.setattr(owner_data, "_k32", lambda: Overflowing(real(), conf.parent))
+def kernel(tree, monkeypatch, overflow: bool) -> Kernel:
+    held = Kernel(owner_data._k32(), tree, overflow)
+    monkeypatch.setattr(owner_data, "_k32", lambda: held)
+    return held
+
+
+def test_a_config_changed_while_the_trees_notices_were_lost_is_incomplete(tree, tmp_path, monkeypatch):
+    conf = tree / "src-tauri" / "tauri.conf.json"
+    kernel(tree, monkeypatch, overflow=True)
     (tmp_path / "AppData" / "Local" / "budget").mkdir()
     watch = owner_data.Watch(owner_data.roots(tree), tree)
+    time.sleep(0.05)   # the config was written before the window
+    (tree / "build.log").write_text("x", encoding="utf-8")   # a build's own write, lost with the rest
+    assert watch.settled()["state"] == "clean"   # no config changed: an overflow alone refuses nothing
     conf.write_text(conf.read_text(encoding="utf-8") + "\n", encoding="utf-8")   # the same names, as now
-    until(lambda: watch.result()["state"] == "incomplete")
+    result = watch.settled()
+    assert result["state"] == "incomplete" and "다 알 수 없다" in owner_data.reason(result)
     (tmp_path / "AppData" / "Local" / "budget" / "cache.bin").write_text("x", encoding="utf-8")
+    assert watch.close()["state"] == "changed"   # the watch went on
+
+
+def test_a_name_given_and_taken_back_before_its_notice_is_read_is_incomplete(tree, monkeypatch):
+    conf = tree / "src-tauri" / "tauri.conf.json"
+    original, held = conf.read_text(encoding="utf-8"), kernel(tree, monkeypatch, overflow=False)
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    time.sleep(0.05)   # the config was written before the window
+    conf.write_text(json.dumps({"identifier": "com.example.trial"}), encoding="utf-8")
+    conf.write_text(original, encoding="utf-8")   # restored before the notice is read
+    held.go.set()
     result = watch.close()
-    assert result["state"] == "changed" and "넘쳐" in " ".join(watch.why)
+    assert result["state"] == "incomplete" and "다 알 수 없다" in owner_data.reason(result)
+    # A config made and removed before its notice is read, in a folder nobody watched for it.
+    held.go.clear()
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    other = tree / "second" / "tauri.conf.json"
+    other.parent.mkdir()
+    other.write_text(json.dumps({"identifier": "com.example.second"}), encoding="utf-8")
+    other.unlink()
+    held.go.set()
+    assert watch.close()["state"] == "incomplete"
 
 
 def test_an_ordinary_config_edit_beside_another_programs_folder_stays_clean(tree, tmp_path):

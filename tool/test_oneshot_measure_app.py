@@ -669,13 +669,8 @@ def test_a_launch_resuming_in_one_turn_holds_up_no_other_turns_shutdown(monkeypa
     with runs[0].halt.gate:   # the first turn's health launch, between its last look and its resume
         closer = threading.Thread(target=work.close_all, kwargs={"wait": False})
         closer.start()
-        deadline = time.monotonic() + 10
-        while stopped != [0, 1]:
-            assert time.monotonic() < deadline, f"only {stopped} were stopped"
-            time.sleep(0.01)
-        assert runs[1].halt.is_set() and closer.is_alive()   # every CLI stopped; the shutdown still waits
-    closer.join(10)
-    assert not closer.is_alive()
+        closer.join(10)   # nothing waits on the launch: its turn's thread is what the shutdown joins after
+        assert not closer.is_alive() and stopped == [0, 1] and all(run.halt.is_set() for run in runs)
 
 
 def test_a_backend_that_did_not_end_fails_its_caller_after_the_holder_is_told(tmp_path, monkeypatch):

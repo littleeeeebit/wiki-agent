@@ -121,8 +121,9 @@ def made(repo: Path, block: dict, session: str = "s1") -> list[dict]:
 class Remote:
     """GitHub and the remote, as `specs.sh` sees them. Everything else runs."""
 
-    def __init__(self, merged=False, ready=True):
+    def __init__(self, merged=False, ready=True, draft=True):
         self.calls, self.body, self.merged, self.real, self.ready = [], "", merged, specs.sh, ready
+        self.draft = draft   # what `gh pr view` says of the open pull request
         self.on_push = lambda: None   # what else happens while a push runs
 
     def __call__(self, args, cwd, timeout=60):
@@ -140,7 +141,7 @@ class Remote:
             self.body = Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8")
             return ok()
         if args[:3] == ["gh", "pr", "view"]:
-            return ok(json.dumps({"state": "MERGED" if self.merged else "OPEN", "mergedAt": None,
+            return ok(json.dumps({"state": "MERGED" if self.merged else "OPEN", "mergedAt": None, "isDraft": self.draft,
                                   "baseRefName": "main", "mergeCommit": {"oid": "fixture-merge"}}))
         if args[:3] == ["gh", "pr", "list"] and "--head" in args:
             return ok("[]")
@@ -1238,9 +1239,11 @@ def test_the_pr_goes_up_as_the_worker_wrote_it_for_a_reader_new_to_the_code(repo
     # A summary saved before this shape is none: facts only, never a `KeyError` (review round 1).
     legacy = dict(spec, summary={"title": "옛 제목", "changes": ["옛 줄"], "why": "옛 이유", "review": []})
     assert "확인된 사실만" in specs.body_of(legacy) and pr_text.title_of(legacy).startswith("x — ")
-    with patch.object(specs, "sh", remote):
+    capped = Remote()   # its own recorder: the earlier turn's worker may still be writing to `remote`'s
+    with patch.object(specs, "sh", capped):
         specs.pull_request(repo, "b", "main", "가" * 300, "body")
-    assert remote.calls[-1][remote.calls[-1].index("--title") + 1] == "가" * 255 + "…", "GitHub caps titles at 256"
+    sent = next(c for c in capped.calls if c[:3] == ["gh", "pr", "create"])
+    assert sent[sent.index("--title") + 1] == "가" * 255 + "…", "GitHub caps titles at 256"
 
 
 def test_a_stopped_pr_text_turn_or_a_stale_summary_never_keeps_a_task_from_its_text(repo):

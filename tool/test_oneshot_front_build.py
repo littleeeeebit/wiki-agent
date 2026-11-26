@@ -44,7 +44,7 @@ FREQUENCY = {"add": "every", "months": "sometimes", "export": "rarely"}
 
 class Run:
     def __init__(self):
-        self.events, self.halt, self.person = [], threading.Event(), False
+        self.events, self.halt, self.person, self.saving = [], threading.Event(), False, threading.Lock()
         self.chat = SimpleNamespace(id="c", parent_id=None)
 
     def put(self, payload):

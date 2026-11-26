@@ -1568,6 +1568,9 @@ def opened(repo: Path, path: Path, run, spec: dict):
     sid, branch = spec["id"], branch_of(spec)
     if run.halt.is_set():
         return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
+    from . import oneshot_publish   # it imports this module
+    if spec.get("oneshot") and (why := oneshot_publish.unready(spec, path)):   # its draft, never a ready one
+        return failed(run, spec, why)
     note(run, f"push · origin {branch}")
     pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch])
     if pushed.returncode:

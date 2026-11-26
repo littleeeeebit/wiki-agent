@@ -9,6 +9,7 @@ ready.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import subprocess
@@ -35,17 +36,25 @@ def body(spec: dict, head: str) -> str:
 def unready(spec: dict, path: Path) -> str:
     """Why the branch may not be pushed now, or empty: once PR #1 exists, a push goes up only while that draft is
     the branch's open pull request, since a push moves whichever one is open on it. The lookup at the pull request
-    write checks the number again, for a draft closed while the push ran."""
+    write checks the number again, for a draft closed while the push ran. A pull request open on the branch that
+    is ready (marked by the owner, or made ready by a run whose `done` was lost) is made a draft again first: a
+    head not yet checked never goes up on a ready one."""
 
-    if not (n := (spec["oneshot"].get("pr1") or {}).get("number")):
-        return ""
+    n = (spec["oneshot"].get("pr1") or {}).get("number")
     try:   # the draft's own base (`specs.own_base`), read off GitHub only for a record without one
         base = specs.base_of(spec, path)
         if base.returncode or not base.stdout.strip():
             return f"기본 브랜치를 모른다 — {specs.said(base)}"
-        specs.existing_pr(path, specs.branch_of(spec), base.stdout.strip(), n)
+        if found := specs.existing_pr(path, specs.branch_of(spec), base.stdout.strip(), n):
+            seen = specs.sh(["gh", "pr", "view", str(found[0]), "--json", "isDraft"], path, 60)
+            if seen.returncode:
+                return f"PR #{found[0]} 이 초안인지 확인하지 못했다 — {specs.said(seen)}"
+            undo = None if json.loads(seen.stdout).get("isDraft") else \
+                specs.sh(["gh", "pr", "ready", str(found[0]), "--undo"], path, 60)
+            if undo is not None and undo.returncode:
+                return f"PR #{found[0]} 을 초안으로 되돌리지 못했다 — {specs.said(undo)}"
     except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as exc:   # every one a stop with its reason
-        return str(exc) if type(exc) is RuntimeError else f"초안 PR #{n} 을 확인하지 못했다 — {type(exc).__name__}: {exc}"
+        return str(exc) if type(exc) is RuntimeError else f"PR 을 확인하지 못했다 — {type(exc).__name__}: {exc}"
     return ""
 
 

@@ -343,6 +343,44 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
     assert o()["stage"] == "pr" and "주인의 실제 데이터 폴더가 바뀌었다" in o()["stopped"]["detail"]
 
 
+def test_a_ready_pull_request_is_made_a_draft_before_any_head_goes_up(finished):
+    tree, sent = finished
+    readme(tree)
+    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    remote = Remote(draft=False)   # made ready by the owner, or by a run whose `done` was lost
+    with patch.object(specs, "sh", listing(remote, 7)):
+        check(tree, SUMMARIZED)
+    undo = next(i for i, c in enumerate(remote.calls) if c[:3] == ["gh", "pr", "ready"] and "--undo" in c)
+    assert undo < next(i for i, c in enumerate(remote.calls) if c[:2] == ["git", "push"])
+    assert o()["stage"] == "done"   # the head checked clean, it leaves draft again
+    # A draft that cannot be made again stops before anything is pushed.
+    oneshot_spec.saved("budget", oneshot={"stage": "pr", "working": "pr"})
+    remote = Remote(draft=False, ready=False)
+    with patch.object(specs, "sh", listing(remote, 7)):
+        assert oneshot_publish.unready(spec(), tree).startswith("PR #7 을 초안으로 되돌리지 못했다")
+    assert not remote.pushes()
+
+
+def test_a_stop_while_s8_reads_its_watch_keeps_the_draft(finished, monkeypatch):
+    from main import oneshot_owner_data
+
+    tree, sent = finished
+    readme(tree)
+    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    run, remote = Run(), Remote()
+    published = lambda: any(c[:3] == ["gh", "pr", "edit"] for c in remote.calls)   # noqa: E731
+    # The read after the publication: a Stop pressed while it runs, then a clean answer.
+    monkeypatch.setattr(oneshot_owner_data, "read", lambda repo: (published() and run.halt.set()) or "")
+    with patch.object(specs, "sh", listing(remote, 7)):
+        assert oneshot_build.checked(tree, run, spec(), SUMMARIZED) is None
+    assert not any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls)
+    assert o()["stage"] == "pr" and "초안으로 두었다" in o()["stopped"]["detail"]
+
+
 def listing(remote, *numbers):
     """`remote`, with `gh pr list` answering these open pull requests from the task's branch into `main`."""
 

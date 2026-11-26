@@ -637,12 +637,10 @@ def close_all(wait: bool = True) -> list[threading.Thread]:
         _cells.clear()
         _review_runs.clear()
         loops = list(_loops.values())
-    for loop in loops:   # all stopped first, as `work.close_all`: one launch resuming holds up no other loop
+    for loop in loops:   # never waited on, as `work.close_all`: a launch resuming ends with its loop's thread
         loop.stop(settle=False)
     for chat in alive:
         chat.close()
-    for loop in loops:
-        loop.settled()
     threads = [lp.thread for lp in loops if lp.thread is not None and lp.thread is not threading.current_thread()]
     for thread in threads if wait else []:
         thread.join()
@@ -675,10 +673,7 @@ class Loop:
             run.halt.flag()
             with run.saving:   # as `work.stop`: a save already past its stop check lands before this returns
                 run.chat.stop(run.halt)
-        settle and self.settled(run)
-
-    def settled(self, run=None) -> None:
-        for halt in (self.halt, getattr(run or self.run, "halt", self.halt)):
+        for halt in (self.halt, getattr(run, "halt", self.halt)) if settle else ():
             halt.settled()
 
 

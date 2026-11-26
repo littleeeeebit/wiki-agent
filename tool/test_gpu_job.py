@@ -132,20 +132,29 @@ def test_a_program_is_a_gpu_job_when_any_directory_it_may_run_in_makes_it_one(tm
     first.mkdir()
     (later / "bin").mkdir(parents=True)
     (later / "bin" / "app.exe").write_bytes(b"")   # only in the later one
-    assert gpu_job.judged(["./bin/app.exe"], [str(first), str(later)], {}) == "gpu"
-    assert gpu_job.judged(["./bin/app.exe"], [str(first)], {}) == "program"
+    assert gpu_job.judged([(["./bin/app.exe"], [str(first), str(later)])], {}) == "gpu"
+    assert gpu_job.judged([(["./bin/app.exe"], [str(first)])], {}) == "program"
 
 
-def test_a_failed_lookup_in_another_directory_never_undoes_a_gpu_job(monkeypatch):
+def test_a_failed_lookup_anywhere_in_the_call_never_undoes_a_gpu_job(monkeypatch):
     def kind(words, d, roots):
         if d == "denied":
             raise PermissionError("access denied")
         return "gpu" if d == "gpu" else "program"
     monkeypatch.setattr(gpu_job, "kind", kind)
-    assert gpu_job.judged(["app"], ["gpu", "denied"], {}) == "gpu"
-    assert gpu_job.judged(["app"], ["denied", "gpu"], {}) == "gpu"
+    assert gpu_job.judged([(["app"], ["gpu", "denied"])], {}) == "gpu"   # one program's two directories
+    assert gpu_job.judged([(["app"], ["denied", "gpu"])], {}) == "gpu"
+    assert gpu_job.judged([(["a"], ["gpu"]), (["b"], ["denied"])], {}) == "gpu"   # two programs in one call
+    assert gpu_job.judged([(["a"], ["denied"]), (["b"], ["gpu"])], {}) == "gpu"
     with pytest.raises(PermissionError):   # none made it one: the lookup's error is the caller's
-        gpu_job.judged(["app"], ["plain", "denied"], {})
+        gpu_job.judged([(["a"], ["plain"]), (["b"], ["denied"])], {})
+    if os.name != "nt":   # the wrap is Windows'
+        return
+    # The hook itself: the GPU program is wrapped or refused, never let through for the other's error.
+    monkeypatch.setattr(gpu_job, "programs", lambda payload, host: ([(["a"], ["gpu"]), (["b"], ["denied"])], "bash"))
+    answer = gpu_job.verdict({"tool_name": "Bash", "tool_input": {"command": "a && b"}})
+    out = (answer or {}).get("hookSpecificOutput") or {}
+    assert out.get("permissionDecision") == "deny" or "updatedInput" in out
 
 
 def test_off_windows_a_gpu_job_is_a_program_like_any_other(tmp_path, monkeypatch):

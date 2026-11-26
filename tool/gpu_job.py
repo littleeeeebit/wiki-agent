@@ -238,20 +238,21 @@ def programs(payload: dict, host: str) -> tuple[list[tuple[list[str], str]], str
 RANK = {"inspect": 0, "builtin": 0, "program": 1, "gpu": 2}
 
 
-def judged(words: list[str], dirs: list, roots: dict) -> str:
-    """One program's kind over every directory it may run in: a GPU job in any of them is one, whatever another
-    directory's lookup raised; that is raised only when none of them made it one."""
+def judged(found: list, roots: dict) -> str:
+    """A shell call's kind over every program in it (`found`: each one's words and the directories it may run
+    in): a GPU job in any of them makes the call one, whatever another lookup raised; that is raised only when
+    none of them made it one."""
 
     best, error = "inspect", None
-    for d in dirs:
+    for words, d in ((words, d) for words, dirs in found for d in dirs):
         try:
-            found = kind(words, str(d), roots)
+            one = kind(words, str(d), roots)
         except Exception as exc:   # every lookup error is the caller's to handle, after the rest are judged
             error = exc
             continue
-        if found == "gpu":
-            return found
-        best = max(best, found, key=RANK.__getitem__)
+        if one == "gpu":
+            return one
+        best = max(best, one, key=RANK.__getitem__)
     if error is not None:
         raise error
     return best
@@ -426,10 +427,10 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
         return None
     roots: dict = {}
     try:
-        kinds = [judged(words, dirs, roots) for words, dirs in found]
+        top = judged(found, roots)   # a GPU job found anywhere in the call survives any other lookup's error
     except Exception:  # noqa: BLE001
         return None
-    if all(k in ("inspect", "builtin") for k in kinds):
+    if RANK[top] == 0:
         return None
     windows = os.name == "nt"   # the queue is Windows': elsewhere a GPU job is a program like any other
     try:
@@ -439,7 +440,7 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
         line = machine.load_line(load, mine)
     except Exception:  # noqa: BLE001 -- the line is help, not a judgement
         load, session, mine, line = {}, None, None, ""
-    if "gpu" not in kinds or not windows:
+    if top != "gpu" or not windows:
         return context(line) if line else None
     try:   # judged a GPU job: every failure from here refuses, never lets the original through
         if mine:
