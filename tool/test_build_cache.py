@@ -217,19 +217,26 @@ def test_a_removal_that_fails_leaves_the_next_its_turn_and_keeps_what_went(tmp_p
     assert caches(tree) == ["b"]
 
 
-def test_the_file_removed_is_the_one_looked_at_whatever_its_name_holds_meanwhile(tmp_path):
+@pytest.mark.parametrize("held", [False, True])
+def test_the_file_removed_is_the_one_looked_at_wherever_it_moved(tmp_path, held):
     at, aside = tmp_path / "f", tmp_path / "aside"
     at.write_bytes(b"x" * 100)
-    first, real = os.lstat(at), os.fstat
+    first, real, close = os.lstat(at), os.fstat, []
 
     def fstat(fd):   # while its handle is open: the file moved away, another put in its name
         st = real(fd)
         os.rename(at, aside)
         at.write_bytes(b"y" * 100)
+        if held:   # and a reader holds it where it went
+            close.append(shared(aside))
         return st
     with patch("os.fstat", fstat):
-        assert build_cache.removed(at) == (first.st_dev, first.st_ino)
-    assert not aside.exists() and at.read_bytes() == b"y" * 100   # the one looked at went; its replacement stays
+        assert build_cache.removed(at) == (None if held else (first.st_dev, first.st_ino))
+    assert at.read_bytes() == b"y" * 100   # its replacement stays
+    assert aside.exists() == held   # the one looked at went, or waits for its reader: then nothing was claimed
+    for c in close:
+        c()
+    assert not aside.exists()
 
 
 @pytest.mark.parametrize("kind", ["junction", "symlink", "folder"])
@@ -249,6 +256,42 @@ def test_a_file_removal_never_follows_nor_takes_what_is_not_a_plain_file(tmp_pat
     with pytest.raises(OSError):
         build_cache.removed(at)
     assert os.path.lexists(at) and (outside / "f").read_bytes() == b"x"   # refused before anything was marked
+
+
+def shared(path):
+    """A reader's handle that lets others delete the file under it, as `CreateFileW` with every share flag gives."""
+
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                wintypes.DWORD, wintypes.HANDLE]
+    handle = k32.CreateFileW(str(path), 0x80000000, 0x7, None, 3, 0, None)   # GENERIC_READ, all shares, existing
+    assert handle not in (None, wintypes.HANDLE(-1).value)
+    return lambda: k32.CloseHandle(wintypes.HANDLE(handle))
+
+
+def test_a_file_another_handle_still_holds_is_never_counted_as_freed(tmp_path):
+    at = tmp_path / "f"
+    at.write_bytes(b"x" * 100)
+    close = shared(at)
+    try:
+        assert build_cache.removed(at) is None   # marked, but its bytes stay while the reader holds it
+        assert at.exists()
+    finally:
+        close()
+    assert not at.exists()   # gone once the last handle closed
+
+
+def test_a_handle_no_descriptor_took_is_closed_at_once(tmp_path):
+    at = tmp_path / "f"
+    at.write_bytes(b"x")
+    with patch("msvcrt.open_osfhandle", side_effect=OSError(24, "Too many open files")):
+        with pytest.raises(OSError):
+            build_cache.removed(at)
+    os.close(os.open(at, os.O_RDONLY))   # refused while a handle asking to delete it were still open
+    assert at.read_bytes() == b"x"
 
 
 def test_a_folder_that_fails_partway_keeps_what_already_went(tmp_path):

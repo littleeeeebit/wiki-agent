@@ -18,7 +18,8 @@ folder with a file open in it cannot be renamed or removed (discovery only gathe
   left.
 - Every file is counted once by its identity, a file linked more than once too. Only counted files a removal itself
   freed come off the count: each it removed, through that file's own handle opened as the entry itself and refused
-  unless it is a plain file, as its last link, in whichever cache that was, kept as it goes. A cache moved or held meanwhile stays counted. What is left is an estimate; the next
+  unless it is a plain file, as its last link, once it is really gone (not held by another handle), in whichever
+  cache that was, kept as it goes. A cache moved or held meanwhile stays counted. What is left is an estimate; the next
   turn's end counts again.
 
 Elsewhere an open file pins nothing, and the oneshot builds on Windows, so nothing is trimmed there.
@@ -153,7 +154,11 @@ def removed(path) -> tuple | None:
                              as_itself | folders_too, None)
     if handle in (None, wintypes.HANDLE(-1).value):
         raise ctypes.WinError(ctypes.get_last_error())
-    fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)   # closing it closes the handle
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)   # from here closing it closes the handle
+    except OSError:
+        k32.CloseHandle(wintypes.HANDLE(handle))   # no descriptor took it: never left open
+        raise
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
@@ -161,8 +166,16 @@ def removed(path) -> tuple | None:
         mark = ctypes.c_ubyte(1)   # FILE_DISPOSITION_INFO: DeleteFile
         if not k32.SetFileInformationByHandle(handle, 4, ctypes.byref(mark), 1):   # FileDispositionInfo
             raise ctypes.WinError(ctypes.get_last_error())
+        name = ctypes.create_unicode_buffer(32768)   # where the file is now: pending deletion, it cannot move
+        k32.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+        if not k32.GetFinalPathNameByHandleW(handle, name, len(name), 0):
+            raise ctypes.WinError(ctypes.get_last_error())
     finally:
-        os.close(fd)   # the system deletes the file this handle opened
+        os.close(fd)   # the system deletes the file this handle opened, once no handle holds it
+    # Marked this way, a file keeps its name until it is really gone, and cannot be renamed meanwhile: that name gone
+    # now means its bytes are. Still there, another handle holds it (or a new file took the name): nothing freed yet.
+    if os.path.lexists(name.value):
+        return None
     return (st.st_dev, st.st_ino) if st.st_nlink == 1 else None
 
 
