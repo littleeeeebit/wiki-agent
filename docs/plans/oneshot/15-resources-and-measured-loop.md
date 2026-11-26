@@ -174,9 +174,10 @@ only with `allow`, after which the approval policy still decides. So a
 Codex GPU job is wrapped in the runner with `--now`, and the runner decides
 in one step under the queue mutex (below). First, no live place may wait.
 Then it tries the lease without waiting. Only once it owns the lease does it
-read the holder note: a note whose root is still alive, or a floor that does
-not hold, makes it release the lease again; a note whose root has exited it
-clears, as the lease's owner. Then it holds the lease for the command's whole
+read the holder note, and judges the whole note as any holder does (below):
+a note that names any process still alive or proven nothing, or a floor
+that does not hold, makes it release the lease again; a note whose every
+named process has exited it clears, as the lease's owner. Then it holds the lease for the command's whole
 run in the foreground. A place published after that step waits on the lease
 like any other. If any condition fails it runs nothing and exits, naming
 which: the head and how many places wait, the lease held, the leftover
@@ -212,14 +213,20 @@ One protocol serves the runners and the server alike, in
   and start time, and the job's root process's pid and start time. It
   clears the note only after the end the next section proves; an end it
   cannot prove replaces the note's processes with those not proven to have
-  exited. Only the lease's owner ever writes or clears the note. Every
+  exited. When the proof failed on the job's count, not on a known process
+  (the count is above the members it reported joining, or could not be
+  read), there is no process to name, and the note says `inconclusive`
+  instead. Only the lease's owner ever writes or clears the note. Every
   acquisition, abandoned or not, reads the note right after it owns the
   lease. Windows may have destroyed the mutex with its last handle, so a
   fresh acquisition can follow a crash, and the note is what tells. A note
   left standing means the last holder did not finish: the new holder waits
   until every process the note names has exited, then for the floor, then
   clears the note and runs. While it waits, the head's line names those
-  processes.
+  processes. An `inconclusive` note is never cleared by a holder: the queue
+  stops, as for an unreadable place, the line says
+  `GPU 작업의 끝을 증명하지 못했다 — 확인 후 지우기` with the note's
+  path, and the owner deletes the note. Nothing is timed out.
 - A place gives the order. A second mutex, `Local\wiki-agent-gpu-queue`,
   guards taking one: under it the taker reads and raises a counter in
   `gpu\next` and creates the place file `gpu\queue\<counter>` with
@@ -275,8 +282,9 @@ One protocol serves the runners and the server alike, in
   member the job reported joining, and an accounting total that covers every
   one of them. Only then does it clear the holder note, release the lease
   and drop its place. If the proof does not come, it writes the processes
-  not proven to have exited into the note, then releases the lease and
-  drops its place, and its output names them. The next holder waits on
+  not proven to have exited into the note, or `inconclusive` when the count
+  failed it, then releases the lease and drops its place, and its output
+  names them. The next holder waits on
   them as on any leftover note, visibly, and nothing is timed out. So no
   thread has to stay alive holding the lease for a job it could not end.
 - The server's launches end the same way, on the measurement worker's
@@ -284,8 +292,8 @@ One protocol serves the runners and the server alike, in
   already proves its job's end with `owned_job` and records the members it
   learned. When that proof is not clean, the look closes its job and
   raises, as today. The worker catches it, writes the members the look's
-  record does not prove exited into the note, and only then releases the
-  lease. The backend's start (`oneshot_measure_app.served`), which today
+  record does not prove exited into the note, or `inconclusive`, and only
+  then releases the lease. The backend's start (`oneshot_measure_app.served`), which today
   closes its job and waits for the root only, moves to the same proof and
   the same note.
 - However the runner itself ends, Windows closes its handles: the job's
@@ -416,7 +424,11 @@ Tests show:
 - Codex admitted with `--now` holding the lease for its run, refused when a
   place waits, when a place is published during its step, for a leftover
   note and for the floor, and two Codex runners racing while the first
-  drains, its note left in place;
+  drains, its note left in place, and refused for a note whose root has
+  exited while a child it names lives;
+- a proof failed on the job's count with every known member gone writing
+  `inconclusive`, the queue stopping on it with its line, and running again
+  once the owner deletes the note;
 - the GPU unreadable, RAM unreadable, and two adapters;
 - each spelling of a root refused on both hosts, the watch's three results
   on an answered, a failed and a stopped turn, a root replaced during a
@@ -460,11 +472,14 @@ The block closes the turn. It joins the closing blocks every build turn sets
 background task still running after it is left over and not waited on, as
 after a `done-report`. Before the trial is dispatched, the server closes the
 worktree's cached CLI (`ChatSession.close`). That ends the CLI's job, and
-with it every background shell and GPU runner the turn left. Each runner
-sees its session end and ends its own job with the proof above before it
-releases the lease, so the trial never waits behind the build's own
-leftover. The next turn on the worktree, the build's or the owner's, starts
-the CLI again with `--resume`.
+with it every background shell and GPU runner the turn left. This is the
+crash path on purpose, not the normal end: a runner ended this way writes
+no proof, its own job closes with it, and its holder note stays. The trial,
+or whoever takes the lease next, waits on that note as on any other, with
+the crash path's stated descendant limit. So the trial never waits behind
+the build's own leftover for longer than its processes take to exit. The
+next turn on the worktree, the build's or the owner's, starts the CLI again
+with `--resume`.
 
 Where it is accepted: a build turn whose effective stage is `build`, or a
 repair turn sent from `measure`, in a run whose `HEAD` holds the measurement
@@ -487,28 +502,20 @@ The server answers with a trial measurement:
 - The worker keeps the hold for the whole trial, through the script's run
   and the check of its result, as the run's measurement worker does, so the
   product and the script both come from the recorded commit.
-- Under the hold it first checks the program file that `app.run` names
-  with `oneshot_desktop.built`'s own containment rules: a plain file inside
-  the worktree's output folder, reached through no link. If it is not, the
-  trial ends with that reason and nothing is moved. If it is, the worker
-  records the move in the trial's record, then moves the file into
-  `measure-app\trial\stale`. Then it runs the run's own gate command
-  (`gate_cmd`), which is what builds the program today
-  (`oneshot_desktop.built` reads its output). So the program the trial
-  measures is one this gate wrote; a gate that passes without building it
-  leaves no program, and the trial ends saying so. It checks again that
-  `HEAD` is the recorded commit and the tree is clean, as `specs.judge` does
-  after a gate. Then it checks the output with `built` and freezes it to
-  the trial's own folder, `measure-app\trial\app`. ponytail: the other files
-  in the output folder are not proven fresh, only the program; a stale
-  resource beside it would pass.
+- Under the hold it runs the run's own gate command (`gate_cmd`), which is
+  what builds the program today (`oneshot_desktop.built` reads its output).
+  It checks again that `HEAD` is the recorded commit and the tree is clean,
+  as `specs.judge` does after a gate. Then it checks the output with
+  `built` and freezes it to the trial's own folder, `measure-app\trial\app`,
+  exactly as the run's measurement does. Nothing in the output folder is
+  moved or removed.
+- ponytail: the trial trusts the gate's output as the run's own measurement
+  does today; a gate that passes without rebuilding leaves an older program
+  in place, and the trial measures it. So the trial's record and its note
+  carry the program's last-write time beside the gate's start, and the
+  build sees when it measured a program its gate did not write. Proving the
+  output's commit is for the measurement and the trial together, later.
 - A failing gate ends the trial with the gate's tail and measures nothing.
-- When the trial ends, however it ends, and while it still holds the tree:
-  if the output folder has no program file, the moved one goes back; if the
-  gate wrote one, the moved one is removed. The record of the move is
-  cleared after either. A server that stops mid-trial finds the record at
-  its next start and does the same before any turn or measurement takes the
-  tree, so a stop or a restart never loses the build's last program.
 - The copy never replaces `measure-app\app`, which the owner's round may be
   waiting to run.
 - The trial's program keeps its data in `measure-app\trial\data`, its own,
@@ -552,7 +559,15 @@ tool paths and PowerShell's call operator included). The agent's side is its
 call. Both are split into commands at `&&`, the chain the contract allows,
 and each command into shell words as `guard` does. Only the contract's
 command that holds `{out}` is the measuring one; the chain's other commands,
-a build or a setup step, are not matched and pass. Each of the agent's
+a build or a setup step, are not matched and pass. 15b makes this a rule of
+the contract rather than a guess: the contract page says the one command
+that receives `{out}` is the measurement itself, and the commands before it
+only prepare; `oneshot_measure_plan` checks that `{out}` sits in the chain's
+last command. An existing contract that breaks it is refused at its next
+check with that reason, as any malformed contract is, and the build
+rewrites it. ponytail: a contract that measures in an earlier command and
+only exports in the last one still passes the check; it breaks the page's
+rule, and the variable refusal above still applies to it. Each of the agent's
 commands is matched against that measuring command, whether it runs alone
 or inside a chain of its own. A program word on either side is compared by its
 canonical executable: the recorded tool path for a declared tool, else the
@@ -644,17 +659,18 @@ Tests show:
   run, measured as a trial of its recorded commit with the tree held
   through the script, built by the gate into its own copy and data, ended
   `superseded` when another commit took the tree, ended by a failing gate
-  and by a gate that leaves no program, refused on an uncommitted tree, its
-  card before `built_head`, its result back as the next build turn after an
-  end, a wrong input, a stop and a restart, and the run's measurement,
-  `measure-app\app` and `measure-app\data` unchanged;
-- a program path through a link or outside the output folder ending the
-  trial with nothing moved; the moved program put back after a failing gate
-  and after a server restart mid-trial, and removed after a gate that wrote
-  a new one;
-- a turn closing with `measure-request` while a background helper still
-  runs: the turn settles, the helper and its GPU runner end with the CLI,
-  and the trial runs;
+  and by a first build on a clean checkout with no output passing, refused
+  on an uncommitted tree, its card before `built_head`, its result back as
+  the next build turn after an end, a wrong input, a stop and a restart, the
+  program's last-write time and the gate's start in its note, nothing in
+  the output folder moved, and the run's measurement, `measure-app\app` and
+  `measure-app\data` unchanged;
+- a turn closing with `measure-request` while a background helper and its
+  GPU runner with a child still run: the turn settles, closing the CLI ends
+  them with the runner's note left standing, and the trial waits on that
+  note and then runs;
+- a contract whose `{out}` is not in its chain's last command refused with
+  the reason;
 - each spelling of the variable refused, the contract's command refused as
   the server renders it, an installed interpreter's recorded path included,
   with a standalone `{out}`, with an attached `--out={out}`, and inside a
