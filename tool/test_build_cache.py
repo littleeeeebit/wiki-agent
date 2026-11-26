@@ -103,7 +103,7 @@ def test_a_build_cargo_holds_is_left_whole_and_unread_and_a_cache_that_will_not_
     real = build_cache.wiped
     try:
         build_cache.lock(fd, True)
-        with patch.object(build_cache, "wiped", lambda c, i: None if c.name == "stuck" else real(c, i)):   # held open
+        with patch.object(build_cache, "wiped", lambda c, i: 0 if c.name == "stuck" else real(c, i)):   # held open
             assert build_cache.pruned(tree, cap=200) == 100   # only what really went; the busy build not read
         assert caches(tree) == ["new", "running", "stuck"]   # the held build untouched, the next one taken instead
     finally:
@@ -123,68 +123,28 @@ def test_a_cache_moved_away_for_another_entry_is_never_counted_as_freed(tmp_path
     inc, real = tree / "target/debug/incremental", build_cache.wiped
 
     def swapped(c, ident):   # after it was measured: moved to another name in the same folder, something in its place
-        if c.name == "old" and not (inc / "kept").exists():   # once
+        if c.name == "old":
             os.rename(c, inc / "kept")
             link(c, outside) if junction else c.mkdir()
         return real(c, ident)
     with patch.object(build_cache, "wiped", swapped):
-        assert build_cache.pruned(tree, cap=100) == 100   # what was in its name freed nothing; `kept` went where it went
-    # a junction goes as itself, never its target; an empty folder in its name came since, so it waits its turn
-    assert caches(tree) == (["new"] if junction else ["new", "old"]) and (outside / "f").exists()
+        assert build_cache.pruned(tree, cap=100) == 100   # what was in its name freed nothing; `new` went instead
+    # a junction goes as itself, never its target; another folder in its name is not the one counted, and stays
+    assert caches(tree) == (["kept"] if junction else ["kept", "old"]) and (outside / "f").exists()
 
 
-@pytest.mark.parametrize("what", ["cache", "folder"])
-def test_a_count_that_cannot_read_what_it_read_before_ends_the_trim_uncredited(tmp_path, what):
-    tree = tmp_path / "tree"
-    for name, age in (("a", 300), ("b", 200), ("c", 100)):
-        cache(tree, name, age)
-    real_measured, real_folders, real_wiped, gone = build_cache.measured, build_cache.folders, build_cache.wiped, []
-
-    def measured(path):   # once the first went, `b` cannot be read
-        if gone and what == "cache" and Path(path).name == "b":
-            raise PermissionError("denied")
-        return real_measured(path)
-
-    def folders(path):   # or the whole `incremental` cannot be listed
-        if gone and what == "folder" and Path(path).name == "incremental":
-            raise PermissionError("denied")
-        return real_folders(path)
-
-    def wiped(c, ident):
-        gone.append(c.name)
-        real_wiped(c, ident)
-    with patch.multiple(build_cache, measured=measured, folders=folders, wiped=wiped):
-        assert build_cache.pruned(tree, cap=100) == 0   # the drop is not known to be freed: nothing credited
-    assert caches(tree) == ["b", "c"]   # and nothing more goes until a full count, at the next turn's end
-
-
-def test_a_cache_unreadable_from_the_start_is_left_and_the_rest_still_trimmed(tmp_path):
+def test_a_cache_unreadable_is_left_and_the_rest_still_trimmed(tmp_path):
     tree = tmp_path / "tree"
     for name, age in (("a", 300), ("b", 200), ("c", 100)):
         cache(tree, name, age)
     real = build_cache.measured
-    with patch.object(build_cache, "measured", lambda p: (_ for _ in ()).throw(PermissionError("denied"))
-                      if Path(p).name == "a" else real(p)):
+    with patch.object(build_cache, "measured", lambda p, seen=None: (_ for _ in ()).throw(PermissionError("denied"))
+                      if Path(p).name == "a" else real(p, seen)):
         assert build_cache.pruned(tree, cap=100) == 100   # `a` in no count; of the rest, the oldest went
     assert caches(tree) == ["a", "c"]
 
 
-def test_a_lone_cache_moved_for_an_empty_folder_gets_its_try_before_the_newcomer(tmp_path):
-    tree = tmp_path / "tree"
-    cache(tree, "old", 300)
-    inc, real = tree / "target/debug/incremental", build_cache.wiped
-
-    def swapped(c, ident):
-        if c.name == "old" and not (inc / "kept").exists():   # once
-            os.rename(c, inc / "kept")
-            c.mkdir()
-        return real(c, ident)
-    with patch.object(build_cache, "wiped", swapped):
-        assert build_cache.pruned(tree, cap=0) == 100   # its two tries: the old name, then where it went
-    assert caches(tree) == ["old"]   # the empty newcomer, nothing in it
-
-
-def test_a_session_moved_out_of_a_cache_is_counted_where_it_went(tmp_path):
+def test_a_session_moved_out_of_a_cache_is_never_counted_as_freed(tmp_path):
     tree = tmp_path / "tree"
     cache(tree, "old", 300)
     cache(tree, "new", 100)
@@ -196,8 +156,19 @@ def test_a_session_moved_out_of_a_cache_is_counted_where_it_went(tmp_path):
             os.rename(c / "s-1", inc / "elsewhere" / "s-1")
         return real(c, ident)
     with patch.object(build_cache, "wiped", moved):
-        assert build_cache.pruned(tree, cap=100) == 100   # the emptied folder freed nothing; the moved bytes counted
-    assert caches(tree) == ["elsewhere"]   # a folder that came since waits behind the first count's own
+        assert build_cache.pruned(tree, cap=100) == 100   # the emptied folder freed nothing, so `new` went too
+    assert caches(tree) == ["elsewhere"]
+
+
+def test_a_file_linked_into_the_next_session_is_counted_and_freed_once(tmp_path):
+    tree = tmp_path / "tree"
+    cache(tree, "old", 300)
+    cache(tree, "new", 100)
+    s1 = tree / "target/debug/incremental/old/s-1"
+    (s1.parent / "s-2").mkdir()
+    os.link(s1 / "f", s1.parent / "s-2" / "f")   # as rustc carries a session's files into the next
+    assert build_cache.pruned(tree, cap=100) == 100   # `old` is 100 bytes on the disk, not 200: `new` stays
+    assert caches(tree) == ["new"]
 
 
 def test_a_folder_measured_is_the_one_its_children_are_read_in(tmp_path):
