@@ -25,12 +25,15 @@ The `vtuber-ko-dub` run's work-turn log
   `common.build_cache.pruned` removes the least recently used incremental
   caches until the rest fit in 6 GB. It finds every Cargo build folder in the
   worktree (`.cargo-lock` beside `incremental`) whatever its target folder is
-  called and however deep, through real folders only. It touches only a build
-  folder whose Cargo lock it takes, so no Cargo build runs there meanwhile,
-  whoever started it; one a build holds stays for the next turn's end. On
-  Windows the open lock file and a pin file in `incremental` keep every folder
-  above a cache from being replaced while it goes. Only what really went
-  counts toward the bound.
+  called, one inside another included, up to eight folders down, through real
+  folders only. It touches only a build folder whose Cargo lock it takes, so no
+  Cargo build runs there meanwhile, whoever started it. One a build holds stays
+  whole for the next turn's end, but its size counts toward the bound. Nothing
+  is deleted through a link or outside the worktree. On Windows, the open lock
+  file pins the path down to the build folder before that path is checked, and
+  each folder below is removed under its own pin. Elsewhere, each folder is
+  opened by descriptor without following links. Only what really went counts
+  toward the bound.
 - Gradle's caches are not bounded here; the prompts only ask the agent to
   keep them warm.
 - Every build prompt tells the agent to build and test with the gate

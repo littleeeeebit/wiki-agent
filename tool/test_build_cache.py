@@ -39,36 +39,53 @@ def test_the_oldest_caches_go_until_the_rest_fit_wherever_cargo_built_and_nothin
     cache(tree, "old", 400)
     cache(tree, "mid", 300, build=NESTED)
     cache(tree, "set", 200, build="build/rust/release")   # `build.target-dir` pointed inside the worktree
+    cache(tree, "inner", 150, build="target/debug/other/debug")   # a target set inside another build folder
     cache(tree, "new", 100, build="target/release")
     cache(outside, "theirs", 900)
+    (outside / "keep").mkdir()
+    (outside / "keep" / "f").write_bytes(b"x")
     link(tree / "app" / "target", outside / "target")
+    link(tree / "target/debug/incremental/old/s-1/shared", outside / "keep")   # a link inside a cache that goes
+    os.utime(tree / "target/debug/incremental/old/s-1", (time.time() - 400, time.time() - 400))   # dated as before
     assert build_cache.pruned(tree, cap=10_000) == 0   # under the cap: every cache stays warm
-    assert build_cache.pruned(tree, cap=250) == 200   # the two oldest, however deep their build folders
-    assert caches(tree) == ["new", "set"]
-    assert (outside / "target/debug/incremental/theirs/s-1/f").exists()
+    assert build_cache.pruned(tree, cap=250) == 300   # the three oldest, however deep their build folders
+    assert caches(tree) == ["inner", "new"]
+    assert (outside / "target/debug/incremental/theirs/s-1/f").exists() and (outside / "keep" / "f").exists()
     assert not list(tree.rglob(build_cache.PIN))   # each pin goes with its lock
     assert build_cache.pruned(tmp_path / "none") == 0   # a worktree that builds nothing with Cargo
 
 
-def test_a_build_cargo_holds_is_left_whole_and_a_cache_that_will_not_go_leaves_the_next_its_turn(tmp_path):
+def test_a_folder_replaced_by_a_link_after_it_was_found_is_never_trimmed(tmp_path):
+    tree, outside = tmp_path / "tree", tmp_path / "outside"
+    cache(tree, "ours", 300, build="app/target/debug")
+    cache(outside, "theirs", 300, build="target/debug")
+    found = list(build_cache.builds(tree))
+    shutil.rmtree(tree / "app")
+    link(tree / "app", outside)   # between discovery and the lock: `app/target/debug` now names their build
+    with patch.object(build_cache, "builds", lambda t: iter(found)):
+        assert build_cache.pruned(tree, cap=0) == 0
+    assert (outside / "target/debug/incremental/theirs/s-1/f").exists()
+
+
+def test_a_build_cargo_holds_is_left_whole_but_counted_and_a_cache_that_will_not_go_leaves_the_next_its_turn(tmp_path):
     tree = tmp_path / "tree"
     cache(tree, "running", 500, build="target/release")
     cache(tree, "stuck", 400)
     cache(tree, "old", 300)
     cache(tree, "new", 100)
     fd = os.open(tree / "target/release/.cargo-lock", os.O_RDWR)   # a build started from a shell, still running
-    real = shutil.rmtree
+    real = build_cache.removed
     try:
         build_cache.lock(fd, True)
-        with patch.object(build_cache.shutil, "rmtree",
-                          lambda path, **k: None if path.name == "stuck" else real(path, **k)):   # a file held open
-            assert build_cache.pruned(tree, cap=200) == 100   # only what really went
-        assert caches(tree) == ["new", "running", "stuck"]   # the held build untouched, the next one taken instead
+        with patch.object(build_cache, "removed",
+                          lambda t, c: None if c.name == "stuck" else real(t, c)):   # a file held open
+            assert build_cache.pruned(tree, cap=200) == 200   # only what really went, the busy build counted
+        assert caches(tree) == ["running", "stuck"]   # the held build untouched, the next ones taken instead
     finally:
         build_cache.lock(fd, False)
         os.close(fd)
-    assert build_cache.pruned(tree, cap=150) == 200   # its build done: the oldest go first again
-    assert caches(tree) == ["new"]
+    assert build_cache.pruned(tree, cap=150) == 100   # its build done: the oldest goes first again
+    assert caches(tree) == ["stuck"]
 
 
 def test_a_trim_that_fails_never_raises_into_the_turns_end(tmp_path):

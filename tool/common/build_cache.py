@@ -6,10 +6,13 @@ and each flag set keeps its own: one worktree's `target` once reached 24 GB. So 
 holds its worktree, the least recently used caches go until the rest fit under `CAP`.
 
 Only a build folder whose Cargo lock this takes is touched, so no Cargo build runs in it meanwhile, whoever started
-it. On Windows that lock's open file, and a pin file in `incremental`, keep every folder above a cache from being
-renamed or replaced while it goes. The cache folder itself is the one name left unpinned, and `shutil.rmtree` refuses
-it if it is a link when it starts. Off Windows an open file pins nothing; there `rmtree` works through file
-descriptors instead.
+it; a busy one still counts toward the bound. Nothing is deleted through a link or outside the worktree:
+
+- On Windows a folder with a file open in it cannot be renamed or removed. The lock's open file pins every folder
+  from the worktree down to the build folder, and only then is that path checked real. Each folder below is then
+  removed under its own pin file, opened before it is checked and read. A link met anywhere goes as a link.
+- Elsewhere an open file pins nothing, so each folder is opened by descriptor without following links, and
+  `shutil.rmtree` removes the cache relative to its parent's descriptor.
 """
 
 import os
@@ -20,8 +23,9 @@ from pathlib import Path
 from common import errorlog, is_junction
 
 CAP = 6 * 2**30   # per worktree: a few flag sets of a large crate, warm
-DEPTH = 6   # how deep a build folder is looked for: `apps/desktop/src-tauri/target/<triple>/debug` is five
+DEPTH = 8   # how deep a build folder is looked for: `apps/desktop/src-tauri/target/<triple>/debug` is five
 SKIP = {".git", "node_modules"}   # never a Cargo build, and large
+PAYLOAD = {"incremental", "deps", "build", ".fingerprint", "examples"}   # a build folder's own: never another build
 PIN = ".pruning"   # rustc and Cargo read only their own entries in `incremental`
 
 
@@ -37,19 +41,28 @@ def folders(path) -> list[os.DirEntry]:
 
 def builds(tree: Path, depth: int = DEPTH):
     """Every Cargo build folder under `tree` (one profile's: `.cargo-lock` beside `incremental`), whatever its target
-    folder is called and however deep, reached through real folders only."""
+    folder is called, up to `DEPTH` folders down, reached through real folders only. One inside another is found too."""
 
     try:
         inside = folders(tree)
     except OSError:
         return
-    if any(e.name == "incremental" for e in inside) and os.path.isfile(tree / ".cargo-lock") \
-            and not linked(tree / ".cargo-lock"):
+    found = any(e.name == "incremental" for e in inside) and os.path.isfile(tree / ".cargo-lock") \
+        and not linked(tree / ".cargo-lock")
+    if found:
         yield tree
-        return
     for e in inside:
-        if depth and e.name not in SKIP:
+        if depth and e.name not in SKIP and not (found and e.name in PAYLOAD):
             yield from builds(Path(e.path), depth - 1)
+
+
+def real(tree: Path, path: Path) -> bool:
+    """Every folder from `tree` down to `path` a real one, where `tree`'s own real path puts it."""
+
+    parts = path.relative_to(tree).parts
+    if any(linked(tree.joinpath(*parts[:n])) for n in range(1, len(parts) + 1)):
+        return False
+    return os.path.realpath(path) == os.path.join(os.path.realpath(tree), *parts)
 
 
 def lock(fd: int, take: bool) -> None:
@@ -89,6 +102,63 @@ def pinned(stack: ExitStack, build: Path) -> list[Path]:
     if linked(inc) or os.path.realpath(inc) != os.path.join(os.path.realpath(build), "incremental"):
         return []   # replaced before the pin held it
     return [Path(e.path) for e in folders(inc)]
+
+
+def unlinked(path) -> None:
+    """A link or junction removed as itself: what it points at is never touched."""
+
+    try:
+        os.unlink(path)
+    except OSError:
+        os.rmdir(path)   # a junction, or a link to a folder
+
+
+def wiped(path: Path) -> None:
+    """Windows: `path`, inside a pinned real folder, removed folder by folder, each under its own pin; what will not go
+    (a file something holds) stays."""
+
+    if linked(path):
+        return unlinked(path)
+    fd = os.open(path / PIN, os.O_RDWR | os.O_CREAT)   # from here `path` stays the folder it is now
+    try:
+        if linked(path):   # replaced just before the pin: the pin went through it, and nothing else does
+            return
+        for e in os.scandir(path):
+            if e.name == PIN:
+                continue
+            try:
+                if linked(e.path):
+                    unlinked(e.path)
+                elif e.is_dir(follow_symlinks=False):
+                    wiped(Path(e.path))
+                else:
+                    os.unlink(e.path)
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
+        unpin(path / PIN)
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
+def removed(tree: Path, cache: Path) -> None:
+    """`cache` deleted without following a link on the way to it or inside it, nor reaching outside `tree`."""
+
+    if os.name == "nt":
+        return wiped(cache)
+    parts = cache.relative_to(tree).parts
+    fd = os.open(tree, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            at = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = at
+        shutil.rmtree(parts[-1], ignore_errors=True, dir_fd=fd)
+    finally:
+        os.close(fd)
 
 
 def unpin(pin: Path) -> None:
@@ -139,25 +209,37 @@ def left(cache: Path, before: int) -> int:
 
 def trimmed(tree: Path, cap: int) -> int:
     with ExitStack() as stack:
-        sized = []
+        sized, busy, partial = [], 0, False
         for build in builds(tree):
             try:
-                caches = pinned(stack, build) if held(stack, build) else []
+                mine = held(stack, build)   # on Windows its open lock file pins the path checked next
+                if not real(tree, build):   # a folder on the way replaced since it was found: not this worktree's
+                    continue
+                caches = pinned(stack, build) if mine else [Path(e.path) for e in folders(build / "incremental")]
             except OSError as exc:
                 errorlog.record("build-cache", exc, path=str(build))
+                partial = True
                 continue
             for cache in caches:
                 try:
-                    sized.append((used(cache), size(cache), cache))
+                    if mine:
+                        sized.append((used(cache), size(cache), cache))
+                    else:   # a build is using it: left whole, but it fills the same disk
+                        busy += size(cache)
                 except OSError as exc:
                     errorlog.record("build-cache", exc, path=str(cache))
-        total, freed = sum(s for _, s, _ in sized), 0
+                    partial = True
+        total, freed = busy + sum(s for _, s, _ in sized), 0
         for _, bytes_, cache in sorted(sized):   # oldest first
             if total <= cap:
                 break
-            shutil.rmtree(cache, ignore_errors=True)   # a link refused; a file something holds stays
+            try:
+                removed(tree, cache)
+            except OSError as exc:
+                errorlog.record("build-cache", exc, path=str(cache))
             gone = bytes_ - left(cache, bytes_)   # what was really freed: one that would not go leaves the next its turn
             total, freed = total - gone, freed + gone
-        if total > cap:
-            errorlog.record("build-cache", OSError(f"{total} bytes left over {cap}"), path=str(tree))
+        if total > cap or partial:
+            errorlog.record("build-cache", OSError(f"{total} bytes counted over {cap}" + (", some not read" if partial
+                                                   else "")), path=str(tree))
     return freed
