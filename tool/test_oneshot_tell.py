@@ -554,7 +554,7 @@ def test_a_retold_tests_turn_may_find_a_planned_test_passing_but_never_skipped(w
 
 def test_a_record_that_holds_nothing_refuses_only_its_own_tree(tmp_path):
     """realtime-screen-translator: a power loss zeroed one repository's record, and every turn anywhere was
-    refused with "실행 기록을 읽거나 고치지 못했다". Its own tree stays closed (its turn would carry no secrets'
+    refused as a record that could not be read. Its own tree stays closed (its turn would carry no secrets'
     mask, PR #455 round 1); a record with content that does not parse, a trailing NUL included, still refuses."""
     tree = tmp_path / "tree"
     (tmp_path / "specs" / "ok").mkdir(parents=True)

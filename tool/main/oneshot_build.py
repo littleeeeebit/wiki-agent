@@ -326,7 +326,7 @@ def lost_tree(key: Path, repo: str) -> bool:
     same = os.path.normcase
     if same(f"{key.parent.name}/{key.name}") == same(f"{repo}-worktrees/{oneshot.BRANCH}"):
         return True
-    from workspace.sessions import checkout
+    from workspace import checkout
     _, main, branch = checkout(key)
     return branch == oneshot.BRANCH and bool(main) and same(Path(main).name) == same(repo)
 
