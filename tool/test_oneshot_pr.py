@@ -288,7 +288,7 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
     oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
-    remote = Remote()   # answers `gh pr ready` as a logged-out gh does
+    remote = Remote(ready=False)   # answers `gh pr ready` as a logged-out gh does
     with patch.object(specs, "sh", listing(remote, 7)):   # the draft, open: its text is edited, then ready asked
         assert check(tree, SUMMARIZED) is None
     assert any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls) and not remote.created()
@@ -308,7 +308,9 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the watch is Windows'")
-def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(finished, tmp_path, monkeypatch):
+@pytest.mark.parametrize("measured", [True, False])   # the measured draft reused, or the first one opened here
+def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(finished, tmp_path, monkeypatch,
+                                                                            measured):
     import owner_data
     from main import oneshot_owner_data
 
@@ -318,23 +320,25 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
     local.mkdir(parents=True)
     monkeypatch.setattr(owner_data, "bases", lambda: [roaming, local])
     readme(tree)
-    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    if measured:
+        oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     oneshot_owner_data.begin("budget", tree, oneshot_spec.store("budget"), "turn", "x", None)
     remote = Remote()
-    open7 = listing(remote, 7)
+    answering, publication = (listing(remote, 7), "edit") if measured else (remote, "create")
 
     def publishing(args, cwd, timeout=60):
-        if args[:3] == ["gh", "pr", "edit"]:   # a publication command, after the turn's own read
+        if args[:3] == ["gh", "pr", publication]:   # a publication command, after the turn's own read
             (roaming / tree.name / "cache.bin").write_text("x", encoding="utf-8")
-        return open7(args, cwd, timeout)
+        return answering(args, cwd, timeout)
     try:
         with patch.object(specs, "sh", publishing):
             assert check(tree, SUMMARIZED) is None
     finally:
         oneshot_owner_data.cleared("budget")
-    assert any(c[:3] == ["gh", "pr", "edit"] for c in remote.calls)
+    made = [c for c in remote.calls if c[:3] == ["gh", "pr", publication]]
+    assert made and (measured or "--draft" in made[0])   # a pull request opened here opens as a draft
     assert not any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls)   # the draft stays a draft
     assert o()["stage"] == "pr" and "주인의 실제 데이터 폴더가 바뀌었다" in o()["stopped"]["detail"]
 

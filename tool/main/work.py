@@ -75,11 +75,13 @@ def close_all(wait: bool = True) -> list[threading.Thread]:
         _sessions.clear()
         turns = list(_turns.items())
         _queued.clear()
-    for _, run in turns:
-        run.halt.set()
+    for _, run in turns:   # every turn flagged and its CLI stopped first: one launch resuming holds up no other
+        run.halt.flag()
         run.chat.stop(run.halt)
     for chat in alive:
         chat.close()
+    for _, run in turns:
+        run.halt.settled()
     threads = [thread for thread, _ in turns if thread is not threading.current_thread()]
     for thread in threads if wait else []:
         thread.join()

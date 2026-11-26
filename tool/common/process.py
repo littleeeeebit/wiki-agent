@@ -23,10 +23,16 @@ class Halt(threading.Event):
         super().__init__()
         self.gate = threading.Lock()
 
-    def set(self) -> None:
+    def flag(self) -> None:   # the stop itself, never waiting: for a caller stopping many in turn
         super().set()
+
+    def settled(self) -> None:
         with self.gate:
             pass
+
+    def set(self) -> None:
+        self.flag()
+        self.settled()
 
 
 if os.name == "nt":

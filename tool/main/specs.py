@@ -1523,8 +1523,8 @@ def existing_pr(path: Path, branch: str, base: str, only: int | None = None) -> 
     return (int(rows[0]["number"]), rows[0]["url"]) if rows else None
 
 
-def pull_request(path: Path, branch: str, base: str, title: str, body: str, only=None) -> tuple[int, str]:
-    """Return an existing or new PR's `(number, url)`; refresh reused metadata.
+def pull_request(path: Path, branch: str, base: str, title: str, body: str, only=None, draft=False) -> tuple[int, str]:
+    """Return an existing or new PR's `(number, url)`; refresh reused metadata. `draft`: a new one is a draft.
     Never retry a failed/timed-out create: re-list because its reply may be lost.
     Raise `RuntimeError` when publication cannot complete."""
 
@@ -1537,7 +1537,7 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str, only
         if not found:
             try:
                 made = sh(["gh", "pr", "create", "--base", base, "--head", branch,
-                           "--title", title, "--body-file", fh.name], path, 120)
+                           "--title", title, "--body-file", fh.name, *(["--draft"] if draft else [])], path, 120)
                 why = said(made)
             except subprocess.TimeoutExpired:
                 made, why = None, "시간 초과"
@@ -1579,9 +1579,10 @@ def opened(repo: Path, path: Path, run, spec: dict):
         return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
     try:
         files = sh(["git", "diff", "--numstat", f"origin/{base.stdout.strip()}...HEAD"], path)
+        o = spec.get("oneshot") or {}   # a oneshot's opens as a draft: it leaves draft after its watch's read
         n, url = pull_request(path, branch, base.stdout.strip(), pr_text.title_of(spec),
-                              body_of(spec, "" if files.returncode else files.stdout),
-                              ((spec.get("oneshot") or {}).get("pr1") or {}).get("number"))
+                              body_of(spec, "" if files.returncode else files.stdout), (o.get("pr1") or {}).get("number"),
+                              draft=bool(o))
     except RuntimeError as exc:
         return failed(run, spec, str(exc))
     plan = spec["source"].get("plan")

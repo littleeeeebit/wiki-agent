@@ -121,8 +121,8 @@ def made(repo: Path, block: dict, session: str = "s1") -> list[dict]:
 class Remote:
     """GitHub and the remote, as `specs.sh` sees them. Everything else runs."""
 
-    def __init__(self, merged=False):
-        self.calls, self.body, self.merged, self.real = [], "", merged, specs.sh
+    def __init__(self, merged=False, ready=True):
+        self.calls, self.body, self.merged, self.real, self.ready = [], "", merged, specs.sh, ready
         self.on_push = lambda: None   # what else happens while a push runs
 
     def __call__(self, args, cwd, timeout=60):
@@ -144,6 +144,8 @@ class Remote:
                                   "baseRefName": "main", "mergeCommit": {"oid": "fixture-merge"}}))
         if args[:3] == ["gh", "pr", "list"] and "--head" in args:
             return ok("[]")
+        if args[:3] == ["gh", "pr", "ready"] and self.ready:
+            return ok()
         if args[0] == "gh":
             return subprocess.CompletedProcess(args, 1, "", "gh 가 로그인되어 있지 않다\n")
         return self.real(args, cwd, timeout)

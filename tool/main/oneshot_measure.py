@@ -24,7 +24,6 @@ import re
 import shutil
 import stat
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -33,6 +32,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from common import masked
+from common.process import Halt
 
 import gpu_queue
 import owner_data
@@ -51,28 +51,13 @@ MAX_TEXT = 2_000   # an input's typed value, and the owner's note
 CREDENTIAL = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION", re.I)
 
 
-class Halted:
+class Halted(Halt):
     """A measurement's stop: the owner's, or the server going down. Made before its worker starts (`start`), so
-    a stop pressed in between is never lost. `gate` orders a stop with a launch, as `process.Halt`'s does: `flag`
-    is the stop itself, taken under any lock; `settled` returns once no launch is between its last look at it
-    and its resume, and is waited on outside every lock."""
-
-    def __init__(self) -> None:
-        self.own, self.gate = threading.Event(), threading.Lock()
-
-    def flag(self) -> None:
-        self.own.set()
-
-    def settled(self) -> None:
-        with self.gate:
-            pass
-
-    def set(self) -> None:
-        self.flag()
-        self.settled()
+    a stop pressed in between is never lost. `flag` is the stop itself, taken under any lock; `settled` returns
+    once no launch is between its last look at it and its resume, and is waited on outside every lock."""
 
     def is_set(self) -> bool:
-        return self.own.is_set() or runtime.stopping.is_set()
+        return super().is_set() or runtime.stopping.is_set()
 
 
 HALTS: dict[str, Halted] = {}   # the measurement running now, by repository: `stop` sets it

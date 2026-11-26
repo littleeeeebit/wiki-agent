@@ -658,6 +658,26 @@ def test_a_stop_waits_on_a_resuming_launch_outside_the_shared_lock(monkeypatch):
     assert not stopper.is_alive()
 
 
+def test_a_launch_resuming_in_one_turn_holds_up_no_other_turns_shutdown(monkeypatch):
+    from main import work
+
+    stopped = []
+    runs = [work.Run(types.SimpleNamespace(id=str(i), stop=lambda halt, i=i: stopped.append(i))) for i in range(2)]
+    monkeypatch.setattr(work, "_turns", {threading.Thread(): run for run in runs})
+    monkeypatch.setattr(work, "_sessions", {})
+    monkeypatch.setattr(work, "_queued", {})
+    with runs[0].halt.gate:   # the first turn's health launch, between its last look and its resume
+        closer = threading.Thread(target=work.close_all, kwargs={"wait": False})
+        closer.start()
+        deadline = time.monotonic() + 10
+        while stopped != [0, 1]:
+            assert time.monotonic() < deadline, f"only {stopped} were stopped"
+            time.sleep(0.01)
+        assert runs[1].halt.is_set() and closer.is_alive()   # every CLI stopped; the shutdown still waits
+    closer.join(10)
+    assert not closer.is_alive()
+
+
 def test_a_backend_that_did_not_end_fails_its_caller_after_the_holder_is_told(tmp_path, monkeypatch):
     told = []
     holder = types.SimpleNamespace(root=lambda identity: None, ended=told.append)

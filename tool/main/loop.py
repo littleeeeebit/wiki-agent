@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from agent import ChatSession, deepseek, read_tools
 from common import errorlog, worktree_home
 from common import settings as settings_file
+from common.process import Halt
 from common.budget import Budget, Cancelled, Exhausted
 from common.paths import RAW
 from workspace import adopt, base_branch, checkout, folder_for, holder, merged, remove, worktrees
@@ -636,10 +637,12 @@ def close_all(wait: bool = True) -> list[threading.Thread]:
         _cells.clear()
         _review_runs.clear()
         loops = list(_loops.values())
-    for loop in loops:
-        loop.stop()
+    for loop in loops:   # all stopped first, as `work.close_all`: one launch resuming holds up no other loop
+        loop.stop(settle=False)
     for chat in alive:
         chat.close()
+    for loop in loops:
+        loop.settled()
     threads = [lp.thread for lp in loops if lp.thread is not None and lp.thread is not threading.current_thread()]
     for thread in threads if wait else []:
         thread.join()
@@ -654,7 +657,7 @@ class Loop:
 
     def __init__(self, repo: str, sid: str) -> None:
         self.repo, self.sid = repo, sid
-        self.halt = threading.Event()
+        self.halt = Halt()   # a work turn's own, too (`work.Run`): a server launch in it is ordered with it
         self.chat: ChatSession | None = None   # the review cell's turn, while one runs
         self.run: work.Run | None = None        # the work cell's turn, while one runs
         self.report_at: dict | None = None      # the last work turn's identity, captured before release
@@ -663,15 +666,20 @@ class Loop:
         self.born: float | None = None   # the task this loop runs, as its first step found it (`born`)
         self.thread: threading.Thread | None = None
 
-    def stop(self) -> None:
-        self.halt.set()   # first: whatever starts after this sees it
+    def stop(self, settle: bool = True) -> None:   # `settle`: return once no launch resumes under the stop
+        self.halt.flag()   # first: whatever starts after this sees it
         chat, run = self.chat, self.run
         if chat is not None:
             chat.stop(self.halt)
         if run is not None and not run.done:
-            run.halt.set()
+            run.halt.flag()
             with run.saving:   # as `work.stop`: a save already past its stop check lands before this returns
                 run.chat.stop(run.halt)
+        settle and self.settled(run)
+
+    def settled(self, run=None) -> None:
+        for halt in (self.halt, getattr(run or self.run, "halt", self.halt)):
+            halt.settled()
 
 
 _loops: dict[tuple[str, str], Loop] = {}

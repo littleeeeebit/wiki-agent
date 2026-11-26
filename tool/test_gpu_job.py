@@ -136,6 +136,18 @@ def test_a_program_is_a_gpu_job_when_any_directory_it_may_run_in_makes_it_one(tm
     assert gpu_job.judged(["./bin/app.exe"], [str(first)], {}) == "program"
 
 
+def test_a_failed_lookup_in_another_directory_never_undoes_a_gpu_job(monkeypatch):
+    def kind(words, d, roots):
+        if d == "denied":
+            raise PermissionError("access denied")
+        return "gpu" if d == "gpu" else "program"
+    monkeypatch.setattr(gpu_job, "kind", kind)
+    assert gpu_job.judged(["app"], ["gpu", "denied"], {}) == "gpu"
+    assert gpu_job.judged(["app"], ["denied", "gpu"], {}) == "gpu"
+    with pytest.raises(PermissionError):   # none made it one: the lookup's error is the caller's
+        gpu_job.judged(["app"], ["plain", "denied"], {})
+
+
 def test_off_windows_a_gpu_job_is_a_program_like_any_other(tmp_path, monkeypatch):
     monkeypatch.setattr(gpu_job, "programs", lambda payload, host: ([(["python", "train.py"], [str(tmp_path)])], "posix"))
     monkeypatch.setattr(gpu_job, "kind", lambda *a: "gpu")

@@ -454,10 +454,12 @@ elsewhere is not covered until its kind names the place.
    unwatched. Every name a product is given in the window counts, one used
    only between two reads included: the folder of each `tauri.conf.json` is
    watched, the file is read again on each change to it, and each name it
-   gives is a root from then on, its folder given a subtree watch when it
-   exists. A Tauri program carries its identifier from its build, so it is
-   built with the name, which is read in time, before it writes under it.
-   Each read first reads every change already delivered, so a
+   gives is a root from then on. A root whose folder does not exist is the
+   base watch's, since a program makes that folder before it writes in it.
+   A root whose folder exists had no watch of its own, and nothing orders a
+   product's run after the read, so the window is `incomplete`. So is one
+   whose config watch overflowed, since names given and taken back in it are
+   lost. Each read first reads every change already delivered, so a
    write that finished before the check is never read after it. Off Windows
    nothing is watched. Nothing is walked: the vtuber root
    holds 200,024 files now, and one metadata walk of it took 20 s. Junctions
@@ -479,7 +481,10 @@ elsewhere is not covered until its kind names the place.
      `HEAD`. So a gate test that writes there and exits is still seen.
      `checked`'s two returns that run no check, the hand-over
      (`HANDOVERS`, S8's PR text) and the stop for a question, read it before
-     they save; a change refuses the turn in their place. `changed` or `incomplete` at either read refuses the turn
+     they save; a change refuses the turn in their place. S8's PR text is read
+     again after its publication commands: its pull request is a draft until
+     then (the measured draft, or one opened as a draft), and leaves draft
+     only on a clean read. `changed` or `incomplete` at either read refuses the turn
      with the folder and the paths, before any stage is saved, and that is
      the next build turn's note.
    - Every other way a check ends counts too: a failed or stopped gate, a

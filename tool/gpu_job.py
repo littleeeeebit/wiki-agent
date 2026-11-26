@@ -239,9 +239,22 @@ RANK = {"inspect": 0, "builtin": 0, "program": 1, "gpu": 2}
 
 
 def judged(words: list[str], dirs: list, roots: dict) -> str:
-    """One program's kind over every directory it may run in: a GPU job in any of them is one."""
+    """One program's kind over every directory it may run in: a GPU job in any of them is one, whatever another
+    directory's lookup raised; that is raised only when none of them made it one."""
 
-    return max((kind(words, str(d), roots) for d in dirs), key=RANK.__getitem__)
+    best, error = "inspect", None
+    for d in dirs:
+        try:
+            found = kind(words, str(d), roots)
+        except Exception as exc:   # every lookup error is the caller's to handle, after the rest are judged
+            error = exc
+            continue
+        if found == "gpu":
+            return found
+        best = max(best, found, key=RANK.__getitem__)
+    if error is not None:
+        raise error
+    return best
 
 
 # -- Whose processes ---------------------------------------------------------------------------------------------

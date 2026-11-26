@@ -720,17 +720,17 @@ def handed(path: Path, run, spec: dict, final: str):
         if seen := oneshot_owner_data.read(repo):
             oneshot_spec.store(repo).stop(STAGE, seen)
             return None
-        if spec["oneshot"].get("pr1"):
-            # `specs.opened` published only to the draft the backend opened (`oneshot_publish.published`), never a
-            # replacement: the final text is in, so it leaves draft. A draft left stops, and `[재개]` asks again.
-            try:
-                ready = specs.sh(["gh", "pr", "ready", str(fresh["pr"]["number"])], path, 60)
-                why = specs.said(ready) if ready.returncode else ""
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                why = f"{type(exc).__name__}: {exc}"
-            if why:
-                oneshot_spec.store(repo).stop(STAGE, f"PR #{fresh['pr']['number']} 의 초안을 풀지 못했다 — {why}")
-                return None
+        # `specs.opened` published only to the draft the backend opened (`oneshot_publish.published`), never a
+        # replacement, or opened one as a draft: the final text is in, so it leaves draft. A draft left stops, and
+        # `[재개]` asks again.
+        try:
+            ready = specs.sh(["gh", "pr", "ready", str(fresh["pr"]["number"])], path, 60)
+            why = specs.said(ready) if ready.returncode else ""
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            why = f"{type(exc).__name__}: {exc}"
+        if why:
+            oneshot_spec.store(repo).stop(STAGE, f"PR #{fresh['pr']['number']} 의 초안을 풀지 못했다 — {why}")
+            return None
         oneshot_spec.saved(repo, oneshot={"stage": "done", "working": None, "pr": fresh["pr"]})
     elif not fresh.get("writing"):   # neither open nor asked again: the reason is the spec's fault
         oneshot_spec.store(repo).stop(STAGE, fresh.get("fault") or "PR 을 만들지 못했다")

@@ -153,23 +153,57 @@ def test_a_name_used_only_between_two_reads_is_never_taken_for_clean(tree, tmp_p
     original = conf.read_text(encoding="utf-8")
     watch = owner_data.Watch(owner_data.roots(tree), tree)
     conf.write_text(json.dumps({"identifier": "com.example.trial"}), encoding="utf-8")   # a smoke test's name
-    until(lambda: any(r.endswith("com.example.trial") for r in watch.result()["roots"]))   # read as it is built
-    (local / "com.example.trial").mkdir()   # its program's data folder, left behind
+    (local / "com.example.trial").mkdir()   # its program's data folder, made before or after the read
+    # The read only has to come before the restore, as a build of the name takes longer than it does.
+    until(lambda: any(r.endswith("com.example.trial") for r in watch.result()["roots"]))
     conf.write_text(original, encoding="utf-8")   # restored before the check reads anything
     result = watch.settled()
-    assert result["state"] == "changed" and any(r.endswith("com.example.trial") for r in result["roots"])
+    assert result["state"] != "clean" and any(r.endswith("com.example.trial") for r in result["roots"])
     watch.close()
     older = local / "com.example.older"   # a name whose folder and settings were there before the window
     older.mkdir()
     (older / "settings.json").write_text("{}", encoding="utf-8")
     watch = owner_data.Watch(owner_data.roots(tree), tree)
     conf.write_text(json.dumps({"identifier": "com.example.older"}), encoding="utf-8")
-    until(lambda: str(older) in watch.result()["roots"])   # read as the program is built with the name
-    (older / "settings.json").write_text('{"x": 1}', encoding="utf-8")   # the program run under it
+    (older / "settings.json").write_text('{"x": 1}', encoding="utf-8")   # run under it before any watch of its own
+    until(lambda: str(older) in watch.result()["roots"])
     conf.write_text(original, encoding="utf-8")
-    result = watch.settled()
-    assert result["state"] == "changed" and any(p.endswith("settings.json") for p in result["paths"])
-    watch.close()
+    result = watch.close()
+    assert result["state"] == "incomplete" and "com.example.older" in owner_data.reason(result)
+
+
+class Overflowing:
+    """kernel32, with every read of one folder's watch delivering an overflow."""
+
+    def __init__(self, k, folder: Path):
+        self.k, self.folder, self.handles = k, str(folder), set()
+
+    def __getattr__(self, name):
+        return getattr(self.k, name)
+
+    def CreateFileW(self, path, *rest):
+        handle = self.k.CreateFileW(path, *rest)
+        if path == self.folder:
+            self.handles.add(handle)
+        return handle
+
+    def GetOverlappedResult(self, handle, overlapped, size, wait):
+        ok = self.k.GetOverlappedResult(handle, overlapped, size, wait)
+        if ok and not wait and handle in self.handles:
+            size._obj.value = 0
+        return ok
+
+
+def test_an_overflowed_config_watch_is_incomplete_and_the_watch_goes_on(tree, tmp_path, monkeypatch):
+    conf, real = tree / "src-tauri" / "tauri.conf.json", owner_data._k32
+    monkeypatch.setattr(owner_data, "_k32", lambda: Overflowing(real(), conf.parent))
+    (tmp_path / "AppData" / "Local" / "budget").mkdir()
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    conf.write_text(conf.read_text(encoding="utf-8") + "\n", encoding="utf-8")   # the same names, as now
+    until(lambda: watch.result()["state"] == "incomplete")
+    (tmp_path / "AppData" / "Local" / "budget" / "cache.bin").write_text("x", encoding="utf-8")
+    result = watch.close()
+    assert result["state"] == "changed" and "넘쳐" in " ".join(watch.why)
 
 
 def test_an_ordinary_config_edit_beside_another_programs_folder_stays_clean(tree, tmp_path):
