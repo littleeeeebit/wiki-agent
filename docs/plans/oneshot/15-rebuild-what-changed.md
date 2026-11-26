@@ -23,10 +23,16 @@ The `vtuber-ko-dub` run's work-turn log
   setting still wins.
 - At the end of every work turn, while the turn still holds its worktree,
   `common.build_cache.pruned` removes the least recently used incremental
-  caches under the worktree's Cargo targets (the Tauri app's own folder and
-  target triples included) until the rest fit in 6 GB. A cache behind a link
-  or junction is never touched; a cache a build still holds stays for the
-  next turn's end.
+  caches until the rest fit in 6 GB. It finds every Cargo build folder in the
+  worktree (`.cargo-lock` beside `incremental`) whatever its target folder is
+  called and however deep, through real folders only. It touches only a build
+  folder whose Cargo lock it takes, so no Cargo build runs there meanwhile,
+  whoever started it; one a build holds stays for the next turn's end. On
+  Windows the open lock file and a pin file in `incremental` keep every folder
+  above a cache from being replaced while it goes. Only what really went
+  counts toward the bound.
+- Gradle's caches are not bounded here; the prompts only ask the agent to
+  keep them warm.
 - Every build prompt tells the agent to build and test with the gate
   command's own package selection, features and profile each time, and never
   to clean the build cache.
