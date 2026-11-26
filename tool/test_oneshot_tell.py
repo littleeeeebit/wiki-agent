@@ -351,6 +351,13 @@ def test_only_a_parked_run_takes_the_words_in_at_once_and_a_stale_measure_start_
     with pytest.raises(HTTPException) as refused:
         oneshot_measure.start("budget", oneshot_measure.Start(head="b" * 40))
     assert refused.value.status_code == 409 and o()["working"] == "build"
+    words = o()["tell_pending"]   # a measurement repair stopped with words said while it ran: only [재개] sends it on
+    at("measure", fix="measure", built_head="c" * 40, tell_pending=words,
+       stopped={"reason": "block", "detail": "x", "state": "measure"})
+    with pytest.raises(HTTPException) as refused:
+        oneshot_measure.start("budget", oneshot_measure.Start(head="c" * 40))
+    assert refused.value.status_code == 409 and "[재개]" in refused.value.detail
+    assert o()["working"] is None and o()["tell_pending"] == words and o()["fix"] == "measure"
     at("build", stopped={"reason": "block", "detail": "x", "state": "build"})   # a stopped run is parked
     say("소리를 줄여")
     assert o()["working"] == "retell"

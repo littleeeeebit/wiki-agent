@@ -556,14 +556,14 @@ class Start(BaseModel):
 @router.post("/api/oneshot/spec/{repo}/measure/start")
 def start(repo: str, body: Start) -> dict:
     with oneshot._lock:   # the request checked, then the owner's waiting words, then the old plan (`oneshot_tell`)
-        if body.head != at_measure(repo)["oneshot"].get("built_head"):
+        if body.head != (now := at_measure(repo)["oneshot"]).get("built_head"):
             raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
+        if now.get("fix"):   # a repair still owed: only `[재개]` sends it on, the owner's waiting words included
+            raise HTTPException(409, "빌드 에이전트의 수리가 끝나지 않았다 — 다시 불러와 [재개]로 이어 간다")
         if oneshot.diverted(oneshot_spec.store(repo), "measure"):
             return oneshot_spec.view(oneshot_spec.spec_of(repo))
         spec, plan, broken = measuring(repo, plan_needed=False)
         o = spec["oneshot"]   # a measurement stopped (a wrong input, a restart) starts again from here
-        if o.get("fix"):   # a repair still owed: only `[재개]` sends it on; nothing is measured before its check
-            raise HTTPException(409, "빌드 에이전트의 수리가 끝나지 않았다 — 다시 불러와 [재개]로 이어 간다")
         last = (o.get("measures") or [None])[-1]
         if broken:   # the committed plan no longer holds: only the build agent can fix it
             then = repair(repo, {"broken": broken}, "plan")
