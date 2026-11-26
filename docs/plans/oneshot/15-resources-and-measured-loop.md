@@ -196,12 +196,18 @@ on and reads it with `write_stdin` (the tool's own declaration, in the
 3. Codex 0.166 has no operation that stops one exec session, and an exec
    call without `tty` may have its input closed, so the stop does not go
    through the runner's input. Each runner also waits on a named event of
-   its own place, `Local\wiki-agent-gpu-stop-<counter>`. The command
-   `python tool/gpu_run.py --stop <counter>` sets it, and the runner ends
-   its command the normal way, waiting or running. It refuses a place whose
-   `.who` file (below) names another session than the caller's. The
-   runner's output and the context name the command. On Claude, `TaskStop`
-   ends the shell as today, and `--stop` works there too.
+   its own place, `Local\wiki-agent-gpu-stop-<counter>`, and ends its
+   command the normal way when it is set, waiting or running (the runner
+   section says when a stop is seen). The stop is one exact command, which
+   the runner's output and the context print in full: the hub's own Python
+   and the hub's absolute `tool\gpu_run.py`, then `--stop <counter>`, so it
+   works from any worktree. The classifier never counts that exact command
+   as a GPU job, so it is never queued or refused behind the job it stops.
+   It refuses a place whose `.who` file (below) names another session than
+   the caller's. It waits until the place is gone and says whether the
+   command had started. On Claude the stop is `TaskStop`, which
+   `background_left` already lets through while it holds a wrapped call;
+   `--stop` is for Codex, which has no such hold.
 4. Codex has no hook that holds the agent's other tools while a call is
    still running, as `background_left` does on Claude. ponytail: a Codex
    agent can go on to other work while its GPU job waits; a second GPU job
@@ -230,18 +236,28 @@ checks then queue behind it, `serve_check` among them, while the turn still
 holds the worktree, and no later turn could stop it. A runner can also still
 be starting, before it has taken any place, so the queue cannot be what
 tells. The hook can: before it returns a wrapped call, the pretool hook
-writes a mark for the session's CLI process, `gpu\wrapped\<pid>-<start>`.
-The command cannot start before the hook returns, so a runner never exists
-without its mark. When a build turn's answer is in, before `checked` runs
-any server command, the server looks for the mark of that worktree's CLI.
+writes a mark named by the app's own session name, the `<uuid>` of
+`WIKI_AGENT_JOB` (above), as `gpu\wrapped\<uuid>`. The hook inherits that
+variable however many launchers sit between the app and the provider (the
+npm `node.exe` shim above the native Codex, for one), and the server knows
+the name it gave its CLI, so both name the same session without looking at
+processes. A session without the variable, outside the app, writes no mark,
+and nothing would read one. The command cannot start before the hook
+returns, so a runner never exists without its mark. If the mark cannot be
+written, the hook refuses the call with that reason; nothing after a call
+is judged a GPU job falls back to letting the original through, whatever
+fails (an exception there is a refusal, not the hooks' usual open
+failure), on both hooks and with or without the session's secrets. When a
+build turn's answer is in, before `checked` runs any server command, the
+server looks for the mark of that worktree's CLI.
 If there is one, it closes the cached CLI (`ChatSession.close`), which ends
 the CLI's job and every runner in it, started or starting, and then removes
 the mark. This is the crash path on purpose, as for a trial: each runner's
 holder note stays, and the gate waits on it until those processes have
 exited, or stops for the owner on an `inconclusive` one as any holder does.
 A session that wrapped nothing keeps its CLI. Outside build sessions nothing
-reads the marks; a mark whose process has exited is removed whenever the
-hook writes one. The next turn starts the CLI
+reads the marks; `ChatSession` removes its own session's mark when it closes
+its CLI. The next turn starts the CLI
 again with `--resume`. This is the app's turn boundary and is separate from
 the Codex transcript check above.
 
@@ -336,11 +352,18 @@ One protocol serves the runners and the server alike, in
   instruction, as `owned_job` creates a look's process, so no child can
   start outside it, and the job ends every member when it closes. A process
   that cannot be created inside its job starts nothing and says why.
-- It writes the holder note, then checks both watched processes. Only if
-  both live does it resume. One that ends after that check is seen by the
-  runner's wait on both handles at once, and the runner ends the job then;
-  between that check and the end of the job the command can run for as long
-  as Windows takes to report the exit. On a server launch, an accepted stop
+- Every wait the runner makes, for its place, the lease and the floor, waits
+  on the stop event and both watched processes too (`WaitForMultipleObjects`;
+  the floor's re-sampling checks them between samples). Any of them ends the
+  runner before it runs anything, its place dropped and nothing started.
+- It writes the holder note, then checks both watched processes and the stop
+  event. Only if both live and no stop is set does it resume. One that ends,
+  or a stop set, after that check is seen by the runner's wait on all three
+  at once, and the runner ends the job then; between that check and the end
+  of the job the command can run for as long as Windows takes to report the
+  exit. So a stop set while the runner waits prevents the command's first
+  instruction, and `--stop` reports `started` only for one set after the
+  check. On a server launch, an accepted stop
   and the resume are serialized by the existing launch gate
   (`desktop_session`), so an accepted stop either comes before the resume
   and nothing runs, or after it and ends the job.
@@ -493,15 +516,23 @@ Tests show:
   build;
 - a Codex GPU job wrapped by `codex_pretool`, waiting for its place past
   its yield as a running exec session started with no `tty`, run once it
-  is the head, ended by `gpu_run.py --stop` while waiting and while running
-  (lease released, children ended), `--stop` refused for another session's
-  place, ended by the session's end, and a sandboxed Codex runner
+  is the head, ended by `gpu_run.py --stop` while waiting for its place,
+  for the lease and for the floor, and while running (lease released,
+  children ended), a stop set between admission and the resume check
+  preventing the command's first instruction, `--stop` run from a product
+  worktree and with a CUDA Python first on `PATH` neither queued nor
+  refused, `--stop` refused for another session's place, ended by the
+  session's end, and a sandboxed Codex runner
   running nothing with its reason, the escalation hint only where the
   policy can ask;
 - a successful Codex build report with a live GPU job that ends only when
   stopped: the server closes the CLI before `checked`, and `serve_check`
   then runs; the same with that job waiting behind another holder, and
-  with its runner paused before it takes any place; the same for a Claude
+  with its runner paused before it takes any place, and with the hook under
+  a `node.exe` launcher; a mark that cannot be written refusing the call on
+  both hooks in a build session without secrets, the original command
+  never starting; a Claude wrapped call held by `background_left` and
+  stopped with `TaskStop`; the same for a Claude
   turn whose background runner outlives its closing answer; a session that
   wrapped nothing keeping its CLI;
 - a DeepSeek session's GPU job
