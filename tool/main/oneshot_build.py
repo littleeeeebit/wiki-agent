@@ -309,14 +309,26 @@ def record(path: Path) -> tuple[str, dict] | None:
                 text = (Path(entry.path) / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8")
             except FileNotFoundError:
                 continue
-            if not text.strip("\0 \t\r\n"):   # lost: only its own tree (`specs.owner`'s layout) stays closed
-                if (key.name, key.parent.name) == (oneshot.BRANCH, f"{entry.name}-worktrees"):
+            if not text.strip("\0 \t\r\n"):   # lost: only its own tree stays closed, by layout or by checkout
+                if lost_tree(key, entry.name):
                     raise HTTPException(409, f"`{entry.name}` 의 원샷 실행 기록이 비어 있다 — 되살리기 전에는 이 작업트리에서 턴을 열지 않는다")
                 continue
             spec = json.loads(text)
             if isinstance(spec, dict) and spec.get("worktree") and Path(spec["worktree"]).resolve() == key:
                 return entry.name, spec
     return None
+
+
+def lost_tree(key: Path, repo: str) -> bool:
+    """Whether `key` may be `repo`'s oneshot tree, its record lost: `specs.owner`'s layout in the volume's case
+    rules, or a checkout of that repository on the oneshot branch wherever it lives (PR #455 round 2)."""
+
+    same = os.path.normcase
+    if same(f"{key.parent.name}/{key.name}") == same(f"{repo}-worktrees/{oneshot.BRANCH}"):
+        return True
+    from workspace.sessions import checkout
+    _, main, branch = checkout(key)
+    return branch == oneshot.BRANCH and bool(main) and same(Path(main).name) == same(repo)
 
 
 def reclaimed(path: Path, run=None, gone: str | None = None) -> None:

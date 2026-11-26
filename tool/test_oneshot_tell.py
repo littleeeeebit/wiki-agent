@@ -1,6 +1,8 @@
 """The owner speaks to a run while it is built (`docs/plans/oneshot/14-owner-speaks-mid-build.md`)."""
 
 import copy
+import os
+import subprocess
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -560,15 +562,23 @@ def test_a_record_that_holds_nothing_refuses_only_its_own_tree(tmp_path):
         f'{{"worktree": "{tree.as_posix()}"}}', encoding="utf-8")
     zeroed = tmp_path / "specs" / "zeroed" / f"{oneshot.BRANCH}.json"
     zeroed.parent.mkdir()
-    own = tmp_path / "zeroed-worktrees" / oneshot.BRANCH
+    # Its own tree: the layout, in the volume's case rules (round 2), and a checkout of it on the oneshot branch.
+    moved = tmp_path / "moved" / "zeroed"
+    moved.mkdir(parents=True)
+    for args in (["init", "-q", "-b", oneshot.BRANCH], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                                                         "--allow-empty", "-m", "x"]):
+        subprocess.run(["git", *args], cwd=moved, check=True, capture_output=True)
+    own = [tmp_path / "zeroed-worktrees" / oneshot.BRANCH, moved,
+           *([tmp_path / "Zeroed-worktrees" / oneshot.BRANCH.upper()] if os.name == "nt" else [])]
     with patch.object(specs, "SPECS", tmp_path / "specs"):
         for nothing in (b"\0" * 4096, b"", b" \r\n"):
             zeroed.write_bytes(nothing)
             assert oneshot_build.record(tmp_path / "elsewhere") is None
             assert oneshot_build.record(tree)[0] == "ok"
-            with pytest.raises(HTTPException) as refused:
-                oneshot_build.record(own)
-            assert refused.value.status_code == 409 and "zeroed" in refused.value.detail
+            for mine in own:
+                with pytest.raises(HTTPException) as refused:
+                    oneshot_build.record(mine)
+                assert refused.value.status_code == 409 and "zeroed" in refused.value.detail
         for broken in (b'{"worktree": ', b'{"worktree": "x"}\0'):
             zeroed.write_bytes(broken)
             with pytest.raises(ValueError):
