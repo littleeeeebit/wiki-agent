@@ -38,9 +38,16 @@ watches them only when they want to.
 This applies to every Claude and Codex session wired to this hub, not only
 oneshot runs, except where a line names a build session. A build session is
 the CLI the server starts for a oneshot build cell. The server marks it with
-`WIKI_AGENT_ROLE=build` when it starts it. A check that names a build session
-also reads the run's effective turn stage (`oneshot_profile.turn_stage`), so
-a repair sent from `measure` counts as a build turn.
+`WIKI_AGENT_ROLE=build` when it starts it. The worktree's CLI is cached and
+shared with the owner's own turns (`work.session`), so the role is part of
+what makes a cached CLI reusable: the build's send passes the role to
+`work.session`, which puts it in the session's environment, and the owner's
+send passes none. `work.session` already closes a cached CLI whose
+environment differs and starts the next with `--resume`, so a build turn
+never runs in an unmarked CLI and an owner's turn never runs in a marked
+one, whatever the stage. A check that names a build session also reads the
+run's effective turn stage (`oneshot_profile.turn_stage`), so a repair sent
+from `measure` counts as a build turn.
 
 ### The machine, once a session starts
 
@@ -203,13 +210,16 @@ One protocol serves the runners and the server alike, in
   without cleaning up. Every holder, runner or server, writes it right after
   it takes the lease and before its job's first process runs: its own pid
   and start time, and the job's root process's pid and start time. It
-  clears the note only after the end the next section proves. Only the
-  lease's owner ever writes or clears the note. Every acquisition, abandoned
-  or not, reads the note right after it owns the lease. Windows may have
-  destroyed the mutex with its last handle, so a fresh acquisition can
-  follow a crash, and the note is what tells. A note left standing means the
-  last holder did not finish: the new holder waits until the noted root
-  process has exited, then for the floor, then clears the note and runs.
+  clears the note only after the end the next section proves; an end it
+  cannot prove replaces the note's processes with those not proven to have
+  exited. Only the lease's owner ever writes or clears the note. Every
+  acquisition, abandoned or not, reads the note right after it owns the
+  lease. Windows may have destroyed the mutex with its last handle, so a
+  fresh acquisition can follow a crash, and the note is what tells. A note
+  left standing means the last holder did not finish: the new holder waits
+  until every process the note names has exited, then for the floor, then
+  clears the note and runs. While it waits, the head's line names those
+  processes.
 - A place gives the order. A second mutex, `Local\wiki-agent-gpu-queue`,
   guards taking one: under it the taker reads and raises a counter in
   `gpu\next` and creates the place file `gpu\queue\<counter>` with
@@ -264,13 +274,20 @@ One protocol serves the runners and the server alike, in
   exiting. The proof is a successful termination, an exit proven for every
   member the job reported joining, and an accounting total that covers every
   one of them. Only then does it clear the holder note, release the lease
-  and drop its place. If the proof does not come, it keeps the lease, the
-  note and its place, and its output says which process is not proven to
-  have exited. The queue waits on it, visibly, and nothing is timed out.
-  The server's launches end the same way: the PC program already does
-  through its look, and the backend's start (`oneshot_measure_app.served`),
-  which today closes its job and waits for the root only, moves to the same
-  proof.
+  and drop its place. If the proof does not come, it writes the processes
+  not proven to have exited into the note, then releases the lease and
+  drops its place, and its output names them. The next holder waits on
+  them as on any leftover note, visibly, and nothing is timed out. So no
+  thread has to stay alive holding the lease for a job it could not end.
+- The server's launches end the same way, on the measurement worker's
+  thread that owns the lease. The PC program's look (`desktop_session.look`)
+  already proves its job's end with `owned_job` and records the members it
+  learned. When that proof is not clean, the look closes its job and
+  raises, as today. The worker catches it, writes the members the look's
+  record does not prove exited into the note, and only then releases the
+  lease. The backend's start (`oneshot_measure_app.served`), which today
+  closes its job and waits for the root only, moves to the same proof and
+  the same note.
 - However the runner itself ends, Windows closes its handles: the job's
   members are ended and the lease is abandoned or destroyed, with the note
   left standing. The next holder acts on the note as above. ponytail: a
@@ -321,9 +338,13 @@ elsewhere is not covered until its kind names the place.
      check runs, which judges the build session's own window. The checks
      that then run commands on the server read it again right before they
      save anything: `tested` after the contract-test command, `built` after
-     the gate and `serve_check`, and `oneshot_front_build.built_front` after
-     its build and looks. So a gate test that writes there and exits is
-     still seen. `changed` or `incomplete` at either read refuses the turn
+     the gate and `serve_check`, `oneshot_front_build.built_front` after
+     its build and looks, and S8's `oneshot_pr.readied` after its final gate
+     and release build, before it writes the gate's result and the final
+     `HEAD`. So a gate test that writes there and exits is still seen.
+     `checked`'s two returns that run no check, the hand-over
+     (`HANDOVERS`, S8's PR text) and the stop for a question, read it before
+     they save; a change refuses the turn in their place. `changed` or `incomplete` at either read refuses the turn
      with the folder and the paths, before any stage is saved, and that is
      the next build turn's note.
    - Every other way a check ends counts too: a failed or stopped gate, a
@@ -383,8 +404,15 @@ Tests show:
 - the runner ending its job when its shell, its session or itself ends, a
   shell ending between the last check and the resume, a process that cannot
   be created in its job starting nothing, a server stop on either side of
-  the resume, the lease kept while a job reports no active process but an
-  exit is unproven, and the backend's start ending by the same proof;
+  the resume, a job that reports no active process with an exit unproven
+  leaving those processes in the note and the next holder waiting on them,
+  and the backend's start ending by the same proof;
+- a PC measurement whose look raises on an unclean proof, through
+  `desktop_session.look` on its own desktop, leaving the unproven members
+  in the note before the worker releases the lease;
+- on one worktree, an owner's turn after a build turn and a build turn
+  after an owner's turn each starting the CLI again, marked only for the
+  build;
 - Codex admitted with `--now` holding the lease for its run, refused when a
   place waits, when a place is published during its step, for a leftover
   note and for the floor, and two Codex runners racing while the first
@@ -393,8 +421,9 @@ Tests show:
 - each spelling of a root refused on both hosts, the watch's three results
   on an answered, a failed and a stopped turn, a root replaced during a
   turn, a gate test writing there and exiting before `serve_check`, a gate
-  writing there and then failing, a failing frontend look, the turn refused
-  before any stage is saved, the first clean retry passing, a
+  writing there and then failing, a failing frontend look, S8's final gate
+  writing there, a hand-over and a question stop after a change, the turn
+  refused before any stage is saved, the first clean retry passing, a
   leftover hold stopping the run for the owner, and a server measurement
   failed by a change.
 
@@ -426,6 +455,17 @@ whole, in `auto` mode, as the automatic measurement does, so its `person`
 metrics stay unmeasured and no metric is selected or skipped. The script's
 outside calls happen as in any automatic measurement.
 
+The block closes the turn. It joins the closing blocks every build turn sets
+(`oneshot_build.Turn`, beside `done-report` and the stage's own block), so a
+background task still running after it is left over and not waited on, as
+after a `done-report`. Before the trial is dispatched, the server closes the
+worktree's cached CLI (`ChatSession.close`). That ends the CLI's job, and
+with it every background shell and GPU runner the turn left. Each runner
+sees its session end and ends its own job with the proof above before it
+releases the lease, so the trial never waits behind the build's own
+leftover. The next turn on the worktree, the build's or the owner's, starts
+the CLI again with `--resume`.
+
 Where it is accepted: a build turn whose effective stage is `build`, or a
 repair turn sent from `measure`, in a run whose `HEAD` holds the measurement
 plan (`oneshot_measure.planned`). Elsewhere the block is refused with that
@@ -447,10 +487,14 @@ The server answers with a trial measurement:
 - The worker keeps the hold for the whole trial, through the script's run
   and the check of its result, as the run's measurement worker does, so the
   product and the script both come from the recorded commit.
-- Under the hold it moves the program file that `app.run` names out of the
-  worktree's output folder, into `measure-app\trial\stale`. Then it runs the
-  run's own gate command (`gate_cmd`), which is what builds the program
-  today (`oneshot_desktop.built` reads its output). So the program the trial
+- Under the hold it first checks the program file that `app.run` names
+  with `oneshot_desktop.built`'s own containment rules: a plain file inside
+  the worktree's output folder, reached through no link. If it is not, the
+  trial ends with that reason and nothing is moved. If it is, the worker
+  records the move in the trial's record, then moves the file into
+  `measure-app\trial\stale`. Then it runs the run's own gate command
+  (`gate_cmd`), which is what builds the program today
+  (`oneshot_desktop.built` reads its output). So the program the trial
   measures is one this gate wrote; a gate that passes without building it
   leaves no program, and the trial ends saying so. It checks again that
   `HEAD` is the recorded commit and the tree is clean, as `specs.judge` does
@@ -459,8 +503,12 @@ The server answers with a trial measurement:
   in the output folder are not proven fresh, only the program; a stale
   resource beside it would pass.
 - A failing gate ends the trial with the gate's tail and measures nothing.
-  The moved program file is removed once the trial ends; the gate has made
-  its replacement or failed.
+- When the trial ends, however it ends, and while it still holds the tree:
+  if the output folder has no program file, the moved one goes back; if the
+  gate wrote one, the moved one is removed. The record of the move is
+  cleared after either. A server that stops mid-trial finds the record at
+  its next start and does the same before any turn or measurement takes the
+  tree, so a stop or a restart never loses the build's last program.
 - The copy never replaces `measure-app\app`, which the owner's round may be
   waiting to run.
 - The trial's program keeps its data in `measure-app\trial\data`, its own,
@@ -502,8 +550,11 @@ measurement command. The contract's side is the command the server would
 run: rendered as the server renders it (`oneshot_build.run_as`, the recorded
 tool paths and PowerShell's call operator included). The agent's side is its
 call. Both are split into commands at `&&`, the chain the contract allows,
-and each command into shell words as `guard` does, and each command is
-matched on its own. A program word on either side is compared by its
+and each command into shell words as `guard` does. Only the contract's
+command that holds `{out}` is the measuring one; the chain's other commands,
+a build or a setup step, are not matched and pass. Each of the agent's
+commands is matched against that measuring command, whether it runs alone
+or inside a chain of its own. A program word on either side is compared by its
 canonical executable: the recorded tool path for a declared tool, else the
 file `PATH` or the explicit path resolves to, links resolved, case ignored.
 Every other word matches literally, except the one word holding `{out}`: it
@@ -597,11 +648,19 @@ Tests show:
   card before `built_head`, its result back as the next build turn after an
   end, a wrong input, a stop and a restart, and the run's measurement,
   `measure-app\app` and `measure-app\data` unchanged;
+- a program path through a link or outside the output folder ending the
+  trial with nothing moved; the moved program put back after a failing gate
+  and after a server restart mid-trial, and removed after a gate that wrote
+  a new one;
+- a turn closing with `measure-request` while a background helper still
+  runs: the turn settles, the helper and its GPU runner end with the CLI,
+  and the trial runs;
 - each spelling of the variable refused, the contract's command refused as
   the server renders it, an installed interpreter's recorded path included,
-  with a standalone `{out}`, with an attached `--out={out}`, and in a `&&`
-  chain, a different option in that place passing, and a read of the
-  contract passing;
+  with a standalone `{out}`, with an attached `--out={out}`, and inside a
+  `&&` chain of the agent's, the contract's build step alone passing, a
+  different option in the `{out}` place passing, and a read of the contract
+  passing;
 - the logs cut at each file's starting size, a truncated and a replaced
   file kept whole, refused for a reparse point or a second link, masked,
   copied, named in the note and removed after;
