@@ -655,6 +655,92 @@ def test_the_same_boot_and_logon_prove_nothing_whatever_the_clock_says(tmp_path,
     assert desktop_session.load(folder)["state"] == "held" and (folder / "data-app").exists()
 
 
+def test_exits_the_cleanup_could_not_prove_in_time_release_the_look_once_proven(tmp_path, monkeypatch):
+    folder = crashed(tmp_path, monkeypatch)   # 11-24: 8 of 305 exits missed by the cleanup, all gone minutes later
+    record = desktop_session.load(folder)
+    late = {"pid": 4508, "created": 1}
+    record["jobs"]["app"] = {"name": "Local\\none", "uptime": 1, "root": None, "members": [late], "proof": {
+        "clean": False, "reasons": ["no exit proven for pid 4508"], "joined": 305, "total": 305, "active": 0}}
+    record["proof"] = {"clean": False, "uptime": 1, "reasons": [   # as `close` saved it
+        "app: no exit proven for pid 4508", "pid 4508 is still running",
+        "folder data-app could not be removed: PermissionError 32"]}
+    desktop_session.save(folder, record)
+    monkeypatch.setattr(desktop_session.native_process, "terminate", lambda member: True)
+    gone = {}
+    monkeypatch.setattr(desktop_session, "exited", lambda member: gone.get(member["pid"]))
+
+    assert desktop_session.recover(folder)   # Windows gives no answer: still held
+    gone[4508] = True
+    assert desktop_session.recover(folder) == []
+    assert desktop_session.load(folder)["recovered"] == "every process its jobs followed has exited since"
+    assert not (folder / "data-app").exists()
+
+
+def late_record(tmp_path, monkeypatch, members, reasons):
+    """A crashed look whose job counted every process but proved one exit too late, `close`'s own proof saved."""
+
+    folder = crashed(tmp_path, monkeypatch)
+    record = desktop_session.load(folder)
+    record["jobs"]["app"] = {"name": "Local\\none", "uptime": 1, "root": None, "members": members, "proof": {
+        "clean": False, "reasons": ["no exit proven for pid 9"], "joined": 3, "total": 3, "active": 0}}
+    record["proof"] = {"clean": False, "uptime": 1, "reasons": ["app: no exit proven for pid 9", *reasons]}
+    desktop_session.save(folder, record)
+    monkeypatch.setattr(desktop_session.native_process, "terminate", lambda member: True)
+    monkeypatch.setattr(desktop_session, "exited", lambda member: True)
+    return folder
+
+
+def test_an_exit_whose_process_was_never_recorded_is_proven_only_by_an_empty_pid(tmp_path, monkeypatch):
+    folder = late_record(tmp_path, monkeypatch, [], [])   # before #440: gone before its join was read
+    free = {}
+    monkeypatch.setattr(desktop_session, "vacant", lambda pid: free.get(pid, False))
+
+    assert "restart the PC or sign out" in desktop_session.recover(folder)[0]   # the pid is taken, or no answer
+    free[9] = True
+    assert desktop_session.recover(folder) == []
+
+
+def test_another_jobs_process_under_the_same_pid_proves_nothing_for_this_one(tmp_path, monkeypatch):
+    folder = late_record(tmp_path, monkeypatch, [], [])   # `app` never recorded its pid 9
+    record = desktop_session.load(folder)
+    record["jobs"]["helper"] = {"name": "Local\\other", "uptime": 1, "root": None,
+                                "members": [{"pid": 9, "created": 1}],   # an older process the pid once named
+                                "proof": {"clean": True, "reasons": [], "joined": 1, "total": 1, "active": 0}}
+    desktop_session.save(folder, record)
+    monkeypatch.setattr(desktop_session, "vacant", lambda pid: False)   # something runs under pid 9 now
+
+    assert "restart the PC or sign out" in desktop_session.recover(folder)[0]
+
+
+def test_a_cleanup_failure_other_than_a_late_exit_keeps_the_look_held(tmp_path, monkeypatch):
+    folder = late_record(tmp_path, monkeypatch, [{"pid": 9, "created": 1}],
+                         ["cannot read the listeners: OSError(22, 'table')"])
+
+    assert "restart the PC or sign out" in desktop_session.recover(folder)[0]
+
+
+def test_a_cleanup_that_never_saved_its_proof_proves_nothing(tmp_path, monkeypatch):
+    folder = late_record(tmp_path, monkeypatch, [{"pid": 9, "created": 1}], [])
+    record = desktop_session.load(folder)
+    record["proof"] = None   # the server died between its jobs and the end of `close`
+    desktop_session.save(folder, record)
+
+    assert "restart the PC or sign out" in desktop_session.recover(folder)[0]
+
+
+def test_a_job_count_that_did_not_match_proves_nothing_however_its_members_ended(tmp_path, monkeypatch):
+    folder = crashed(tmp_path, monkeypatch)
+    record = desktop_session.load(folder)
+    record["jobs"]["app"] = {"name": "Local\\none", "uptime": 1, "root": None, "members": [{"pid": 7, "created": 1}],
+                             "proof": {"clean": False, "joined": 4, "total": 5, "active": 0, "reasons": [
+                                 "no exit proven for pid 7", "the job counted 5 processes; 4 were followed"]}}
+    desktop_session.save(folder, record)
+    monkeypatch.setattr(desktop_session.native_process, "terminate", lambda member: True)
+    monkeypatch.setattr(desktop_session, "exited", lambda member: True)
+
+    assert "restart the PC or sign out" in desktop_session.recover(folder)[0]
+
+
 def test_an_unanswered_logon_read_proves_nothing(tmp_path, monkeypatch):
     folder = crashed(tmp_path, monkeypatch)
     monkeypatch.setattr(desktop_session, "logon_ended", lambda recorded: None)

@@ -5,6 +5,7 @@ of its own: what a oneshot runs is never out of the owner's sight (plan 13)."""
 
 import ctypes
 import os
+import re
 import shutil
 import stat
 import time
@@ -514,9 +515,62 @@ def look(root: Path, name: str, disposable: bool = False):
             raise Refused(f"{failure}; {message}") from failure
 
 
+def vacant(pid: int) -> bool:
+    """No running process has `pid`: it opens nothing, or only a process that has exited. Anything else, a live
+    process or no answer, is not vacant."""
+
+    k, _ = native_process._kernel()
+    handle = k.OpenProcess(native_process.SYNCHRONIZE, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == INVALID_PARAMETER
+    try:
+        return k.WaitForSingleObject(handle, 0) == 0
+    finally:
+        k.CloseHandle(handle)
+
+
+LATE = re.compile(r"(?:(?P<key>[^:]+): )?no exit proven for pid (?P<pid>\d+)")
+UNSEEN = re.compile(r"pid (?P<pid>\d+) (?:is still running|cannot be shown to have exited)")
+
+
+def ended_since(record: dict) -> bool:
+    """The look's cleanup ran to its end and every job followed every process it counted, and what it could not
+    prove then was only exits, proven now: each process recorded under that pid has exited (`exited`), or, where
+    the job never recorded one (a process gone before its join was read, before #440), no process has the pid at
+    all (`vacant`). A folder left is checked again by `recover` itself. A cleanup that never finished, a count
+    that did not match, or any other reason, such as a listener table that could not be read, proves nothing."""
+
+    proof, jobs = record.get("proof"), record["jobs"]
+    if not proof or not jobs:
+        return False
+
+    def gone(pid: str, members: list[dict]) -> bool:   # only the members of the job the reason names
+        known = [member for member in members if str(member["pid"]) == pid]
+        return all(exited(member) is True for member in known) if known else vacant(int(pid))
+
+    for entry in jobs.values():
+        own = entry.get("proof")
+        if not own or own.get("total") is None or own["total"] != own.get("joined"):
+            return False
+        if not all((late := LATE.fullmatch(reason)) and not late["key"] and gone(late["pid"], entry["members"])
+                   for reason in own["reasons"]):
+            return False
+    everyone = [member for entry in jobs.values() for member in entry["members"]]   # what `_exits` checked
+    for reason in proof["reasons"]:
+        if reason.startswith("folder "):   # `_removed`'s own answer, which `recover` asks again
+            continue
+        if late := LATE.fullmatch(reason):
+            if late["key"] not in jobs or not gone(late["pid"], jobs[late["key"]]["members"]):
+                return False
+        elif not (unseen := UNSEEN.fullmatch(reason)) or not gone(unseen["pid"], everyone):
+            return False
+    return True
+
+
 def recover(folder: Path) -> list[str]:
-    """Settle an earlier look's record. `[]` once its proof completed, or once a new boot or the end of its
-    logon session proved its processes ended and its disposable folders are gone; otherwise why it is held."""
+    """Settle an earlier look's record. `[]` once its proof completed, or once a new boot, the end of its logon
+    session or the exits its cleanup could not prove in time (`ended_since`) proved its processes ended and its
+    disposable folders are gone; otherwise why it is held."""
 
     folder = Path(folder).absolute()
     if not _plain(folder.parent, folder):   # a link would move every removal to wherever it leads
@@ -536,20 +590,22 @@ def recover(folder: Path) -> list[str]:
         proof = "the logon session it ran in ended"
     else:
         proof = None
+    if not proof:
+        k = _native()[0]
+        for entry in record["jobs"].values():
+            for member in entry["members"]:
+                native_process.terminate(member)
+            if record["session"] == session():   # a `Local\` name means nothing in another session
+                job = k.OpenJobObjectW(0x0008, False, entry["name"])   # JOB_OBJECT_TERMINATE
+                if job:
+                    k.TerminateJobObject(job, 1)
+                    k.CloseHandle(job)
+        proof = "every process its jobs followed has exited since" if ended_since(record) else None
     if proof:
         left = _removed(folder, record["folders"])
         record.update(state="held" if left else "recovered", recovered=None if left else proof, held=left)
         save(folder, record)
         return [f"{folder.name}: {reason}" for reason in left]
-    k = _native()[0]
-    for entry in record["jobs"].values():
-        for member in entry["members"]:
-            native_process.terminate(member)
-        if record["session"] == session():   # a `Local\` name means nothing in another session
-            job = k.OpenJobObjectW(0x0008, False, entry["name"])   # JOB_OBJECT_TERMINATE
-            if job:
-                k.TerminateJobObject(job, 1)
-                k.CloseHandle(job)
     held = ["no proof its processes ended; restart the PC or sign out to release it"]
     record.update(state="held", held=held)
     save(folder, record)

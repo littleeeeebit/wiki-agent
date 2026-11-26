@@ -292,7 +292,7 @@ def test_both_hosts_run_the_fixed_command_and_say_so():
     import claude_pretool
     import codex_pretool
     payload = {"tool_name": "Bash", "cwd": str(hook.HERE),
-               "tool_input": {"command": "python -m pytest tool -q | tail -4", "description": "Run the tests"}}
+               "tool_input": {"command": "python -m pytest tool/test_hook.py -q | tail -4", "description": "Run the tests"}}
     out = claude_pretool.verdict(payload)["hookSpecificOutput"]
     assert "permissionDecision" not in out, "Claude 가 새 명령에 자기 승인 규칙을 그대로 적용해야 한다"
     assert out["updatedInput"]["description"] == "Run the tests"

@@ -23,13 +23,18 @@ request (its prose is the worker's `pr-summary`, written in Korean from the
 diff; never a translated spec). Korean
 survives in English text only where it names a Korean thing — the glossary
 holds that list, and a word the translator refuses to render is exactly a word
-this rule may not deny.
+this rule may not deny. A host with no mirror is the exception: in an Orca
+terminal (`ORCA_TERMINAL_HANDLE` is set) the person reads chat replies,
+progress lines and the options of a question exactly as written, so those
+are Korean there. Tool descriptions stay English, as the hook holds them.
 
 What goes wrong. Thinking in one language and writing in another costs the
 agent accuracy on every turn, and this repository spent a long time paying it:
 every surface the agent touched was Korean. The person still reads Korean —
 that is what the mirror is for — but the reading now happens after the work,
-not during it.
+not during it. Where nothing mirrors, the same rule leaves the person unable
+to follow: on 2026-11-25 an Orca session reported its progress in English,
+and the owner said they could not understand any of it.
 
 ## Why this page is layer 4
 
