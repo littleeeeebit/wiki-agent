@@ -207,13 +207,17 @@ on and reads it with `write_stdin` (the tool's own declaration, in the
    command as a GPU job, so it is never queued or refused behind the job it
    stops. It refuses a place whose `.who` file (below) names another
    session than the caller's. After it sets the event it waits until the
-   place is no longer live, by the queue's own rule (the place file opens,
-   so no process holds it), and removes a dead place itself under the queue
-   mutex, so it returns even if the runner died after the signal and no one
-   else joins the queue. It says only that the place is gone; whether the
-   command had started is the runner's own last output line (`stopped
-   before start` or `stopped after start`), and a runner that died writes
-   none, which the stop's answer then says.
+   place is no longer live. A place file that is absent means the stop is
+   done: the runner or another scan removed it. A sharing violation means
+   it is still held, and the stop keeps waiting. A file that opens has no
+   holder, and the stop removes it itself under the queue mutex. So it
+   returns even if the runner died after the signal and no one else joins
+   the queue, and it never treats an absent file as the queue's unreadable
+   place. It says only that the place is gone. Whether the command had
+   started is the runner's own last output line in the original exec
+   session (`stopped before start` or `stopped after start`); if that
+   output has no such line, the runner died and whether the command started
+   is unknown.
    A job the agent started outside the sandbox (`require_escalated`) has
    its runner under the owner's account, and is stopped by a call with the
    same `require_escalated`, which the runner's line says; a stop run under
