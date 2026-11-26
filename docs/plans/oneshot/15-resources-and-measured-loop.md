@@ -193,11 +193,15 @@ on and reads it with `write_stdin` (the tool's own declaration, in the
    session, and runs the job there once it is the head and holds the lease.
    It watches the shell that session started and the Codex process, as on
    Claude, so the end of the session ends it the normal way.
-3. Codex 0.166 has no operation that stops one exec session. So the runner
-   reads its own standard input, which its command never gets, and the line
-   `stop` ends its command the normal way, waiting or running. On Codex the
-   agent sends it with `write_stdin`; the context and the runner's output
-   say so. On Claude, `TaskStop` ends the shell as today.
+3. Codex 0.166 has no operation that stops one exec session, and an exec
+   call without `tty` may have its input closed, so the stop does not go
+   through the runner's input. Each runner also waits on a named event of
+   its own place, `Local\wiki-agent-gpu-stop-<counter>`. The command
+   `python tool/gpu_run.py --stop <counter>` sets it, and the runner ends
+   its command the normal way, waiting or running. It refuses a place whose
+   `.who` file (below) names another session than the caller's. The
+   runner's output and the context name the command. On Claude, `TaskStop`
+   ends the shell as today, and `--stop` works there too.
 4. Codex has no hook that holds the agent's other tools while a call is
    still running, as `background_left` does on Claude. ponytail: a Codex
    agent can go on to other work while its GPU job waits; a second GPU job
@@ -214,10 +218,8 @@ on and reads it with `write_stdin` (the tool's own declaration, in the
    cells run with full access, so they are not touched.
 6. Before 15a is built, a real Codex 0.166 transcript is checked for what
    the queue relies on: a command still running past its yield comes back
-   as a session id and is not ended; it survives the end of its turn; and
-   `write_stdin` with `stop` ends a waiting runner's shell and the runner,
-   and a running one's job, lease and children. If any fails, 15a stops
-   there and goes to the owner.
+   as a session id and is not ended; and it survives the end of its turn.
+   If either fails, 15a stops there and goes to the owner.
 
 ### A build turn's GPU jobs end with the turn
 
@@ -225,16 +227,28 @@ A build turn's answer can arrive while one of its GPU runners still waits or
 runs: Codex's app session keeps its CLI alive after a successful turn, and a
 Claude background task can outlive a closing answer. The server's own
 checks then queue behind it, `serve_check` among them, while the turn still
-holds the worktree, and no later turn could stop it. So every place and
-every holder note also records the session process its runner watches.
-When a build turn's answer is in, before `checked` runs any server command,
-the server looks in the queue for a live place or a holder note of that
-session. If there is one, it closes the worktree's cached CLI
-(`ChatSession.close`), which ends the CLI's job and every runner in it. This
-is the crash path on purpose, as for a trial: each runner's note stays, and
-the gate's wait on it lasts only until those processes have exited. The
-next turn starts the CLI again with `--resume`. This is the app's turn
-boundary and is separate from the Codex transcript check above.
+holds the worktree, and no later turn could stop it. A runner can also still
+be starting, before it has taken any place, so the queue cannot be what
+tells. The hook can: before it returns a wrapped call, the pretool hook
+writes a mark for the session's CLI process, `gpu\wrapped\<pid>-<start>`.
+The command cannot start before the hook returns, so a runner never exists
+without its mark. When a build turn's answer is in, before `checked` runs
+any server command, the server looks for the mark of that worktree's CLI.
+If there is one, it closes the cached CLI (`ChatSession.close`), which ends
+the CLI's job and every runner in it, started or starting, and then removes
+the mark. This is the crash path on purpose, as for a trial: each runner's
+holder note stays, and the gate waits on it until those processes have
+exited, or stops for the owner on an `inconclusive` one as any holder does.
+A session that wrapped nothing keeps its CLI. Outside build sessions nothing
+reads the marks; a mark whose process has exited is removed whenever the
+hook writes one. The next turn starts the CLI
+again with `--resume`. This is the app's turn boundary and is separate from
+the Codex transcript check above.
+
+Each place also has a readable `gpu\queue\<counter>.who`, written right
+after the place and removed with it, naming the session process its runner
+watches. It is what `--stop` checks and what the queue's line shows; no
+decision about running reads it.
 
 ### The queue's order and the lease
 
@@ -478,15 +492,18 @@ Tests show:
   after an owner's turn each starting the CLI again, marked only for the
   build;
 - a Codex GPU job wrapped by `codex_pretool`, waiting for its place past
-  its yield as a running exec session, run once it is the head, ended by a
-  `stop` line on its input while waiting and while running (lease released,
-  children ended) and by the session's end, and a sandboxed Codex runner
+  its yield as a running exec session started with no `tty`, run once it
+  is the head, ended by `gpu_run.py --stop` while waiting and while running
+  (lease released, children ended), `--stop` refused for another session's
+  place, ended by the session's end, and a sandboxed Codex runner
   running nothing with its reason, the escalation hint only where the
   policy can ask;
 - a successful Codex build report with a live GPU job that ends only when
   stopped: the server closes the CLI before `checked`, and `serve_check`
-  then runs; the same for a Claude turn whose background runner outlives
-  its closing answer; a build turn with no live place left untouched;
+  then runs; the same with that job waiting behind another holder, and
+  with its runner paused before it takes any place; the same for a Claude
+  turn whose background runner outlives its closing answer; a session that
+  wrapped nothing keeping its CLI;
 - a DeepSeek session's GPU job
   queued as Claude's; a holder waiting on a note whose root has exited
   while a child it names lives;
