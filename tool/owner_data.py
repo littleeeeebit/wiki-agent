@@ -71,15 +71,33 @@ def product_names(tree: Path) -> list[str]:
             names.append(Path(common).parent.name)
     except (OSError, subprocess.TimeoutExpired):
         pass
-    for conf in tree.glob("**/tauri.conf.json"):
-        if any(part in ("node_modules", "target", ".git") for part in conf.relative_to(tree).parts):
-            continue
+    for conf in _confs(tree):
         try:
             value = json.loads(conf.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         names += [str(value[k]) for k in ("identifier", "productName") if isinstance(value, dict) and value.get(k)]
     return list(dict.fromkeys(n for n in names if n and n not in (".", "..")))
+
+
+def _confs(tree: Path):
+    for conf in Path(tree).glob("**/tauri.conf.json"):
+        if not any(part in ("node_modules", "target", ".git") for part in conf.relative_to(tree).parts):
+            yield conf
+
+
+def configs(tree: Path) -> dict[str, tuple[int, int]]:
+    """Each `tauri.conf.json` the roots are read from, with its write time and size: a window in which one
+    changed may have named a product, and made its folder, between two reads."""
+
+    found = {}
+    for conf in _confs(tree):
+        try:
+            stat = conf.stat()
+        except OSError:
+            continue
+        found[str(conf)] = (stat.st_mtime_ns, stat.st_size)
+    return found
 
 
 def roots(tree: Path) -> list[Path]:
@@ -180,13 +198,16 @@ class Watch:
 
     Each base folder (the roots' parents) is watched for every directory name created, renamed or removed in
     it, so a root that only came to exist during the window (a `tauri.conf.json` identifier the turn added) is
-    covered too: `settled(now)` and `close(now)` take the roots as they are now. One of them seen at its base is
-    a change; one that already existed, and so had no watch of its own, leaves the window `incomplete`."""
+    covered too: `settled` and `close` take the roots as they are now (`now`, else read off `tree`). One of
+    them seen at its base is a change; one that already existed, and so had no watch of its own, leaves the
+    window `incomplete`. A `tauri.conf.json` of `tree` that changed in the window may have named a product only
+    between two reads: then a folder name seen at a base that no root explains leaves it `incomplete` too."""
 
-    def __init__(self, found: list[Path]):
+    def __init__(self, found: list[Path], tree: Path | None = None):
         self.lock, self.sync_lock = threading.Lock(), threading.Lock()
         self.state, self.paths, self.why = "clean", [], []
         self.found, self.seen, self.bases = list(found), {}, set()
+        self.tree, self.configs = tree, configs(tree) if tree is not None else None
         self.threads, self.syncs, self.stop, self.k = [], [], None, None
         if os.name != "nt":
             return
@@ -238,6 +259,17 @@ class Watch:
                 self._changed(None)
             elif root.exists():
                 self._fail(f"`{root}` 는 이 구간 중에 생긴 이름이라 그 안은 감시하지 못했다")
+        if self.tree is None or configs(self.tree) == self.configs:
+            return
+        with self.lock:
+            unexplained = sorted(str(base / name) for base, names in self.seen.items() for name in names
+                                 if not any(r.parent == base and r.name.lower() == name for r in self.found))
+        if unexplained:
+            self._fail("이 구간 중에 `tauri.conf.json` 이 바뀌었고, 그동안 생기거나 바뀐 폴더가 어느 제품의 것인지 알 수 "
+                       "없다 — " + ", ".join(f"`{p}`" for p in unexplained[:MOST]))
+
+    def _now(self, now: list[Path] | None) -> list[Path] | None:
+        return now if now is not None or self.tree is None else roots(self.tree)
 
     def _start(self, folder: Path, recursive: bool) -> None:
         ready = threading.Event()
@@ -316,14 +348,18 @@ class Watch:
 
         with self.sync_lock:
             if self.stop is not None:
-                with self.lock:
+                failed = []
+                with self.lock:   # a worker leaves `syncs` under this lock before it closes its handles
                     pending = list(self.syncs)
-                for sync, acked in pending:
-                    acked.clear()
-                    self.k.SetEvent(sync)
+                    for sync, acked in pending:
+                        acked.clear()
+                        if not self.k.SetEvent(sync):
+                            failed.append(ctypes.get_last_error())
+                for error in failed:
+                    self._fail(f"감시에 묻지 못했다 (Windows error {error})")
                 if not all(acked.wait(10) for _, acked in pending):
                     self._fail("감시가 제때 답하지 않았다")
-        if now is not None:
+        if (now := self._now(now)) is not None:
             self._cover(now)
         return self.result()
 
@@ -340,7 +376,7 @@ class Watch:
                         self._fail("감시를 끝내지 못했다")
                 self.k.CloseHandle(self.stop)
                 self.stop = None
-        if now is not None:
+        if (now := self._now(now)) is not None:
             self._cover(now)
         return self.result()
 

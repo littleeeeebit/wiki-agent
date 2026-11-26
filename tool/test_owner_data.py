@@ -148,6 +148,22 @@ def test_a_root_named_during_the_window_is_covered(tree, tmp_path):
     assert watch.close(owner_data.roots(tree))["state"] == "clean"
 
 
+def test_a_name_used_only_between_two_reads_is_never_taken_for_clean(tree, tmp_path):
+    local, conf = tmp_path / "AppData" / "Local", tree / "src-tauri" / "tauri.conf.json"
+    original = conf.read_text(encoding="utf-8")
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    conf.write_text(json.dumps({"identifier": "com.example.trial"}), encoding="utf-8")   # a smoke test's name
+    (local / "com.example.trial").mkdir()   # its program's data folder, left behind
+    time.sleep(0.05)
+    conf.write_text(original, encoding="utf-8")   # restored before the check reads anything
+    result = watch.settled()
+    assert result["state"] == "incomplete" and "com.example.trial" in owner_data.reason(result)
+    watch.close()
+    watch = owner_data.Watch(owner_data.roots(tree), tree)   # the same folder made with the config untouched
+    (local / "elsewhere").mkdir()   # another program's folder: no name of this tree could be it
+    assert watch.close()["state"] == "clean"
+
+
 def test_off_windows_nothing_is_watched_and_nothing_is_claimed(monkeypatch):
     monkeypatch.setattr(owner_data, "_k32", lambda: pytest.fail("the Windows watch was started"))
     with monkeypatch.context() as m:

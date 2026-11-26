@@ -53,13 +53,16 @@ CREDENTIAL = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKI
 
 class Halted:
     """A measurement's stop: the owner's, or the server going down. Made before its worker starts (`start`), so
-    a stop pressed in between is never lost."""
+    a stop pressed in between is never lost. `gate` orders a stop with a launch: a start holds it from its last
+    look at the stop through the program's resume (`owned_job.Job.start`), so a stop that returned was either
+    seen there or comes after the resume, where the launch's own waits see it."""
 
     def __init__(self) -> None:
-        self.own = threading.Event()
+        self.own, self.gate = threading.Event(), threading.Lock()
 
     def set(self) -> None:
-        self.own.set()
+        with self.gate:
+            self.own.set()
 
     def is_set(self) -> bool:
         return self.own.is_set() or runtime.stopping.is_set()

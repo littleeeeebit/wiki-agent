@@ -449,7 +449,10 @@ elsewhere is not covered until its kind names the place.
    it sees, and each read takes the roots as they are then: a root the turn
    named (a new `tauri.conf.json` identifier) is a change when its folder
    came or went in the window, and `incomplete` when it already existed,
-   unwatched. Each read first reads every change already delivered, so a
+   unwatched. A name used only between two reads leaves no root behind: when
+   a `tauri.conf.json` changed in the window (its write time or size), a
+   folder name seen at a base that no root explains makes it `incomplete`.
+   Each read first reads every change already delivered, so a
    write that finished before the check is never read after it. Off Windows
    nothing is watched. Nothing is walked: the vtuber root
    holds 200,024 files now, and one metadata walk of it took 20 s. Junctions

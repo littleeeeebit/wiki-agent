@@ -68,6 +68,23 @@ def test_a_contract_test_writing_there_is_read_before_the_tests_are_pinned(owner
     assert "cache.bin" in sent[-1][2]
 
 
+def test_the_servers_last_command_before_the_tests_are_pinned_is_inside_the_window(owner):
+    tree, sent, data = owner
+    begun(tree)
+    write(tree, "test_budget.py", TESTS)
+    real = specs.sh
+
+    def sh(argv, cwd, *a, **k):
+        if argv[:2] == ["git", "commit"]:   # the tests commit: the server's last command before the save
+            (data / "after.bin").write_text("x", encoding="utf-8")
+        return real(argv, cwd, *a, **k)
+    with patch.object(specs, "sh", sh):
+        then = check(tree)
+    assert o()["stage"] == "tests" and not o().get("tests_head")
+    then()
+    assert "after.bin" in sent[-1][2]
+
+
 def test_a_question_after_a_change_is_refused_rather_than_asked(owner):
     tree, sent, data = owner
     to_build(tree, sent)

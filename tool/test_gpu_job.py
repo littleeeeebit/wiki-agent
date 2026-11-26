@@ -118,6 +118,20 @@ def test_a_program_in_a_worktree_is_a_gpu_job(tmp_path, monkeypatch):
     assert gpu_job.kind(["./bin/cat.exe"], str(top), {}) == "gpu"
     assert gpu_job.kind([str(named)], str(top), {}) == "gpu"
     assert gpu_job.kind(["cat", "x"], str(top), {}) == "inspect"
+    (top / "bin" / "timeout.exe").write_bytes(b"")   # named like a wrapper: never stripped as one
+    assert gpu_job.kind(["./bin/timeout.exe"], str(top), {}) == "gpu"
+    assert gpu_job.kind(["env", "A=1", "./bin/timeout.exe", "5"], str(top), {}) == "gpu"
+
+
+def test_off_windows_a_gpu_job_is_a_program_like_any_other(tmp_path, monkeypatch):
+    monkeypatch.setattr(gpu_job, "programs", lambda payload, host: ([(["python", "train.py"], str(tmp_path))], "posix"))
+    monkeypatch.setattr(gpu_job, "kind", lambda *a: "gpu")
+    monkeypatch.setattr(gpu_queue, "ancestry", lambda *a: pytest.fail("the Windows process tree was read"))
+    with monkeypatch.context() as m:
+        m.setattr(gpu_job.os, "name", "posix")
+        answer = gpu_job.verdict({"tool_name": "Bash", "tool_input": {"command": "python train.py"}})
+    out = (answer or {}).get("hookSpecificOutput") or {}
+    assert out.get("permissionDecision") != "deny" and "updatedInput" not in out
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows jobs")

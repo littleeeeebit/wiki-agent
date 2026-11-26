@@ -297,11 +297,14 @@ class Holder:
         def taken():
             counter_file = self.folder / "next"
             try:
-                counter = int(counter_file.read_text(encoding="utf-8").strip() or 0) + 1
+                last = int(counter_file.read_text(encoding="utf-8").strip() or 0)
             except FileNotFoundError:
-                counter = 1
+                last = 0
             except ValueError as error:
                 raise Refused(f"`{counter_file}` is unreadable ({error}) — 확인 후 지우기") from None
+            # Above every place and `.who` there is too: a lost counter never hands out a live place's number.
+            counter = max([last, *(int(p.name.split(".")[0]) for p in (self.folder / "queue").iterdir()
+                                   if p.name.split(".")[0].isdigit())]) + 1
             part = counter_file.with_suffix(f".{os.getpid()}.part")
             part.write_text(str(counter), encoding="utf-8")
             os.replace(part, counter_file)
@@ -557,9 +560,17 @@ def stop(counter: int, session: dict | None, say=print) -> int:
         say(f"place {counter} belongs to another session; not stopped")
         return 3
     event = K.OpenEventW(0x0002, False, stop_event(counter, folder))   # EVENT_MODIFY_STATE
+    signalled = bool(event) and bool(K.SetEvent(event))
+    error = ctypes.get_last_error()
     if event:
-        K.SetEvent(event)
         K.CloseHandle(event)
+    if not signalled:   # never a wait the runner was not told to end
+        if probe(place) == "gone":
+            say(f"place {counter} is gone")
+            return 0
+        say(f"cannot signal place {counter}'s stop (Windows error {error}); not stopped — the runner's job is "
+            "still queued or running")
+        return 4
     lease, queue, _ = names(folder)
     while True:
         state = probe(place)

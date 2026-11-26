@@ -877,9 +877,7 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
         return "계획 테스트 사례가 `contract` 에 없는 파일에서 나왔다 — " + ", ".join(outside[:10])
     if (snapshot(path, moved), head(path), changed(path, o["design_head"])) != before:
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
-    if seen := oneshot_owner_data.read(spec["repo"]):   # the contract-test command ran: judged before any save
-        return seen
-    gate = " && ".join([runner["command"].replace("{report}", REPORT), *runner["after"]])
+    gate =" && ".join([runner["command"].replace("{report}", REPORT), *runner["after"]])
     adapter = path / ".wiki" / "adapter.toml"
     try:   # every table but `[slots]` is kept as written; one that is there but unreadable is never replaced
         old = adapter.read_bytes().decode("utf-8") if adapter.exists() else ""   # its line endings as they are
@@ -899,6 +897,8 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
             raise ValueError(f"계약 테스트를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
     if left := specs.sh(["git", "status", "--porcelain", "--", *names], path).stdout.strip():
         raise ValueError(f"계약 테스트 커밋 뒤에도 바뀐 파일이 남았다 — {left[:300]}")
+    if seen := oneshot_owner_data.read(spec["repo"]):   # after the last server command, the commit: before the save
+        return seen   # a retold turn finds the commit made and keeps it as the tests' commit
     tests_head, pins = head(path), cases(spec, found)
     scenarios = [f"{r['id']}: {r['text']}" for r in spec.get("requirements") or [] if r.get("postconditions")]
     oneshot_spec.saved(spec["repo"], done=spec.get("done") if o.get("retell_to") == "build-front" else [gate, *scenarios],   # R2's screens stay

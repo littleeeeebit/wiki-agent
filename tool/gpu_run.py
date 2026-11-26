@@ -69,10 +69,11 @@ def runnable(shell: str, dialect: str, command: str) -> tuple[str, str]:
 
 
 def shell_argv(shell: str, dialect: str, command: str) -> list[str]:
-    if dialect == "ps":   # `-Command` exits 1 for any failure: the last program's own code is kept
+    # `-Command` exits 1 for any failure: the last program's own code is kept. Nothing goes before the command,
+    # whose `using` lines or `param` block must come first; a fresh shell's `$LASTEXITCODE` is unset already.
+    if dialect == "ps":
         return [shell, "-NoLogo", "-NoProfile", "-Command",
-                f"$global:LASTEXITCODE = 0\n{command}\n$ok = $?\nif ($LASTEXITCODE) {{ exit $LASTEXITCODE }}\n"
-                "if (-not $ok) { exit 1 }"]
+                f"{command}\n$ok = $?\nif ($LASTEXITCODE) {{ exit $LASTEXITCODE }}\nif (-not $ok) {{ exit 1 }}"]
     return [shell, "-c", command]
 
 

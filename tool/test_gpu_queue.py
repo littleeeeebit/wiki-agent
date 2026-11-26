@@ -289,6 +289,41 @@ def test_a_place_anyone_can_see_already_has_its_stop_event_and_its_session(queue
     assert seen == [(True, True)]
 
 
+def test_a_lost_counter_never_hands_out_a_live_places_number(queue):
+    hold = threading.Event()
+    a, _ = background("first", hold=hold)
+    until(lambda: (queue / "holder").exists())
+    who = (queue / "queue" / "1.who").read_text(encoding="utf-8")
+    (queue / "next").unlink()
+    holder = gpu_queue.Holder("second", say=Lines())
+    try:
+        assert holder.take() == 2
+    finally:
+        holder.finish()
+    assert (queue / "queue" / "1.who").read_text(encoding="utf-8") == who   # the first place can still be stopped
+    hold.set()
+    a.join(30)
+
+
+def test_a_stop_that_cannot_signal_a_live_place_says_so_at_once(queue, monkeypatch):
+    me = native_process.identity(os.getpid())
+    hold = threading.Event()
+    a, raised = background("job", hold=hold, who={"session": me})
+    until(lambda: (queue / "holder").exists())
+    try:
+        for failing in ("OpenEventW", "SetEvent"):
+            with monkeypatch.context() as m:
+                m.setattr(gpu_queue.K, failing, lambda *args: 0)
+                lines, started = Lines(), time.monotonic()
+                assert gpu_queue.stop(1, me, lines) == 4 and time.monotonic() - started < 5
+                assert "not stopped" in lines[-1], failing
+        assert a.is_alive()
+    finally:
+        hold.set()
+        a.join(30)
+    assert not raised
+
+
 def test_a_store_shells_command_runs_through_an_installed_shell_in_its_own_syntax(monkeypatch):
     from common import shell as shells
 
@@ -301,6 +336,8 @@ def test_a_store_shells_command_runs_through_an_installed_shell_in_its_own_synta
         gpu_run.runnable(store, "ps", "$x = $y ?? 1")
     installed = r"C:\Program Files\PowerShell\7\pwsh.exe"
     assert gpu_run.runnable(installed, "ps", "a && b") == (installed, "a && b")
+    for opening in ("using namespace System.IO\n[Path]::GetTempPath()", "param($n = 1)\npython train.py $n"):
+        assert gpu_run.shell_argv(installed, "ps", opening)[-1].startswith(opening)   # nothing goes before it
 
 
 def test_an_inconclusive_end_stops_the_queue_until_the_owner_deletes_the_note(queue):

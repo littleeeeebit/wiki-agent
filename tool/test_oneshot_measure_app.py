@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import sys
+import threading
 import time
 import types
 from pathlib import Path
@@ -179,7 +180,7 @@ def session(tmp_path: Path, job: Job, seen: dict):
             (self.folder / "evidence").mkdir(parents=True)
             seen.update(disposable=disposable)
 
-        def start(self, key, argv, cwd, extra, halt=None, output=None):
+        def start(self, key, argv, cwd, extra, halt=None, output=None, gate=None):
             if seen.get("refuse"):
                 raise (owned_job.Unrunnable if seen["refuse"] == "program" else refused)("refused")
             output.write(seen.get("log", "app started").encode())   # what the program prints, to its pipe
@@ -563,14 +564,19 @@ class Backend:
     """An `owned_job.Job` stand-in for the Windows backend: its start calls both callbacks before the resume, as
     the real one does under its gate."""
 
-    def __init__(self, clean: bool = True):
-        self.clean, self.resumed = clean, False
+    def __init__(self, clean: bool = True, paused: threading.Event | None = None,
+                 release: threading.Event | None = None):
+        self.clean, self.resumed, self.paused, self.release = clean, False, paused, release
 
-    def start(self, argv, cwd, env, desktop, log, before_resume=None, last=None):
+    def start(self, argv, cwd, env, desktop, log, before_resume=None, last=None, gate=None):
         root = {"pid": 1, "created": 1, "exe": "serve.exe"}
         before_resume(root)
-        last()
-        self.resumed = True
+        with gate if gate is not None else contextlib.nullcontext():
+            last()
+            if self.paused is not None:   # between the last look at the stop and the resume
+                self.paused.set()
+                self.release.wait(10)
+            self.resumed = True
         return root
 
     def code(self, root):
@@ -602,9 +608,37 @@ def test_a_stop_accepted_while_the_backend_is_prepared_never_resumes_it(tmp_path
     assert not job.resumed
 
 
-def test_a_backend_that_did_not_end_fails_its_caller_after_the_holder_is_told(tmp_path):
+def test_a_stop_pressed_between_the_last_look_and_the_resume_returns_after_the_resume(tmp_path):
+    halt, paused, release = measure.Halted(), threading.Event(), threading.Event()
+    job, raised = Backend(paused=paused, release=release), []
+    holder = types.SimpleNamespace(root=lambda identity: None, ended=lambda proof: None)
+
+    def launch():
+        try:
+            backend(tmp_path, job, halt, holder)
+        except ValueError as error:
+            raised.append(str(error))
+    launcher = threading.Thread(target=launch)
+    launcher.start()
+    assert paused.wait(10)
+    stopper = threading.Thread(target=halt.set)   # the stop endpoint, accepting the owner's stop now
+    stopper.start()
+    stopper.join(0.5)
+    assert stopper.is_alive() and not halt.is_set()   # ordered after the resume, never accepted before it
+    release.set()
+    stopper.join(10)
+    launcher.join(10)
+    assert job.resumed and raised == ["사람이 멈췄다"]   # the launch's own wait saw it
+
+
+def test_a_backend_that_did_not_end_fails_its_caller_after_the_holder_is_told(tmp_path, monkeypatch):
     told = []
     holder = types.SimpleNamespace(root=lambda identity: None, ended=told.append)
     with pytest.raises(RuntimeError, match="백엔드를 끝내지 못했다"):
         backend(tmp_path, Backend(clean=False), measure.Halted(), holder)
     assert [proof["clean"] for proof in told] == [False]
+    told.clear()   # a launch that failed already: the unended backend is still what the caller hears, with its cause
+    monkeypatch.setattr(product, "answering", lambda *a: (_ for _ in ()).throw(ValueError("백엔드가 답하지 않았다")))
+    with pytest.raises(RuntimeError, match="백엔드를 끝내지 못했다") as stopped:
+        backend(tmp_path, Backend(clean=False), measure.Halted(), holder)
+    assert [proof["clean"] for proof in told] == [False] and "답하지 않았다" in str(stopped.value.__context__)

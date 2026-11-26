@@ -147,19 +147,20 @@ def owned_backend(argv: list[str], path: Path, env: dict, health: str, seconds: 
         with log.open("wb") as output:
             try:
                 root = job.start(argv, path, {**env, "PYTHONUNBUFFERED": "1"}, None, output,
-                                 before_resume=holder.root if holder is not None else None, last=last)
+                                 before_resume=holder.root if holder is not None else None, last=last,
+                                 gate=getattr(halt, "gate", None))
             except owned_job.Refused as exc:
                 raise ValueError(f"백엔드 프로세스를 묶어 둘 수 없었다 — {exc}") from None
         try:
             answering(lambda: job.code(root), lambda: vouched({m["pid"] for m in job.members()}, health),
                       health, seconds, halt, log, hide)
             yield
-        finally:
+        finally:   # judged here, as the PC program's: a failed launch never hides an unended backend
             proof = job.end(END_SECONDS)
             if holder is not None:
                 holder.ended(proof)
-        if not proof["clean"]:   # as the PC program's: a check or measurement never passes over an unended backend
-            raise RuntimeError(f"백엔드를 끝내지 못했다 — {'; '.join(proof.get('reasons') or [])}")
+            if not proof["clean"]:   # the owner's stop; the launch's own failure stays as its context
+                raise RuntimeError(f"백엔드를 끝내지 못했다 — {'; '.join(proof.get('reasons') or [])}")
     finally:
         job.close()
 
@@ -364,6 +365,7 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
             try:
                 try:
                     look.start("app", argv, copy / launch["cwd"], extra, halt=halt, output=output.writer,
+                               gate=getattr(halt, "gate", None),
                                **({"ready": lambda: holder.root(look.record["jobs"]["app"]["root"])} if holder else {}))
                 except owned_job.Unrunnable as exc:   # Windows would not run this program: the build's to fix
                     raise ValueError(f"PC 프로그램을 띄우지 못했다 — {masked(str(exc), hide)}") from None

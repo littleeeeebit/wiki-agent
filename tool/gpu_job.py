@@ -78,7 +78,7 @@ def resolved(word: str, cwd: str) -> Path | None:
 def unwrapped(words: list[str]) -> list[str]:
     """The program a `timeout 5 x`, `env A=1 x` or `nohup x` runs, which guard does not model."""
 
-    while words and name(words[0]) in WRAPPERS:
+    while words and name(words[0]) in WRAPPERS and not re.search(r"[\\/]", words[0]):   # a path is that file
         kind, words = name(words[0]), words[1:]
         while words and (words[0].startswith("-") or (kind == "env" and "=" in words[0])):
             words = words[1:]
@@ -409,14 +409,15 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
         return None
     if all(k in ("inspect", "builtin") for k in kinds):
         return None
+    windows = os.name == "nt"   # the queue is Windows': elsewhere a GPU job is a program like any other
     try:
         load = machine.sample()
-        session = gpu_queue.ancestry()[0]
-        mine = own(load.get("holders"), session)
+        session = gpu_queue.ancestry()[0] if windows else None
+        mine = own(load.get("holders"), session) if windows else None
         line = machine.load_line(load, mine)
     except Exception:  # noqa: BLE001 -- the line is help, not a judgement
         load, session, mine, line = {}, None, None, ""
-    if "gpu" not in kinds:
+    if "gpu" not in kinds or not windows:
         return context(line) if line else None
     try:   # judged a GPU job: every failure from here refuses, never lets the original through
         if mine:

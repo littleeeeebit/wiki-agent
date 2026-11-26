@@ -40,11 +40,11 @@ def begin(repo: str, tree: Path, store, token: str, text: str, note: str | None)
 
     found = owner_data.roots(tree)
     store.put(owner_watch={"turn": token, "started": time.time()})
-    watch = owner_data.Watch(found)
+    watch = owner_data.Watch(found, tree)
     with _lock:
         old = _watches.pop(repo, None)
         _watches[repo] = (token, watch, tree)
-    stale = owner_data.reason(old[1].close(owner_data.roots(old[2]))) if old else ""
+    stale = owner_data.reason(old[1].close()) if old else ""
     if seen := "; ".join(filter(None, [note, stale])):   # `send` read the refusal `text` is bound to already
         return f"The server's watch of the owner's data folders, from the last build turn: {seen}\n\n{text}"
     return text
@@ -56,7 +56,7 @@ def read(repo: str) -> str:
 
     with _lock:
         entry = _watches.get(repo)
-    return owner_data.reason(entry[1].settled(owner_data.roots(entry[2]))) if entry else ""
+    return owner_data.reason(entry[1].settled()) if entry else ""
 
 
 def close(repo: str, store, token: str | None = None) -> str:
@@ -67,7 +67,7 @@ def close(repo: str, store, token: str | None = None) -> str:
         if entry is None or token is not None and entry[0] != token:
             return ""
         _watches.pop(repo)
-    why = owner_data.reason(entry[1].close(owner_data.roots(entry[2])))
+    why = owner_data.reason(entry[1].close())
     store.put(owner_watch=None)
     return why
 
@@ -111,7 +111,7 @@ def measured(tree: Path) -> owner_data.Watch:
     """A server measurement's own watch over the same roots; `owner_data.reason` of its `close()` fails the
     measurement."""
 
-    return owner_data.Watch(owner_data.roots(tree))
+    return owner_data.Watch(owner_data.roots(tree), tree)
 
 
 def gpu_boundary(chat) -> None:
