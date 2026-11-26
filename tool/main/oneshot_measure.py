@@ -275,6 +275,8 @@ def measure(repo: str, mode: str | None = None) -> None:
             store.stop("measure", found["io"])
             return None
         record["tail"] = (text or "").strip()[-3000:]
+        if halt.is_set() and getattr(halt, "told", False) and not runtime.stopping.is_set():
+            return lambda: decided(repo, store, record, since, hide)   # the owner spoke: the words are taken in
         if halt.is_set():
             store.stop("measure", masked("사람이 실측을 멈췄다 — 다시 하려면 [실측 시작]을 누른다" if not runtime.stopping.is_set()
                                          else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다", hide))
@@ -333,6 +335,10 @@ def decided(repo: str, store, record: dict, since: tuple, hide: dict[str, str] |
     under the lock every stored-value change takes, so a change to one of them at any moment sets it aside."""
 
     with oneshot._lock:
+        if (halt := HALTS.get(repo)) is not None and halt.is_set() and getattr(halt, "told", False) \
+                and not runtime.stopping.is_set():   # the owner spoke: their words are taken in, then built
+            from . import oneshot_tell   # it imports this module's neighbours
+            return lambda: oneshot_tell.handoff(store)   # run once `holding` lets the tree go
         if halted(repo, store, hide):
             return None
         if changes(repo, since[0]) != since[1]:   # every sentence the owner reads masked whole (13e)
@@ -434,14 +440,20 @@ def fixing(spec: dict) -> str:
 
 # -- What the owner does ----------------------------------------------------------------------------------
 
-def measuring(repo: str, plan_needed: bool = True) -> tuple[dict, dict | None, str]:
-    """`(spec, plan, why the plan does not hold)` while the run is at the measurement with no worker running."""
+def at_measure(repo: str) -> dict:
+    """The spec while the run is at the measurement with no worker running; otherwise 409."""
 
-    spec = oneshot_spec.spec_of(repo)
-    o = spec["oneshot"]
+    o = (spec := oneshot_spec.spec_of(repo))["oneshot"]
     oneshot_spec.supported(o)
     if o.get("stage") != "measure" or o.get("working"):
         raise HTTPException(409, f"지금 할 수 없다 — {o.get('stage')}{' 진행 중' if o.get('working') else ''}")
+    return spec
+
+
+def measuring(repo: str, plan_needed: bool = True) -> tuple[dict, dict | None, str]:
+    """`(spec, plan, why the plan does not hold)` while the run is at the measurement with no worker running."""
+
+    o = (spec := at_measure(repo))["oneshot"]
     try:
         return spec, planned(Path(spec["worktree"]), spec, o.get("built_head")), ""
     except ValueError as exc:
@@ -476,15 +488,16 @@ def plain_input(spec: dict, given: dict) -> dict:   # the same values again chan
         input_since=len(spec["oneshot"].get("measures") or []))
 
 
-def retire(spec: dict, why: str, **fields) -> dict:
+def retire(spec: dict, why: str, top: dict | None = None, **fields) -> dict:
     """The result waiting for the owner, their verdict or their measurement after the server's own pass, set
-    aside (`stale`) with `why`, saved with `fields`: what it measured is no longer what would be judged."""
+    aside (`stale`) with `why`, saved with `fields` (and the spec's own `top` fields) in one save: what it
+    measured is no longer what would be judged."""
 
     runs = list(spec["oneshot"].get("measures") or [])
     if runs and runs[-1]["status"] in ("owner", "passed") and not runs[-1].get("owner"):
         runs[-1] = {**runs[-1], "status": "stale", "error": why}
         fields["measures"] = runs
-    return oneshot_spec.saved(spec["repo"], oneshot=fields) if fields else spec
+    return oneshot_spec.saved(spec["repo"], oneshot=fields, **(top or {})) if fields or top else spec
 
 
 @router.post("/api/oneshot/spec/{repo}/measure/inputs/{iid}")
@@ -542,13 +555,15 @@ class Start(BaseModel):
 
 @router.post("/api/oneshot/spec/{repo}/measure/start")
 def start(repo: str, body: Start) -> dict:
-    with oneshot._lock:
+    with oneshot._lock:   # the request checked, then the owner's waiting words, then the old plan (`oneshot_tell`)
+        if body.head != (now := at_measure(repo)["oneshot"]).get("built_head"):
+            raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
+        if now.get("fix"):   # a repair still owed: only `[재개]` sends it on, the owner's waiting words included
+            raise HTTPException(409, "빌드 에이전트의 수리가 끝나지 않았다 — 다시 불러와 [재개]로 이어 간다")
+        if oneshot.diverted(oneshot_spec.store(repo), "measure"):
+            return oneshot_spec.view(oneshot_spec.spec_of(repo))
         spec, plan, broken = measuring(repo, plan_needed=False)
         o = spec["oneshot"]   # a measurement stopped (a wrong input, a restart) starts again from here
-        if body.head != o.get("built_head"):
-            raise HTTPException(409, "빌드가 그 사이 바뀌었다 — 다시 불러와 새 화면에서 시작하라")
-        if o.get("fix"):   # a repair still owed: only `[재개]` sends it on; nothing is measured before its check
-            raise HTTPException(409, "빌드 에이전트의 수리가 끝나지 않았다 — 다시 불러와 [재개]로 이어 간다")
         last = (o.get("measures") or [None])[-1]
         if broken:   # the committed plan no longer holds: only the build agent can fix it
             then = repair(repo, {"broken": broken}, "plan")

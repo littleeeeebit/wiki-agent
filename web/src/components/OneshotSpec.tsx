@@ -7,7 +7,8 @@ import { Board } from '@/components/OneshotBoard'
 import { Owner } from '@/components/OneshotMeasure'
 import { Calls, Leaked, Needs } from '@/components/OneshotNeeds'
 import { PcApprove, PcResults } from '@/components/OneshotPc'
-import { Track } from '@/components/OneshotTrack'
+import { Tell, TELLS, Track } from '@/components/OneshotTrack'
+import type { Answered } from '@/lib/oneshot'
 import { api, owns, STOP, type Brief, type Decision, type Gate, type Handset, type Palette,
   type Models, type PhoneRound, type RunSummary, type SpecView, type Talk, type Tool, kindLabel, ROLE, modelName,
   ownedNotice, toolText,
@@ -96,10 +97,15 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
 
   useEffect(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, [repo])
   useEffect(() => { if (view) onView?.(view) }, [view, onView])
-  const working = !!view?.working
+  // An answer to the agent's question can wait for its turn to let go before the rewrite starts (`answered`).
+  const working = !!view?.working || (view?.stopped?.reason === 'asked' && !!view.oneshot.tell_pending?.some((w) => w.answers))
+  const acted = useRef(0)   // a poll read before the owner's last action finished never replaces what it returned
   useEffect(() => {
     if (!working) return
-    const timer = window.setInterval(() => { api.view(repo).then(setView).catch((err) => setFault(error(err))) }, 1500)
+    const timer = window.setInterval(() => {
+      const at = acted.current
+      api.view(repo).then((v) => { if (acted.current === at) setView(v) }).catch((err) => setFault(error(err)))
+    }, 1500)
     return () => window.clearInterval(timer)
   }, [repo, working])
 
@@ -108,7 +114,9 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
     setFault('')
     setBusy(true)
     try {
-      setView(await fn())
+      const next = await fn()
+      acted.current += 1
+      setView(next)
       return true
     } catch (err) {
       setFault(error(err))
@@ -175,10 +183,17 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
         forget={(env) => act(() => api.forget(repo, env))} />
     </div>
   ) : null
-  if (owns(view)) return <>{faulted}{needs}<Owner repo={repo} view={view} busy={busy} act={act} /></>
+  // A screen waiting on the owner (a measurement to judge, a round, a sheet), stopped or not: they can still speak
+  // to the build, and take waiting words in. Each answer installs the new view, so a started rewrite is followed.
+  const told = { post: (text: string, asked?: Answered[], turn?: string) => act(() => api.tell(repo, text, asked, turn)),
+    apply: () => act(() => api.applyTell(repo)) }
+  const tell = !view.working && TELLS.includes(view.stage) ? (
+    <div className="px-10 pt-4 max-[1500px]:px-7 max-[560px]:px-4"><Tell view={view} {...told} /></div>
+  ) : null
+  if (owns(view)) return <>{faulted}{needs}<Owner repo={repo} view={view} busy={busy} act={act} />{tell}</>
   if (view.stopped) {
     return (
-      <Track view={view} halt={<>
+      <Track view={view} {...told} halt={<>
         {view.phone_owned?.length || unposted || leaked ? faulted : <Fault text={fault} />}
         <Halt title={STOP[view.stopped.reason] ?? view.stopped.reason} detail={view.stopped.detail}>{resume}</Halt>
         {view.stage === 'r3' && o.pc?.results ? <PcResults title="주인 화면 회차 — 통과" results={o.pc.results} /> : null}
@@ -217,6 +232,7 @@ export function OneshotSpec({ repo, onView }: { repo: string; onView?: (view: Sp
           items={view.r3_items ?? []} state={o.r3} busy={busy} brief={view.r3_brief}
           submit={(body) => act(() => api.decide(repo, 'r3', { ...body, source: view.r3_brief?.source }))} />
       )}
+      {tell}
       {view.stage === 'done' && view.summary && <Finished summary={view.summary} />}
       {view.working && view.stage !== 'done' && <Track view={view} halt={view.working === 'phone' && (
         <section aria-label="휴대폰 회차" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-5 py-4">

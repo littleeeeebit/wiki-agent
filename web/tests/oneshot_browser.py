@@ -9,6 +9,7 @@ Serves web/dist with synthetic runs; the sheets are short Markdown like the serv
 
 import asyncio
 import copy
+import json
 import re
 import sys
 import time
@@ -640,7 +641,7 @@ def tracking():
     often the owner goes back and forth; a stopped check counts the failed checks; critiques count by sequence,
     their shots apart, against the cap since it restarted; a failed record read says so; partial translation
     leaves progress in English, and the switch set elsewhere is followed at once."""
-    trees = {name: f"C:/fixture/{name}-worktrees/oneshot-initial" for name in ("a-run", "b-run", "c-run", "d-run", "e-run", "f-run")}
+    trees = {name: f"C:/fixture/{name}-worktrees/oneshot-initial" for name in ("a-run", "b-run", "c-run", "d-run", "e-run", "f-run", "g-run")}
     limits = {"attempts": 3, "refusals": 5, "critiques": 6}
     look = lambda n, clean: {"look": n, "head": "c" * 40, "clean": clean, "findings": [] if clean else [
         {"route": "/", "viewport": "phone", "state": "empty", "what": "글자가 잘린다", "severity": "high"}]}
@@ -655,11 +656,18 @@ def tracking():
         # The same cap stop as a server before `counted` saved it: the count only in its detail.
         "f-run": run("f-run", "critique", waits=False, stopped={"reason": "critique",
                                                                "detail": "6회차에도 높은 발견이 남았다 — / phone empty: 글자가 잘린다"}),
+        # The measurement's repair asked: its stop shows as any stage's, so the work log's form answers it.
+        "g-run": run("g-run", "measure", waits=False, measure={"plan": None, "error": "", "runs": [], "pr": None,
+                                                               "head": "c" * 40, "next": "owner"},
+                     stopped={"reason": "asked", "detail": "구현 에이전트가 묻는다 — 작업 로그에서 답한다", "turn": "q1"}),
     }
     for name, view in views.items():
         view |= {"worktree": trees[name], "limits": limits}
     views["a-run"]["oneshot"] |= {"attempts": 1, "inflight": {"role": "build", "codex": False, "sent": time.time(), "turn": "t1"}}
     views["b-run"]["oneshot"] |= {"attempts": 3}
+    views["g-run"]["oneshot"] |= {"fix": "measure", "built_head": "c" * 40}
+    repaired = "재시도 간격을 어떻게 할까?"
+    asks = {"question": repaired, "options": [{"label": "1초마다"}, {"label": "점점 늘린다"}]}
     # Two clean looks at shot 1 (a second look at the same shots), then an R3 fix restarted the count.
     views["c-run"]["oneshot"] |= {"critiques": [look(1, True), look(1, True), look(2, False)], "critique_base": 2}
     views["d-run"]["oneshot"] |= {"critiques": [look(1, True), look(1, True)], "critique_base": 2}
@@ -715,6 +723,10 @@ def tracking():
                 return {"rows": [{"role": "assistant", "text": "Built the screens.",
                                   "steps": [{"kind": "progress", "text": "Reading the board."}]}],
                         "session_id": "c", "busy": False, "running": None, "rules": [], "queued": None}
+            if where == trees["g-run"]:
+                return {"rows": [{"role": "assistant", "turn": "q1",
+                                  "text": "고칠 방향을 묻는다.\n\n```choices\n" + json.dumps(asks, ensure_ascii=False) + "\n```\n"}],
+                        "session_id": "g", "busy": False, "running": None, "rules": [], "queued": None}
             if where in (trees["b-run"], trees["d-run"], trees["e-run"], trees["f-run"]):
                 return {"rows": [], "session_id": "", "busy": False, "running": None, "rules": [], "queued": None}
         return fixture(path, request.method)
@@ -785,6 +797,11 @@ def tracking():
         expect(page.locator(".oneshot-shell main > header h1")).to_have_text("f-run")
         expect(record).to_contain_text("화면 비평6 / 6")
         expect(record).not_to_contain_text("모두")
+        pick("g-run")   # a measurement repair's question: answered in the work log, never the measurement screen
+        expect(trail).to_contain_text(repaired)
+        expect(trail.get_by_text("점점 늘린다")).to_be_visible()
+        expect(page.get_by_role("button", name="재개")).to_be_visible()
+        expect(page.get_by_text("리뷰 전에 진짜 서비스에 붙여 돌려 본다")).to_have_count(0)   # the measurement screen's own
         browser.close()
     assert not errors, errors
     print("PASS: a run's stream closes when another run is shown, however often; a stopped check shows the checks "

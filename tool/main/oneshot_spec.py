@@ -365,33 +365,50 @@ def approved(repo: str) -> None:
     """Every item approved: the design files written into the worktree and committed, and the build may begin."""
 
     spec = spec_of(repo)
-    tree, o = own_tree(spec), spec["oneshot"]
-    docs = tree and (tree / "docs" / "design").resolve()
-    if not tree or not docs.is_relative_to(tree):
-        store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
-        return
-    # A core (an Android app's, or the one several kinds share): the sheet and the module contracts the tests are
-    # written from, and a web app's endpoints among several kinds as its API.
-    cored = "modules" in o["design"]
-    written = ({"core.md": sheet.sheet, "core.json": sheet.core, **({"api.yaml": sheet.openapi} if "api" in o["design"]
-                                                                   else {})} if cored else
-               {"backend.md": sheet.sheet, "api.yaml": sheet.openapi})
-    files = [f"docs/design/{name}" for name in written]
-    if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
-        store(repo).stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {', '.join(linked)}")
-        return
-    docs.mkdir(parents=True, exist_ok=True)
-    for name, render in written.items():
-        (docs / name).write_text(render(spec), encoding="utf-8", newline="\n")
-    head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
-                                     f"(R1 round {o['r1']['round']})")
+    o = spec["oneshot"]
+    head = design_committed(repo, f"Record the approved {'core' if 'modules' in o['design'] else 'backend'} design "
+                          f"(R1 round {o['r1']['round']})")
     if head:
+        files = design_files(o)
         # What the build reads first (`handoff`): the design just committed governs, and the spec model that
         # wrote it answers the builder's escalations.
         saved(repo, task={"kind": "feature", "what": spec["goal"]},
               precedence=[{"ref": f, "role": "current", "why": "the approved design"} for f in files], escalate=[],
               author=o.get("design_author") or oneshot.role_config("design", store(repo)),
               oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
+
+
+def design_files(o: dict) -> dict:
+    """The design files a run's worktree holds, each with what renders it: a core's (an Android app's, or the one
+    several kinds share) sheet and module contracts the tests are written from, a web app's endpoints among several
+    kinds as its API; else the backend's sheet and API."""
+
+    if "modules" in o["design"]:
+        return {f"docs/design/{n}": r for n, r in {"core.md": sheet.sheet, "core.json": sheet.core,
+                                                   **({"api.yaml": sheet.openapi} if "api" in o["design"] else {})}.items()}
+    return {"docs/design/backend.md": sheet.sheet, "docs/design/api.yaml": sheet.openapi}
+
+
+def design_committed(repo: str, message: str, spec: dict | None = None) -> str | None:
+    """The design as the spec holds it now (or as `spec`, one not saved yet, holds it), written into the worktree's
+    design files and committed with `message`: the new HEAD, or `None` after stopping with `folder`. R1's approval
+    records it, and so does a design the owner changed during the build (`oneshot_tell.retell`)."""
+
+    spec = spec or spec_of(repo)
+    tree, o = own_tree(spec), spec["oneshot"]
+    docs = tree and (tree / "docs" / "design").resolve()
+    if not tree or not docs.is_relative_to(tree):
+        store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
+        return None
+    written = design_files(o)
+    files = list(written)
+    if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
+        store(repo).stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {', '.join(linked)}")
+        return None
+    docs.mkdir(parents=True, exist_ok=True)
+    for name, render in written.items():
+        (tree / name).write_text(render(spec), encoding="utf-8", newline="\n")
+    return commit(repo, tree, files, message)
 
 
 def within(base: Path, *parts: str) -> Path | None:
@@ -416,6 +433,8 @@ def commit(repo: str, tree: Path, files: list[str], message: str) -> str | None:
     """Exactly `files` committed, whatever else is staged: the new HEAD, or `None` after stopping with `folder`."""
 
     for args in (["add", "--", *files], ["commit", "-m", message, "--", *files]):
+        if args[0] == "commit" and not specs.sh(["git", "diff", "--cached", "--quiet", "--", *files], tree, 60).returncode:
+            break   # every file matches HEAD (a rewrite retried after its commit): HEAD holds the design
         done = specs.sh(["git", *args], tree, 60)
         if done.returncode and not re.search("nothing to commit|no changes added", done.stdout + done.stderr):
             store(repo).stop("folder", f"설계 문서를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
@@ -473,6 +492,8 @@ def recover() -> None:
             o = specs.load(folder.name, oneshot.BRANCH)["oneshot"]
         if o and (repair := brief.recovered(o)):   # a brief the server went down writing, or its orphaned turn
             o = saved(folder.name, oneshot=repair)["oneshot"]
+        if o and o.get("inflight") and not o.get("working"):   # a stopped run's turn whose end failed to clear it
+            o = saved(folder.name, oneshot=oneshot.settled(o))["oneshot"]   # nothing runs at start: charged as cut
         o = waiting(folder.name, o) if o else o
         if o and o.get("stage") == "pr" and "desktop" in kinds_of(o) and o.get("attached") == o.get("final_head") \
                 and o.get("attached") and not o.get("working"):   # 9e6b held this run: its stop, kept or lost
@@ -771,6 +792,8 @@ def decide(repo: str, body: Decisions) -> dict:
 
 @router.post("/api/oneshot/spec/{repo}/resume")
 def resume(repo: str) -> dict:
+    from . import oneshot_build   # it imports this module
+    oneshot_build.unstuck(repo)   # a turn gone without clearing its marks never holds `[재개]`
     with oneshot._lock:
         o = spec_of(repo)["oneshot"]
         supported(o)
