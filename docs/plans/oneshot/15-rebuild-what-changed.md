@@ -29,11 +29,13 @@ The `vtuber-ko-dub` run's work-turn log
   folders only. It touches only a build folder whose Cargo lock it takes, so no
   Cargo build runs there meanwhile, whoever started it. One a build holds stays
   whole for the next turn's end, but its size counts toward the bound. Nothing
-  is deleted through a link or outside the worktree. On Windows, the open lock
-  file pins the path down to the build folder before that path is checked, and
-  each folder below is removed under its own pin. Elsewhere, each folder is
-  opened by descriptor without following links. Only what really went counts
-  toward the bound.
+  is deleted through a link or outside the worktree. The open lock file pins
+  the path down to the build folder before that path is checked against the
+  root the trim began on. Each folder below is removed under its own pin, a
+  file the trim creates and the system deletes when its handle closes. Only
+  what really went counts toward the bound. This relies on Windows keeping a
+  folder with an open file where it is; the oneshot builds on Windows, and
+  elsewhere nothing is trimmed.
 - Gradle's caches are not bounded here; the prompts only ask the agent to
   keep them warm.
 - Every build prompt tells the agent to build and test with the gate
