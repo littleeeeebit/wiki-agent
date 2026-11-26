@@ -27,7 +27,7 @@ def at(stage: str, **more) -> None:
     tree = str(specs.load("budget", oneshot.BRANCH)["worktree"])
     if (more.get("inflight") or {}).get("turn"):   # a turn in flight is one still ending in the tree: its run is
         oneshot_tell.work._runs[tree] = MagicMock(spec=oneshot_build.Turn, over=False, done=True, repo="budget",
-                                                  wake=threading.Lock())   # done, its marks not cleared yet
+                                                  wake=threading.Lock(), halt=threading.Event())   # its marks not cleared yet
     else:
         oneshot_tell.work._runs.pop(tree, None)
 
@@ -440,12 +440,23 @@ def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_opens_nothing_o
                 oneshot_build.unstuck("budget")   # nothing left to clear: the tree stays free for the run's follow-up
             assert not taken.called and not dispatched.called
             real("budget", adapter=turn.token, oneshot={"inflight": stale, "working": None})
-            with patch.object(work, "dispatch") as dispatched:   # the repair's hold hands the queue on as it goes
+            with patch.object(oneshot_build, "hold") as taken:   # only that ended turn's own marks, with no hold
                 oneshot_build.unstuck("budget")
-            assert dispatched.call_args[0][0] == Path(tree) and not o().get("inflight")
+            assert not taken.called and not o().get("inflight") and not live()
+            fresh = {**stale, "turn": "next"}   # a newer turn's marks, written under the same lock: never touched
+            real("budget", adapter="next", oneshot={"inflight": fresh, "working": None})
+            oneshot_build.unstuck("budget")
+            assert o()["inflight"]["turn"] == "next" and live()
+            real("budget", adapter=False, oneshot={"inflight": None})
+            stopped = MagicMock(spec=work.Run, halt=threading.Event())
+            stopped.halt.set()   # the tree's latest turn was stopped with an order waiting on it
+            with patch.dict(work._runs, {tree: stopped}), patch.dict(work._queued, {tree: order}), \
+                 patch.object(work, "begin") as started:
+                work.dispatch(Path(tree), MagicMock(halt=threading.Event()))   # an older turn's dispatcher, late
+                assert tree not in work._queued and not started.called   # the stop drops it, whoever dispatches
             # The release hooks looked before a newer build turn let the tree go, and that turn is still ending:
             # read again as the order is taken, under the queue's lock, so the order is never taken to be refused.
-            still = MagicMock(spec=oneshot_build.Turn, over=False, done=True)
+            still = MagicMock(spec=oneshot_build.Turn, over=False, done=True, halt=threading.Event())
             with patch.dict(work._runs, {tree: still}), patch.dict(work._queued, {tree: order}), \
                  patch.object(work, "RELEASED", []), patch.object(work, "begin") as started:
                 work.dispatch(Path(tree), MagicMock(halt=threading.Event()))

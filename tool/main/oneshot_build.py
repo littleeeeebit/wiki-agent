@@ -261,12 +261,13 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
         cfg = oneshot.role_config("build", store)
         chat = work.session(path, cfg["model"], cfg["effort"])
         turn = Turn(chat, repo, stage, codex)
-        store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
-                  inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
-                  sent_refusal=due and {**due, "turn": turn.token})
-        grant = stage in GRANTS and GRANTS[stage](spec)   # set as the turn starts, a resumed one included, naming
-        if grant or spec.get("adapter"):   # the turn: it opens the adapter only while that turn is `inflight`
-            oneshot_spec.saved(repo, adapter=turn.token if grant else False)   # (`guard_grant.live`); its end clears it
+        with oneshot._lock:   # one step against `unstuck`, which reads and clears an ended turn's marks under it
+            store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
+                      inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
+                      sent_refusal=due and {**due, "turn": turn.token})
+            grant = stage in GRANTS and GRANTS[stage](spec)   # set as the turn starts, a resumed one included, naming
+            if grant or spec.get("adapter"):   # the turn: it opens the adapter only while that turn is `inflight`
+                oneshot_spec.saved(repo, adapter=turn.token if grant else False)   # (`guard_grant.live`); its end clears it
         work.begin(path, chat, text, release, turn)
     except BaseException as exc:
         try:
@@ -307,12 +308,13 @@ def record(path: Path) -> tuple[str, dict] | None:
     return None
 
 
-def reclaimed(path: Path, run=None) -> None:
+def reclaimed(path: Path, run=None, gone: str | None = None) -> None:
     """Clear the marks a build turn's end failed to clear, once that turn is gone.
 
-    Revoke its grant and, on a run nothing works on, charge the turn once as cut, in one save. The caller
-    holds the tree, so no turn of the run is starting. Raise when the record cannot be read or saved: nothing
-    is opened on a guess."""
+    Revoke its grant and, on a run nothing works on, charge the turn once as cut, in one save, under the lock
+    `send` writes a new turn's marks under. With `gone`, only that turn's marks: its end has run, so they are
+    stale whoever holds the tree. Without it the caller holds the tree, so no turn of the run is starting.
+    Raise when the record cannot be read or saved: nothing is opened on a guess."""
 
     if ending(path) and work._runs.get(str(path)) is not run:   # its end dispatches the queue
         raise HTTPException(409, "앞선 빌드 턴이 아직 끝나는 중이다 — 끝나면 기다리던 지시가 이어 간다")
@@ -323,11 +325,15 @@ def reclaimed(path: Path, run=None) -> None:
         repo, spec = found
         o, grant = spec.get("oneshot") or {}, spec.get("adapter")
         flight = o.get("inflight") or {}
+
+        def stale(token) -> bool:
+            return bool(token) and token != mine and gone in (None, token)
+
         import guard_grant   # the guard's own rule for what is open
-        fields = {"adapter": False} if isinstance(grant, str) and grant != mine and guard_grant.live(spec) else {}
-        if flight.get("turn") and flight["turn"] != mine and not o.get("working"):
+        fields = {"adapter": False} if isinstance(grant, str) and stale(grant) and guard_grant.live(spec) else {}
+        if stale(flight.get("turn")) and not o.get("working"):
             fields["oneshot"] = oneshot.settled(o)
-        elif flight.get("turn") and flight["turn"] != mine and o["working"] == flight.get("role"):
+        elif stale(flight.get("turn")) and o["working"] == flight.get("role"):
             fields["oneshot"] = {**oneshot.settled(o), "working": None, "stopped": {   # its end failed before its stop
                 "reason": "block", "detail": "작업 턴이 끝났지만 그 끝을 기록하지 못했다 — [재개]로 다시 보낸다",
                 "state": o.get("stage")}}
@@ -348,26 +354,18 @@ def admitted(path: Path, run) -> None:
 
 
 def unstuck(repo: str) -> None:
-    """For `[재개]` and the owner's answer: clear a stopped run's marks left by a turn that is gone, holding
-    the tree. Only marks a turn left are worth the hold, so a healthy run's follow-up never finds its tree
-    taken. A tree in use, or a turn still ending, is left to that turn."""
+    """For `[재개]` and the owner's answer: clear the marks left by the tree's build turn whose end has run
+    (`over`) and could not clear them. It takes no hold, so a run's follow-up never finds its tree taken: only
+    that turn's own token is cleared, and a new turn writes its own under the same lock."""
 
-    spec = oneshot_spec.spec_of(repo)
-    tree, flight = Path(spec["worktree"]), (spec["oneshot"].get("inflight") or {})
-    if not flight.get("turn") or ending(tree):
+    tree = Path(oneshot_spec.spec_of(repo)["worktree"])
+    turn = work._runs.get(str(tree))
+    if not isinstance(turn, Turn) or not turn.over:   # a turn still ending clears its own; none, a later one did
         return
     try:
-        release = hold(work._busy, work_lock, str(tree), "", kind="turn")
-    except HTTPException:
-        return
-    try:
-        if not ending(tree):
-            reclaimed(tree)
+        reclaimed(tree, gone=turn.token)
     except Exception as exc:
         errorlog.record("oneshot-grant", exc, repo=repo)
-    finally:
-        release()
-        work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))   # a queued order its hold kept waiting
 
 
 def idle(path: Path) -> None:
@@ -752,11 +750,12 @@ def checked(path: Path, run, spec: dict, final: str):
     why = oneshot_needs.leaked(path, spec, hide, final)   # before any check reads it; again at the turn's end
     if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
-    run.checked = True
     if not why and stage in owner().OPEN and specs.asks(final):   # the owner answers it in the work log (`oneshot_tell`)
         oneshot_spec.store(repo).stop("asked", "구현 에이전트가 묻는다 — 작업 로그에서 답하면 설계에 반영하고 이어 간다",
                                       turn=run.turn)   # the turn whose question it is: only its answer counts
+        run.checked = True   # once its stop is saved: a failed save leaves the turn's end its own stop
         return None
+    run.checked = True
     check, stop, _, after = STAGES[stage]
     try:
         why = why or check(path, run, spec, final)
