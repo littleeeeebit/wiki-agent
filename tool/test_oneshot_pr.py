@@ -310,11 +310,14 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
 @pytest.mark.skipif(os.name != "nt", reason="the watch is Windows'")
 # The write lands while the measured draft is edited, while the first one is created here, or while it is made
 # ready, the window's last server command: answered; its answer lost, GitHub applying it only after the read;
-# its undo refused; or its undo answered while GitHub still says ready.
-@pytest.mark.parametrize("publication", ["edit", "create", "ready", "ready-lost", "ready-kept", "ready-unread"])
+# lost, and the draft's state unreadable after it; its undo refused; or its undo answered while GitHub still says
+# ready. `quiet`: its answer lost with no change at all.
+@pytest.mark.parametrize("publication", ["edit", "create", "ready", "ready-lost", "ready-blind", "ready-kept",
+                                         "ready-unread", "ready-quiet"])
 def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(finished, tmp_path, monkeypatch,
                                                                             publication):
     measured, publication, how = publication != "create", *(publication.split("-") + [""])[:2]
+    lost = how in ("lost", "blind", "quiet")
     import owner_data
     from main import oneshot_owner_data
 
@@ -335,13 +338,15 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
     def publishing(args, cwd, timeout=60):
         if args[:3] == ["gh", "pr", "ready"]:   # GitHub's draft flag, as each read sees it
             undo = "--undo" in args
-            remote.draft = how not in ("kept", "unread") if undo else how == "lost"
+            remote.draft = how not in ("kept", "unread") if undo else lost and how != "quiet"
             remote.calls.append(args)
-            if not undo:
+            if not undo and how != "quiet":
                 (roaming / tree.name / "cache.bin").write_text("x", encoding="utf-8")
-            if not undo and how == "lost":
+            if not undo and lost:
                 raise subprocess.TimeoutExpired(args, timeout)
             return subprocess.CompletedProcess(args, int(undo and how == "kept"), "", "GitHub refused\n")
+        if how == "blind" and args[:3] == ["gh", "pr", "view"] and any(c[:3] == ["gh", "pr", "ready"] for c in remote.calls):
+            return subprocess.CompletedProcess(args, 1, "", "GitHub unreachable\n")
         if args[:3] == ["gh", "pr", publication]:   # a publication command
             (roaming / tree.name / "cache.bin").write_text("x", encoding="utf-8")
         return answering(args, cwd, timeout)
@@ -354,10 +359,12 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
     assert made and (measured or "--draft" in made[0])   # a pull request opened here opens as a draft
     readied = [c for c in remote.calls if c[:3] == ["gh", "pr", "ready"]]
     # The draft stays a draft: never made ready, or made a draft again right after, read back off GitHub.
-    assert not readied if publication != "ready" else (readied[-1][-1] == "--undo") != (how == "lost")
-    # Only a draft GitHub confirmed after an answered ready reads as kept.
-    assert (how in ("lost", "kept", "unread")) == ("준비 완료로 남았을 수 있다" in o()["stopped"]["detail"])
-    assert o()["stage"] == "pr" and "주인의 실제 데이터 폴더가 바뀌었다" in o()["stopped"]["detail"]
+    assert not readied if publication != "ready" else (readied[-1][-1] == "--undo") != lost
+    # Only a draft GitHub confirmed after an answered ready reads as kept, and every cause is told.
+    detail = o()["stopped"]["detail"]
+    assert bool(how) == ("준비 완료일 수 있다" in detail) and lost == ("초안을 푼 결과를 모른다" in detail)
+    assert (how == "blind") <= ("초안인지 확인하지 못했다" in detail)
+    assert o()["stage"] == "pr" and (how == "quiet") != ("주인의 실제 데이터 폴더가 바뀌었다" in detail)
 
 
 def test_a_ready_pull_request_is_made_a_draft_before_any_head_goes_up(finished):

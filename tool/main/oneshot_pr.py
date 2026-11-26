@@ -733,12 +733,13 @@ def handed(path: Path, run, spec: dict, final: str):
             # Its last server command ran, whatever its reply (GitHub may have applied a ready whose answer was
             # lost): the window is judged again, and a change makes the pull request a draft, confirmed off GitHub.
             # A ready with no answer may still land after any read, so its draft is never taken as confirmed.
+            unsure = why and f"초안을 푼 결과를 모른다 ({why})"
             if seen := oneshot_owner_data.read(repo):
-                kept = oneshot_publish.drafted(path, fresh["pr"]["number"]) or (why and f"초안을 푼 결과를 모른다 ({why})")
-                oneshot_spec.store(repo).stop(STAGE, f"{seen} — {kept}, 준비 완료로 남았을 수 있다" if kept else seen)
+                kept = "; ".join(c for c in (oneshot_publish.drafted(path, fresh["pr"]["number"]), unsure) if c)
+                oneshot_spec.store(repo).stop(STAGE, f"{seen} — {kept}, 준비 완료일 수 있다" if kept else seen)
                 return None
             if why:
-                oneshot_spec.store(repo).stop(STAGE, f"PR #{fresh['pr']['number']} 의 초안을 풀지 못했다 — {why}")
+                oneshot_spec.store(repo).stop(STAGE, f"PR #{fresh['pr']['number']} 의 초안을 풀지 못했다 — {unsure}, 준비 완료일 수 있다")
                 return None
             oneshot_spec.saved(repo, oneshot={"stage": "done", "working": None, "pr": fresh["pr"]})
     elif not fresh.get("writing"):   # neither open nor asked again: the reason is the spec's fault

@@ -218,8 +218,9 @@ def test_a_watched_base_folder_cannot_be_replaced_during_the_window(tree, tmp_pa
     local.rename(local.with_name("Local-aside"))   # the hold ends with the window
 
 
-@pytest.mark.parametrize("left", [True, False])   # the junction left on the new folder, or put back before the read
-def test_a_base_reached_through_a_junction_named_elsewhere_is_incomplete(tree, tmp_path, monkeypatch, left):
+def junctioned(tmp_path, monkeypatch):
+    """The Local base as a junction naming `first`, a `second` folder, and `link(target)` to name another."""
+
     first, second, local = tmp_path / "first", tmp_path / "second", tmp_path / "Junction" / "Local"
     first.mkdir()
     second.mkdir()
@@ -229,6 +230,12 @@ def test_a_base_reached_through_a_junction_named_elsewhere_is_incomplete(tree, t
         subprocess.run(["cmd", "/c", "mklink", "/J", str(local), str(target)], check=True, capture_output=True)
     link(first)
     monkeypatch.setattr(owner_data, "bases", lambda: [tmp_path / "AppData" / "Roaming", local])
+    return first, second, local, link
+
+
+@pytest.mark.parametrize("left", [True, False])   # the junction left on the new folder, or put back before the read
+def test_a_base_reached_through_a_junction_named_elsewhere_is_incomplete(tree, tmp_path, monkeypatch, left):
+    first, second, local, link = junctioned(tmp_path, monkeypatch)
     watch = owner_data.Watch(owner_data.roots(tree), tree)   # `com.example.budget` has no folder yet
     os.rmdir(local)   # the junction itself, not the folder the watch holds
     link(second)
@@ -242,6 +249,40 @@ def test_a_base_reached_through_a_junction_named_elsewhere_is_incomplete(tree, t
     # was watched throughout, and the write went elsewhere: it is not that folder's change.
     assert (result["state"] == "incomplete" and "가리키는 폴더가" in owner_data.reason(result)) if left else \
         result["state"] == "clean" and not (first / "com.example.budget").exists()
+
+
+def test_a_base_whose_junction_named_another_folder_as_its_watch_started_is_incomplete(tree, tmp_path, monkeypatch):
+    first, second, local, link = junctioned(tmp_path, monkeypatch)
+    start = owner_data.Watch._start
+
+    def elsewhere(self, folder, mode):   # the junction names the second folder only while this watch opens
+        if folder != local:
+            return start(self, folder, mode)
+        os.rmdir(local)
+        link(second)
+        start(self, folder, mode)
+        os.rmdir(local)
+        link(first)
+    monkeypatch.setattr(owner_data.Watch, "_start", elsewhere)
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    (first / "com.example.budget").mkdir()   # the owner's folder, which the path names all through the window
+    result = watch.close()
+    os.rmdir(local)
+    assert result["state"] != "clean"
+
+
+def test_a_root_whose_junction_target_is_replaced_is_incomplete(tree, tmp_path):
+    target, local = tmp_path / "target", tmp_path / "AppData" / "Local"
+    target.mkdir()
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(local / "com.example.budget"), str(target)], check=True,
+                   capture_output=True)
+    watch = owner_data.Watch(owner_data.roots(tree), tree)   # the root is a junction in an ordinary base
+    target.rename(tmp_path / "target-aside")   # the folder its watch holds, moved away outside the base
+    target.mkdir()   # another at the same path: the junction, unchanged, names it
+    (local / "com.example.budget" / "settings.json").write_text("{}", encoding="utf-8")
+    result = watch.close()
+    os.rmdir(local / "com.example.budget")
+    assert result["state"] == "incomplete" and "가리키는 폴더가" in owner_data.reason(result)
 
 
 def test_a_root_named_during_the_window_is_covered(tree, tmp_path):

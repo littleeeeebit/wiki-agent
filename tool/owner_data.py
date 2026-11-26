@@ -206,6 +206,8 @@ def _k32():
     k.WaitForMultipleObjects.argtypes = (w.DWORD, ctypes.POINTER(w.HANDLE), w.BOOL, w.DWORD)
     k.WaitForMultipleObjects.restype = w.DWORD
     k.WaitForSingleObject.argtypes, k.WaitForSingleObject.restype = (w.HANDLE, w.DWORD), w.DWORD
+    k.GetFinalPathNameByHandleW.argtypes = (w.HANDLE, w.LPWSTR, w.DWORD, w.DWORD)
+    k.GetFinalPathNameByHandleW.restype = w.DWORD
     return k
 
 
@@ -235,7 +237,7 @@ class Watch:
     def __init__(self, found: list[Path], tree: Path | None = None):
         self.lock, self.sync_lock = threading.Lock(), threading.Lock()
         self.state, self.paths, self.why = "clean", [], []
-        self.found, self.seen, self.bases, self.tree, self.real = list(found), {}, set(), tree, {}
+        self.found, self.seen, self.bases, self.tree = list(found), {}, set(), tree
         self.threads, self.syncs, self.stop, self.k = [], [], None, None
         self.confs, self.lost = {}, False   # each config as last read (its bytes and write time); notices lost
         if os.name != "nt":
@@ -248,7 +250,6 @@ class Watch:
         for base in dict.fromkeys(root.parent for root in found):
             if base.is_dir():
                 self.bases.add(base)
-                self.real[base] = _real(base)   # the folder the path names now, through any junction on it
                 self._start(base, "base")
             else:
                 self._fail(f"`{base}` 가 없어 감시하지 못했다")
@@ -264,7 +265,8 @@ class Watch:
         with self.lock:
             if self.state != "changed":
                 self.state = "incomplete"
-            self.why.append(why)
+            if why not in self.why:   # a check repeated at every answer says it once
+                self.why.append(why)
 
     def _changed(self, path: Path | None) -> None:
         with self.lock:
@@ -318,12 +320,6 @@ class Watch:
             lost, self.lost, known = self.lost, False, list(self.confs)
         for conf in {*map(str, _confs(self.tree)), *known} if lost else ():
             self._reread(Path(conf), lost=True)
-        # The hold keeps the folder a base resolves to in place, not a junction naming it: a base that resolves
-        # elsewhere now, or cannot be resolved, was not watched where its path leads.
-        for base, was in self.real.items():
-            if (now_real := _real(base)) != was or was is None:
-                self._fail(f"`{base}` 가 가리키는 폴더를 확인하지 못했다" if None in (was, now_real) else
-                           f"`{base}` 가 가리키는 폴더가 이 구간 중에 바뀌어, 그 안은 감시하지 못했다")
         return now if now is not None or self.tree is None else roots(self.tree)
 
     def _start(self, folder: Path, mode: str) -> None:
@@ -344,8 +340,9 @@ class Watch:
         # A base is held without delete sharing: Windows then refuses to move or remove it, or its parent, for the
         # window, so the folder at its path stays the one its handle watches. What is inside changes as ever. The
         # cost: a program holding the base itself open with delete access makes the watch fail to start
-        # (`incomplete`), and one opening it so during the window gets a sharing error. A junction on the path is
-        # checked at every read (`_now`), since the hold keeps only the folder it resolves to.
+        # (`incomplete`), and one opening it so during the window gets a sharing error. The hold keeps only the
+        # folder the path resolved to, so each answer and the end compare the handle's own folder with where the
+        # path leads then (`placed`): a junction naming another, or a root's folder moved, is never taken for it.
         handle = k.CreateFileW(str(folder), 0x1, 0x3 if mode == "base" else 0x7, None, 3, 0x02000000 | 0x40000000,
                                None)
         if not handle or handle == w.HANDLE(-1).value:
@@ -355,6 +352,17 @@ class Watch:
         event = k.CreateEventW(None, True, False, None)
         sync = k.CreateEventW(None, False, False, None)   # `settled` asks; answered once nothing delivered is unread
         acked = threading.Event()
+
+        def answer():   # first, the folder this handle watches is still the one its path leads to
+            if mode != "tree":
+                text = ctypes.create_unicode_buffer(32768)
+                held = text.value if 0 < k.GetFinalPathNameByHandleW(handle, text, 32768, 0) < 32768 else ""
+                held = "\\" + held[8:] if held.startswith("\\\\?\\UNC\\") else held.removeprefix("\\\\?\\")
+                if not held or (now := _real(folder)) is None:
+                    self._fail(f"`{folder}` 가 가리키는 폴더를 확인하지 못했다")
+                elif os.path.normcase(held) != now:
+                    self._fail(f"`{folder}` 가 가리키는 폴더가 이 구간 중에 바뀌어, 그 안은 감시하지 못했다")
+            acked.set()
         entry = (sync, acked)
         buffer = ctypes.create_string_buffer((1024 if mode == "tree" else 64) * 1024)   # a build's writes are many
         overlapped = _Overlapped(event=event)
@@ -397,7 +405,7 @@ class Watch:
                 if "stop" in due:
                     return
                 if due:
-                    acked.set()
+                    answer()
                 k.ResetEvent(event)
                 if not k.ReadDirectoryChangesW(handle, buffer, len(buffer), recursive, which,
                                                None, ctypes.byref(overlapped), None):
@@ -412,12 +420,12 @@ class Watch:
                     if "stop" in owed:   # caught up: nothing before them is unread
                         cancelled()
                         return
-                    acked.set()
+                    answer()
                     owed = set()
                 # The lowest signalled handle wins: a delivered change is read before a sync is answered.
                 while (found := k.WaitForMultipleObjects(3, (w.HANDLE * 3)(event, stop, sync), False,
                                                          0xFFFFFFFF)) == 2:
-                    acked.set()
+                    answer()
                 error, size = ctypes.get_last_error(), w.DWORD()
                 if found != 0:   # closing, or the wait failed: the read is ended first, and read if it came
                     if found != 1:
@@ -434,7 +442,7 @@ class Watch:
             with self.lock:
                 if entry in self.syncs:
                     self.syncs.remove(entry)
-            acked.set()
+            answer()   # the end, too: its folder checked while the handle is still open
             ready.set()
             for h in (event, sync, handle):
                 if h:
