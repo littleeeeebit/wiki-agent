@@ -53,20 +53,26 @@ def unready(spec: dict, path: Path, halt=None) -> str:
 
 
 def drafted(path: Path, n: int, halt=None) -> str:
-    """Pull request `n` read off GitHub and made a draft again if it is ready: "" once it is a draft, else why not
-    (a stop set while it was read changes nothing)."""
+    """Pull request `n` read off GitHub and made a draft again if it is ready, then read back: "" once GitHub says
+    it is a draft, else why not (a stop set while it was read changes nothing)."""
 
-    try:
+    def draft() -> bool:
         seen = specs.sh(["gh", "pr", "view", str(n), "--json", "isDraft"], path, 60)
         if seen.returncode:
-            return f"PR #{n} 이 초안인지 확인하지 못했다 — {specs.said(seen)}"
+            raise ValueError(specs.said(seen))
+        return bool(json.loads(seen.stdout).get("isDraft"))
+
+    try:
+        if draft():
+            return ""
         if halt is not None and halt.is_set():   # a Stop while it was read: nothing on GitHub changes after it
             return "사람이 멈춤 — PR 을 바꾸지 않았다"
-        undo = None if json.loads(seen.stdout).get("isDraft") else \
-            specs.sh(["gh", "pr", "ready", str(n), "--undo"], path, 60)
+        undo = specs.sh(["gh", "pr", "ready", str(n), "--undo"], path, 60)
+        if undo.returncode or not draft():
+            return f"PR #{n} 을 초안으로 되돌리지 못했다 — {specs.said(undo) if undo.returncode else '아직 준비 완료다'}"
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return f"PR #{n} 이 초안인지 확인하지 못했다 — {type(exc).__name__}: {exc}"
-    return f"PR #{n} 을 초안으로 되돌리지 못했다 — {specs.said(undo)}" if undo is not None and undo.returncode else ""
+    return ""
 
 
 def published(repo: str) -> dict:

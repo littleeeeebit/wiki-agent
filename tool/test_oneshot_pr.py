@@ -309,9 +309,9 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
 
 @pytest.mark.skipif(os.name != "nt", reason="the watch is Windows'")
 # The write lands while the measured draft is edited, while the first one is created here, or while it is made
-# ready, the window's last server command: answered, its answer lost after GitHub applied it, or answered and
-# then not undone.
-@pytest.mark.parametrize("publication", ["edit", "create", "ready", "ready-lost", "ready-kept"])
+# ready, the window's last server command: answered; its answer lost, GitHub applying it only after the read;
+# its undo refused; or its undo answered while GitHub still says ready.
+@pytest.mark.parametrize("publication", ["edit", "create", "ready", "ready-lost", "ready-kept", "ready-unread"])
 def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(finished, tmp_path, monkeypatch,
                                                                             publication):
     measured, publication, how = publication != "create", *(publication.split("-") + [""])[:2]
@@ -333,16 +333,17 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
     answering = listing(remote, 7) if measured else remote
 
     def publishing(args, cwd, timeout=60):
-        if args[:3] == ["gh", "pr", "ready"]:   # GitHub's draft flag follows what it applied
-            remote.draft = "--undo" in args and how != "kept"
-            if "--undo" in args and how == "kept":
-                remote.calls.append(args)
-                return subprocess.CompletedProcess(args, 1, "", "GitHub refused\n")
-        if args[:3] == ["gh", "pr", publication] and "--undo" not in args:   # a publication command
-            (roaming / tree.name / "cache.bin").write_text("x", encoding="utf-8")
-            if how == "lost":
-                answering(args, cwd, timeout)
+        if args[:3] == ["gh", "pr", "ready"]:   # GitHub's draft flag, as each read sees it
+            undo = "--undo" in args
+            remote.draft = how not in ("kept", "unread") if undo else how == "lost"
+            remote.calls.append(args)
+            if not undo:
+                (roaming / tree.name / "cache.bin").write_text("x", encoding="utf-8")
+            if not undo and how == "lost":
                 raise subprocess.TimeoutExpired(args, timeout)
+            return subprocess.CompletedProcess(args, int(undo and how == "kept"), "", "GitHub refused\n")
+        if args[:3] == ["gh", "pr", publication]:   # a publication command
+            (roaming / tree.name / "cache.bin").write_text("x", encoding="utf-8")
         return answering(args, cwd, timeout)
     try:
         with patch.object(specs, "sh", publishing):
@@ -353,8 +354,9 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
     assert made and (measured or "--draft" in made[0])   # a pull request opened here opens as a draft
     readied = [c for c in remote.calls if c[:3] == ["gh", "pr", "ready"]]
     # The draft stays a draft: never made ready, or made a draft again right after, read back off GitHub.
-    assert not readied if publication != "ready" else readied[-1][-1] == "--undo"
-    assert (how == "kept") == ("준비 완료로 남았을 수 있다" in o()["stopped"]["detail"])
+    assert not readied if publication != "ready" else (readied[-1][-1] == "--undo") != (how == "lost")
+    # Only a draft GitHub confirmed after an answered ready reads as kept.
+    assert (how in ("lost", "kept", "unread")) == ("준비 완료로 남았을 수 있다" in o()["stopped"]["detail"])
     assert o()["stage"] == "pr" and "주인의 실제 데이터 폴더가 바뀌었다" in o()["stopped"]["detail"]
 
 

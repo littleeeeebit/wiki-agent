@@ -470,7 +470,12 @@ elsewhere is not covered until its kind names the place.
    notices. A config's names are taken from the bytes the read kept. A base
    folder is held without delete sharing for the window, so Windows refuses
    to move or remove it or its parent, and no other folder takes its path
-   while its handle watches the old one. Each read first reads every change already delivered, so a
+   while its handle watches the old one. A base reached through a junction
+   is resolved at the start and at every read: one that resolves elsewhere,
+   or cannot be resolved, is `incomplete`. A program holding a base open
+   with delete access makes the watch fail to start, which is `incomplete`.
+   A promotion whose answer was lost never reads as a confirmed draft, and
+   an undone draft is read back off GitHub. Each read first reads every change already delivered, so a
    write that finished before the check is never read after it. Off Windows
    nothing is watched. Nothing is walked: the vtuber root
    holds 200,024 files now, and one metadata walk of it took 20 s. Junctions

@@ -146,6 +146,7 @@ class Remote:
         if args[:3] == ["gh", "pr", "list"] and "--head" in args:
             return ok("[]")
         if args[:3] == ["gh", "pr", "ready"] and self.ready:
+            self.draft = "--undo" in args   # what a later `gh pr view` reads
             return ok()
         if args[0] == "gh":
             return subprocess.CompletedProcess(args, 1, "", "gh 가 로그인되어 있지 않다\n")

@@ -218,6 +218,32 @@ def test_a_watched_base_folder_cannot_be_replaced_during_the_window(tree, tmp_pa
     local.rename(local.with_name("Local-aside"))   # the hold ends with the window
 
 
+@pytest.mark.parametrize("left", [True, False])   # the junction left on the new folder, or put back before the read
+def test_a_base_reached_through_a_junction_named_elsewhere_is_incomplete(tree, tmp_path, monkeypatch, left):
+    first, second, local = tmp_path / "first", tmp_path / "second", tmp_path / "Junction" / "Local"
+    first.mkdir()
+    second.mkdir()
+    local.parent.mkdir()
+
+    def link(target):
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(local), str(target)], check=True, capture_output=True)
+    link(first)
+    monkeypatch.setattr(owner_data, "bases", lambda: [tmp_path / "AppData" / "Roaming", local])
+    watch = owner_data.Watch(owner_data.roots(tree), tree)   # `com.example.budget` has no folder yet
+    os.rmdir(local)   # the junction itself, not the folder the watch holds
+    link(second)
+    (local / "com.example.budget").mkdir()   # the product's folder, reached through the configured path
+    if not left:
+        os.rmdir(local)
+        link(first)
+    result = watch.close()
+    os.rmdir(local)
+    # Left on the new folder, the window is incomplete. Put back, the owner's folder the path names at both reads
+    # was watched throughout, and the write went elsewhere: it is not that folder's change.
+    assert (result["state"] == "incomplete" and "가리키는 폴더가" in owner_data.reason(result)) if left else \
+        result["state"] == "clean" and not (first / "com.example.budget").exists()
+
+
 def test_a_root_named_during_the_window_is_covered(tree, tmp_path):
     local, conf = tmp_path / "AppData" / "Local", tree / "src-tauri" / "tauri.conf.json"
     watch = owner_data.Watch(owner_data.roots(tree))

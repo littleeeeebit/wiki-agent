@@ -102,6 +102,13 @@ def _confs(tree: Path):
             yield conf
 
 
+def _real(folder: Path) -> str | None:
+    try:
+        return os.path.normcase(os.path.realpath(folder, strict=True))
+    except OSError:
+        return None
+
+
 def _state(conf: Path) -> tuple[bytes, int] | None:
     """A config's bytes and its write time, read in that order through one handle, or `None` when it is gone."""
 
@@ -228,7 +235,7 @@ class Watch:
     def __init__(self, found: list[Path], tree: Path | None = None):
         self.lock, self.sync_lock = threading.Lock(), threading.Lock()
         self.state, self.paths, self.why = "clean", [], []
-        self.found, self.seen, self.bases, self.tree = list(found), {}, set(), tree
+        self.found, self.seen, self.bases, self.tree, self.real = list(found), {}, set(), tree, {}
         self.threads, self.syncs, self.stop, self.k = [], [], None, None
         self.confs, self.lost = {}, False   # each config as last read (its bytes and write time); notices lost
         if os.name != "nt":
@@ -241,6 +248,7 @@ class Watch:
         for base in dict.fromkeys(root.parent for root in found):
             if base.is_dir():
                 self.bases.add(base)
+                self.real[base] = _real(base)   # the folder the path names now, through any junction on it
                 self._start(base, "base")
             else:
                 self._fail(f"`{base}` 가 없어 감시하지 못했다")
@@ -310,6 +318,12 @@ class Watch:
             lost, self.lost, known = self.lost, False, list(self.confs)
         for conf in {*map(str, _confs(self.tree)), *known} if lost else ():
             self._reread(Path(conf), lost=True)
+        # The hold keeps the folder a base resolves to in place, not a junction naming it: a base that resolves
+        # elsewhere now, or cannot be resolved, was not watched where its path leads.
+        for base, was in self.real.items():
+            if (now_real := _real(base)) != was or was is None:
+                self._fail(f"`{base}` 가 가리키는 폴더를 확인하지 못했다" if None in (was, now_real) else
+                           f"`{base}` 가 가리키는 폴더가 이 구간 중에 바뀌어, 그 안은 감시하지 못했다")
         return now if now is not None or self.tree is None else roots(self.tree)
 
     def _start(self, folder: Path, mode: str) -> None:
@@ -328,7 +342,10 @@ class Watch:
         which = {"root": SUBTREE, "base": 0x2, "tree": 0x1 | 0x8 | 0x10}[mode]
         k = self.k
         # A base is held without delete sharing: Windows then refuses to move or remove it, or its parent, for the
-        # window, so the folder at its path stays the one its handle watches. What is inside changes as ever.
+        # window, so the folder at its path stays the one its handle watches. What is inside changes as ever. The
+        # cost: a program holding the base itself open with delete access makes the watch fail to start
+        # (`incomplete`), and one opening it so during the window gets a sharing error. A junction on the path is
+        # checked at every read (`_now`), since the hold keeps only the folder it resolves to.
         handle = k.CreateFileW(str(folder), 0x1, 0x3 if mode == "base" else 0x7, None, 3, 0x02000000 | 0x40000000,
                                None)
         if not handle or handle == w.HANDLE(-1).value:
