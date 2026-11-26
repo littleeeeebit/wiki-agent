@@ -294,8 +294,9 @@ def ending(path: Path) -> bool:
 
 
 def record(path: Path) -> tuple[str, dict] | None:
-    """The oneshot run whose worktree is `path`, read now. Raises when the folder or a record cannot be
-    read: a refused read is never "no run" (`specs.load` and `glob` both hide one)."""
+    """The oneshot run whose worktree is `path`, read now. Raises when the folder or a record cannot be read: a
+    refused read is never "no run" (`specs.load` and `glob` both hide one). An empty or zeroed record (a power
+    loss, realtime-screen-translator 11-22) refuses only its own tree; it once refused every turn everywhere."""
 
     key = path.resolve()
     with specs._files:
@@ -305,12 +306,29 @@ def record(path: Path) -> tuple[str, dict] | None:
             return None
         for entry in entries:
             try:
-                spec = json.loads((Path(entry.path) / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8"))
+                text = (Path(entry.path) / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8")
             except FileNotFoundError:
                 continue
+            if not text.strip("\0 \t\r\n"):   # lost: only its own tree stays closed, by layout or by checkout
+                if lost_tree(key, entry.name):
+                    raise HTTPException(409, f"`{entry.name}` 의 원샷 실행 기록이 비어 있다 — 되살리기 전에는 이 작업트리에서 턴을 열지 않는다")
+                continue
+            spec = json.loads(text)
             if isinstance(spec, dict) and spec.get("worktree") and Path(spec["worktree"]).resolve() == key:
                 return entry.name, spec
     return None
+
+
+def lost_tree(key: Path, repo: str) -> bool:
+    """Whether `key` may be `repo`'s oneshot tree, its record lost: `specs.owner`'s layout in the volume's case
+    rules, or a checkout of that repository on the oneshot branch wherever it lives (PR #455 round 2)."""
+
+    same = os.path.normcase
+    if same(f"{key.parent.name}/{key.name}") == same(f"{repo}-worktrees/{oneshot.BRANCH}"):
+        return True
+    from workspace import checkout
+    _, main, branch = checkout(key)
+    return branch == oneshot.BRANCH and bool(main) and same(Path(main).name) == same(repo)
 
 
 def reclaimed(path: Path, run=None, gone: str | None = None) -> None:
