@@ -8,8 +8,8 @@ web screen's mock page and shoots it in a browser. For each native kind, the
 Android app and the PC app, it unpacks the repository's HEAD into a scratch
 folder of that kind's own, adds that kind's mock files, runs that kind's
 preview command there, and keeps only the pictures: the Android preview with
-no emulator, the PC preview on a desktop the run owns, out of the owner's
-sight.
+no emulator, the PC preview in a look on the owner's desktop, where they
+see it.
 
 ## What you receive
 
@@ -68,8 +68,12 @@ never repeated.
   reference phone's full size. An overlay is drawn over a plain stand-in page,
   and a notification in a stand-in shade.
 - The PC preview is the stack's own: for a web view stack such as Tauri or
-  Electron, its pages rendered by a headless browser screenshot; for WinUI or
-  WPF, a rendered-control snapshot test. A feature's control has the
+  Electron, its pages rendered by a screenshot of a headed browser window,
+  never a headless one; for WinUI or
+  WPF, a snapshot of each screen shown in a window of its own. Each screen
+  is shown in a window on the owner's display, for at least a second, while
+  it is shot; a preview that shows no window there is refused, whatever it
+  drew. A feature's control has the
   `AutomationId` `feature:<id>` (a web view element's `id`, or XAML's
   `AutomationProperties.AutomationId`). Each command starts one of the host
   programs listed, or a file inside the repository; any other program is

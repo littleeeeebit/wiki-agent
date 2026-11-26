@@ -29,7 +29,7 @@ from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
 from . import connect, oneshot, oneshot_android, oneshot_calls, oneshot_needs, oneshot_spec, refactor_run, runtime, specs, work
-from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled
+from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled, turn_stage
 from .query import ROOT, _lock as work_lock, hold
 
 MAX_ATTEMPTS = 3
@@ -467,7 +467,7 @@ def resume(repo: str) -> None:
     if stopped_for_kind(repo):
         return
     spec = oneshot_spec.saved(repo, oneshot={"attempts": 0})   # the owner's resume starts the attempts afresh
-    stage = spec["oneshot"]["stage"]
+    stage = turn_stage(spec["oneshot"])
     send(repo, stage, STAGES[stage][2](spec))
 
 
@@ -752,7 +752,7 @@ def owns(spec: dict) -> bool:
 
 def checked(path: Path, run, spec: dict, final: str):
     """`specs._check`'s hand-over: the stage's check, then the next turn; a person's turn, or one S4 does not own, is left."""
-    repo, stage = spec["repo"], spec["oneshot"]["stage"]
+    repo, stage = spec["repo"], turn_stage(spec["oneshot"])
     if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
     hide = getattr(run.chat, "hide", None)

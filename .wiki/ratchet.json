@@ -13,8 +13,8 @@
     },
     "tool/apply.py": {
       "dup": 6,
-      "lines": 884,
-      "reason": "RETIRED_DENIES and retire_denies: a checkout's settings lose a deny a page dropped (sed -i) through apply and the global install alike; user-level files keep theirs"
+      "lines": 886,
+      "reason": "PR #446 round 5: `read_json` refuses a settings root that is no JSON object as a `ValueError` its callers already catch, so one malformed checkout never stops the wiring watch's settle or the project list (two lines). Before that: RETIRED_DENIES and retire_denies: a checkout's settings lose a deny a page dropped (sed -i) through apply and the global install alike; user-level files keep theirs"
     },
     "tool/census.py": {
       "dup": 19,
@@ -138,8 +138,8 @@
     },
     "tool/main/oneshot_spec.py": {
       "dup": 0,
-      "lines": 828,
-      "reason": "PR #450 rounds 27-28: start-up settles a stopped run's turn left in flight (`oneshot.settled`), and `[재개]` first clears marks a gone turn left (`oneshot_build.unstuck`, four lines). Round 9: a design commit whose files already match HEAD (a rewrite retried after its commit landed) returns HEAD rather than stopping on git's untracked-files no-op (two lines). Oneshot plan 14a: R1's approval writes and commits the design files through `design_committed` and `design_files`, which the owner's mid-build rewrite (`oneshot_tell.retell`) commits with too (sixteen lines). Before that: PR #423, over 9e5a (#421): the design and the redesign save `design_author` with the design they wrote, and approval gives the build's spec its `task`, the committed design as `precedence` and that author, so the builder's escalations reach the model that designed it (six lines past the 800-line cap for a file without an entry)."
+      "lines": 829,
+      "reason": "PR #450 merging #446 (one line). Rounds 27-28: start-up settles a stopped run's turn left in flight (`oneshot.settled`), and `[재개]` first clears marks a gone turn left (`oneshot_build.unstuck`, four lines). Round 9: a design commit whose files already match HEAD (a rewrite retried after its commit landed) returns HEAD rather than stopping on git's untracked-files no-op (two lines). Oneshot plan 14a: R1's approval writes and commits the design files through `design_committed` and `design_files`, which the owner's mid-build rewrite (`oneshot_tell.retell`) commits with too (sixteen lines). Before that: PR #423, over 9e5a (#421): the design and the redesign save `design_author` with the design they wrote, and approval gives the build's spec its `task`, the committed design as `precedence` and that author, so the builder's escalations reach the model that designed it (six lines past the 800-line cap for a file without an entry)."
     },
     "tool/main/oneshot_review.py": {
       "dup": 0,

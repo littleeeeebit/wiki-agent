@@ -226,8 +226,8 @@ A refusal comes back with the reason, at most three times in all.
   only one used.
 <!-- /kind -->
 <!-- kind:desktop -->
-- Do not start the PC app on the owner's desktop: the server's own desktop is
-  the only one it runs on.
+- Do not start the PC app yourself: the server starts it, on the owner's
+  desktop where they see it, and only there.
 <!-- /kind -->
 - Visible text follows the profile's `ui_language`; Korean text is written
   directly in Korean, never translated from English.

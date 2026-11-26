@@ -1086,7 +1086,7 @@ def measurement():
         expect(box).to_have_value("")
         with posting(page):
             start.click()
-        assert posted[-1] == ("measure/start", {"head": head}), posted
+        assert posted[-1] == ("measure/start", {"head": head, "n": 0}), posted   # no result shown yet
         running = page.get_by_role("region", name="실측 중")
         expect(running).to_contain_text("「허용」")
         expect(running).to_contain_text("1회차 주인 실측 중")   # which one, since when, and what follows

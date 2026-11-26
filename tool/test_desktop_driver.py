@@ -138,7 +138,7 @@ def test_an_app_that_shows_no_window_is_a_refusal(tmp_path):
         look.start("app", python(NONE), tmp_path)
         report = desktop_driver.drive(look, "app", (640, 480), [], wait=2, settle_ms=200)
 
-    assert report["refusal"] == "the app showed no window on the owned desktop"
+    assert report["refusal"] == "the app showed no window on the owner's desktop"
 
 
 STAND_IN = """

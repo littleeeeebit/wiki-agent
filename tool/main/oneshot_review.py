@@ -523,17 +523,15 @@ def holding(repo: str, what: str, body, passed: str = "built_head", build: str =
     passed_on = False
     try:
         following = None
-        try:
+        try:   # what `again` returns runs once the tree is let go, as a save's does
             if why := moved(spec, tree, passed):
-                (again or rebuild)(repo, store, why, build)
+                following = (again or rebuild)(repo, store, why, build)
+            elif (save := body(store, spec, tree)) is None:
                 return
-            save = body(store, spec, tree)
-            if save is None:
-                return
-            if why := moved(spec, tree, passed):
-                (again or rebuild)(repo, store, f"{what} 동안 작업트리가 바뀌었다 — {why}", build)
-                return
-            following = save()
+            elif why := moved(spec, tree, passed):
+                following = (again or rebuild)(repo, store, f"{what} 동안 작업트리가 바뀌었다 — {why}", build)
+            else:
+                following = save()
         finally:
             release()
         if callable(following):   # a save that only saves returns the spec
@@ -767,7 +765,7 @@ def build_turn(spec: dict) -> str:
     (`oneshot_measure.fixing`) or the review's refusal of the built HEAD."""
 
     o = spec["oneshot"]
-    if o.get("fix") in ("measure", "plan"):
+    if o.get("fix") in ("measure", "plan", "moved"):
         from . import oneshot_measure   # it imports this module
         if text := oneshot_measure.fixing(spec):
             return text

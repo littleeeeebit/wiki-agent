@@ -286,7 +286,7 @@ def looked(path: Path, kind: str, spec: dict, live: str, device: dict | None, sh
            apks: dict, build: dict | None = None, *, env: dict | None = None) -> list[dict]:
     """One kind's look at the HEAD the gate passed, shot into `shots`: the web app served and shot in a browser,
     the Android app's APKs copied and installed on the run's emulator (`apks` gets the copies' digests), or the
-    PC app's frozen `build` started on a desktop the run owns."""
+    PC app's frozen `build` started on the owner's desktop."""
 
     o, store = spec["oneshot"], oneshot_spec.store(spec["repo"])
     # Each app runs with the owner's secrets (`env`, a `gate_env`), and its text the look keeps shows `[N1]`.

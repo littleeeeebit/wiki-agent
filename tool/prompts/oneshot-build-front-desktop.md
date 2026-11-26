@@ -24,8 +24,8 @@ with the test runner's configuration; these files may not change at all:
 
 <!-- shared:conventions -->
 The server copies the program the gate builds out of this worktree and starts
-the copy unpackaged, without elevation, on a desktop of its own, out of the
-owner's sight. It reads the program's controls through UI Automation and
+the copy unpackaged, without elevation, on the owner's desktop, where they
+see it. It reads the program's controls through UI Automation and
 acts only through automation patterns, never synthetic input.
 
 - The screens follow the stack's `ui`. Each screen shows where its `surface`
@@ -174,7 +174,7 @@ The server checks, in order:
    declared by, its case as stored on disk. The server then records every
    copied file's digest with the launch settings and names the build by
    them. A change to any file or setting is a new build.<!-- /shared -->
-6. <!-- shared:look -->The server starts the frozen copy on its own desktop
+6. <!-- shared:look -->The server starts the frozen copy on the owner's desktop
    once for each screen and state, as the conventions above describe, and
    shoots and reads its windows. It refuses: a program that does not start,
    that shows no main window or more than one at startup, or that changes a
@@ -197,7 +197,7 @@ A refusal comes back with the reason, at most three times in all.
 - Do not push or open a pull request. Decide within the approved design; ask
   the owner only a decision that is theirs, as the end of this message says.
 - Running the gate command or the host-side tests is fine. Install nothing,
-  and do not start the program on the owner's desktop: the server's own
-  desktop is the only one it runs on.
+  and do not start the program yourself: the server starts it, on the owner's
+  desktop where they see it.
 - Visible text follows the profile's `ui_language`; Korean text is written
   directly in Korean, never translated from English.
