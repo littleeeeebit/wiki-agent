@@ -5,6 +5,7 @@ of its own: what a oneshot runs is never out of the owner's sight (plan 13)."""
 
 import ctypes
 import os
+import re
 import shutil
 import stat
 import time
@@ -514,20 +515,54 @@ def look(root: Path, name: str, disposable: bool = False):
             raise Refused(f"{failure}; {message}") from failure
 
 
-def ended_since(record: dict) -> bool:
-    """Every job's own cleanup ran and followed every process the job counted, and the only exits it could not
-    prove then are proven now, by the identity it recorded for each (`exited`). A cleanup that never ran, a count
-    that did not match, or any other reason proves nothing."""
+def vacant(pid: int) -> bool:
+    """No running process has `pid`: it opens nothing, or only a process that has exited. Anything else, a live
+    process or no answer, is not vacant."""
 
-    for entry in record["jobs"].values():
-        proof = entry.get("proof")
-        if not proof or proof.get("total") is None or proof["total"] != proof.get("joined"):
+    k, _ = native_process._kernel()
+    handle = k.OpenProcess(native_process.SYNCHRONIZE, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == INVALID_PARAMETER
+    try:
+        return k.WaitForSingleObject(handle, 0) == 0
+    finally:
+        k.CloseHandle(handle)
+
+
+LATE = re.compile(r"(?:(?P<key>[^:]+): )?no exit proven for pid (?P<pid>\d+)")
+UNSEEN = re.compile(r"pid (?P<pid>\d+) (?:is still running|cannot be shown to have exited)")
+
+
+def ended_since(record: dict) -> bool:
+    """The look's cleanup ran to its end and every job followed every process it counted, and what it could not
+    prove then was only exits, proven now: each process recorded under that pid has exited (`exited`), or, where
+    the job never recorded one (a process gone before its join was read, before #440), no process has the pid at
+    all (`vacant`). A folder left is checked again by `recover` itself. A cleanup that never finished, a count
+    that did not match, or any other reason, such as a listener table that could not be read, proves nothing."""
+
+    proof, jobs = record.get("proof"), record["jobs"]
+    if not proof or not jobs:
+        return False
+    members = [member for entry in jobs.values() for member in entry["members"]]
+
+    def gone(pid: str) -> bool:
+        known = [member for member in members if str(member["pid"]) == pid]
+        return all(exited(member) is True for member in known) if known else vacant(int(pid))
+
+    for entry in jobs.values():
+        own = entry.get("proof")
+        if not own or own.get("total") is None or own["total"] != own.get("joined"):
             return False
-        for reason in proof["reasons"]:
-            pid = reason.removeprefix("no exit proven for pid ")
-            if pid == reason or not any(str(m["pid"]) == pid and exited(m) is True for m in entry["members"]):
-                return False
-    return bool(record["jobs"])
+        if not all((late := LATE.fullmatch(reason)) and not late["key"] and gone(late["pid"])
+                   for reason in own["reasons"]):
+            return False
+    for reason in proof["reasons"]:
+        if reason.startswith("folder "):   # `_removed`'s own answer, which `recover` asks again
+            continue
+        late = LATE.fullmatch(reason) or UNSEEN.fullmatch(reason)
+        if not late or late.groupdict().get("key", "") not in (*jobs, "") or not gone(late["pid"]):
+            return False
+    return True
 
 
 def recover(folder: Path) -> list[str]:

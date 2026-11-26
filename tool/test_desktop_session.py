@@ -661,6 +661,9 @@ def test_exits_the_cleanup_could_not_prove_in_time_release_the_look_once_proven(
     late = {"pid": 4508, "created": 1}
     record["jobs"]["app"] = {"name": "Local\\none", "uptime": 1, "root": None, "members": [late], "proof": {
         "clean": False, "reasons": ["no exit proven for pid 4508"], "joined": 305, "total": 305, "active": 0}}
+    record["proof"] = {"clean": False, "uptime": 1, "reasons": [   # as `close` saved it
+        "app: no exit proven for pid 4508", "pid 4508 is still running",
+        "folder data-app could not be removed: PermissionError 32"]}
     desktop_session.save(folder, record)
     monkeypatch.setattr(desktop_session.native_process, "terminate", lambda member: True)
     gone = {}
@@ -671,6 +674,46 @@ def test_exits_the_cleanup_could_not_prove_in_time_release_the_look_once_proven(
     assert desktop_session.recover(folder) == []
     assert desktop_session.load(folder)["recovered"] == "every process its jobs followed has exited since"
     assert not (folder / "data-app").exists()
+
+
+def late_record(tmp_path, monkeypatch, members, reasons):
+    """A crashed look whose job counted every process but proved one exit too late, `close`'s own proof saved."""
+
+    folder = crashed(tmp_path, monkeypatch)
+    record = desktop_session.load(folder)
+    record["jobs"]["app"] = {"name": "Local\\none", "uptime": 1, "root": None, "members": members, "proof": {
+        "clean": False, "reasons": ["no exit proven for pid 9"], "joined": 3, "total": 3, "active": 0}}
+    record["proof"] = {"clean": False, "uptime": 1, "reasons": ["app: no exit proven for pid 9", *reasons]}
+    desktop_session.save(folder, record)
+    monkeypatch.setattr(desktop_session.native_process, "terminate", lambda member: True)
+    monkeypatch.setattr(desktop_session, "exited", lambda member: True)
+    return folder
+
+
+def test_an_exit_whose_process_was_never_recorded_is_proven_only_by_an_empty_pid(tmp_path, monkeypatch):
+    folder = late_record(tmp_path, monkeypatch, [], [])   # before #440: gone before its join was read
+    free = {}
+    monkeypatch.setattr(desktop_session, "vacant", lambda pid: free.get(pid, False))
+
+    assert "restart the PC or sign out" in desktop_session.recover(folder)[0]   # the pid is taken, or no answer
+    free[9] = True
+    assert desktop_session.recover(folder) == []
+
+
+def test_a_cleanup_failure_other_than_a_late_exit_keeps_the_look_held(tmp_path, monkeypatch):
+    folder = late_record(tmp_path, monkeypatch, [{"pid": 9, "created": 1}],
+                         ["cannot read the listeners: OSError(22, 'table')"])
+
+    assert "restart the PC or sign out" in desktop_session.recover(folder)[0]
+
+
+def test_a_cleanup_that_never_saved_its_proof_proves_nothing(tmp_path, monkeypatch):
+    folder = late_record(tmp_path, monkeypatch, [{"pid": 9, "created": 1}], [])
+    record = desktop_session.load(folder)
+    record["proof"] = None   # the server died between its jobs and the end of `close`
+    desktop_session.save(folder, record)
+
+    assert "restart the PC or sign out" in desktop_session.recover(folder)[0]
 
 
 def test_a_job_count_that_did_not_match_proves_nothing_however_its_members_ended(tmp_path, monkeypatch):
