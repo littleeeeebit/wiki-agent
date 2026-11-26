@@ -292,13 +292,42 @@ def test_a_base_spelled_with_the_extended_prefix_reads_as_itself(tree, tmp_path,
     assert watch.settled()["state"] == "clean" and watch.close()["state"] == "clean"
 
 
+def cased(folder: Path) -> Path:
+    """`folder`, made case-sensitive, or the test skipped where the volume makes none."""
+
+    folder.mkdir(parents=True, exist_ok=True)
+    if subprocess.run(["fsutil", "file", "setCaseSensitiveInfo", str(folder), "enable"], capture_output=True).returncode:
+        pytest.skip("this volume makes no case-sensitive folder")
+    return folder
+
+
+def test_a_config_moved_to_a_folder_differing_only_in_case_is_incomplete(tree, tmp_path, monkeypatch):
+    base = cased(tmp_path / "Cased")
+    (base / "Original").mkdir()
+    (base / "original").mkdir()   # both the owner's, both there before the window
+    monkeypatch.setattr(owner_data, "bases", lambda: [base])
+    conf = tree / "src-tauri" / "tauri.conf.json"
+    conf.write_text(json.dumps({"identifier": "Original"}), encoding="utf-8")
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    conf.write_text(json.dumps({"identifier": "original"}), encoding="utf-8")   # kept on disk
+    (base / "original" / "settings.json").write_text("{}", encoding="utf-8")
+    states = watch.settled()["state"], watch.close()["state"]
+    assert states == ("incomplete", "incomplete")
+
+
+def test_bases_differing_only_in_case_are_both_kept(tmp_path, monkeypatch):
+    parent = cased(tmp_path / "Cased")
+    (parent / "Local").mkdir()
+    (parent / "local").mkdir()
+    monkeypatch.setattr(owner_data, "known", lambda which: parent / ("Local" if which == owner_data.LOCAL else "Roaming"))
+    monkeypatch.setenv("APPDATA", str(parent / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(parent / "local"))
+    assert [b.name for b in owner_data.bases()] == ["Roaming", "Local", "local"]
+
+
 def test_a_junction_moved_to_a_folder_differing_only_in_case_is_incomplete(tree, tmp_path, monkeypatch):
     first, second, local, link = junctioned(tmp_path, monkeypatch)
-    folders = tmp_path / "cased"
-    folders.mkdir()
-    made = subprocess.run(["fsutil", "file", "setCaseSensitiveInfo", str(folders), "enable"], capture_output=True)
-    if made.returncode:
-        pytest.skip("this volume makes no case-sensitive folder")
+    folders = cased(tmp_path / "cased")
     (folders / "Original").mkdir()
     (folders / "original").mkdir()
     os.rmdir(local)

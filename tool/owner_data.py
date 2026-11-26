@@ -49,14 +49,12 @@ def known(guid: str) -> Path | None:
 
 
 def bases() -> list[Path]:
-    """Roaming and Local AppData, as the known folders say and as the environment says where it differs."""
+    """Roaming and Local AppData, as the known folders say and as the environment says where it differs. Spellings
+    are told apart exactly: in a case-sensitive folder two that differ only in case are two folders, and one
+    folder spelled twice is only watched twice."""
 
     found = [known(ROAMING), known(LOCAL), *(Path(os.environ[v]) for v in ("APPDATA", "LOCALAPPDATA") if os.environ.get(v))]
-    out: list[Path] = []
-    for base in found:
-        if base and all(os.path.normcase(str(base)) != os.path.normcase(str(o)) for o in out):
-            out.append(base)
-    return out
+    return [Path(b) for b in dict.fromkeys(str(base) for base in found if base)]
 
 
 def product_names(tree: Path) -> list[str]:
@@ -258,9 +256,9 @@ class Watch:
         if not self.stop:
             self._fail(f"감시를 시작하지 못했다 (Windows error {ctypes.get_last_error()})")
             return
-        for base in dict.fromkeys(root.parent for root in found):
+        for base in map(Path, dict.fromkeys(str(root.parent) for root in found)):   # exact spellings, as `bases`
             if base.is_dir():
-                self.bases.add(base)
+                self.bases.add(str(base))
                 self._start(base, "base")
             else:
                 self._fail(f"`{base}` 가 없어 감시하지 못했다")
@@ -299,11 +297,12 @@ class Watch:
         a product's run after this: its inside went unwatched. One whose folder does not is the base watch's."""
 
         with self.lock:
-            new = [r for r in now if r not in self.found]
+            watched = {str(r) for r in self.found}   # never `Path` equality, which folds case
+            new = list({str(r): r for r in now if str(r) not in watched}.values())
             self.found += new
             seen = {base: set(names) for base, names in self.seen.items()}
         for root in new:
-            if root.parent not in self.bases:
+            if str(root.parent) not in self.bases:
                 self._fail(f"`{root}` 는 이 구간 중에 생긴 이름이고, 그 상위 폴더는 감시하지 않았다")
             elif root.name.lower() in seen.get(root.parent, ()):
                 self._changed(None)
