@@ -128,9 +128,29 @@ def test_a_cache_moved_away_for_another_entry_is_never_counted_as_freed(tmp_path
             link(c, outside) if junction else c.mkdir()
         return real(c, ident)
     with patch.object(build_cache, "wiped", swapped):
-        assert build_cache.pruned(tree, cap=100) == 100   # only `new` really went; `kept` is counted where it went
-    # a junction goes as itself, never its target; the empty folder in its name is a cache of its own, and goes
-    assert caches(tree) == ["kept"] and (outside / "f").exists()
+        assert build_cache.pruned(tree, cap=100) == 100   # what was in its name freed nothing; `kept` went where it went
+    # a junction goes as itself, never its target; an empty folder in its name is a cache of its own, and goes
+    assert caches(tree) == ["new"] and (outside / "f").exists()
+
+
+def test_a_cache_that_cannot_be_read_again_is_never_counted_as_freed(tmp_path):
+    tree = tmp_path / "tree"
+    for name, age in (("a", 300), ("b", 200), ("c", 100)):
+        cache(tree, name, age)
+    real_measured, real_wiped, gone = build_cache.measured, build_cache.wiped, []
+
+    def measured(path):   # once the first went, `b` cannot be read, nor removed
+        if gone and Path(path).name == "b":
+            raise PermissionError("denied")
+        return real_measured(path)
+
+    def wiped(c, ident):
+        if c.name != "b":
+            gone.append(c.name)
+            real_wiped(c, ident)
+    with patch.object(build_cache, "measured", measured), patch.object(build_cache, "wiped", wiped):
+        assert build_cache.pruned(tree, cap=100) == 200   # `b` still counted at its last size: `c` had to go too
+    assert caches(tree) == ["b"]
 
 
 def test_a_session_moved_out_of_a_cache_is_counted_where_it_went(tmp_path):

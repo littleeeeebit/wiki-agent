@@ -36,7 +36,8 @@ The `vtuber-ko-dub` run's work-turn log
   pin, a file the trim creates and the system deletes when its handle closes,
   held while its children are read. After each removal the pinned
   `incremental` folders are counted again, and only the drop counts as freed,
-  so a cache or session moved within them is still counted where it went.
+  so a cache or session moved within them is still counted where it went, and
+  gets its own try there. One that cannot be read again keeps its last count.
   Discovery is a provisional scan for names: it pins nothing, since a pin
   changes its folder's time and a build script may watch a source folder's
   time, so it may list a folder a junction swapped in meanwhile. Every name it
