@@ -354,18 +354,34 @@ def admitted(path: Path, run) -> None:
 
 
 def unstuck(repo: str) -> None:
-    """For `[재개]` and the owner's answer: clear the marks left by the tree's build turn whose end has run
-    (`over`) and could not clear them. It takes no hold, so a run's follow-up never finds its tree taken: only
-    that turn's own token is cleared, and a new turn writes its own under the same lock."""
+    """For `[재개]` and the owner's answer: clear the marks a build turn left that could not clear them.
 
-    tree = Path(oneshot_spec.spec_of(repo)["worktree"])
+    The tree's registered turn whose end has run (`over`) has its own token cleared with no hold, so a run's
+    follow-up never finds its tree taken; a new turn writes its own under the same lock. A token no registered
+    turn holds (its turn never registered, or its conversation was reset) is told from a turn still starting by
+    the tree's hold, which `send` keeps from before it writes the token; that hold hands the queue on after."""
+
+    spec = oneshot_spec.spec_of(repo)
+    tree, token = Path(spec["worktree"]), (spec["oneshot"].get("inflight") or {}).get("turn")
     turn = work._runs.get(str(tree))
-    if not isinstance(turn, Turn) or not turn.over:   # a turn still ending clears its own; none, a later one did
-        return
     try:
-        reclaimed(tree, gone=turn.token)
+        if isinstance(turn, Turn) and turn.over:
+            reclaimed(tree, gone=turn.token)
     except Exception as exc:
         errorlog.record("oneshot-grant", exc, repo=repo)
+    if not token or ending(tree) or isinstance(turn, Turn) and turn.token == token:
+        return   # nothing left, a turn still ending clears its own, or it was cleared just above
+    try:
+        release = hold(work._busy, work_lock, str(tree), "", kind="turn")
+    except HTTPException:   # a turn is starting or running there: its own end clears its marks
+        return
+    try:
+        reclaimed(tree, gone=token)
+    except Exception as exc:
+        errorlog.record("oneshot-grant", exc, repo=repo)
+    finally:
+        release()
+        work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))   # an order its hold kept waiting
 
 
 def idle(path: Path) -> None:
