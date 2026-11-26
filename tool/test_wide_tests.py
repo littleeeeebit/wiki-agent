@@ -41,6 +41,21 @@ def test_an_operator_inside_quotes_is_text_and_splits_no_command(tmp_path):
     assert ask('python -m pytest -q -k test --junitxml "review;results.xml"', root)   # still no test path
     assert ask('echo "note; python -m pytest -q; end"', root) is None   # only words echoed
     assert ask("python -m pytest -q 'tool/test_a.py' && echo 'done | ok'", root) is None
+    assert ask("python -m pytest tool/test_hook.py > hook-tests.log 2>&1 &", root) is None   # sent to the background
+    assert ask("python -m pytest -q &> all.log & wait", root)   # `&>` is a redirection; the run is still wide
+    assert ask("cd .. & python -m pytest -q", root)   # a move sent to the background stays in its subshell
+
+
+def test_joining_a_long_command_takes_time_in_proportion_to_its_length():
+    import time
+    from wide_tests import joined
+    line = "A configuration example with a 'quoted value'.\n"
+    took = []
+    for n in (2048, 8192):
+        start = time.perf_counter()
+        joined(f"cat <<'DOC'\n{line * n}DOC\n", True)
+        took.append(time.perf_counter() - start)
+    assert took[1] < took[0] * 12, took   # four times the text, well under sixteen times the work
 
 
 def test_every_option_that_takes_a_value_has_it_read_as_the_value(tmp_path):

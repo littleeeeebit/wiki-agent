@@ -22,7 +22,10 @@ from pathlib import Path
 from pytest_output import _QUOTED, _blank, runs_pytest
 
 LIMIT = 8
-STAGES = re.compile(r"&&|\|\||[;|\n]")
+STAGES = {   # in Bash a lone `&` runs what is before it in the background; `2>&1` and `&>` are redirections
+    "posix": re.compile(r"&&|\|\||(?<![<>&])&(?![>&])|[;|\n]"),
+    "ps": re.compile(r"&&|\|\||[;|\n]"),   # PowerShell's `&` calls the command after it
+}
 MOVED = re.compile(r"(cd|sl|Set-Location|pushd|Push-Location)(?:\s+(\S.*))?", re.IGNORECASE)
 ENDED = re.compile(r"(?:exit|logout|throw)(?:\s.*)?", re.IGNORECASE)
 READ = {   # what `joined` stops at, in each shell: a quoted span, an escaped character, a `#`
@@ -110,23 +113,28 @@ def joined(command: str, posix: bool) -> str:
 
     # Whether a `#` starts a word is read off the text joined so far, so a continuation the shell drops is no
     # boundary of its own; `glued` is that text's length where a quote or an escape last ended.
-    out, at, glued = [], 0, -1
+    out, at, glued, size, last = [], 0, -1, 0, ""
+
+    def add(piece: str) -> None:
+        nonlocal size, last
+        out.append(piece)
+        size, last = size + len(piece), piece[-1:] or last
+
     while m := READ[posix].search(command, at):
-        out.append(command[at:m.start()])
-        at, text = m.end(), "".join(out)
+        add(command[at:m.start()])
+        at = m.end()
         if m["hash"]:
-            if (not text or text[-1] in " \t\r\n;&|(") and glued != len(text):
+            if (not size or last in " \t\r\n;&|(") and glued != size:
                 end = command.find("\n", m.start())
                 at = len(command) if end < 0 else end   # the newline stays: it ends the comment's line
             else:
-                out.append("#")
+                add("#")
         elif m["escape"] and m[0][1:] in ("\n", "\r\n"):
-            out.append("" if posix else " ")
+            add("" if posix else " ")
         else:
-            piece = m[0] if m["escape"] or not (posix and m[0].startswith('"')) else re.sub(r"\\\r?\n", "", m[0])
-            out.append(piece)
-            glued = len(text) + len(piece)
-    out.append(command[at:])
+            add(m[0] if m["escape"] or not (posix and m[0].startswith('"')) else re.sub(r"\\\r?\n", "", m[0]))
+            glued = size
+    add(command[at:])
     return "".join(out)
 
 
@@ -150,7 +158,7 @@ def stages(command: str, dialect: str) -> list[tuple[str, str]]:
     on the same list."""
 
     blank, cuts, ops = _blank(command, dialect), [0], [""]
-    for match in STAGES.finditer(blank):   # the same length as `command`, so its places are `command`'s
+    for match in STAGES[dialect].finditer(blank):   # the same length as `command`, so its places are `command`'s
         cuts += [match.start(), match.end()]
         ops.append(match[0])
     cuts.append(len(command))
@@ -178,8 +186,9 @@ def places(command: str, posix: bool, here: Path):
         runs = ok if op == "&&" else failed if op == "||" else ok | failed
         kept_ok, kept_failed = (set(), failed) if op == "&&" else (ok, set()) if op == "||" else (set(), set())
         yield stage, {folder for folder, _, _ in runs}
-        # Bash runs each part of a pipeline in a subshell, so no move made there outlives it
-        piped = posix and "|" in (op, split[i + 1][0] if i + 1 < len(split) else "")
+        # Bash runs each part of a pipeline, and a stage sent to the background, in a subshell: no move outlives it
+        after = split[i + 1][0] if i + 1 < len(split) else ""
+        piped = posix and ("|" in (op, after) or after == "&")
         moved = None if piped else MOVED.fullmatch(stage)
         if moved:
             try:
