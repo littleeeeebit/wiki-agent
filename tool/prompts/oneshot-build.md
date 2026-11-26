@@ -46,4 +46,4 @@ A refusal comes back with the reason, at most three times in all.
   each time: every other flag set builds its own copy of the dependencies, and
   the next build starts from that copy instead of what was just built. Never
   clean the build cache (`cargo clean`, deleting `target`, `gradle clean`):
-  a warm cache rebuilds only the modules a fix changed (the server bounds Cargo's incremental cache).
+  a warm cache rebuilds only the modules a fix changed (on Windows the server bounds Cargo's incremental cache).

@@ -19,6 +19,7 @@ Elsewhere an open file pins nothing, and the oneshot builds on Windows, so nothi
 """
 
 import os
+import stat
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -91,6 +92,9 @@ def held(stack: ExitStack, build: Path) -> bool:
 
     fd = os.open(build / ".cargo-lock", os.O_RDWR)
     stack.callback(os.close, fd)
+    entry = os.lstat(build / ".cargo-lock")   # open, the file cannot be renamed or removed: this stays its entry
+    if not stat.S_ISREG(entry.st_mode) or not os.path.samestat(os.fstat(fd), entry):
+        raise OSError(f"{build / '.cargo-lock'} is not the build folder's own lock file")
     try:
         lock(fd, True)
     except OSError:
@@ -151,8 +155,11 @@ def wiped(path: Path) -> None:
 
 
 def size(path) -> int:
-    """Bytes under `path`, never counted through a link or a junction; 0 once it is gone."""
+    """Bytes under `path`, never counted through a link or a junction; 0 once it is gone. A link at `path` itself is
+    refused: what it points at is not this worktree's to count."""
 
+    if linked(path):
+        raise OSError(f"{path} is a link")
     try:
         entries = list(os.scandir(path))
     except FileNotFoundError:
@@ -164,6 +171,8 @@ def size(path) -> int:
 def used(cache: Path) -> float:
     """When rustc last wrote a session into `cache`: it writes a new one each time it compiles that crate."""
 
+    if linked(cache):
+        raise OSError(f"{cache} is a link")
     return max((e.stat(follow_symlinks=False).st_mtime for e in os.scandir(cache)),
                default=os.stat(cache, follow_symlinks=False).st_mtime)
 
@@ -184,9 +193,12 @@ def pruned(tree: Path, cap: int = CAP) -> int:
 
 
 def left(cache: Path, before: int) -> int:
+    """What is left of `cache` once its removal ran, between none and all of it: unreadable, or a link put in its place
+    (the folder moved, not freed), it counts as all still there."""
+
     try:
-        return size(cache)
-    except OSError:   # unreadable after a partial removal: counted as all still there
+        return min(max(size(cache), 0), before)
+    except OSError:
         return before
 
 

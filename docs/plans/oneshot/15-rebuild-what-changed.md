@@ -18,9 +18,10 @@ The `vtuber-ko-dub` run's work-turn log
 
 ## Design
 
-- The server no longer sets `CARGO_INCREMENTAL=0`. A fix recompiles only the
-  parts of a crate it changed, as Cargo does by default; an owner's own
-  setting still wins.
+- On Windows the server no longer sets `CARGO_INCREMENTAL=0`. A fix
+  recompiles only the parts of a crate it changed, as Cargo does by default.
+  Elsewhere nothing bounds the cache, so it stays off there; an owner's own
+  setting wins either way.
 - At the end of every work turn, while the turn still holds its worktree,
   `common.build_cache.pruned` removes the least recently used incremental
   caches until the rest fit in 6 GB. It finds every Cargo build folder in the

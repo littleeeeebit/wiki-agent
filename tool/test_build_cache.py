@@ -113,6 +113,29 @@ def test_a_build_cargo_holds_is_left_whole_but_counted_and_a_cache_that_will_not
     assert caches(tree) == ["stuck"]
 
 
+def test_a_lock_entry_that_is_not_the_file_opened_is_never_trusted(tmp_path):
+    tree, other = tmp_path / "tree", tmp_path / "other"
+    cache(tree, "old", 300)
+    other.write_text("")
+    real = os.lstat   # the entry swapped between the open and its check: a link then, or another file now
+
+    def lstat(path, *a, **k):
+        return real(other) if str(path).endswith(".cargo-lock") else real(path, *a, **k)
+    with patch("os.lstat", lstat):
+        assert build_cache.pruned(tree, cap=0) == 0
+    assert caches(tree) == ["old"]
+
+
+def test_a_link_in_a_caches_place_is_never_read_nor_counted_as_freed(tmp_path):
+    outside, at = tmp_path / "outside", tmp_path / "cache"
+    outside.mkdir()
+    (outside / "big").write_bytes(b"x" * 1000)
+    link(at, outside)
+    with pytest.raises(OSError):
+        build_cache.size(at)
+    assert build_cache.left(at, 100) == 100   # the folder moved away and a link took its name: nothing freed
+
+
 def test_a_trim_that_fails_never_raises_into_the_turns_end(tmp_path):
     cache(tmp_path, "old", 300)
     with patch.object(build_cache, "trimmed", side_effect=PermissionError("denied")):

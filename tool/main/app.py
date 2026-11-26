@@ -628,8 +628,11 @@ def main() -> int:
     # cp949 character eight times.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
-    # Cargo's incremental cache stays on, so a fix rebuilds only what changed; each turn's end bounds it
-    # (`common.build_cache`).
+    # Cargo's incremental cache stays on where each turn's end bounds it (`common.build_cache`, Windows), so a fix
+    # rebuilds only what changed. Elsewhere nothing bounds it, and one worktree's `target` reached 24 GB: off there,
+    # unless the owner set it, for every agent, gate and build this server starts.
+    if os.name != "nt":
+        os.environ.setdefault("CARGO_INCREMENTAL", "0")
     process.hide_child_consoles()   # no console window of a gate, agent or build reaches the owner's screen
     previous_exception, previous_thread_exception = sys.excepthook, threading.excepthook
     def exception(kind, value, trace):
