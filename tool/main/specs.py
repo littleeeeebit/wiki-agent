@@ -1530,9 +1530,9 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str, only
     each write, so none starts once it is set.
     Raise `RuntimeError` when publication cannot complete."""
 
-    def unstopped():
+    def unstopped(n=None):   # `n`: the pull request found, a lost create's included
         if halt is not None and halt.is_set():
-            raise RuntimeError("사람이 멈춤 — push 는 했고 PR 은 만들거나 고치지 않았다")
+            raise RuntimeError(f"사람이 멈춤 — push 는 했고 {f'PR #{n} 이 있으며 고치지' if n else 'PR 은 만들지'} 않았다")
 
     # GitHub refuses a title over 256 characters; a spec's goal can run longer, and the body carries it whole.
     title = title if len(title) <= 256 else title[:255] + "…"
@@ -1556,7 +1556,7 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str, only
                 raise RuntimeError(f"PR 을 만들지 못했다 — {why}")
         # The agent may have opened it early, or GitHub accepted a timed-out
         # create. In both cases publish the current requirements and evidence.
-        unstopped()
+        unstopped(found[0])
         try:
             edited = sh(["gh", "pr", "edit", str(found[0]), "--title", title, "--body-file", fh.name], path, 120)
         except subprocess.TimeoutExpired as exc:

@@ -11,7 +11,6 @@ From `PR #n` on the spec follows the ordinary cycle, and the run keeps its summa
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import re
@@ -30,7 +29,7 @@ from common import errorlog, masked, shell
 from wiki import slots_for
 
 from . import github_release, oneshot_build, oneshot_calls, oneshot_ci, oneshot_device, oneshot_needs, oneshot_spec
-from . import oneshot_owner_data, pr_text, release, release_desktop, specs
+from . import oneshot_owner_data, oneshot_publish, pr_text, release, release_desktop, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -731,13 +730,14 @@ def handed(path: Path, run, spec: dict, final: str):
                 why = specs.said(ready) if ready.returncode else ""
             except (OSError, subprocess.TimeoutExpired) as exc:
                 why = f"{type(exc).__name__}: {exc}"
+            # Its last server command ran, whatever its reply (GitHub may have applied a ready whose answer was
+            # lost): the window is judged again, and a change makes the pull request a draft, confirmed off GitHub.
+            if seen := oneshot_owner_data.read(repo):
+                kept = oneshot_publish.drafted(path, fresh["pr"]["number"])
+                oneshot_spec.store(repo).stop(STAGE, f"{seen} — {kept}, 준비 완료로 남았을 수 있다" if kept else seen)
+                return None
             if why:
                 oneshot_spec.store(repo).stop(STAGE, f"PR #{fresh['pr']['number']} 의 초안을 풀지 못했다 — {why}")
-                return None
-            if seen := oneshot_owner_data.read(repo):   # its last server command ran: the window is judged again
-                with contextlib.suppress(OSError, subprocess.TimeoutExpired):   # a draft again, as far as it goes
-                    specs.sh(["gh", "pr", "ready", str(fresh["pr"]["number"]), "--undo"], path, 60)
-                oneshot_spec.store(repo).stop(STAGE, seen)
                 return None
             oneshot_spec.saved(repo, oneshot={"stage": "done", "working": None, "pr": fresh["pr"]})
     elif not fresh.get("writing"):   # neither open nor asked again: the reason is the spec's fault

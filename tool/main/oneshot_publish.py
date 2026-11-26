@@ -46,18 +46,27 @@ def unready(spec: dict, path: Path, halt=None) -> str:
         if base.returncode or not base.stdout.strip():
             return f"기본 브랜치를 모른다 — {specs.said(base)}"
         if found := specs.existing_pr(path, specs.branch_of(spec), base.stdout.strip(), n):
-            seen = specs.sh(["gh", "pr", "view", str(found[0]), "--json", "isDraft"], path, 60)
-            if seen.returncode:
-                return f"PR #{found[0]} 이 초안인지 확인하지 못했다 — {specs.said(seen)}"
-            if halt is not None and halt.is_set():   # a Stop while it was read: nothing on GitHub changes after it
-                return "사람이 멈춤 — PR 을 바꾸지 않았다"
-            undo = None if json.loads(seen.stdout).get("isDraft") else \
-                specs.sh(["gh", "pr", "ready", str(found[0]), "--undo"], path, 60)
-            if undo is not None and undo.returncode:
-                return f"PR #{found[0]} 을 초안으로 되돌리지 못했다 — {specs.said(undo)}"
+            return drafted(path, found[0], halt)
     except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as exc:   # every one a stop with its reason
         return str(exc) if type(exc) is RuntimeError else f"PR 을 확인하지 못했다 — {type(exc).__name__}: {exc}"
     return ""
+
+
+def drafted(path: Path, n: int, halt=None) -> str:
+    """Pull request `n` read off GitHub and made a draft again if it is ready: "" once it is a draft, else why not
+    (a stop set while it was read changes nothing)."""
+
+    try:
+        seen = specs.sh(["gh", "pr", "view", str(n), "--json", "isDraft"], path, 60)
+        if seen.returncode:
+            return f"PR #{n} 이 초안인지 확인하지 못했다 — {specs.said(seen)}"
+        if halt is not None and halt.is_set():   # a Stop while it was read: nothing on GitHub changes after it
+            return "사람이 멈춤 — PR 을 바꾸지 않았다"
+        undo = None if json.loads(seen.stdout).get("isDraft") else \
+            specs.sh(["gh", "pr", "ready", str(n), "--undo"], path, 60)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        return f"PR #{n} 이 초안인지 확인하지 못했다 — {type(exc).__name__}: {exc}"
+    return f"PR #{n} 을 초안으로 되돌리지 못했다 — {specs.said(undo)}" if undo is not None and undo.returncode else ""
 
 
 def published(repo: str) -> dict:

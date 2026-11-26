@@ -309,11 +309,12 @@ def test_the_backends_draft_pr_left_a_draft_stops_s8_instead_of_finishing(finish
 
 @pytest.mark.skipif(os.name != "nt", reason="the watch is Windows'")
 # The write lands while the measured draft is edited, while the first one is created here, or while it is made
-# ready, the window's last server command.
-@pytest.mark.parametrize("publication", ["edit", "create", "ready"])
+# ready, the window's last server command: answered, its answer lost after GitHub applied it, or answered and
+# then not undone.
+@pytest.mark.parametrize("publication", ["edit", "create", "ready", "ready-lost", "ready-kept"])
 def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(finished, tmp_path, monkeypatch,
                                                                             publication):
-    measured = publication != "create"
+    measured, publication, how = publication != "create", *(publication.split("-") + [""])[:2]
     import owner_data
     from main import oneshot_owner_data
 
@@ -332,8 +333,16 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
     answering = listing(remote, 7) if measured else remote
 
     def publishing(args, cwd, timeout=60):
+        if args[:3] == ["gh", "pr", "ready"]:   # GitHub's draft flag follows what it applied
+            remote.draft = "--undo" in args and how != "kept"
+            if "--undo" in args and how == "kept":
+                remote.calls.append(args)
+                return subprocess.CompletedProcess(args, 1, "", "GitHub refused\n")
         if args[:3] == ["gh", "pr", publication] and "--undo" not in args:   # a publication command
             (roaming / tree.name / "cache.bin").write_text("x", encoding="utf-8")
+            if how == "lost":
+                answering(args, cwd, timeout)
+                raise subprocess.TimeoutExpired(args, timeout)
         return answering(args, cwd, timeout)
     try:
         with patch.object(specs, "sh", publishing):
@@ -343,8 +352,9 @@ def test_a_change_made_while_s8_publishes_keeps_the_draft_and_never_finishes(fin
     made = [c for c in remote.calls if c[:3] == ["gh", "pr", publication]]
     assert made and (measured or "--draft" in made[0])   # a pull request opened here opens as a draft
     readied = [c for c in remote.calls if c[:3] == ["gh", "pr", "ready"]]
-    # The draft stays a draft: never made ready, or made a draft again right after.
+    # The draft stays a draft: never made ready, or made a draft again right after, read back off GitHub.
     assert not readied if publication != "ready" else readied[-1][-1] == "--undo"
+    assert (how == "kept") == ("준비 완료로 남았을 수 있다" in o()["stopped"]["detail"])
     assert o()["stage"] == "pr" and "주인의 실제 데이터 폴더가 바뀌었다" in o()["stopped"]["detail"]
 
 
@@ -411,6 +421,29 @@ def test_a_stop_during_publication_changes_nothing_on_github_after_it(finished, 
     after = [c for c in remote.calls[stops[0]:] if c[:2] == ["git", "push"]
              or c[:3] in (["gh", "pr", "ready"], ["gh", "pr", "edit"], ["gh", "pr", "create"])]
     assert not after and (when not in ("view", "scan") or not remote.pushes())
+
+
+def test_a_stop_after_a_lost_create_names_the_pull_request_it_found(finished):
+    tree, sent = finished
+    readme(tree)
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    run, remote = Run(), Remote()
+    rows = json.dumps([{"number": 7, "url": "https://github.com/o/proj/pull/7", "headRefName": specs.branch_of(spec()),
+                        "baseRefName": "main", "isCrossRepository": False}])
+
+    def lost(args, cwd, timeout=60):
+        if args[:3] == ["gh", "pr", "create"]:   # GitHub opened it, and its answer was lost
+            remote(args, cwd, timeout)
+            raise subprocess.TimeoutExpired(args, timeout)
+        if args[:3] == ["gh", "pr", "list"] and remote.created():   # the lookup finds it, as the owner's Stop lands
+            run.halt.set()
+            return subprocess.CompletedProcess(args, 0, rows, "")
+        return remote(args, cwd, timeout)
+    with patch.object(specs, "sh", lost):
+        oneshot_build.checked(tree, run, spec(), SUMMARIZED)
+    assert not any(c[:3] == ["gh", "pr", "edit"] for c in remote.calls)
+    assert "PR #7 이 있으며 고치지 않았다" in o()["stopped"]["detail"]
 
 
 def test_a_stop_while_s8_reads_its_watch_keeps_the_draft(finished, monkeypatch):

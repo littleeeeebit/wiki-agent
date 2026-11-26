@@ -102,14 +102,6 @@ def _confs(tree: Path):
             yield conf
 
 
-def _identity(folder: Path) -> tuple[int, int] | None:
-    try:
-        stat = os.stat(folder)
-    except OSError:
-        return None
-    return stat.st_dev, stat.st_ino
-
-
 def _state(conf: Path) -> tuple[bytes, int] | None:
     """A config's bytes and its write time, read in that order through one handle, or `None` when it is gone."""
 
@@ -239,7 +231,6 @@ class Watch:
         self.found, self.seen, self.bases, self.tree = list(found), {}, set(), tree
         self.threads, self.syncs, self.stop, self.k = [], [], None, None
         self.confs, self.lost = {}, False   # each config as last read (its bytes and write time); notices lost
-        self.ids: dict[Path, tuple | None] = {}   # each watched folder's file identity
         if os.name != "nt":
             return
         self.k = _k32()
@@ -316,19 +307,15 @@ class Watch:
         """The roots as they are now; first, after the tree's notices were lost, every config read again."""
 
         with self.lock:
-            lost, self.lost, known, ids = self.lost, False, list(self.confs), dict(self.ids)
+            lost, self.lost, known = self.lost, False, list(self.confs)
         for conf in {*map(str, _confs(self.tree)), *known} if lost else ():
             self._reread(Path(conf), lost=True)
-        for folder in (f for f, was in ids.items() if _identity(f) != was):   # its handle follows the old folder
-            self._fail(f"`{folder}` 가 이 구간 중에 다른 폴더로 바뀌어, 그 안은 감시하지 못했다")
         return now if now is not None or self.tree is None else roots(self.tree)
 
     def _start(self, folder: Path, mode: str) -> None:
         """A watcher on `folder`: `root` (its subtree), `base` (directory names in it) or `config` (its files).
         Only the constructor starts one, so `settled` and `close` see every watcher there is."""
 
-        if mode != "tree":   # the folder itself, as its handle will hold it: a replacement is not it
-            self.ids[folder] = _identity(folder)
         ready = threading.Event()
         thread = threading.Thread(target=self._run, args=(folder, mode, ready, self.stop), daemon=True,
                                   name=f"owner-watch-{folder.name}")
@@ -340,7 +327,10 @@ class Watch:
         recursive = mode in ("root", "tree")
         which = {"root": SUBTREE, "base": 0x2, "tree": 0x1 | 0x8 | 0x10}[mode]
         k = self.k
-        handle = k.CreateFileW(str(folder), 0x1, 0x7, None, 3, 0x02000000 | 0x40000000, None)
+        # A base is held without delete sharing: Windows then refuses to move or remove it, or its parent, for the
+        # window, so the folder at its path stays the one its handle watches. What is inside changes as ever.
+        handle = k.CreateFileW(str(folder), 0x1, 0x3 if mode == "base" else 0x7, None, 3, 0x02000000 | 0x40000000,
+                               None)
         if not handle or handle == w.HANDLE(-1).value:
             self._fail(f"`{folder}` 를 감시하려고 열지 못했다 (Windows error {ctypes.get_last_error()})")
             ready.set()

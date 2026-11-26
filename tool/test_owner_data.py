@@ -204,14 +204,18 @@ def test_a_read_that_completes_while_the_close_cancels_it_is_still_read(tree, tm
     assert closing.result["state"] == "changed"
 
 
-def test_a_base_folder_replaced_by_another_is_never_taken_for_watched(tree, tmp_path):
-    local = tmp_path / "AppData" / "Local"
+def test_a_watched_base_folder_cannot_be_replaced_during_the_window(tree, tmp_path):
+    local, appdata = tmp_path / "AppData" / "Local", tmp_path / "AppData"
     watch = owner_data.Watch(owner_data.roots(tree), tree)   # `com.example.budget` has no folder yet
-    local.rename(tmp_path / "AppData" / "Local-aside")   # the watched base moved away, its handle with it
-    (local / "com.example.budget").mkdir(parents=True)   # a new base in its place, and the product's folder in it
-    (local / "com.example.budget" / "settings.json").write_text("{}", encoding="utf-8")
-    result = watch.close()
-    assert result["state"] == "incomplete" and "다른 폴더로 바뀌어" in owner_data.reason(result)
+    try:   # neither the base nor its parent moves aside, so no other folder takes its path, restored or not
+        for folder in (local, appdata):
+            with pytest.raises(OSError):
+                folder.rename(folder.with_name(folder.name + "-aside"))
+        (local / "com.example.budget").mkdir()   # inside it, everything still changes and is seen
+    finally:
+        result = watch.close()
+    assert result["state"] == "changed"
+    local.rename(local.with_name("Local-aside"))   # the hold ends with the window
 
 
 def test_a_root_named_during_the_window_is_covered(tree, tmp_path):
