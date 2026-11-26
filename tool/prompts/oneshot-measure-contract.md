@@ -70,16 +70,16 @@ script drives, so the window shows what the script does.
    to. It never waits for a person when `ONESHOT_MEASURE` is `auto`: it uses
    the sign-in `{data}` already holds, and a metric it cannot reach without a
    person it leaves out of the report. When an input itself is wrong, it writes
-   `{"input_error": {"input": "M2", "why": "<reason>", "checked": {"how":
+   `{"input_error": {"input": "M2", "why": "<Korean>", "checked": {"how":
    "<Korean>", "answer": "<Korean>"}}}` instead. Examples: a key the service
    refuses, a broadcast that is not live, a sign-in the owner did not finish.
-   The owner gave that input, so the server does not take the script's word
-   for it: an `input_error` comes back to you as a failed measurement.
-   `checked` is the check made outside the program's own code that showed
-   the input wrong (`how`) and what the service answered (`answer`), each
-   in Korean: for a broadcast, the platform itself saying it is not live now.
-   Only an `input_error` with such a `checked`, after you were sent it,
-   reaches the owner, who reads it. It never prints a secret.
+   The owner gave that input, so the measurement stops and asks them, showing
+   `why`: a new value is measured again at once, and the same value kept
+   comes back to you as a failed measurement, the input standing. `checked`,
+   optional, is the check made outside the program's own code that showed
+   the input wrong (`how`) and what the service answered (`answer`): for a
+   broadcast, the platform itself saying it is not live now. The owner reads
+   `why` and `checked`, so both are in Korean. It never prints a secret.
 3. `inputs`: what only the owner can give, each
    `{"id": "M1", "what": "<Korean>", "kind": "secret" | "text", "env": "NAME",
    "guide": [steps]}`. A secret goes to Windows Credential Manager. A `text`

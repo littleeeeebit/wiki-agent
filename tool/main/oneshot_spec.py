@@ -22,7 +22,8 @@ from pydantic import BaseModel
 from common import is_junction
 
 from . import oneshot, oneshot_brief as brief, oneshot_sheet as sheet, specs, work
-from .oneshot_profile import STAGE_ORDER, current, environment, held, kind_of, kinds_of, off_host, stacked, tooled, unsettled
+from .oneshot_profile import (STAGE_ORDER, current, environment, held, kind_of, kinds_of, off_host, stacked, tooled,
+                              turn_stage, unsettled)
 
 RUNNING = {"spec": "talk", "design": "design", "r1": "redesign"}   # a later stage's module adds its own
 SHEETS = {"r1"}   # a stage whose sheet stands when its edit turn stopped
@@ -364,33 +365,50 @@ def approved(repo: str) -> None:
     """Every item approved: the design files written into the worktree and committed, and the build may begin."""
 
     spec = spec_of(repo)
-    tree, o = own_tree(spec), spec["oneshot"]
-    docs = tree and (tree / "docs" / "design").resolve()
-    if not tree or not docs.is_relative_to(tree):
-        store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
-        return
-    # A core (an Android app's, or the one several kinds share): the sheet and the module contracts the tests are
-    # written from, and a web app's endpoints among several kinds as its API.
-    cored = "modules" in o["design"]
-    written = ({"core.md": sheet.sheet, "core.json": sheet.core, **({"api.yaml": sheet.openapi} if "api" in o["design"]
-                                                                   else {})} if cored else
-               {"backend.md": sheet.sheet, "api.yaml": sheet.openapi})
-    files = [f"docs/design/{name}" for name in written]
-    if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
-        store(repo).stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {', '.join(linked)}")
-        return
-    docs.mkdir(parents=True, exist_ok=True)
-    for name, render in written.items():
-        (docs / name).write_text(render(spec), encoding="utf-8", newline="\n")
-    head = commit(repo, tree, files, f"Record the approved {'core' if cored else 'backend'} design "
-                                     f"(R1 round {o['r1']['round']})")
+    o = spec["oneshot"]
+    head = design_committed(repo, f"Record the approved {'core' if 'modules' in o['design'] else 'backend'} design "
+                          f"(R1 round {o['r1']['round']})")
     if head:
+        files = design_files(o)
         # What the build reads first (`handoff`): the design just committed governs, and the spec model that
         # wrote it answers the builder's escalations.
         saved(repo, task={"kind": "feature", "what": spec["goal"]},
               precedence=[{"ref": f, "role": "current", "why": "the approved design"} for f in files], escalate=[],
               author=o.get("design_author") or oneshot.role_config("design", store(repo)),
               oneshot={"stage": "tests", "design_head": head, "working": "tests"})   # the turn comes next
+
+
+def design_files(o: dict) -> dict:
+    """The design files a run's worktree holds, each with what renders it: a core's (an Android app's, or the one
+    several kinds share) sheet and module contracts the tests are written from, a web app's endpoints among several
+    kinds as its API; else the backend's sheet and API."""
+
+    if "modules" in o["design"]:
+        return {f"docs/design/{n}": r for n, r in {"core.md": sheet.sheet, "core.json": sheet.core,
+                                                   **({"api.yaml": sheet.openapi} if "api" in o["design"] else {})}.items()}
+    return {"docs/design/backend.md": sheet.sheet, "docs/design/api.yaml": sheet.openapi}
+
+
+def design_committed(repo: str, message: str, spec: dict | None = None) -> str | None:
+    """The design as the spec holds it now (or as `spec`, one not saved yet, holds it), written into the worktree's
+    design files and committed with `message`: the new HEAD, or `None` after stopping with `folder`. R1's approval
+    records it, and so does a design the owner changed during the build (`oneshot_tell.retell`)."""
+
+    spec = spec or spec_of(repo)
+    tree, o = own_tree(spec), spec["oneshot"]
+    docs = tree and (tree / "docs" / "design").resolve()
+    if not tree or not docs.is_relative_to(tree):
+        store(repo).stop("folder", f"작업트리가 `{oneshot.BRANCH}` 브랜치의 그 작업트리가 아니다: {spec['worktree']}")
+        return None
+    written = design_files(o)
+    files = list(written)
+    if linked := [f for f in files if (tree / f).is_symlink() or not (tree / f).resolve().is_relative_to(tree)]:
+        store(repo).stop("folder", f"설계 문서 자리가 작업트리 밖을 가리킨다: {', '.join(linked)}")
+        return None
+    docs.mkdir(parents=True, exist_ok=True)
+    for name, render in written.items():
+        (tree / name).write_text(render(spec), encoding="utf-8", newline="\n")
+    return commit(repo, tree, files, message)
 
 
 def within(base: Path, *parts: str) -> Path | None:
@@ -415,6 +433,8 @@ def commit(repo: str, tree: Path, files: list[str], message: str) -> str | None:
     """Exactly `files` committed, whatever else is staged: the new HEAD, or `None` after stopping with `folder`."""
 
     for args in (["add", "--", *files], ["commit", "-m", message, "--", *files]):
+        if args[0] == "commit" and not specs.sh(["git", "diff", "--cached", "--quiet", "--", *files], tree, 60).returncode:
+            break   # every file matches HEAD (a rewrite retried after its commit): HEAD holds the design
         done = specs.sh(["git", *args], tree, 60)
         if done.returncode and not re.search("nothing to commit|no changes added", done.stdout + done.stderr):
             store(repo).stop("folder", f"설계 문서를 커밋하지 못했다 — {(done.stderr or done.stdout).strip()[-300:]}")
@@ -472,6 +492,8 @@ def recover() -> None:
             o = specs.load(folder.name, oneshot.BRANCH)["oneshot"]
         if o and (repair := brief.recovered(o)):   # a brief the server went down writing, or its orphaned turn
             o = saved(folder.name, oneshot=repair)["oneshot"]
+        if o and o.get("inflight") and not o.get("working"):   # a stopped run's turn whose end failed to clear it
+            o = saved(folder.name, oneshot=oneshot.settled(o))["oneshot"]   # nothing runs at start: charged as cut
         o = waiting(folder.name, o) if o else o
         if o and o.get("stage") == "pr" and "desktop" in kinds_of(o) and o.get("attached") == o.get("final_head") \
                 and o.get("attached") and not o.get("working"):   # 9e6b held this run: its stop, kept or lost
@@ -488,9 +510,9 @@ def recover() -> None:
             # never a `restart` the owner's `[재개]` would only be refused on.
             waiting(folder.name, specs.load(folder.name, oneshot.BRANCH)["oneshot"])
         o = specs.load(folder.name, oneshot.BRANCH)["oneshot"] if o else o
-        if o and o.get("stage") in TURNS and (o.get("stopped") or {}).get("reason") == "restart" and not held(o):
+        if o and turn_stage(o) in TURNS and (o.get("stopped") or {}).get("reason") == "restart" and not held(o):
             from . import oneshot_build   # it imports this module
-            oneshot_build.resolve_tools(folder.name, o["stage"])   # a PC app's tool gone meanwhile: `toolchain`
+            oneshot_build.resolve_tools(folder.name, turn_stage(o))   # a PC app's tool gone meanwhile: `toolchain`
 
 
 def waiting(repo: str, o: dict) -> dict:
@@ -770,6 +792,8 @@ def decide(repo: str, body: Decisions) -> dict:
 
 @router.post("/api/oneshot/spec/{repo}/resume")
 def resume(repo: str) -> dict:
+    from . import oneshot_build   # it imports this module
+    oneshot_build.unstuck(repo)   # a turn gone without clearing its marks never holds `[재개]`
     with oneshot._lock:
         o = spec_of(repo)["oneshot"]
         supported(o)
@@ -784,10 +808,10 @@ def resume(repo: str) -> dict:
             o = saved(repo, oneshot=settle)["oneshot"]
         if o.get("inflight"):   # its `Turn.finish` has not run: the next turn would lose that turn's charge
             raise HTTPException(409, "앞 턴의 비용을 아직 매기는 중이다 — 잠시 뒤 다시 하라")
-        if o["stage"] not in (*RUNNING, *TURNS, *SHEETS, "review", "board"):
+        if (stage := turn_stage(o)) not in (*RUNNING, *TURNS, *SHEETS, "review", "board"):   # a repair resumes
             raise HTTPException(409, f"`{o['stage']}` 단계는 다음 단계에서 이어진다")
         # An edit turn that stopped: the sheet stands, the owner decides again. A board's stop likewise.
-        if o["stage"] in SHEETS or o["stage"] == "board":
+        if stage in SHEETS or stage == "board":
             return view(saved(repo, oneshot={"stopped": None}))
         if o["stage"] in RUNNING:
             start(repo, RUNNING[o["stage"]])
@@ -799,7 +823,7 @@ def resume(repo: str) -> dict:
                 return view(spec_of(repo))
             # The cap stopped it on a refused HEAD: the findings go to the build, the refusals counted afresh.
             o = saved(repo, oneshot={"stage": "build", "refused": 0, "fix": "review"})["oneshot"]
-        saved(repo, oneshot={"working": o["stage"], "stopped": None})   # a second resume meanwhile is refused
+        saved(repo, oneshot={"working": turn_stage(o), "stopped": None})   # a second resume meanwhile is refused
     from . import oneshot_build   # it imports this module
     oneshot_build.resume(repo)   # outside the lock, as after the approval
     return view(spec_of(repo))

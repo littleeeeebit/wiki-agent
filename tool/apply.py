@@ -544,8 +544,10 @@ def user_files(agent: str) -> list[Path]:
     return list(seen.values())
 
 
-def read_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+def read_json(path: Path) -> dict:   # a settings file is an object: any other root is refused as unreadable
+    if not isinstance(data := json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}, dict):
+        raise ValueError(f"{path}: 설정 파일의 최상위가 JSON 객체가 아니다")
+    return data
 
 
 def drift(settings: dict, project: Path | None, agent: str) -> list[str]:

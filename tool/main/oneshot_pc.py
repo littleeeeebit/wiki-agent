@@ -484,8 +484,7 @@ def observe(repo: str, o: dict, stopped, carry: dict | None = None, hide: dict[s
         if held := _held():
             raise RuntimeError("앞선 주인 화면 회차의 정리가 확인되지 않았다 — " + "; ".join(held))
         standing()
-        with desktop_session.look(looks, f"round-{uuid.uuid4().hex[:12]}", owned=False,
-                                  disposable=bool(hide)) as session:
+        with desktop_session.look(looks, f"round-{uuid.uuid4().hex[:12]}", disposable=bool(hide)) as session:
             # The last stop check and the resume run under the lock a stop is accepted under: one accepted first
             # always keeps the app from running.
             runs = desktop_look.Launches(session, build, desktop_look.size(o["profile"]), stopped, shoot=False,

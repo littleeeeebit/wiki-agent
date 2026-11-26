@@ -1,5 +1,8 @@
 import { get, json, post, type ChoiceQuestion } from '@/lib/api'
 
+/** A `choices` question answered, as the owner saw it (`oneshot_tell.Asked`). */
+export type Answered = ChoiceQuestion & { answer: string; picked: number[] | null }   // `picked`: null when typed
+
 /** The oneshot run's data past S1 and its requests (`tool/main/oneshot_spec.py` `view`). */
 
 export type Decision = { approve?: boolean; edit?: string }
@@ -37,8 +40,8 @@ export const modelName = (role: keyof Models, m: { model: string; effort: string
   `${m.model || (role === 'review' ? '리뷰 설정 따름' : 'Claude 기본')}${m.effort ? ` · ${m.effort}` : ''}`
 export type SpecSummary = {
   repo: string; stage: string; working: string | null; waits: boolean; kind?: string; kinds?: string[]
-  /** `counted`: the critiques a cap stop reached (`oneshot_critique`). */
-  stopped: { reason: string; detail: string; counted?: number } | null
+  /** `counted`: the critiques a cap stop reached (`oneshot_critique`); `turn`: the work-log turn that asked. */
+  stopped: { reason: string; detail: string; counted?: number; turn?: string } | null
 }
 export type Reading = { round: number; seconds: number | null; opened: string[]; edited: string[] }
 export type RunSummary = {
@@ -159,12 +162,18 @@ export type SpecView = SpecSummary & {
   limits?: { attempts: number; refusals: number; critiques: number }
   oneshot: {
     sentence: string; models?: Models; talk?: Talk[]; attempts?: number; critiques?: Critique[]
+    /** Why a build turn repairs the run: at the measurement, a repair that stays there (plan 13). */
+    fix?: string | null
+    /** How many measurements there were when an input last changed: one before it was of an older value. */
+    input_since?: number
     intent?: { kind?: string; kinds?: string[] }
     /** How many `critiques` came before the count against the cap restarted (a resume, an R3 fix). */
     critique_base?: number
     /** Several kinds: where a kind's own count restarted after its cap stop. */
     critique_bases?: Record<string, number>
     inflight?: Inflight | null; reviews?: Review[]; refused?: number; cases?: string[][]
+    /** The owner's words mid-build: waiting for the design, and each set the design was rewritten from. */
+    tell_pending?: { text: string; stage: string; answers?: boolean }[]; retold?: { words: string[]; changed: string[]; ts: number }[]
     spend?: { usd?: number; seconds?: number; calls?: number }
     /** The gate runs that reached each outside call (`oneshot_calls.reached`), by call id. */
     calls?: Record<string, number>; design?: { outside?: { id: string; target: string }[] }
@@ -193,9 +202,10 @@ export type SpecView = SpecSummary & {
 
 /** Whether the stage's own screen shows (`OneshotMeasure` `Owner`), its stop included: a stop at the measurement (a
  *  wrong input, the owner's stop, a restart) shows above its steps, and [실측 시작] starts it again with no [재개]
- *  first. Any other stop shows as every stage's does. */
+ *  first. Any other stop shows as every stage's does, a repair's at the measurement too: its [재개] sends the build. */
 export const owns = (v: SpecView) => v.stage === 'measure' && !!v.measure
-  && (!v.stopped || ['measure', 'measure-input', 'restart'].includes(v.stopped.reason))
+  && (!v.stopped || ['measure', 'measure-input'].includes(v.stopped.reason)
+      || v.stopped.reason === 'restart' && !v.oneshot.fix)
   || v.stage === 'conflict' && !v.working && !v.stopped
 
 export const base = (repo: string) => `/api/oneshot/spec/${repo}`
@@ -204,6 +214,13 @@ export const oneshotSpecs = () => get('/api/oneshot-specs').then((r) => json<{ s
 export const api = {
   view: (repo: string) => get(base(repo)).then(answer),
   say: (repo: string, text: string) => post(`${base(repo)}/say`, { text }).then(answer),
+  // The owner's words to the build agent mid-build (`oneshot_tell.tell`).
+  // `asked`: the work-log questions the words answer, each with its options (`oneshot_tell.Asked`); `turn`: theirs.
+  tell: (repo: string, text: string, asked?: Answered[], turn?: string) => post(`${base(repo)}/tell`, {
+    text, turn: turn ?? '', asked: asked?.map((q) => ({ header: q.header ?? '', question: q.question, answer: q.answer, picked: q.picked,
+      options: q.options.map((o) => ({ label: o.label, note: o.note ?? '', preview: o.preview ?? '' })) })) ?? [] }).then(answer),
+  // [지금 반영]: the words a parked run holds, taken in now (`oneshot_tell.apply`).
+  applyTell: (repo: string) => post(`${base(repo)}/tell/apply`, {}).then(answer),
   // A PC app's build part, confirmed exactly as offered (`oneshot_spec.confirm_build`).
   confirmBuild: (repo: string, part: string, choice: string, tools: Tool[]) =>
     post(`${base(repo)}/build`, { part, choice, tools }).then(answer),
@@ -232,7 +249,8 @@ export const api = {
   measureTakeBack: (repo: string, head: string, x: MeasureInput) => post(
     `${base(repo)}/measure/inputs/${x.id}?${new URLSearchParams({ head, env: x.env, kind: x.kind })}`, undefined, 'DELETE')
     .then(answer),
-  measureStart: (repo: string, head: string) => post(`${base(repo)}/measure/start`, { head }).then(answer),
+  // `n`: the measurement whose result the screen shows, so a repair it sends is of that result and no later one.
+  measureStart: (repo: string, head: string, n = 0) => post(`${base(repo)}/measure/start`, { head, n }).then(answer),
   measureStop: (repo: string) => post(`${base(repo)}/measure/stop`, {}).then(answer),
   measureDecide: (repo: string, run: MeasureRun, approve: boolean, note: string) =>
     post(`${base(repo)}/measure/decide`, { head: run.head, n: run.n, approve, note }).then(answer),
@@ -273,6 +291,7 @@ export const STOP: Record<string, string> = {
   gate: '빌드가 검사를 통과하지 못했다', review: '백엔드 리뷰가 라운드 상한까지 거절했다', critique: '화면 비평이 멈췄다',
   kind: '이 종류는 여기까지', rekind: '고른 종류로는 만들 수 없는 요구', toolchain: '쓰기로 한 도구가 이 PC 에 없다',
   measure: '실측이 멈췄다', 'measure-input': '실측에 넣은 값이 틀렸다', fake: '고정한 계약 테스트에 가짜가 있다',
+  asked: '구현 에이전트가 묻는다',
 }
 /** The kinds the owner picks on the start screen (`tool/main/oneshot.py` `Start.kinds`); `soon` ones are shown off,
  *  and a `host` one only once the server says this host builds it (`oneshot_profile.HOST_ONLY`). */

@@ -134,52 +134,65 @@ def test_the_author_revises_the_spec_and_its_handoff(task):
     assert spec["precedence"] == [{"ref": "a.txt:1-1", "role": "current"}]
 
 
-def test_a_split_cards_the_prerequisite_and_holds_the_task(task):
+def test_no_prerequisite_task_is_split_off(task):
+    """realtime-screen-translator revision 7: a prerequisite card split off mid-task left the task waiting for
+    good. Work that must land first is a revision in this branch; the author is never offered a `split`."""
     repo, sid = task
+    assert "split" not in handoff.ANSWERS and "```split" not in handoff.PROMPT
     first = spec_block(slug="untangle-transaction", goal="Untangle the transaction boundary")
     with patch.object(handoff, "ask", return_value=block("split", {"reason": "it must land first", "spec": first})):
         assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
-    before = specs.load("proj", "untangle-transaction")
-    assert before["state"] == "정리됨" and before["author"]["model"] == "opus"
-    assert "untangle-transaction" in specs.load("proj", sid)["fault"]
+    assert specs.load("proj", "untangle-transaction") is None
+    assert "선행 작업" not in specs.load("proj", sid)["fault"]
 
 
-def test_a_revision_gives_the_author_fresh_rounds(task):
-    """reach-gemini-from-phone: guidance, then a revision, and the first conflict on revision 2 went to the person."""
+def test_no_count_of_author_answers_stops_the_task(task):
+    """realtime-screen-translator: caps of two answers per revision and four in a row kept stopping working
+    tasks. Every escalation goes to the author, however many came before; only no author reaches the person."""
     repo, sid = task
     update = {"rev": 1, "reason": "The person widened acceptance", "goal": "Read the chapter ahead", "out": [],
               "done": ["The chapter is read ahead"], "task": {"kind": "feature", "what": "Read ahead"},
               "precedence": [{"ref": "a.txt", "role": "current"}]}
     answers = [block("guidance", {"text": "Ask the person."}), block("spec-update", update),
-               *[block("guidance", {"text": "Go on."})] * handoff.ROUNDS]
+               *[block("guidance", {"text": "Go on."})] * 8]
     with patch.object(handoff, "ask", side_effect=answers) as ask, patch.object(specs, "again", return_value=True):
         for _ in answers:
             assert specs._check(repo, Run(), block("escalation", ESCALATION)) is not None
-        assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None   # two on revision 2
-    assert ask.call_count == len(answers) and "명세 2판" in specs.load("proj", sid)["fault"]
-    # The person stepping in (a pause, a stop, a failed or refused round trip) starts the count again.
-    asked = [{"rev": 2, "answer": {"kind": k}} for k in ("guidance", "guidance", "person", "guidance")]
-    assert handoff.spent(asked, 2) == 1 and handoff.spent(asked, 3) == 0
-    # A revision that changes nothing still moves `rev`: the author's answers in a row stop at `CHAIN`.
-    chain = [{"rev": r, "answer": {"kind": "spec-update"}} for r in range(1, handoff.CHAIN + 1)]
-    assert handoff.spent(chain, handoff.CHAIN + 1) == 0 and handoff.spent(chain) == handoff.CHAIN
-    assert handoff.spent([*chain, {"rev": 5, "answer": {"kind": "split"}}]) == 0   # a split waits for the person
-
-
-def test_the_person_decides_past_the_rounds_or_without_an_author(task):
-    repo, sid = task
-    with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})) as ask, \
-         patch.object(specs, "again", return_value=True):
-        for _ in range(handoff.ROUNDS):
-            assert specs._check(repo, Run(), block("escalation", ESCALATION)) is not None
-        assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
-    assert ask.call_count == handoff.ROUNDS
     spec = specs.load("proj", sid)
-    assert "상위 판단 필요" in spec["fault"] and spec["escalations"][-1]["answer"]["kind"] == "person"
+    assert ask.call_count == len(answers) and spec["rev"] == 2 and not spec.get("fault")
     specs.update("proj", sid, author={}, source={}, escalations=[], fault=None)
     with patch.object(handoff, "ask") as ask:
         assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
     assert not ask.called and "기록돼 있지 않다" in specs.load("proj", sid)["fault"]
+    # An unfinished oneshot approved before its approval kept the author asks the spec model its run pinned, and
+    # only from a turn its stage's check owns: never a person's turn, never one at an owner gate.
+    fixed, approved = {"model": "fable", "effort": "high"}, {"stage": "build", "design_head": "abc"}
+    for o, person, asked in (({**approved, "models": {"spec": fixed}}, False, "author"),
+                             ({**approved, "models": {"spec": fixed}}, True, "check"),
+                             ({**approved, "stage": "r2", "models": {"spec": fixed}}, False, "check"),
+                             ({"stage": "tests", "models": {"spec": fixed}}, False, "person"),   # no design approved
+                             ({**approved, "models": {"spec": {"model": "", "effort": ""}}}, False, "person")):
+        specs.update("proj", sid, oneshot={**o, "working": o["stage"]}, escalations=[], fault=None)
+        with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})) as ask, \
+             patch("main.oneshot_spec.store"), patch("main.oneshot_needs.leaked", return_value=""), \
+             patch("main.oneshot_build.send") as send, patch("main.oneshot_build.checked", return_value=None) as check:
+            then = specs._check(repo, Run(person), block("escalation", ESCALATION))
+        assert ask.called == (asked == "author") and check.called == (asked == "check")
+        if asked == "author":   # the pinned model is asked, and its guidance is the builder's next turn
+            assert ask.call_args[0][1] == fixed and then is not None
+        else:
+            assert then is None and not send.called
+        assert asked != "person" or "기록돼 있지 않다" in specs.load("proj", sid)["fault"]
+    # A repair at the measurement is a build turn (plan 13): it goes up, and the guidance is sent as a build turn.
+    specs.update("proj", sid, oneshot={**approved, "stage": "measure", "fix": "measure", "working": "build",
+                                       "models": {"spec": fixed}}, escalations=[], fault=None)
+    with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})) as ask, \
+         patch("main.oneshot_spec.store"), patch("main.oneshot_needs.leaked", return_value=""), \
+         patch("main.oneshot_build.send") as send, patch("main.oneshot_build.checked", return_value=None):
+        then = specs._check(repo, Run(), block("escalation", ESCALATION))
+        assert ask.called and then is not None
+        then()
+    assert send.call_args[0][1] == "build"   # never under the measurement's `working`
 
 
 def test_an_answer_outside_the_three_goes_to_the_person(task):
@@ -347,6 +360,20 @@ def test_a_stop_while_the_author_answers_applies_nothing_and_sends_nothing(task)
     assert specs.load("proj", sid)["escalations"][-1]["answer"]["kind"] == "stopped"
 
 
+def test_a_repeated_guidance_is_a_new_answer_owed_to_the_loop(task):
+    """PR #453 round 1: uncapped, the author can give the same guidance twice on one revision. An owed record
+    equal to the last made the loop miss the second, ask for a report instead, and stop with it still owed."""
+    repo, sid = task
+    specs.update("proj", sid, state="고치는 중 R1")
+    owed = []
+    with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})), \
+         patch("main.loop.asked"), patch.object(specs, "again"):
+        for _ in range(2):
+            assert specs._check(repo, Run(), block("escalation", ESCALATION))() is None
+            owed.append(specs.load("proj", sid)["handoff_owed"])
+    assert owed[0]["text"] == owed[1]["text"] and owed[0] != owed[1]
+
+
 def test_a_review_loop_takes_the_authors_revision_and_sends_its_turn_itself(task):
     """Held for the person, the author's revision never took effect while a review loop ran."""
     repo, sid = task
@@ -359,11 +386,12 @@ def test_a_review_loop_takes_the_authors_revision_and_sends_its_turn_itself(task
         assert specs._check(repo, Run(), block("escalation", ESCALATION))() is None
         spec = specs.load("proj", sid)
         assert (spec["rev"], spec["goal"], spec["state"]) == (2, "Another goal", "고치는 중 R1") and not asked.called
-        assert spec["handoff_owed"] == {"kind": "spec-update", "rev": 2, "report_at": None}   # `loop.handed` sends it
+        assert spec["handoff_owed"] == {"kind": "spec-update", "rev": 2, "report_at": None,   # `loop.handed` sends it
+                                        "at": spec["escalations"][-1]["ts"]}
         # The revision's own save carries its answer and the delivery it owes: none stands without the other.
         revised = [s for s in saves if s["rev"] == 2]
         assert revised and all(s.get("handoff_owed") and s.get("escalations") for s in revised)
-        # A split waits for the person before any card of it exists.
+        # A `split` is no answer: refused for the person, and no card of it is made.
         split = block("split", {"reason": "first", "spec": spec_block(slug="first-thing")})
         with patch.object(handoff, "ask", return_value=split):
             specs.update("proj", sid, escalations=[])
@@ -374,7 +402,7 @@ def test_a_review_loop_takes_the_authors_revision_and_sends_its_turn_itself(task
         with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})):
             assert specs._check(repo, Run(), block("escalation", ESCALATION)) is None
         assert "선행 리뷰 중" in specs.load("proj", sid)["fault"] and asked.call_count == 2
-        assert handoff.spent(specs.load("proj", sid)["escalations"]) == 0   # decided by the person, not the author
+        assert specs.load("proj", sid)["escalations"][-1]["answer"]["kind"] == "person"
         specs.update("proj", sid, state="고치는 중 R1", fault=None, prerequisite_review=None)
         # The repair's own goal change is still refused: the loop keeps its retries, nothing else sends one.
         assert specs._check(repo, Run(), block("spec-update", {**update, "rev": 2, "goal": "Mine"}))() is None

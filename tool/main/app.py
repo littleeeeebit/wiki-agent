@@ -42,7 +42,7 @@ from common import settings as settings_file
 from . import architecture, channels, connect, improvements, loop, mobile, oneshot, oneshot_android, oneshot_critique, oneshot_front, oneshot_needs, oneshot_pc, oneshot_phone, oneshot_spec, planning, powershell, query, recovery, refactor, refactor_api, release_api, runtime, specs, suite, survey, update, verification, wiring, work
 from .runtime import server_owner
 from . import onboarding
-from . import oneshot_measure, oneshot_review
+from . import oneshot_measure, oneshot_review, oneshot_tell
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -172,6 +172,7 @@ app.include_router(oneshot_spec.router)
 app.include_router(oneshot_needs.router)
 app.include_router(oneshot_review.router)
 app.include_router(oneshot_measure.router)
+app.include_router(oneshot_tell.router)
 app.include_router(oneshot_front.router)
 app.include_router(oneshot_critique.router)
 app.include_router(oneshot_phone.router)

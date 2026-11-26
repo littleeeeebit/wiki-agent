@@ -9,9 +9,11 @@ document, or which lines of it, govern and which are legacy or background) and `
 hand back). `text` puts them at the very top of the write session's prompt.
 
 When the implementer hits a stop condition it ends its answer with an `escalation` block. The server sends
-the conflict to the spec's `author` model in a read-only turn, which keeps the spec with guidance, revises it,
-or splits a prerequisite task off; after `ROUNDS` such answers, or with no author model on record, the person
-decides. The implementer never redesigns on its own: its own `spec-update` may not move the goal or the scope
+the conflict to the spec's `author` model in a read-only turn, which keeps the spec with guidance or revises it.
+Work that has to land first is an earlier done item of a revision, in this task's own branch: a prerequisite
+task split off mid-way left the task it held waiting for good (realtime-screen-translator, revision 7's
+`reopen-kept-chapter-fast`). No count of answers hands the task to the person; only a spec with no author
+model on record, or an answer that cannot be applied, does. The implementer never redesigns on its own: its own `spec-update` may not move the goal or the scope
 (`narrowed`).
 """
 
@@ -35,11 +37,9 @@ DEFAULT_ESCALATE = (
     "The task requires changing code that only a `legacy` document describes.",
     "A done item cannot be met as the spec states it.",
 )
-ROUNDS = 2          # the author's answers on one revision before the person decides (`spent`)
-CHAIN = 4           # and in a row across revisions: a revision always moves `rev`, even one that changes nothing
 TOOLS = "Read,Glob,Grep"   # the author reads the worktree; it never writes there
 RANGE = re.compile(r"^(.+?):(\d+)[-–](\d+)$")
-ANSWERS = ("spec-update", "guidance", "split")
+ANSWERS = ("spec-update", "guidance")
 PROMPT = (Path(__file__).resolve().parents[2] / "tool/prompts/escalation.md").read_text(encoding="utf-8")
 NARROWED = ("Your `spec-update` changed the {what}. That is the spec author's decision, not the implementer's: "
             "the update was not applied. If the code or the documents make the spec impossible as written, end "
@@ -201,7 +201,17 @@ def found(blocks: list[dict]) -> list[dict]:
 
 
 def author_of(spec: dict) -> dict:
-    return spec.get("author") or (spec.get("source") or {}).get("author") or {}
+    """Who wrote the spec. An unfinished oneshot whose design was approved (`design_head`) before the approval
+    kept it asks the design's author, else the spec model the run pinned at its start by name. A CLI default
+    names no model that wrote it: the person decides, as for a card with no author."""
+
+    if got := spec.get("author") or (spec.get("source") or {}).get("author"):
+        return got
+    o = spec.get("oneshot") or {}
+    if o.get("stage") in (None, "done") or not o.get("design_head"):
+        return {}
+    pinned = o.get("design_author") or (o.get("models") or {}).get("spec") or {}
+    return pinned if pinned.get("model") else {}
 
 
 def question(spec: dict, escalation: dict) -> str:
@@ -255,24 +265,28 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
     blocks = found(specs.blocks(final)[1])
     if not blocks:
         return None
+    from . import oneshot_build
+    if oneshot_build.owns(spec) and (getattr(run, "person", False) or oneshot_build.turn_stage(spec["oneshot"]) not in oneshot_build.STAGES):
+        # Only a turn its stage's check owns goes up: a person's turn, or one at an owner gate (R1, R2 …), is
+        # left as that check leaves it, so no answer starts a build turn the owner has not let in.
+        return oneshot_build.checked(path, run, spec, final)
     value = blocks[0].get("value")
     if len(blocks) != 1 or "error" in blocks[0] or not shaped(value):
         return ended(spec, run, "`escalation` 블록은 conflict·where·question 을 담은 JSON 객체 하나여야 한다")
     author, past = author_of(spec), spec.get("escalations") or []
     entry = {"ts": time.time(), "rev": spec["rev"], "escalation": value}
     # A record with an empty model is the CLI's default the spec was written on; no record is an older card.
-    here, row = spent(past, spec["rev"]), spent(past)
-    if not author or here >= ROUNDS or row >= CHAIN:
-        why = "명세를 쓴 모델이 기록돼 있지 않다" if not author else \
-            f"명세 {spec['rev']}판에서 상위 모델 판단이 {ROUNDS}번 넘었다" if here >= ROUNDS else \
-            f"사람 없이 상위 모델 판단이 {CHAIN}번 이어졌다"
+    # No count of the author's answers stops the task: a cap of two per revision and four in a row kept
+    # handing working tasks to the person (realtime-screen-translator).
+    if not author:
         return person(spec, run, [*past, {**entry, "answer": {"kind": "person"}}],
-                      f"상위 판단 필요 — {why}. 구현 모델의 충돌: {value['conflict']} / 질문: {value['question']}")
+                      f"상위 판단 필요 — 명세를 쓴 모델이 기록돼 있지 않다. 구현 모델의 충돌: {value['conflict']} / "
+                      f"질문: {value['question']}")
 
     # Run here, still holding the worktree as the gate does: the author reads the tree the implementer left,
     # and its lines land in this turn's record.
     specs.note(run, f"충돌을 명세를 쓴 모델 `{author.get('model') or '기본 모델'}` 에게 넘긴다 "
-                    f"({here + 1}/{ROUNDS}, 명세 {spec['rev']}판)")
+                    f"(명세 {spec['rev']}판)")
     from common import masked
 
     hide = getattr(getattr(run, "chat", None), "hide", None)   # a oneshot's secrets: never saved or sent on
@@ -293,19 +307,6 @@ def escalated(repo: Path, path: Path, run, spec: dict, final: str):
         return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "text": answer[-2000:]}}])
     return applied(repo, path, run, specs.load(spec["repo"], spec["id"]) or spec, past, entry, answer)
 
-
-def spent(past: list[dict], rev: int | None = None) -> int:
-    """The author's answers in a row since the person last stepped in (any answer that is not the author's
-    ended with the person), and with `rev` only those on that revision. Counted over the whole task, a spec
-    the author had just revised reached the person on its first new conflict (realtime-screen-translator
-    reach-gemini-from-phone, revision 2)."""
-
-    n = 0
-    for e in reversed(past):   # a `split` waits for the person, so it ends a run like the person's own answer
-        if rev is not None and e.get("rev") != rev or (e.get("answer") or {}).get("kind") not in ("guidance", "spec-update"):
-            break
-        n += 1
-    return n
 
 
 def turn_for(path: Path, spec: dict, owed: dict) -> str:
@@ -388,7 +389,9 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         if name == "guidance":
             if not isinstance(value, dict) or not isinstance(value.get("text"), str) or not value["text"].strip():
                 raise ValueError("`guidance` 는 {\"text\": ...} 여야 한다")
-            owed = {"kind": name, "rev": spec["rev"], "text": value["text"]}
+            # `at`, the escalation's own moment: a reply that repeats the last one's text is still a new one
+            # to deliver (the loop tells owed answers apart by equality, `loop.handed`).
+            owed = {"kind": name, "rev": spec["rev"], "text": value["text"], "at": entry["ts"]}
             # One write: a loop's answer is never saved without the delivery it owes (`loop.handed`).
             spec = specs.update(spec["repo"], spec["id"], escalations=history, **(
                 {"handoff_owed": {**owed, "report_at": spec.get("report_at")}} if looping else {})) or spec
@@ -401,7 +404,7 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
                 current = specs.load(spec["repo"], spec["id"])
                 if run.halt.is_set():
                     return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
-                owed = {"kind": name, "rev": current["rev"] + 1}
+                owed = {"kind": name, "rev": current["rev"] + 1, "at": entry["ts"]}
                 # Saved by the revision itself: it never stands without its escalation or the delivery it owes.
                 current["escalations"] = history
                 if looping:
@@ -409,22 +412,6 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
                 specs.revise(repo, current, value, author=True, checkout=path)   # the tree the author read
                 # A running session keeps the system prompt it started with: the revision goes in the turn.
                 spec = specs.load(spec["repo"], spec["id"])
-        elif looping:   # the person decides on a prerequisite before any card of it exists
-            return person(spec, run, history, f"상위 모델이 선행 작업으로 나누자고 답했다 — 반영하지 않고 리뷰 루프를 멈췄다:\n"
-                                              f"{json.dumps(value, ensure_ascii=False, indent=1)[:6000]}")
-        else:
-            if not isinstance(value, dict) or not isinstance(value.get("spec"), dict):
-                raise ValueError("`split` 은 {\"spec\": 선행 작업 명세, \"reason\": ...} 이어야 한다")
-            gate = specs.gate_of(repo)
-            if not gate:
-                raise ValueError("저장소의 gate_cmd 가 없어 선행 작업 카드를 만들 수 없다")
-            with specs._files, run.saving:   # as the revision, in its order: the card is made whole, or not at all
-                if run.halt.is_set():
-                    return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
-                sid = specs.card(repo, value["spec"], gate, {"focus": "escalation", "turn": time.time(),
-                                                             "from": spec["id"], "author": author_of(spec)})
-            return person(spec, run, history, f"선행 작업 `{sid}` 을 먼저 한다 — {value.get('reason') or '상위 모델이 나눴다'}. "
-                                              "그 PR 이 머지된 뒤 이 작업을 이어 간다")
     except (ValueError, OSError) as exc:
         return person(spec, run, [*history[:-1], {**entry, "answer": {"kind": "refused", "error": str(exc)}}],
                       f"상위 모델의 답을 적용하지 못했다 — {exc}")
@@ -437,6 +424,6 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         run.checked = True   # handled: the stage's finalizer records no unchecked turn
         due, more = oneshot_answers.carried(spec["oneshot"], run)   # what the escalating turn was sent, bound now
         told = oneshot_answers.composed(told + more, due)
-        return oneshot_build.unless_stopped(run, spec["repo"],
-                                            lambda: oneshot_build.send(spec["repo"], spec["oneshot"]["stage"], told))
+        stage = oneshot_build.turn_stage(spec["oneshot"])   # a repair at the measurement answers as a build turn
+        return oneshot_build.unless_stopped(run, spec["repo"], lambda: oneshot_build.send(spec["repo"], stage, told))
     return lambda: None if run.halt.is_set() else specs.again(path, run.chat, told, spec)

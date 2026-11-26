@@ -12,6 +12,7 @@ import { Btn, ClearAsk } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
 import type { Keep, Kept, Options, Rule, Worktree } from '@/lib/api'
+import type { Answered } from '@/lib/oneshot'
 import { useOverlay, useParagraphOverlay } from '@/lib/overlay'
 import { choicesOf } from '@/lib/work'
 import type { Step, Turn } from '@/lib/work'
@@ -207,8 +208,8 @@ export function Reply({ turn, on, progressOn = on, onAnswer, onPeek, onSend }: {
   /** None for another task's turn: its questions and approvals show, unanswerable here. */
   onAnswer?: Props['onAnswer']
   onPeek: Props['onPeek']
-  /** Only the latest turn's: a `choices` block answered sends the next instruction. */
-  onSend?: (text: string) => void
+  /** Only the latest turn's: a `choices` block answered sends the next instruction (`asked`: its questions). */
+  onSend?: (text: string, asked?: Answered[]) => void
 }) {
   // Codex asks with a `choices` block at the end of a finished answer.
   const [body, asked] = turn.pending ? [turn.text, null] : choicesOf(turn.text)
@@ -249,7 +250,7 @@ export function Reply({ turn, on, progressOn = on, onAnswer, onPeek, onSend }: {
       {list(0, cut)}
       {body && <Answer text={text} korean={on} remote="" onPeek={onPeek} />}
       {asked && <div data-question-pending={onSend ? 'true' : undefined}>
-        <Choices value={asked} korean={on} busy={!onSend} onSay={(said) => onSend?.(said)} />
+        <Choices value={asked} korean={on} busy={!onSend} onSay={(said, asked) => onSend?.(said, asked)} />
       </div>}
       {list(cut, turn.steps.length)}
       {turn.latest !== 'step' && marker}

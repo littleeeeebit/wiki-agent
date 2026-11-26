@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -60,11 +61,13 @@ def test_a_change_of_branch_or_user_settings_tells_the_screens_once_each(tmp_pat
     settings.write_text("{}", encoding="utf-8")
     branch = ["main"]
     # `watch` runs on this thread, so a feed that drops other threads' events holds the exact count.
+    settled = []
     with patch.object(work, "feed", OwnFeed()), patch.object(wiring, "hub_branch", side_effect=lambda: branch[0]), \
-         patch.object(wiring.apply, "user_files", side_effect=lambda host: [settings] if host == "claude" else []):
+         patch.object(wiring.apply, "user_files", side_effect=lambda host: [settings] if host == "claude" else []), \
+         patch.object(wiring, "settle", side_effect=lambda: settled.append(1)):
         drained()
         wiring.watch(Ticks(1), every=0)
-        assert drained() == [], "바뀐 것이 없으면 알리지 않는다"
+        assert drained() == [] and settled == [1], "바뀐 것이 없으면 알리지 않고, 시작할 때 한 번 맞춘다"
 
         looks = iter([lambda: None, lambda: settings.write_text('{"hooks": {}}', encoding="utf-8"),
                       lambda: branch.__setitem__(0, "other"), lambda: None])
@@ -76,6 +79,201 @@ def test_a_change_of_branch_or_user_settings_tells_the_screens_once_each(tmp_pat
 
         wiring.watch(Changing(3), every=0)
         assert drained() == [{"kind": "connect", "repo": ""}] * 2, "설정 파일과 브랜치가 바뀔 때마다 한 번씩"
+        assert settled == [1, 1, 1, 1], "시작과 바뀔 때마다 체크아웃 설정을 맞춘다"
+        with patch.object(wiring, "settle", return_value=["a: deny 추가: x"]):
+            wiring.watch(Ticks(0), every=0)
+        assert drained() == [{"kind": "connect", "repo": ""}], "시작할 때 쓴 것이 있으면 화면이 다시 읽는다"
+
+
+def test_settle_writes_a_checkouts_own_untracked_settings_with_no_click_and_leaves_the_rest(tmp_path):
+    def repo(name: str, text: str, track: bool = False) -> Path:
+        path = tmp_path / name
+        (path / ".claude").mkdir(parents=True)
+        (path / ".claude" / "settings.json").write_text(text, encoding="utf-8")
+        (path / ".wiki").mkdir()
+        (path / ".wiki" / "adapter.toml").write_text("", encoding="utf-8")   # connected: an adapter of no hosts named
+        git(path, "init", "-q")
+        if track:
+            git(path, "add", ".claude/settings.json")
+        return path
+
+    loose, kept, off = repo("loose", "{}"), repo("kept", "{}", track=True), repo("off", '{"disableAllHooks": true}')
+    bad = repo("bad", "[]")   # a settings root that is no object: unreadable, and never the others' stop
+    linked, elsewhere = tmp_path / "linked", tmp_path / "elsewhere"
+    (elsewhere / ".claude").mkdir(parents=True)
+    (elsewhere / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    (linked / ".wiki").mkdir(parents=True)
+    (linked / ".wiki" / "adapter.toml").write_text("", encoding="utf-8")
+    git(linked, "init", "-q")
+    try:   # a link out of the checkout: a junction on Windows, a symbolic link elsewhere
+        import _winapi
+        _winapi.CreateJunction(str(elsewhere / ".claude"), str(linked / ".claude"))
+    except ImportError:
+        os.symlink(elsewhere / ".claude", linked / ".claude", target_is_directory=True)
+    cased = repo("cased", "{}")   # git tracks it as `Settings.json`: the same file on Windows, the person's either way
+    (cased / ".claude/settings.json").rename(cased / ".claude/Settings.json")
+    git(cased, "add", ".claude/Settings.json")
+    nested = repo("nested", "{}")   # its settings folder is a checkout of its own, as a submodule is: that one tracks it
+    git(nested / ".claude", "init", "-q")
+    git(nested / ".claude", "add", "settings.json")
+    fresh, ignoring = repo("fresh", "{}"), repo("ignoring", "{}")   # no settings yet: git ignores them in one
+    for path in (fresh, ignoring):
+        (path / ".claude/settings.json").unlink()
+    (ignoring / ".gitignore").write_text(".claude/settings.json\n", encoding="utf-8")
+    rows = [{"path": str(p), "state": "일부"} for p in (bad, loose, kept, off, linked, cased, nested, fresh, ignoring)]
+    rule = "Bash(dos2unix*)"
+    choice = connect.hosts
+
+    def chosen():   # the adapter's choice itself, every host taken as installed
+        return patch.object(connect, "hosts", choice), patch.object(connect.apply, "available_agents", list)
+    with patch.object(connect, "hosts", return_value=["claude"]), \
+         patch.object(chat_channels, "projects", side_effect=lambda: list(rows)), \
+         patch.object(connect.apply, "declared", return_value=({rule: []}, {})), \
+         patch.object(wiring.apply, "user_wired", return_value=True):
+        with patch.object(wiring, "hub_branch", return_value="feature"):
+            assert wiring.settle() == [], "main 이 아닌 허브는 그 브랜치의 배선을 걸지 않는다"
+        branches = iter(["main"])   # the hub leaves main while the sweep plans: nothing of the new branch lands
+        with patch.object(wiring, "hub_branch", side_effect=lambda: next(branches, "feature")):
+            assert wiring.settle() == [] and (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+        index = tmp_path / "empty-index"   # an index the server's environment names, and a literal pathspec mode
+        with patch.object(wiring, "hub_branch", return_value="main"), \
+                patch.dict(os.environ, {"GIT_INDEX_FILE": str(index), "GIT_LITERAL_PATHSPECS": "1"}):
+            assert wiring.own(kept.resolve(), kept.resolve() / ".claude/settings.json") is False
+            assert wiring.own(cased.resolve(), cased.resolve() / ".claude/settings.json") is False
+        with patch.object(wiring, "hub_branch", return_value="main"):
+            done = wiring.settle()
+            assert sorted(done) == [f"{p.resolve() / '.claude' / 'settings.json'}: deny 추가: {rule}" for p in (ignoring, loose)]
+            assert not (fresh / ".claude/settings.json").exists(), "a clean checkout stays clean: only an ignored file is made"
+            assert json.loads((ignoring / ".claude/settings.json").read_text(encoding="utf-8"))["permissions"]["deny"] == [rule]
+            assert json.loads((loose / ".claude/settings.json").read_text(encoding="utf-8"))["permissions"]["deny"] == [rule]
+            assert wiring.settle() == [], "맞춘 뒤에는 쓸 것이 없다"
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            user = wiring.apply.user_files("claude")[0]   # hooks switched off for every checkout, at the user level
+            user.parent.mkdir(parents=True, exist_ok=True)
+            before = user.read_bytes() if user.exists() else None
+            user.write_text('{"disableAllHooks": true}', encoding="utf-8")
+            try:
+                assert wiring.settle() == [] and (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            finally:
+                user.write_bytes(before) if before is not None else user.unlink()
+            codex = loose / ".codex" / "hooks.json"   # a Codex file it cannot read: Codex's wait for its trust check
+            codex.parent.mkdir()
+            codex.write_text("[]", encoding="utf-8")
+            with patch.object(connect, "hosts", return_value=["claude", "codex"]):
+                assert wiring.settle() == [f"{loose.resolve() / '.claude' / 'settings.json'}: deny 추가: {rule}"]
+            assert codex.read_text(encoding="utf-8") == "[]", "Codex 훅은 [모두 다시 연결]만 뺀다"
+            codex.unlink()
+            codex.parent.rmdir()
+            adapter = loose / ".wiki" / "adapter.toml"   # one being edited, Codex's alone, or gone: never Claude's guess
+            for text in ("agents = [", 'agents = ["codex"]', 'agents = "claude"', None):
+                (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+                adapter.write_text(text, encoding="utf-8") if text is not None else adapter.unlink()
+                hosts, agents = chosen()
+                with hosts, agents:
+                    assert wiring.settle() == [], f"adapter {text!r} writes no Claude settings"
+                assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            adapter.write_text("", encoding="utf-8")
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            assert (kept / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "git 이 추적하는 파일은 사람의 것"
+            assert (cased / ".claude/Settings.json").read_text(encoding="utf-8") == "{}", "다른 대소문자로 추적해도 사람의 것"
+            assert (nested / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "하위 체크아웃이 추적하면 사람의 것"
+            assert "permissions" not in json.loads((off / ".claude/settings.json").read_text(encoding="utf-8"))
+            assert (elsewhere / ".claude/settings.json").read_text(encoding="utf-8") == "{}", "링크 너머는 쓰지 않는다"
+            assert (bad / ".claude/settings.json").read_text(encoding="utf-8") == "[]"
+            real = wiring.subprocess.run
+
+            def unreadable(argv, *a, **k):   # git that could not read its index
+                return SimpleNamespace(returncode=128, stdout="") if "ls-files" in argv else real(argv, *a, **k)
+
+            shaped = repo("shaped", '{"hooks": [1]}')   # hooks of another shape: unreadable, never the listing's stop
+            with patch.object(connect, "adapter_of", return_value=({"slots": {"gate_cmd": "x"}}, "")):
+                assert "옛 hook 남음 (Claude)" in connect.status(shaped, {"claude": True})["missing"]
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            checked, mine = {}, wiring.own
+
+            def flips(at: Path, file: Path) -> bool:   # staged or linked after the plan read it
+                checked[file] = checked.get(file, 0) + 1
+                return mine(at, file) and checked[file] == 1
+
+            with patch.object(wiring, "own", flips):
+                assert wiring.settle() == [] and (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            assert not list((loose / ".claude").glob("*.part")), "the staging never stays behind"
+            for edited, text in (("settings.json", '{"disableAllHooks": true}'), ("settings.json", '{"x": 1}'),
+                                 ("settings.local.json", '{"disableAllHooks": true}'), ("settings.json", None)):
+                (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+                (loose / ".claude/settings.local.json").unlink(missing_ok=True)
+                checked.clear()
+
+                def editing(at: Path, file: Path, edited=edited, text=text) -> bool:   # the person edits mid-write
+                    checked[file] = checked.get(file, 0) + 1
+                    if checked[file] == 2 and text is None:   # removed: absent reads as `{}`, never as the same
+                        (file.parent / edited).unlink()
+                    elif checked[file] == 2:
+                        (file.parent / edited).write_text(text, encoding="utf-8")
+                    return mine(at, file)
+
+                with patch.object(wiring, "own", editing):
+                    assert wiring.settle() == [], f"an edit to {edited} after the plan read it writes nothing"
+                left = loose / ".claude" / edited
+                assert (left.read_text(encoding="utf-8") if left.exists() else None) == text
+            (loose / ".claude/settings.local.json").unlink(missing_ok=True)
+            planned, reads = wiring.planned, []
+
+            def saving(at: Path):   # the person saves while the writer's last read of the plan runs
+                reads.append(at)
+                found = planned(at)
+                if at == loose.resolve() and reads.count(at) == 2:
+                    (loose / ".claude/settings.json").write_text('{"x": 1}', encoding="utf-8")
+                return found
+
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            with patch.object(wiring, "planned", saving):
+                assert wiring.settle() == [], "a save during the last read writes nothing"
+            assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == '{"x": 1}'
+            reads.clear()
+
+            def staging(at: Path):   # the person stages the file while the writer's last read of the plan runs
+                reads.append(at)
+                if at == loose.resolve() and reads.count(at) == 2:
+                    git(loose, "add", ".claude/settings.json")
+                return planned(at)
+
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+            with patch.object(wiring, "planned", staging):
+                assert wiring.settle() == [], "a file staged during the last read is the person's"
+            assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            git(loose, "rm", "-q", "--cached", ".claude/settings.json")
+            reads.clear()
+
+            def unwiring(at: Path):   # the user-level hooks removed while the writer's last read of the plan runs
+                reads.append(at)
+                return planned(at)
+
+            (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+
+            def unselecting(at: Path):   # the checkout stops selecting Claude while the writer's last read runs
+                reads.append(at)
+                if at == loose.resolve() and reads.count(at) == 2:
+                    adapter.write_text('agents = ["codex"]', encoding="utf-8")
+                return planned(at)
+
+            reads.clear()
+            hosts, agents = chosen()
+            with patch.object(wiring, "planned", unselecting), hosts, agents:
+                assert wiring.settle() == [], "a checkout that left Claude during the last read is never written"
+            assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            adapter.write_text("", encoding="utf-8")
+            reads.clear()
+            with patch.object(wiring, "planned", unwiring), \
+                    patch.object(wiring.apply, "user_wired", side_effect=lambda *a: reads.count(loose.resolve()) < 2):
+                assert wiring.settle() == [], "the checkout's hooks are never dropped once they are the only ones"
+            assert (loose / ".claude/settings.json").read_text(encoding="utf-8") == "{}"
+            with patch.object(wiring.subprocess, "run", unreadable):
+                (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+                assert wiring.settle() == [], "git 이 색인을 읽지 못하면 추적 여부를 모르니 쓰지 않는다"
+            with patch.object(wiring.apply, "user_wired", return_value=False):   # the checkout's own install governs
+                (loose / ".claude/settings.json").write_text("{}", encoding="utf-8")
+                assert wiring.settle() == []
 
 
 def test_rewire_writes_exactly_the_confirmed_plan_or_nothing(tmp_path):

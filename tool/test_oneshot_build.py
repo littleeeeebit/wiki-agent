@@ -45,7 +45,7 @@ def month(name):
 
 class Turn:
     def __init__(self, person=False):
-        self.events, self.halt, self.person, self.token = [], threading.Event(), person, "turn"
+        self.events, self.halt, self.person, self.token, self.turn = [], threading.Event(), person, "turn", "t1"
         self.chat = SimpleNamespace(id="c", parent_id=None)
 
     def put(self, payload):
@@ -181,6 +181,41 @@ def test_failing_planned_tests_are_committed_pinned_and_followed_by_the_build_tu
     assert f"gate_cmd = {json.dumps(GATE)}" in (tree / ".wiki/adapter.toml").read_text(encoding="utf-8")
     assert spec()["done"] == [GATE, "R1: 지출을 적으면 이번 달 합계에 더해진다", "R2: 지난 달 지출을 고르면 그 달 목록이 보인다"]
     assert o()["tests_head"] in sent[-1][2] and "`test_budget.py`" in sent[-1][2]
+
+
+def test_a_retold_tests_turn_that_kept_the_contract_moves_on_from_head_past_an_untracked_app_file(built_world):
+    tree, sent = built_world
+    to_build(tree, sent)
+    first = o()["tests_head"]
+    write(tree, "app.py", APP)   # the build's own file, not committed yet: the planned tests pass now
+    oneshot_spec.saved("budget", oneshot={"stage": "tests", "working": "tests"})   # the owner's rewrite kept the contract
+    then = check(tree)
+    assert then is not None and o()["stage"] == "build" and o()["tests_head"] == first
+    assert git(tree, "status", "--porcelain") == "?? app.py"   # left for the build turn after
+
+
+def test_a_build_turn_that_asks_the_owner_waits_for_the_answer_with_no_retry(built_world):
+    tree, sent = built_world
+    to_build(tree, sent)
+    before = len(sent)
+    asked = fenced("choices", {"question": "합계는 세금 포함인가?", "options": [{"label": "포함"}, {"label": "제외"}]})
+    assert check(tree, "물어본다.\n\n" + asked) is None and len(sent) == before   # no retry replaces the question
+    assert o()["stopped"]["reason"] == "asked" and o()["attempts"] == 0 and not o()["working"]
+    assert o()["stopped"]["turn"]   # whose question it is: only that turn's form answers it (`oneshot_tell.tell`)
+    oneshot_spec.saved("budget", oneshot={"stopped": None, "working": "build"})
+    turn, real = Turn(), oneshot.Store.stop
+
+    def refused(self, reason, *a, **k):
+        if reason == "asked":
+            raise OSError("disk")
+        return real(self, reason, *a, **k)
+
+    with patch.object(oneshot.Store, "stop", refused), pytest.raises(OSError):   # the question's stop is not saved
+        oneshot_build.checked(tree, turn, spec(), "물어본다.\n\n" + asked)
+    assert not getattr(turn, "checked", False)   # so the turn's end still stops the stage: never `working` with no turn and no stop
+    oneshot_spec.saved("budget", oneshot={"stage": "pr", "stopped": None})   # the README turn: no work-log answer there
+    check(tree, "물어본다.\n\n" + asked)   # its own check refuses the question, as a README turn may ask nothing
+    assert (o().get("stopped") or {}).get("reason") != "asked"
 
 
 @pytest.mark.parametrize("files, final, said", [
@@ -630,9 +665,13 @@ def test_a_turn_that_ends_without_its_check_stops_the_stage_and_is_charged(built
         turn = oneshot_build.Turn(chat, "budget", "tests", False)
         oneshot_spec.saved("budget", oneshot={"inflight": {"role": "tests", "turn": turn.token}})   # as `send` writes it
         turn.put({"kind": "error", "text": "사람이 멈춤", "meta": {}})
-        elsewhere(turn.finish)
+        real, saves = oneshot_spec.saved, []
+        with patch.object(oneshot_spec, "saved", lambda repo, **f: saves.append(f) or real(repo, **f)):
+            elsewhere(turn.finish)
     assert o()["stopped"] == {**o()["stopped"], "reason": "block"} and "사람이 멈춤" in o()["stopped"]["detail"]
     assert o()["spend"]["calls"] == 1 and o()["spend"]["unknown"] == 1
+    # its charge, its cleared mark and its stop in one save: a failure leaves all three or none
+    assert [set(s["oneshot"]) >= {"spend", "inflight", "stopped", "working"} for s in saves if "spend" in s.get("oneshot", {})] == [True]
 
 
 def test_a_late_end_of_an_earlier_turn_leaves_the_resumed_turn_alone(built_world):

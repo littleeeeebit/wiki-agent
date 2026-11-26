@@ -12,7 +12,8 @@ The person's later instructions update the assignment as work progresses.
   not redesign: stop, leave what the conflict touches unchanged, commit what
   is safe, and end the answer with one `escalation` block. The server hands
   it to the spec's author, and your next turn carries its answer: guidance
-  under the same spec, a revised spec, or a prerequisite task.
+  under the same spec, or a revised spec. Work that has to land first is
+  part of this task in this branch, never a separate task to wait for.
 
   ```escalation
   {"condition": "which stop condition holds", "conflict": "what in the code or documents contradicts the spec, in facts", "where": ["src/store.py:40-58", "docs/design/backend.md:200"], "tried": "what you tried and what happened", "question": "the decision you need"}

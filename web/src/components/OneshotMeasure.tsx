@@ -18,16 +18,21 @@ export function Owner({ repo, view, busy, act }: { repo: string; view: SpecView;
 
 /** The real measurement between the backend's build and its review (`tool/main/oneshot_measure.py`). The build
  *  agent wrote every step below; the owner follows them one window at a time and pastes what the last step names
- *  into its box. The server measures by itself until every metric that needs no person passes; then the owner
- *  measures once, the program on their own screen with its sound, and approves or refuses. A stop (a wrong input,
- *  the owner's stop) shows above and the button starts again. */
+ *  into its box. The server measures by itself, on this screen, until every metric that needs no person passes,
+ *  the build agent repairing a failure inside this stage; then the owner measures once, with the program's sound,
+ *  and approves or refuses. A stop (a wrong input, the owner's stop) shows above: a new value for a wrong input
+ *  measures again at once, and the button keeps it as it is. */
 function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy: boolean; act: Act }) {
   const m = view.measure
   if (!m) return null
   const last = m.runs.at(-1)
   const current = last && last.head === m.head ? last : undefined
   const waiting = !!current && verdictDue(current)
-  const failed = current?.status === 'failed'   // stopped at the cap: the button hands it to the build agent, no input needed
+  // Stopped at the cap: the button hands it to the build agent, no input needed. An input an earlier version
+  // disputed this way is the owner's to answer: measured again first.
+  const failed = current?.status === 'failed' && !current.input_error
+  // A new value measures again at once; with none changed since, this button keeps the value (`kept_input`).
+  const disputed = current?.status === 'input' && (view.oneshot.input_since ?? 0) < current.n
   const missing = failed ? [] : m.plan?.inputs.filter((x) => !x.given) ?? []
   const owner = m.next === 'owner'
   return (
@@ -67,14 +72,15 @@ function Measure({ repo, view, busy, act }: { repo: string; view: SpecView; busy
           </> : (
             <p>{m.plan.app ? '서버가 이 PC 에서 PC 프로그램을 띄워 사람이 필요 없는 항목을 혼자 잰다. 프로그램 창이 wiki-agent 가 도는 PC 화면에 뜨고 소리가 난다.'
               : '서버가 이 PC 에서 백엔드를 띄워 사람이 필요 없는 항목을 혼자 잰다.'}
-              {' '}통과하지 못한 항목만 빌드 에이전트가 고치고, 서버가 다시 잰다. 모두 통과하면 주인 실측을 한 번 부른다.</p>
+              {' '}통과하지 못한 항목은 이 단계 안에서 빌드 에이전트가 고치고, 서버가 다시 잰다. 모두 통과하면 주인 실측을 한 번 부른다.</p>
           )}
           <p className="text-muted-foreground">한 번에 약 {m.plan.measure.minutes}분 걸린다. 진짜 서비스로 아래를 잰다.</p>
           <Metrics run={current} plan={m.plan.metrics} />
           <div className="flex flex-wrap items-center gap-3">
             <Btn tone="wait" disabled={busy || !!view.working || missing.length > 0 || waiting}
-              onClick={() => void act(() => api.measureStart(repo, m.head))}>
-              {failed ? '빌드 에이전트에게 고치게 하기' : owner ? '주인 실측 시작' : '자동 실측 시작'}</Btn>
+              onClick={() => void act(() => api.measureStart(repo, m.head, current?.n ?? 0))}>
+              {failed ? '빌드 에이전트에게 고치게 하기' : disputed ? '이 값이 맞다 — 빌드 에이전트에게 고치게 하기'
+                : owner ? '주인 실측 시작' : '자동 실측 시작'}</Btn>
             {missing.length > 0 && <span className="text-wait">아직 넣지 않은 값: {missing.map((x) => x.id).join(', ')}</span>}
           </div>
         </section>
@@ -101,7 +107,9 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
   const run = m?.running
   const owner = (run?.mode ?? m?.next) === 'owner'   // the server's own measurement asks nothing of the owner
   const now = useNow(run ? 1000 : 0)
-  if (view.working !== 'measure') return <section aria-label="실측 중" className={BOX}><p>PR #1 초안을 올리는 중이다.</p></section>
+  if (view.working !== 'measure') return <section aria-label="실측 중" className={BOX}><p>{view.working === 'build'
+    ? '실측에서 나온 문제를 빌드 에이전트가 이 단계 안에서 고치는 중이다. 고친 커밋이 빌드 검사를 통과하면 서버가 바로 다시 잰다.'
+    : 'PR #1 초안을 올리는 중이다.'}</p></section>
   const minutes = plan?.measure.minutes ?? 0
   const gone = run ? Math.max(0, Math.floor(now / 1000 - run.ts)) : 0
   const late = !!run?.cut && now / 1000 > run.cut - 300   // the script past its planned minutes, by its own clock
@@ -139,7 +147,7 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
       <p className="text-muted-foreground">{owner
         ? `끝나면: 모든 항목이 기준을 넘으면 ${plan?.clips ? '결과와 클립이 이 화면에 뜨고, 보고 들은 뒤' : '결과가 이 화면에 뜨고, 본 뒤'} 승인하거나 거절한다. 어느 항목이든 기준에 못 미치면 판정 없이 빌드 에이전트가 고친다.`
         : '끝나면: 모두 통과하면 주인 실측을 부른다. 통과하지 못한 항목이 있으면 보통은 빌드 에이전트가 그 항목만 고치고 서버가 다시 잰다.'}
-        {' '}실패가 회차 한도에 닿거나 입력이 틀렸다고 확인되면 멈추고, 이 화면 위에 이유와 누를 버튼이 뜬다.</p>
+        {' '}실패가 회차 한도에 닿거나 스크립트가 넣은 입력이 틀렸다고 하면 멈추고, 이 화면 위에 이유와 누를 버튼이 뜬다.</p>
     </section>
   )
 }
@@ -240,7 +248,7 @@ const verdictDue = (r: MeasureRun) => r.status === 'owner' && r.mode === 'owner'
 
 const said = (r: MeasureRun) => (r.owner ? (r.owner.approve ? '주인 승인' : '주인 거절')
   : r.status === 'owner' ? (r.mode === 'owner' ? '판정 기다림' : '판정하지 않음 — 자동 실측부터 다시') : r.status === 'passed' ? '자동 실측 통과 — 주인 실측 차례'
-    : r.status === 'input' ? '넣은 값이 틀림' : r.status === 'stale' ? '판정하지 않음'
+    : r.status === 'input' ? '넣은 값이 틀렸다고 함 — 주인에게 묻는다' : r.status === 'stale' ? '판정하지 않음'
       : r.mode === 'auto' ? '자동 실측 실패 — 빌드가 고친다' : '실패 — 빌드가 고친다') + (r.comment_error ? ` · ${r.comment_error}` : '')
 
 function Result({ repo, run, busy, act }: { repo: string; run: MeasureRun; busy: boolean; act: Act }) {

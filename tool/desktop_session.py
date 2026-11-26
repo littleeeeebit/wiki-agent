@@ -1,6 +1,7 @@
-"""One desktop look on an owned, invisible Windows desktop: its record written before anything starts, each app
-in an owned job with its data in disposable folders, cleanup with its proof on every outcome, and recovery of an
-earlier look's record before the next one starts (docs/research/oneshot-desktop-session.md)."""
+"""One desktop look on the owner's own desktop, where they can see it: its record written before anything starts, each
+app in an owned job with its data in disposable folders, cleanup with its proof on every outcome, and recovery of an
+earlier look's record before the next one starts (docs/research/oneshot-desktop-session.md). No look opens a desktop
+of its own: what a oneshot runs is never out of the owner's sight (plan 13)."""
 
 import ctypes
 import os
@@ -25,12 +26,10 @@ class Halted(Exception):
 
 
 NO_SUCH_LOGON_SESSION = 0xC000005F
-DESKTOP_ALL, DESKTOP_READ = 0x01FF, 0x0001
-NOT_FOUND, INVALID_PARAMETER = 2, 87
+INVALID_PARAMETER = 87
 FINAL = ("proven", "recovered")
 LOG_TAIL = 64 * 1024   # the bytes of a run's log it returns, its end: a writer still running cannot extend the read
 RELEASE_RETRIES = 10   # half a second apart: a handle still held after that keeps its server the owner
-_Each = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
 
 
 class _Luid(ctypes.Structure):
@@ -67,11 +66,6 @@ def _native():
     s.LsaGetLogonSessionData.argtypes = (ctypes.POINTER(_Luid), ctypes.POINTER(ctypes.POINTER(_Logon)))
     s.LsaGetLogonSessionData.restype = ctypes.c_ulong
     s.LsaFreeReturnBuffer.argtypes = (w.LPVOID,)
-    u.CreateDesktopW.argtypes = (w.LPCWSTR, w.LPCWSTR, w.LPVOID, w.DWORD, w.DWORD, w.LPVOID)
-    u.CreateDesktopW.restype = w.HANDLE
-    u.OpenDesktopW.argtypes, u.OpenDesktopW.restype = (w.LPCWSTR, w.DWORD, w.BOOL, w.DWORD), w.HANDLE
-    u.CloseDesktop.argtypes = (w.HANDLE,)
-    u.EnumDesktopWindows.argtypes = (w.HANDLE, _Each, w.LPARAM)
     return k, u, a, s
 
 
@@ -194,31 +188,25 @@ def _removed(folder: Path, entries: list[dict], seconds: float = 30) -> list[str
 
 
 class Look:
-    """One look: an owned desktop, its apps' jobs and their disposable folders, all named in `folder`'s record.
-    Use it through `look()`, which runs `close()` on every outcome."""
+    """One look: its apps' jobs on the owner's desktop and their disposable folders, all named in `folder`'s
+    record. Use it through `look()`, which runs `close()` on every outcome."""
 
-    def __init__(self, root: Path, name: str, owned: bool = True, disposable: bool = False):
-        """`owned` false is the owner's desktop round (plan 9e5): its jobs start on the desktop the server runs on,
-        the owner's, and the look creates and closes no desktop of its own; its record and proof are the same."""
-
+    def __init__(self, root: Path, name: str, disposable: bool = False):
         self.root = Path(root).absolute()   # a child starts elsewhere: its data paths must not be relative
         self.disposable = disposable   # `evidence` too is removed with the look: its apps carried secrets
         self.folder = self.root / name
         self.result = None   # the teardown's reasons, kept until its proof is saved
         self.closing = False
-        self.probes: list = []   # name-probe handles Windows would not close, still held
         self.jobs: dict[str, owned_job.Job] = {}
-        self.desktop = None
+        self.shown: dict[str, int] = {}   # per run, the most windows its members showed at once on the owner's screen
         self.closed = False
         held = recover_all(self.root)
         if held:
             raise Refused("an earlier look is held: " + "; ".join(held))
-        self.k, self.u, _, _ = _native()
         owner = native_process.identity(os.getpid())
         if owner is None:   # recovery could not tell a live look of this server from a dead one
             raise Refused("cannot record this server's own identity")
-        self.record = {"state": "owning", "desktop": "wiki-look-" + uuid.uuid4().hex if owned else None,
-                       "session": session(),
+        self.record = {"state": "owning", "session": session(),
                        "logon": logon(), "uptime": uptime(), "owner": owner, "folders": [], "jobs": {},
                        "listeners": [], "proof": None}
         self.folder.mkdir()
@@ -230,15 +218,6 @@ class Look:
     def _open_for_more(self) -> None:
         if self.closing:   # nothing may join a look whose cleanup began, saved or not
             raise Refused("the look's cleanup has begun")
-
-    def open(self) -> None:
-        self._open_for_more()
-        if self.desktop or not self.record["desktop"]:
-            raise Refused("the look's desktop is already open, or it has none of its own")
-        handle = self.u.CreateDesktopW(self.record["desktop"], None, None, 0, DESKTOP_ALL, None)
-        if not handle:
-            raise Refused(f"cannot create the look's desktop: {ctypes.get_last_error()}")
-        self.desktop = handle
 
     def check_key(self, key: str) -> None:
         """A job key is one identifier no job of this look carries yet, compared without case, since the key
@@ -265,7 +244,7 @@ class Look:
 
     def start(self, key: str, argv: list[str], cwd, extra: dict | None = None, halt=None, ready=None,
               gate=None, output=None) -> dict:
-        """Start `argv` in a job of its own on the look's desktop, its data folders inside a disposable folder
+        """Start `argv` in a job of its own on the owner's desktop, its data folders inside a disposable folder
         the record names first, its output in `evidence/<key>.log`, or in `output`, a binary file object such as
         a pipe's end, so a caller can keep it off the disk. The root's identity. A `halt` set by the
         time the suspended root is recorded ends it before it runs (`Halted`), as does whatever `ready`, called
@@ -306,11 +285,9 @@ class Look:
                 raise Halted(f"halted before {argv[0]} ran")
 
         if output is not None:
-            return job.start(argv, cwd, env, self.record["desktop"], output, before_resume=recorded, last=last,
-                             gate=gate)
+            return job.start(argv, cwd, env, None, output, before_resume=recorded, last=last, gate=gate)
         with (self.folder / "evidence" / f"{key}.log").open("ab") as log:
-            return job.start(argv, cwd, env, self.record["desktop"], log, before_resume=recorded, last=last,
-                             gate=gate)
+            return job.start(argv, cwd, env, None, log, before_resume=recorded, last=last, gate=gate)
 
     def run(self, key: str, argv: list[str], cwd, seconds: float, halt, extra: dict | None = None) \
             -> tuple[int | None, str, str]:
@@ -332,6 +309,7 @@ class Look:
                 cut = "멈춤"
             elif time.monotonic() > deadline:   # read after the code: an exit it shows happened by now
                 cut = f"{int(seconds)}초 안에 끝나지 않았다"
+            self.shown[key] = max(self.shown.get(key, 0), visible({m["pid"] for m in job.members()}))
             if cut or code is not None:
                 break
             time.sleep(max(0.0, min(0.2, deadline - time.monotonic())))
@@ -357,53 +335,9 @@ class Look:
     def _recorded(self) -> list[dict]:
         return [member for entry in self.record["jobs"].values() for member in entry["members"]]
 
-    def _desktop_closed(self, seconds: float = 10) -> list[str]:
-        if not self.desktop:
-            return []
-        reasons, deadline, found, error = [], time.monotonic() + seconds, None, 0
-        try:
-            while True:
-                windows = []
-                ctypes.set_last_error(0)   # an empty desktop sets no error; an earlier call's must not stand in
-                ok = self.u.EnumDesktopWindows(self.desktop, _Each(lambda hwnd, _: windows.append(hwnd) or True), 0)
-                error = 0 if ok else ctypes.get_last_error()
-                found = None if error else windows   # an empty desktop answers 0 with no error
-                if found == [] or time.monotonic() >= deadline:
-                    break
-                time.sleep(0.1)
-        finally:   # released even when the wait is interrupted; a handle that will not close is kept
-            if self.u.CloseDesktop(self.desktop):
-                self.desktop = None
-            else:
-                reasons.append(f"cannot close the desktop: Windows error {ctypes.get_last_error()}")
-        if found is None:
-            reasons.append(f"cannot list the desktop's windows: Windows error {error}")
-        elif found:
-            reasons.append(f"{len(found)} window(s) remain on the desktop")
-        if self.desktop:
-            return reasons
-        # A reference Windows has not dropped yet can keep the name a moment: the probe is retried, bounded.
-        probe_until = time.monotonic() + 5
-        while True:
-            again = self.u.OpenDesktopW(self.record["desktop"], 0, False, DESKTOP_READ)
-            error = 0 if again else ctypes.get_last_error()
-            if again:
-                self.probes.append(again)   # counted as held until its close is seen to succeed
-                if not self.u.CloseDesktop(again):
-                    break   # held, and no further probe opens another
-                self.probes.remove(again)
-            if error == NOT_FOUND or time.monotonic() >= probe_until:
-                break
-            time.sleep(0.1)
-        if again:
-            reasons.append("the desktop still opens by its name")
-        elif error != NOT_FOUND:
-            reasons.append(f"cannot tell whether the desktop is gone: Windows error {error}")
-        return reasons
-
     def close(self, seconds: float = 30) -> dict:
-        """End every job, close the desktop, and prove each part gone. The proof, also saved in the record; a
-        look whose proof is not clean stays held until recovery proves it."""
+        """End every job and prove each part gone. The proof, also saved in the record; a look whose proof is not
+        clean stays held until recovery proves it."""
 
         if self.closed:
             return self.record["proof"]
@@ -432,8 +366,7 @@ class Look:
         return record["proof"]
 
     def _outstanding(self) -> int:
-        return (bool(self.desktop) + len(self.probes)
-                + sum(job.outstanding() for job in self.jobs.values()))
+        return sum(job.outstanding() for job in self.jobs.values())
 
     def _release(self) -> BaseException | None:
         """Close again every handle an earlier close could not; the interruption to raise, if one came."""
@@ -448,18 +381,6 @@ class Look:
                 if not isinstance(error, Exception):
                     interrupted = interrupted or error
 
-        def desktop() -> None:
-            if self.u.CloseDesktop(self.desktop):
-                self.desktop = None
-
-        def probe(handle) -> None:
-            if self.u.CloseDesktop(handle):
-                self.probes.remove(handle)
-
-        if self.desktop:
-            attempt(desktop)
-        for handle in list(self.probes):
-            attempt(lambda handle=handle: probe(handle))
         for job in self.jobs.values():
             attempt(job.close)
         return interrupted
@@ -487,7 +408,6 @@ class Look:
         self.record["listeners"] = ports
         for key, job in self.jobs.items():
             attempt(f"{key}: cannot end the job", lambda key=key, job=job: self._ended(key, job, seconds))
-        attempt("cannot close the desktop", self._desktop_closed)
         attempt("cannot check the recorded processes", lambda: self._exits(recorded))
         attempt("cannot check the listeners", lambda: self._listening(ports, recorded))
         attempt("cannot remove the folders", lambda: _removed(self.folder, self.record["folders"]))
@@ -523,17 +443,48 @@ class Look:
                        for pid in native_process.listeners(port) for member in recorded)]
 
 
-@contextmanager
-def look(root: Path, name: str, owned: bool = True, disposable: bool = False):
-    """A look in `root/name`, its desktop open (with `owned` false, on the owner's desktop: `Look`); cleaned and
-    proven on every exit. A proof that is not clean raises, naming what it could not prove. A `disposable` look's
-    `evidence` is removed with it."""
+def visible(pids: set[int]) -> int:
+    """How many windows of `pids` the owner's screen shows now: visible, not minimized, not cloaked, at least
+    100×50 pixels and on a display, so a hidden, collapsed or off-screen window is never taken for one the owner
+    sees."""
 
-    session_ = Look(root, name, owned, disposable)
+    if not pids:
+        return 0
+    u, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
+    callback = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+    u.EnumWindows.argtypes = (callback, w.LPARAM)
+    u.GetWindowThreadProcessId.argtypes = (w.HWND, ctypes.POINTER(w.DWORD))
+    u.IsWindowVisible.argtypes = u.IsIconic.argtypes = (w.HWND,)
+    u.GetWindowRect.argtypes = (w.HWND, ctypes.POINTER(w.RECT))
+    u.MonitorFromRect.argtypes, u.MonitorFromRect.restype = (ctypes.POINTER(w.RECT), w.DWORD), w.HANDLE
+    dwm.DwmGetWindowAttribute.argtypes = (w.HWND, w.DWORD, w.LPVOID, w.DWORD)
+    found = []
+
+    @callback
+    def seen(hwnd, _):
+        owner, rect, cloaked = w.DWORD(), w.RECT(), w.DWORD()
+        u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value not in pids or not u.IsWindowVisible(hwnd) or u.IsIconic(hwnd) \
+                or not u.GetWindowRect(hwnd, ctypes.byref(rect)) \
+                or rect.right - rect.left < 100 or rect.bottom - rect.top < 50:
+            return True
+        dwm.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked))   # DWMWA_CLOAKED
+        if not cloaked.value and u.MonitorFromRect(ctypes.byref(rect), 0):   # 0: MONITOR_DEFAULTTONULL
+            found.append(hwnd)
+        return True
+
+    u.EnumWindows(seen, 0)
+    return len(found)
+
+
+@contextmanager
+def look(root: Path, name: str, disposable: bool = False):
+    """A look in `root/name` on the owner's desktop (`Look`); cleaned and proven on every exit. A proof that is not
+    clean raises, naming what it could not prove. A `disposable` look's `evidence` is removed with it."""
+
+    session_ = Look(root, name, disposable)
     failure = None
     try:
-        if owned:
-            session_.open()
         yield session_
     except BaseException as error:
         failure = error
