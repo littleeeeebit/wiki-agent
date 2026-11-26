@@ -608,8 +608,14 @@ def test_a_stop_accepted_while_the_backend_is_prepared_never_resumes_it(tmp_path
     assert not job.resumed
 
 
-def test_a_stop_pressed_between_the_last_look_and_the_resume_returns_after_the_resume(tmp_path):
-    halt, paused, release = measure.Halted(), threading.Event(), threading.Event()
+@pytest.mark.parametrize("stop", ["measurement", "build"])   # the measurement's stop, and a build turn's (`serve_check`)
+def test_a_stop_pressed_between_the_last_look_and_the_resume_returns_after_the_resume(tmp_path, stop):
+    from common import process
+    from main import work
+
+    halt = measure.Halted() if stop == "measurement" else work.Run(types.SimpleNamespace(id="c")).halt
+    assert stop == "measurement" or isinstance(halt, process.Halt)
+    paused, release = threading.Event(), threading.Event()
     job, raised = Backend(paused=paused, release=release), []
     holder = types.SimpleNamespace(root=lambda identity: None, ended=lambda proof: None)
 
@@ -620,15 +626,36 @@ def test_a_stop_pressed_between_the_last_look_and_the_resume_returns_after_the_r
             raised.append(str(error))
     launcher = threading.Thread(target=launch)
     launcher.start()
-    assert paused.wait(10)
-    stopper = threading.Thread(target=halt.set)   # the stop endpoint, accepting the owner's stop now
-    stopper.start()
-    stopper.join(0.5)
-    assert stopper.is_alive() and not halt.is_set()   # ordered after the resume, never accepted before it
-    release.set()
+    try:
+        assert paused.wait(10)
+        stopper = threading.Thread(target=halt.set)   # the stop endpoint, accepting the owner's stop now
+        stopper.start()
+        stopper.join(0.5)
+        assert stopper.is_alive()   # it returns only after the resume: never while the launch may still go on
+    finally:
+        release.set()   # the launch holds this module's patches until it ends
+        launcher.join(10)
     stopper.join(10)
-    launcher.join(10)
-    assert job.resumed and raised == ["사람이 멈췄다"]   # the launch's own wait saw it
+    assert not stopper.is_alive() and job.resumed and raised == ["사람이 멈췄다"]   # the launch's own wait saw it
+
+
+def test_a_stop_waits_on_a_resuming_launch_outside_the_shared_lock(monkeypatch):
+    halt = measure.Halted()
+    monkeypatch.setitem(measure.HALTS, "budget", halt)
+    monkeypatch.setattr(measure.oneshot_spec, "spec_of", lambda repo: {})
+    monkeypatch.setattr(measure.oneshot_spec, "view", lambda spec: {})
+    with halt.gate:   # a launch between its last look at the stop and its resume
+        stopper = threading.Thread(target=measure.stop, args=("budget",))
+        stopper.start()
+        deadline = time.monotonic() + 10
+        while not halt.is_set():
+            assert time.monotonic() < deadline, "the stop was never taken"
+            time.sleep(0.01)
+        assert measure.oneshot._lock.acquire(timeout=5)   # every other oneshot call goes on meanwhile
+        measure.oneshot._lock.release()
+        assert stopper.is_alive()   # the stop itself returns only after the resume
+    stopper.join(10)
+    assert not stopper.is_alive()
 
 
 def test_a_backend_that_did_not_end_fails_its_caller_after_the_holder_is_told(tmp_path, monkeypatch):

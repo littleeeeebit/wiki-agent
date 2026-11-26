@@ -123,8 +123,21 @@ def test_a_program_in_a_worktree_is_a_gpu_job(tmp_path, monkeypatch):
     assert gpu_job.kind(["env", "A=1", "./bin/timeout.exe", "5"], str(top), {}) == "gpu"
 
 
+def test_a_program_is_a_gpu_job_when_any_directory_it_may_run_in_makes_it_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    top = tmp_path / "real"
+    subprocess.run(["git", "init", "-q", str(top)], check=True)
+    first, later = top / "a", top / "z"   # the guard's two places after a `cd` that may or may not succeed
+    first.mkdir()
+    (later / "bin").mkdir(parents=True)
+    (later / "bin" / "app.exe").write_bytes(b"")   # only in the later one
+    assert gpu_job.judged(["./bin/app.exe"], [str(first), str(later)], {}) == "gpu"
+    assert gpu_job.judged(["./bin/app.exe"], [str(first)], {}) == "program"
+
+
 def test_off_windows_a_gpu_job_is_a_program_like_any_other(tmp_path, monkeypatch):
-    monkeypatch.setattr(gpu_job, "programs", lambda payload, host: ([(["python", "train.py"], str(tmp_path))], "posix"))
+    monkeypatch.setattr(gpu_job, "programs", lambda payload, host: ([(["python", "train.py"], [str(tmp_path)])], "posix"))
     monkeypatch.setattr(gpu_job, "kind", lambda *a: "gpu")
     monkeypatch.setattr(gpu_queue, "ancestry", lambda *a: pytest.fail("the Windows process tree was read"))
     with monkeypatch.context() as m:

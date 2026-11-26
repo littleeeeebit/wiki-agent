@@ -28,7 +28,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent import OUTPUT_LIMIT, ChatSession, claude_usage, codex_usage, deepseek, output_of
-from common.process import background_options
+from common.process import Halt, background_options
 from common.paths import RAW
 from common import Veil, errorlog, masked
 from secrets_held import SECRETS_HELD
@@ -674,7 +674,7 @@ class Run:
         self.events: list[dict] = []
         self.asked: dict[str, list] = {}   # a question's options as asked (`Veil.options`), until it is answered
         self.done = False
-        self.halt = threading.Event()   # set by a stop; the session reads it too
+        self.halt = Halt()   # set by a stop; the session reads it too; a server launch is ordered with it
         self.saving = threading.Lock()   # held over a save this turn decided on (`handoff`); a stop waits on it
         self.wake = threading.Condition()
         self.diff_base: str | None = None

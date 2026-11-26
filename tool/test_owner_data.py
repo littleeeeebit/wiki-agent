@@ -153,14 +153,31 @@ def test_a_name_used_only_between_two_reads_is_never_taken_for_clean(tree, tmp_p
     original = conf.read_text(encoding="utf-8")
     watch = owner_data.Watch(owner_data.roots(tree), tree)
     conf.write_text(json.dumps({"identifier": "com.example.trial"}), encoding="utf-8")   # a smoke test's name
+    until(lambda: any(r.endswith("com.example.trial") for r in watch.result()["roots"]))   # read as it is built
     (local / "com.example.trial").mkdir()   # its program's data folder, left behind
-    time.sleep(0.05)
     conf.write_text(original, encoding="utf-8")   # restored before the check reads anything
     result = watch.settled()
-    assert result["state"] == "incomplete" and "com.example.trial" in owner_data.reason(result)
+    assert result["state"] == "changed" and any(r.endswith("com.example.trial") for r in result["roots"])
     watch.close()
-    watch = owner_data.Watch(owner_data.roots(tree), tree)   # the same folder made with the config untouched
-    (local / "elsewhere").mkdir()   # another program's folder: no name of this tree could be it
+    older = local / "com.example.older"   # a name whose folder and settings were there before the window
+    older.mkdir()
+    (older / "settings.json").write_text("{}", encoding="utf-8")
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    conf.write_text(json.dumps({"identifier": "com.example.older"}), encoding="utf-8")
+    until(lambda: str(older) in watch.result()["roots"])   # read as the program is built with the name
+    (older / "settings.json").write_text('{"x": 1}', encoding="utf-8")   # the program run under it
+    conf.write_text(original, encoding="utf-8")
+    result = watch.settled()
+    assert result["state"] == "changed" and any(p.endswith("settings.json") for p in result["paths"])
+    watch.close()
+
+
+def test_an_ordinary_config_edit_beside_another_programs_folder_stays_clean(tree, tmp_path):
+    local, conf = tmp_path / "AppData" / "Local", tree / "src-tauri" / "tauri.conf.json"
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    value = json.loads(conf.read_text(encoding="utf-8"))
+    conf.write_text(json.dumps({**value, "app": {"windows": [{"width": 900}]}}), encoding="utf-8")   # same names
+    (local / "elsewhere").mkdir()   # another program's folder: no name this tree ever gave
     assert watch.close()["state"] == "clean"
 
 

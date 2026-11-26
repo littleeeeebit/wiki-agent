@@ -232,7 +232,16 @@ def programs(payload: dict, host: str) -> tuple[list[tuple[list[str], str]], str
     ctx = guard.Ctx(dialect, frozenset({cwd}), guard.posix(Path.home()), Path(tempfile.gettempdir()).as_posix(),
                     os.name == "nt", programs=found)
     guard.derive(command, dialect, ctx)
-    return [(words, (dirs or [cwd or os.getcwd()])[0]) for words, dirs in found if words], dialect
+    return [(words, sorted(dirs) or [cwd or os.getcwd()]) for words, dirs in found if words], dialect
+
+
+RANK = {"inspect": 0, "builtin": 0, "program": 1, "gpu": 2}
+
+
+def judged(words: list[str], dirs: list, roots: dict) -> str:
+    """One program's kind over every directory it may run in: a GPU job in any of them is one."""
+
+    return max((kind(words, str(d), roots) for d in dirs), key=RANK.__getitem__)
 
 
 # -- Whose processes ---------------------------------------------------------------------------------------------
@@ -404,7 +413,7 @@ def verdict(payload: dict, host: str = "claude") -> dict | None:
         return None
     roots: dict = {}
     try:
-        kinds = [kind(words, cwd, roots) for words, cwd in found]
+        kinds = [judged(words, dirs, roots) for words, dirs in found]
     except Exception:  # noqa: BLE001
         return None
     if all(k in ("inspect", "builtin") for k in kinds):

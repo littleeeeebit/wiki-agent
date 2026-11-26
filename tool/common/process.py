@@ -11,6 +11,23 @@ import os
 import signal
 import subprocess
 import sys
+import threading
+
+
+class Halt(threading.Event):
+    """A stop that a launch is ordered with: a start holds `gate` from its last look at the stop through its
+    program's resume (`owned_job.Job.start`), and `set` waits on it, so a set that returned was either seen by
+    that look or comes after the resume, where the launch's own waits see it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = threading.Lock()
+
+    def set(self) -> None:
+        super().set()
+        with self.gate:
+            pass
+
 
 if os.name == "nt":
     import ctypes

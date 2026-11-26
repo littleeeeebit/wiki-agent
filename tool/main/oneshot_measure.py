@@ -53,16 +53,23 @@ CREDENTIAL = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKI
 
 class Halted:
     """A measurement's stop: the owner's, or the server going down. Made before its worker starts (`start`), so
-    a stop pressed in between is never lost. `gate` orders a stop with a launch: a start holds it from its last
-    look at the stop through the program's resume (`owned_job.Job.start`), so a stop that returned was either
-    seen there or comes after the resume, where the launch's own waits see it."""
+    a stop pressed in between is never lost. `gate` orders a stop with a launch, as `process.Halt`'s does: `flag`
+    is the stop itself, taken under any lock; `settled` returns once no launch is between its last look at it
+    and its resume, and is waited on outside every lock."""
 
     def __init__(self) -> None:
         self.own, self.gate = threading.Event(), threading.Lock()
 
-    def set(self) -> None:
+    def flag(self) -> None:
+        self.own.set()
+
+    def settled(self) -> None:
         with self.gate:
-            self.own.set()
+            pass
+
+    def set(self) -> None:
+        self.flag()
+        self.settled()
 
     def is_set(self) -> bool:
         return self.own.is_set() or runtime.stopping.is_set()
@@ -617,7 +624,9 @@ def launch(repo: str, spec: dict, plan: dict) -> None:
 def stop(repo: str) -> dict:
     with oneshot._lock:   # a stop accepted here is seen by `decided`, which saves the outcome under it
         if halt := HALTS.get(repo):
-            halt.set()
+            halt.flag()
+    if halt:   # a launch between its last look and its resume is waited for outside the shared lock
+        halt.settled()
     return oneshot_spec.view(oneshot_spec.spec_of(repo))
 
 

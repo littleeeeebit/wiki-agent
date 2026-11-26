@@ -72,32 +72,25 @@ def product_names(tree: Path) -> list[str]:
     except (OSError, subprocess.TimeoutExpired):
         pass
     for conf in _confs(tree):
-        try:
-            value = json.loads(conf.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        names += [str(value[k]) for k in ("identifier", "productName") if isinstance(value, dict) and value.get(k)]
+        names += conf_names(conf)
     return list(dict.fromkeys(n for n in names if n and n not in (".", "..")))
+
+
+def conf_names(conf: Path) -> list[str]:
+    """One `tauri.conf.json`'s `identifier` and `productName`; none when it cannot be read."""
+
+    try:
+        value = json.loads(conf.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [str(value[k]) for k in ("identifier", "productName") if isinstance(value, dict) and value.get(k)
+            and str(value[k]) not in (".", "..")]
 
 
 def _confs(tree: Path):
     for conf in Path(tree).glob("**/tauri.conf.json"):
         if not any(part in ("node_modules", "target", ".git") for part in conf.relative_to(tree).parts):
             yield conf
-
-
-def configs(tree: Path) -> dict[str, tuple[int, int]]:
-    """Each `tauri.conf.json` the roots are read from, with its write time and size: a window in which one
-    changed may have named a product, and made its folder, between two reads."""
-
-    found = {}
-    for conf in _confs(tree):
-        try:
-            stat = conf.stat()
-        except OSError:
-            continue
-        found[str(conf)] = (stat.st_mtime_ns, stat.st_size)
-    return found
 
 
 def roots(tree: Path) -> list[Path]:
@@ -200,14 +193,18 @@ class Watch:
     it, so a root that only came to exist during the window (a `tauri.conf.json` identifier the turn added) is
     covered too: `settled` and `close` take the roots as they are now (`now`, else read off `tree`). One of
     them seen at its base is a change; one that already existed, and so had no watch of its own, leaves the
-    window `incomplete`. A `tauri.conf.json` of `tree` that changed in the window may have named a product only
-    between two reads: then a folder name seen at a base that no root explains leaves it `incomplete` too."""
+    window `incomplete`.
+
+    Every name a product is given during the window counts, a name used only between two reads included: the
+    folder of each `tauri.conf.json` of `tree` is watched, and the file is read again on every change to it.
+    Each name it gives becomes a root at once: one whose folder exists gets a subtree watch of its own, one whose
+    folder does not is the base watch's. A Tauri program carries its identifier from its build, so it is built
+    with a name, which this reads in time, before it can write under it."""
 
     def __init__(self, found: list[Path], tree: Path | None = None):
         self.lock, self.sync_lock = threading.Lock(), threading.Lock()
         self.state, self.paths, self.why = "clean", [], []
-        self.found, self.seen, self.bases = list(found), {}, set()
-        self.tree, self.configs = tree, configs(tree) if tree is not None else None
+        self.found, self.seen, self.bases, self.tree, self.closing = list(found), {}, set(), tree, False
         self.threads, self.syncs, self.stop, self.k = [], [], None, None
         if os.name != "nt":
             return
@@ -219,12 +216,14 @@ class Watch:
         for base in dict.fromkeys(root.parent for root in found):
             if base.is_dir():
                 self.bases.add(base)
-                self._start(base, False)
+                self._start(base, "base")
             else:
                 self._fail(f"`{base}` 가 없어 감시하지 못했다")
         for root in found:
             if root.is_dir():
-                self._start(root, True)
+                self._start(root, "root")
+        for folder in dict.fromkeys(conf.parent for conf in _confs(tree)) if tree is not None else ():
+            self._start(folder, "config")
 
     def _fail(self, why: str) -> None:
         with self.lock:
@@ -247,7 +246,10 @@ class Watch:
         if hit:
             self._changed(None)   # the root itself was created, renamed, removed or replaced
 
-    def _cover(self, now: list[Path]) -> None:
+    def _cover(self, now: list[Path], read: bool = True) -> None:
+        """Roots not watched so far. Found by a config's watch (`read` false), one whose folder exists is
+        watched from now on, before its product is built; found only by a read, its inside went unwatched."""
+
         with self.lock:
             new = [r for r in now if r not in self.found]
             self.found += new
@@ -257,29 +259,35 @@ class Watch:
                 self._fail(f"`{root}` 는 이 구간 중에 생긴 이름이고, 그 상위 폴더는 감시하지 않았다")
             elif root.name.lower() in seen.get(root.parent, ()):
                 self._changed(None)
+            elif root.is_dir() and not read:
+                self._start(root, "root")
             elif root.exists():
                 self._fail(f"`{root}` 는 이 구간 중에 생긴 이름이라 그 안은 감시하지 못했다")
-        if self.tree is None or configs(self.tree) == self.configs:
-            return
-        with self.lock:
-            unexplained = sorted(str(base / name) for base, names in self.seen.items() for name in names
-                                 if not any(r.parent == base and r.name.lower() == name for r in self.found))
-        if unexplained:
-            self._fail("이 구간 중에 `tauri.conf.json` 이 바뀌었고, 그동안 생기거나 바뀐 폴더가 어느 제품의 것인지 알 수 "
-                       "없다 — " + ", ".join(f"`{p}`" for p in unexplained[:MOST]))
+
+    def _named_by(self, conf: Path) -> None:
+        """A `tauri.conf.json` changed: each name it gives now is a root from now on."""
+
+        self._cover([base / name for name in conf_names(conf) for base in bases()], read=False)
 
     def _now(self, now: list[Path] | None) -> list[Path] | None:
         return now if now is not None or self.tree is None else roots(self.tree)
 
-    def _start(self, folder: Path, recursive: bool) -> None:
-        ready = threading.Event()
-        thread = threading.Thread(target=self._run, args=(folder, recursive, ready, self.stop), daemon=True,
-                                  name=f"owner-watch-{folder.name}")
-        thread.start()
-        ready.wait()
-        self.threads.append(thread)
+    def _start(self, folder: Path, mode: str) -> None:
+        """A watcher on `folder`: `root` (its subtree), `base` (directory names in it) or `config` (its files)."""
 
-    def _run(self, folder: Path, recursive: bool, ready: threading.Event, stop) -> None:
+        with self.lock:
+            if self.closing:
+                return
+            ready = threading.Event()
+            thread = threading.Thread(target=self._run, args=(folder, mode, ready, self.stop), daemon=True,
+                                      name=f"owner-watch-{folder.name}")
+            self.threads.append(thread)
+            thread.start()
+        ready.wait()
+
+    def _run(self, folder: Path, mode: str, ready: threading.Event, stop) -> None:
+        recursive = mode == "root"
+        which = {"root": SUBTREE, "base": 0x2, "config": 0x1 | 0x8 | 0x10}[mode]
         k = self.k
         handle = k.CreateFileW(str(folder), 0x1, 0x7, None, 3, 0x02000000 | 0x40000000, None)
         if not handle or handle == w.HANDLE(-1).value:
@@ -300,7 +308,7 @@ class Watch:
                 self.syncs.append(entry)
             while True:
                 k.ResetEvent(event)
-                if not k.ReadDirectoryChangesW(handle, buffer, len(buffer), recursive, SUBTREE if recursive else 0x2,
+                if not k.ReadDirectoryChangesW(handle, buffer, len(buffer), recursive, which,
                                                None, ctypes.byref(overlapped), None):
                     self._fail(f"`{folder}` 의 변경을 읽지 못했다 (Windows error {ctypes.get_last_error()})")
                     return
@@ -319,14 +327,19 @@ class Watch:
                 if not k.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(size), False):
                     self._fail(f"`{folder}` 의 변경을 읽지 못했다 (Windows error {ctypes.get_last_error()})")
                     return
-                if size.value == 0:   # the buffer overflowed: something changed, which is not known
-                    self._changed(None)
+                if size.value == 0:   # the buffer overflowed: what changed is not known
+                    if mode == "config":
+                        self._named_by(folder / "tauri.conf.json")
+                    else:
+                        self._changed(None)
                     continue
                 for name in _names(buffer.raw[:size.value]):
-                    if recursive:
+                    if mode == "root":
                         self._changed(folder / name)
-                    else:
+                    elif mode == "base":
                         self._named(folder, name)
+                    elif name.lower() == "tauri.conf.json":
+                        self._named_by(folder / name)
         finally:
             with self.lock:
                 if entry in self.syncs:
@@ -369,8 +382,11 @@ class Watch:
 
         with self.sync_lock:
             if self.stop is not None:
+                with self.lock:   # no watcher starts after this: a config's new name ends with the rest
+                    self.closing = True
+                    threads = list(self.threads)
                 self.k.SetEvent(self.stop)
-                for thread in self.threads:
+                for thread in threads:
                     thread.join(10)
                     if thread.is_alive():
                         self._fail("감시를 끝내지 못했다")

@@ -145,7 +145,7 @@ def tell(repo: str, body: Tell) -> dict:
             from . import oneshot_measure   # it imports this module's neighbours
             if halt := oneshot_measure.HALTS.get(repo):
                 halt.told = True   # the measurement hands the words on rather than stopping (`oneshot_measure`)
-                halt.set()
+                halt.flag()   # under the shared lock: nothing here waits on a launch's resume
         # Only a parked run takes the words in now. Anywhere else a step is between its turns, and its next start
         # meets them (`diverted`); a run that parks with words waiting shows them, and `[지금 반영]` takes them in.
         if due(o) and not parked(spec):

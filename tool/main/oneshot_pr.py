@@ -715,6 +715,11 @@ def handed(path: Path, run, spec: dict, final: str):
     # Published by this hand-over only when no fault and no text asked again stands: an earlier publication's
     # record, left by a push that failed since or a text turn that moved HEAD, never finishes the run.
     if fresh.get("pr") and not fresh.get("fault") and not fresh.get("writing"):
+        # The publication's commands ran: the watch is judged before the draft leaves draft or the run is done.
+        # A change stops the stage with the draft kept, and `[재개]` asks again.
+        if seen := oneshot_owner_data.read(repo):
+            oneshot_spec.store(repo).stop(STAGE, seen)
+            return None
         if spec["oneshot"].get("pr1"):
             # `specs.opened` published only to the draft the backend opened (`oneshot_publish.published`), never a
             # replacement: the final text is in, so it leaves draft. A draft left stops, and `[재개]` asks again.

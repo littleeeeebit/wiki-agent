@@ -384,9 +384,11 @@ One protocol serves the runners and the server alike, in
   exit. So a stop set while the runner waits prevents the command's first
   instruction, and the runner writes `stopped after start` only for one set
   after the check. On a server launch, an accepted stop
-  and the resume are serialized by the existing launch gate
-  (`desktop_session`), so an accepted stop either comes before the resume
-  and nothing runs, or after it and ends the job.
+  and the resume are serialized by the launch gate (`owned_job.Job.start`'s
+  `gate`), so an accepted stop either comes before the resume and nothing
+  runs, or after it and ends the job. The gate is the stop's own: a
+  measurement's (`Halted.gate`) and a build turn's (`common.process.Halt`,
+  for `serve_check`). A stop waits on it outside every shared lock.
 - The normal end, whether the command finished, was cancelled, or its shell
   or session ended: the runner ends its job with `owned_job`'s proof, not a
   zero count, since Windows can report no active process while one is still
@@ -449,9 +451,12 @@ elsewhere is not covered until its kind names the place.
    it sees, and each read takes the roots as they are then: a root the turn
    named (a new `tauri.conf.json` identifier) is a change when its folder
    came or went in the window, and `incomplete` when it already existed,
-   unwatched. A name used only between two reads leaves no root behind: when
-   a `tauri.conf.json` changed in the window (its write time or size), a
-   folder name seen at a base that no root explains makes it `incomplete`.
+   unwatched. Every name a product is given in the window counts, one used
+   only between two reads included: the folder of each `tauri.conf.json` is
+   watched, the file is read again on each change to it, and each name it
+   gives is a root from then on, its folder given a subtree watch when it
+   exists. A Tauri program carries its identifier from its build, so it is
+   built with the name, which is read in time, before it writes under it.
    Each read first reads every change already delivered, so a
    write that finished before the check is never read after it. Off Windows
    nothing is watched. Nothing is walked: the vtuber root
