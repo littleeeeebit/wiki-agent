@@ -306,6 +306,27 @@ def test_only_a_name_known_to_be_missing_counts_as_gone(tmp_path):
             assert not build_cache.gone(str(at))
 
 
+@pytest.mark.parametrize("undone", [True, False])
+def test_a_mark_that_fails_is_taken_back_or_stops_the_trim(tmp_path, undone):
+    tree = tmp_path / "tree"
+    for name, age in (("a", 300), ("b", 200), ("c", 100)):
+        cache(tree, name, age)
+    real, marks = build_cache.marked, []
+
+    def marked(k32, handle, delete):   # `b`'s mark fails, as a reply lost on the way back would
+        if delete:
+            marks.append(handle)
+            if len(marks) == 2:
+                raise OSError(64, "The specified network name is no longer available")
+        elif not undone:
+            raise OSError(64, "The specified network name is no longer available")
+        return real(k32, handle, delete)
+    with patch.object(build_cache, "marked", marked):
+        # taken back, `b` is only skipped and `c` goes; if not, whether `b` goes is unknown and the trim stops there
+        assert build_cache.pruned(tree, cap=0) == (200 if undone else 100)
+    assert caches(tree) == (["b"] if undone else ["b", "c"])
+
+
 def test_a_mark_that_will_not_come_off_stops_the_trim_on_that_count(tmp_path):
     tree = tmp_path / "tree"
     for name, age in (("a", 300), ("b", 200), ("c", 100)):

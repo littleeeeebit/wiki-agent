@@ -42,8 +42,8 @@ The `vtuber-ko-dub` run's work-turn log
   what a link there points at, and anything but a plain file is refused before
   it is marked for deletion. A file another handle still holds is not yet
   freed, so it is not credited, and only the system's own not-found answer
-  shows a file gone. If a mark cannot be checked it is taken back; if it
-  cannot be taken back either, the trim stops there. A cache that moved, would not go, or
+  shows a file gone. If a mark cannot be set or checked it is taken back; if
+  it cannot be taken back either, the trim stops there. A cache that moved, would not go, or
   could not be read stays counted, and a removal that fails partway keeps what
   went and leaves the next its turn, so what is left is an estimate that the
   next turn's end counts again.

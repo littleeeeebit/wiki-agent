@@ -213,13 +213,13 @@ def removed(path) -> tuple | None:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
             raise OSError(f"{path} is not a plain file")
-        marked(k32, handle, True)
         try:
+            marked(k32, handle, True)   # an error here may still have marked it, as a lost reply would
             where = final(k32, handle)   # marked, it cannot move from here
         except OSError:
             try:
-                marked(k32, handle, False)   # its going could not be checked: it stays
-            except OSError as undo:   # and if the mark will not come off, whether it goes is unknown
+                marked(k32, handle, False)   # its going could not be set or checked: it stays
+            except OSError as undo:   # and if no mark is known to be off, whether it goes is unknown
                 raise Unsure(f"{path} may be deleted unseen") from undo
             raise
     finally:
