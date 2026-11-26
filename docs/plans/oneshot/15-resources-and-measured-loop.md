@@ -164,31 +164,51 @@ idle server would never move, so this case never queues. On 2026-11-26 at
 
 On Codex the shell tool has no background start, and a rewrite there comes
 only with `allow`, after which the approval policy still decides. So a
-Codex GPU job is wrapped in the runner with `--now`: the runner takes the
-lease only if no place waits and the lease is free that moment, and holds it
-for the command's whole run in the foreground. Otherwise it runs nothing and
-exits, naming the head and how many places wait. A Codex GPU job never
-waits, so no Codex timeout counts a wait.
+Codex GPU job is wrapped in the runner with `--now`, and the runner decides
+in one step under the queue mutex (below): no live place waits, no holder
+note is left (or the process it names has exited, and the note is cleared),
+the floor holds, and the lease is free that moment. Then it holds the lease
+for the command's whole run in the foreground. A place published after that
+step waits on the lease like any other. If any condition fails it runs
+nothing and exits, naming which: the head and how many places wait, the
+leftover holder, or the memory short. A Codex GPU job never waits, so no
+Codex timeout counts a wait.
 
 ### The queue's order and the lease
 
 One protocol serves the runners and the server alike, in
 `tool/gpu_queue.py`.
 
-- The lease is a named mutex, `Local\wiki-agent-gpu`, which every process of
-  the owner's logon session shares. Holding it is the only permission to
-  run a GPU job, so two jobs never run at once, whatever the queue's state.
-  It is owned by the thread that runs the job: a runner's main thread, or
-  the server's measurement worker thread, which takes and releases it
-  itself. When its owner ends without releasing it, Windows hands it to the
-  next waiter as abandoned (`WAIT_ABANDONED`).
+- Where it lives. Every participant uses one folder, `wiki-agent-data\gpu`
+  under the owner account's `FOLDERID_LocalAppData`, read with
+  `SHGetKnownFolderPath`, never from `TEMP` or `LOCALAPPDATA`. So the
+  server's gate, which points `TEMP` elsewhere, and every shell see the same
+  queue. The two mutexes below are created in the `Local\` namespace of the
+  owner's logon session with the default security of the owner account. A
+  process of another account, such as the Codex sandbox's separate Windows
+  account, cannot open them or the folder. A runner that cannot open either
+  runs nothing and says that this account cannot join the GPU queue.
+- The lease is a named mutex, `Local\wiki-agent-gpu`. Holding it is the
+  only permission to run a GPU job, so two jobs never run at once, whatever
+  the queue's state. It is owned by the thread that runs the job: a runner's
+  main thread, or the server's measurement worker thread, which takes and
+  releases it itself.
+- The holder note, `gpu\holder`, is what survives a holder that ends
+  without cleaning up. Every holder, runner or server, writes it right after
+  it takes the lease and before its job's first process runs: its own pid
+  and start time, and the job's root process's pid and start time. It
+  clears the note only after the end the next section proves. Every
+  acquisition, abandoned or not, reads the note first. Windows may have
+  destroyed the mutex with its last handle, so a fresh acquisition can
+  follow a crash, and the note is what tells. A note left standing means the
+  last holder did not finish: the new holder waits until the noted root
+  process has exited, then for the floor, then clears the note and runs.
 - A place gives the order. A second mutex, `Local\wiki-agent-gpu-queue`,
   guards taking one: under it the taker reads and raises a counter in
-  `%TEMP%\wiki-agent-gpu\next`, and creates the place file
-  `%TEMP%\wiki-agent-gpu\queue\<counter>` with `CREATE_NEW` and no sharing,
-  held open while it waits and runs. The counter, not the clock, orders
-  places, so a paused taker or a clock change cannot put a place ahead of
-  one taken before it.
+  `gpu\next` and creates the place file `gpu\queue\<counter>` with
+  `CREATE_NEW` and no sharing, held open while it waits and runs. The
+  counter, not the clock, orders places, so a paused taker or a clock change
+  cannot put a place ahead of one taken before it.
 - The head is the lowest place whose file cannot be opened because of a
   sharing violation, so a live process holds it. A place whose file opens
   belongs to no one and is removed under the queue mutex. Any other error
@@ -217,26 +237,33 @@ One protocol serves the runners and the server alike, in
   session's Claude or Codex process, whose pid and start time the hook
   passes, so a reused pid is not taken for it. Claude's TaskStop ends that
   shell and leaves its child running (`chat_session.py`, seen on 2.1.291),
-  so the runner watches the shell. When either ends, it drops its place and
-  the lease and ends.
+  so the runner watches the shell. When either ends, the runner ends its
+  command as the normal end below does.
 - It creates the command suspended and puts it in a job of its own that
   ends every member when it closes (`common.process.contained`). A failed
   containment starts nothing and says why.
-- Before it resumes the command it writes the command's pid and start time
-  into a lease note, `%TEMP%\wiki-agent-gpu\holder`, then checks both
-  watched processes. Only if both live does it resume. One that ends after
-  that check is seen by the runner's wait on both handles at once, and the
-  runner ends the job then; between that check and the end of the job the
-  command can run for as long as Windows takes to report the exit. On a
-  server launch, an accepted stop and the resume are serialized by the
-  existing launch gate (`desktop_session`), so an accepted stop either comes
-  before the resume and nothing runs, or after it and ends the job.
-- However the runner ends, Windows closes its handles: the job's members are
-  ended and the lease is abandoned. A holder that receives an abandoned
-  lease reads the lease note and waits until that process has exited, then
-  waits for the floor, before it runs. ponytail: a descendant of that
-  process is ended by the same job close but is not waited on one by one; the
-  floor is what keeps the next job off memory it still holds.
+- It writes the holder note, then checks both watched processes. Only if
+  both live does it resume. One that ends after that check is seen by the
+  runner's wait on both handles at once, and the runner ends the job then;
+  between that check and the end of the job the command can run for as long
+  as Windows takes to report the exit. On a server launch, an accepted stop
+  and the resume are serialized by the existing launch gate
+  (`desktop_session`), so an accepted stop either comes before the resume
+  and nothing runs, or after it and ends the job.
+- The normal end, whether the command finished, was cancelled, or its shell
+  or session ended: the runner terminates its job and waits until the job's
+  accounting shows no active process, as `owned_job` proves a job's end
+  today. Only then does it clear the holder note, release the lease and
+  drop its place. If the job never empties, it keeps the lease, the note and
+  its place, and its output says which process will not end. The queue
+  waits on it, visibly, and nothing is timed out. A server launch ends the
+  same way through `owned_job`'s proof.
+- However the runner itself ends, Windows closes its handles: the job's
+  members are ended and the lease is abandoned or destroyed, with the note
+  left standing. The next holder acts on the note as above. ponytail: a
+  descendant of the noted root is ended by the same job close but is not
+  waited on one by one; the floor is what keeps the next job off memory it
+  still holds.
 - In the app the session is also inside `ChatSession`'s job, which ends
   what a finished turn left.
 
@@ -276,11 +303,16 @@ elsewhere is not covered until its kind names the place.
    stopped before the turn's end, which is what a hold left over from an
    earlier server means.
 5. When it counts.
-   - `oneshot_build.checked` reads the watch first, before any check runs
-     and before any check can save the run's next stage. So the window it
-     judges is the build session's own: from the send until its answer.
-     `changed` or `incomplete` refuses the turn with the folder and the
-     paths, and that is the next build turn's note.
+   - The watch runs from the send until the check of that turn has run its
+     last server command. `oneshot_build.checked` reads it first, before any
+     check runs, which judges the build session's own window. The checks
+     that then run commands on the server read it again right before they
+     save anything: `tested` after the contract-test command, `built` after
+     the gate and `serve_check`, and `oneshot_front_build.built_front` after
+     its build and looks. So a gate test that writes there and exits is
+     still seen. `changed` or `incomplete` at either read refuses the turn
+     with the folder and the paths, before any stage is saved, and that is
+     the next build turn's note.
    - A turn that ends without reaching `checked`, failed or stopped, is
      read at `work.run_turn`'s finalization, beside `oneshot_needs.settle`.
      Its result goes into the next build turn's note.
@@ -290,10 +322,9 @@ elsewhere is not covered until its kind names the place.
      owner with `주인 데이터 폴더를 감시하지 못한 구간이 있다 — 확인 후
      재개`. An unwatched window is never taken for a clean one; the owner's
      resume clears it.
-   - The server's own launches of the product (`serve_check`, the PC
-     measurement, the trial) watch the same roots over their run. A change
-     fails that launch with the folder and the paths, as a failed metric
-     does.
+   - The server's measurements of the product, the PC measurement and the
+     trial, watch the same roots over their run. A change fails that
+     measurement with the folder and the paths, as a failed metric does.
 6. Whose change. A change in a build session's window is taken as the
    build's. The product is under construction and its installer is this
    run's own output, so no other writer is expected. A change shows only
@@ -322,20 +353,26 @@ Tests show:
   by either record, beside an agent's own background call left exempt;
 - the lease exclusive under racing takers, places ordered by the counter
   with a taker paused before it creates its file, a stale place, an
-  unreadable place stopping the queue, the floor holding the head, an
-  abandoned lease waiting for the noted process, and the server's launches
-  waiting and stopping in it;
+  unreadable place stopping the queue, the floor holding the head, a
+  leftover holder note acted on after an abandoned lease and after a
+  destroyed one with no waiter at the crash, a server holder's note, and
+  the server's launches waiting and stopping in it;
+- one folder seen by a shell with another `TEMP` and by the gate's
+  environment, and a runner that cannot open the objects running nothing;
 - the runner ending its job when its shell, its session or itself ends, a
   shell ending between the last check and the resume, a failed containment
-  starting nothing, and a server stop on either side of the resume;
-- Codex admitted with `--now` holding the lease for its run, and refused
-  when a place waits;
+  starting nothing, a server stop on either side of the resume, and the
+  lease released only after the job's accounting shows it empty;
+- Codex admitted with `--now` holding the lease for its run, refused when a
+  place waits, when a place is published during its step, for a leftover
+  note and for the floor;
 - the GPU unreadable, RAM unreadable, and two adapters;
 - each spelling of a root refused on both hosts, the watch's three results
   on an answered, a failed and a stopped turn, a root replaced during a
-  turn, the turn refused before any stage is saved, the first clean retry
-  passing, a leftover hold stopping the run for the owner, and a server
-  launch failed by a change.
+  turn, a gate test writing there and exiting before `serve_check`, the
+  turn refused before any stage is saved, the first clean retry passing, a
+  leftover hold stopping the run for the owner, and a server measurement
+  failed by a change.
 
 The full gate passes once after the reviewer allows the merge.
 
@@ -350,9 +387,9 @@ this PC, with the run's actual debug product started on a desktop of its own:
    least 100 of them different.
 2. Muting as the measurement will mute (below), with playback started after
    launch the way the measurement script starts it: a loopback capture of
-   the default speaker hears nothing from the program from its first sample
-   on, while a process loopback capture of the program's processes hears
-   its sound.
+   every active output device hears nothing from the program from its first
+   sample on, while a process loopback capture of the program's processes
+   hears its sound.
 3. Stopping both captures leaves the program and its measurement running.
 
 If any of the three fails, 15b stops there and goes to the owner.
@@ -365,19 +402,37 @@ whole, in `auto` mode, as the automatic measurement does, so its `person`
 metrics stay unmeasured and no metric is selected or skipped. The script's
 outside calls happen as in any automatic measurement.
 
+Where it is accepted: a build turn whose effective stage is `build`, or a
+repair turn sent from `measure`, in a run whose `HEAD` holds the measurement
+plan (`oneshot_measure.planned`). Elsewhere the block is refused with that
+reason in the next note.
+
 The server answers with a trial measurement:
 
-- It measures the worktree's `HEAD`. An uncommitted tree refuses the
-  request, naming the files; the build commits what it wants measured,
-  diagnostic logging included.
-- It builds that `HEAD` with the contract's build for the program (the
-  `app.run` build the measurement already requires) before freezing it, so
-  output left from an earlier commit is never measured under a new one. The
-  frozen copy goes to its own folder, `measure-app\trial\app`, and never
+- At acceptance it records the commit to measure: the worktree's `HEAD`. An
+  uncommitted tree refuses the request, naming the files; the build commits
+  what it wants measured, diagnostic logging included.
+- The trial worker takes the worktree hold, as the run's measurement worker
+  does (`oneshot_review`), and checks that `HEAD` is still the recorded
+  commit and the tree is clean. If not, the trial ends `superseded` and the
+  next build turn is told; nothing is built from another commit.
+- A plan with `app` (a PC program): under the hold the worker runs the run's
+  own gate command (`gate_cmd`), which is what builds the program today
+  (`oneshot_desktop.built` reads its output), checks the output with
+  `built`, and freezes it to the trial's own folder, `measure-app\trial\app`.
+  It then releases the hold and measures from that copy. A failing gate ends
+  the trial with the gate's tail and measures nothing. The copy never
   replaces `measure-app\app`, which the owner's round may be waiting to run.
+- A plan with `serve` (a backend started from the worktree): the worker
+  keeps the hold for the whole trial and starts `serve` from the checked
+  commit, as the measurement does.
+- The trial's program keeps its data in `measure-app\trial\data`, its own,
+  kept from one trial to the next as `measure-app\data` is kept between
+  measurements. It starts empty and inherits nothing, so its first trial
+  downloads the runtime once. Nothing a trial writes reaches `data`.
 - It takes a GPU place and the lease as any measurement does.
-- No build gate runs first. A trial is the build's diagnosis and never
-  passes or fails the run.
+- No other build check runs first. A trial is the build's diagnosis and
+  never passes or fails the run.
 
 Its state is its own: the run's `trials` list holds each trial's number,
 `HEAD`, build identity, start, end, result and kept logs, apart from
@@ -405,10 +460,15 @@ measurement.
 In a build session, on Claude and on Codex, a shell call is refused when its
 text sets `ONESHOT_MEASURE` (a `VAR=` prefix, `set`, `export`, or a
 PowerShell `$env:` assignment, in any case), or when it runs the contract's
-measurement command: the command's program words matched with its one
-`{out}` taken as any single argument, so the call the server itself makes,
-with a real folder in its place, matches. Reading the contract or the
-script passes, and so does a test that sets the variable in its own code.
+measurement command. The match splits both commands into shell words as
+`guard` does. The first word is compared after resolving it to a program
+path, as the server resolves it (`oneshot_build.target`), case-insensitively.
+Every other word matches literally, except the one word holding `{out}`: it
+matches any word with the same text before and after the placeholder and
+something non-empty in its place, so `--out={out}` matches `--out=C:\x` and
+nothing else. So the call the server itself makes, with a real folder in
+place of `{out}`, matches. Reading the contract or the script passes, and so
+does a test that sets the variable in its own code.
 
 A command that reaches the script through another runner is not seen. The
 request above is the faster path and the one the prompt names; the refusal
@@ -419,10 +479,15 @@ use that exact call shape.
 
 - What is kept: the program's output, already captured and masked; and,
   under the measurement's data folder, files whose names end `.log`, `.txt`
-  or `.jsonl`. For a file that existed when the measurement started, only
-  the bytes written after its size at that start are kept, so an append
-  log brings no earlier run's lines. A file created during the measurement
-  is kept whole. Newest first, up to 5 MB in all, masked as the output is.
+  or `.jsonl`. At the start each such file's identity (volume serial and
+  file index) and size are recorded. At the end, a file with the same
+  identity and at least that size keeps only the bytes after it, so an
+  append log brings no earlier run's lines. One with the same identity but
+  smaller was truncated and rewritten, and is kept whole. One with a new
+  identity, or none at the start, was created or replaced during the
+  measurement, and is kept whole. A rotated-away file under another name is
+  kept only if its own name matches and its identity is new. Newest first,
+  up to 5 MB in all, masked as the output is.
 - Each path is checked as `oneshot_kept` checks evidence today: a reparse
   point or a file with more than one link is refused, and a name is checked
   before it is shown.
@@ -439,13 +504,16 @@ use that exact call shape.
   owner's round, every metric marked `person`, and every other look stay on
   the owner's desktop. #446's input questions and its repair at the
   measurement do not change.
-- Muting covers every audio session of the program's job, from before the
-  program runs to its end. The server registers for new sessions on the
-  default output device (`IAudioSessionManager2`, `IAudioSessionNotification`)
-  before it resumes the program, and mutes each session of a job member as
-  it is created, child processes included. A session it cannot mute, or a
-  mute it cannot read back as set, fails the launch with that reason; the
-  program does not go on playing.
+- Muting covers every audio session of the program's job on every output
+  device, from before the program runs to its end. Before it resumes the
+  program, the server registers for new sessions (`IAudioSessionManager2`,
+  `IAudioSessionNotification`) on every active render endpoint, and for
+  endpoints added or made default during the run (`IMMNotificationClient`),
+  registering on each as it appears. It mutes each session of a job member as
+  it is created, child processes included, and reads the mute back. A
+  session it cannot mute, a mute it cannot read back as set, or an endpoint
+  it cannot register on fails the launch with that reason; the program does
+  not go on playing.
 - What the viewer hears is a process loopback capture of the job's
   processes.
 - The running measurement or trial card gains [보기], served by the app's
@@ -472,17 +540,23 @@ appears (13f), `tool/prompts/oneshot-measure-contract.md`,
 
 Tests show:
 
-- a `measure-request` measured as a trial of a freshly built `HEAD` in its
-  own copy, refused on an uncommitted tree, its card before `built_head`,
-  its result back as the next build turn after an end, a wrong input, a
-  stop and a restart, and the run's measurement and the owner's copy
-  unchanged;
-- each spelling of the variable and the contract's command with a real
-  folder for `{out}` refused, and a read of the contract passing;
-- the logs cut at each file's starting size, refused for a reparse point or
-  a second link, masked, copied, named in the note and removed after;
+- a `measure-request` accepted only where stated, measured as a trial of
+  its recorded commit built by the gate into its own copy and data, ended
+  `superseded` when another commit took the tree, ended by a failing gate,
+  refused on an uncommitted tree, its card before `built_head`, its result
+  back as the next build turn after an end, a wrong input, a stop and a
+  restart, a `serve` plan holding the tree throughout, and the run's
+  measurement, `measure-app\app` and `measure-app\data` unchanged;
+- each spelling of the variable refused, the contract's command refused
+  with a standalone `{out}` and with an attached `--out={out}`, a different
+  option in that place passing, and a read of the contract passing;
+- the logs cut at each file's starting size, a truncated and a replaced
+  file kept whole, refused for a reparse point or a second link, masked,
+  copied, named in the note and removed after;
 - only the three launches on their own desktop; a session created after
-  launch and a child's session muted; a mute that fails ending the launch;
+  launch, a child's session and a session on a second output device muted;
+  an endpoint added during the run registered; a mute that fails ending the
+  launch;
 - [보기] refused through the tunnel and for a measurement not running,
   bound to its measurement, and closed on each of its three ends.
 
