@@ -86,9 +86,11 @@ every rule the write session reads, with each file's length. The spec records
 the model that wrote it as its `author`: the next-task conversation's model, a
 refactoring survey's model, or a oneshot's spec model. An implementer that meets
 a stop condition ends with an `escalation` block instead of redesigning, and
-the server asks the author in a read-only turn for `guidance`, a `spec-update`
-or a `split` into a prerequisite card. Two such answers per task, or no author
-on record, and the card waits for the person. The implementer's own
+the server asks the author in a read-only turn for `guidance` or a
+`spec-update`; work that has to land first becomes earlier done items of the
+same task in its own branch, never a separate prerequisite card. No count of
+such answers stops the task; only a spec with no author on record waits for
+the person. The implementer's own
 `spec-update` never moves the goal or these fields.
 
 PR publication, including planner handoff, stops before review. The person

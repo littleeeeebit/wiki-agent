@@ -22,16 +22,13 @@ whenever they change. Leave the repository gate out of `done`; the server keeps 
 {"rev": 1, "reason": "The queue must commit inside the existing transaction; the spec placed it outside", "goal": "...", "out": ["..."], "done": ["..."], "precedence": [{"ref": "docs/design/backend.md:180-329", "role": "current"}]}
 ```
 
-`split` — the conflict is a separate task that has to land first (for example, untangling a
-transaction boundary before the queue can go in). Give that task as a complete spec block, with the same
-fields a spec in the next-task conversation carries (`slug`, `goal`, `out`, `done`, `task`, `precedence`,
-`escalate`, `grounds`, `decisions`). The current task waits until the person has run it.
-
-```split
-{"reason": "why it must land first", "spec": {"slug": "...", "goal": "...", "out": [], "done": ["..."], "task": {"kind": "change", "what": "..."}, "precedence": [{"ref": "...", "role": "current"}]}}
-```
+There is no separate prerequisite task. When something has to land first (untangling a transaction
+boundary before the queue can go in, a backend change an `out` item forbids), it is part of this task in
+this branch: give a `spec-update` that lifts the `out` item in the way and puts that work among the
+`done` items, before the ones that depend on it. Never tell the implementer to stop and wait for
+another task or PR.
 
 Prefer `guidance` when the spec stands. Do not use `spec-update` to widen the task past what the person
-asked for. When the conflict needs a product decision only the person can make (dropping a feature,
+asked for; work that what the person asked for cannot land without is not widening. When the conflict needs a product decision only the person can make (dropping a feature,
 changing what the person asked for), answer with `guidance` that names the decision and tells the
 implementer to put it to the person as a `choices` question.
