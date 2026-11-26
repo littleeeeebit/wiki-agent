@@ -17,8 +17,8 @@ folder with a file open in it cannot be renamed or removed (discovery only gathe
   its pin holds, and a link met anywhere goes as a link. A cache whose name no longer holds the folder measured is
   left.
 - Every file is counted once by its identity, a file linked more than once too. Only counted files a removal itself
-  freed come off the count: each it removed, through that file's own handle, as its last link, in whichever cache
-  that was, kept as it goes. A cache moved or held meanwhile stays counted. What is left is an estimate; the next
+  freed come off the count: each it removed, through that file's own handle opened as the entry itself and refused
+  unless it is a plain file, as its last link, in whichever cache that was, kept as it goes. A cache moved or held meanwhile stays counted. What is left is an estimate; the next
   turn's end counts again.
 
 Elsewhere an open file pins nothing, and the oneshot builds on Windows, so nothing is trimmed there.
@@ -133,15 +133,36 @@ def unlinked(path) -> None:
 
 
 def removed(path) -> tuple | None:
-    """The file at `path` removed through its own handle, so the file removed is the one looked at, whatever its name
-    holds meanwhile: the system deletes the file the handle opened once it closes. Its `(st_dev, st_ino)` when that
-    was its last link, since another keeps its bytes on the disk."""
+    """The plain file at `path` removed through its own handle, so the file removed is the one looked at, whatever its
+    name holds meanwhile. The entry is opened as itself, never followed: a link or any other reparse point there is
+    refused before anything is marked for deletion, and only then is that same handle marked. Its `(st_dev, st_ino)`
+    when that was its last link, since another keeps its bytes on the disk."""
 
-    fd = os.open(path, os.O_RDONLY | os.O_TEMPORARY)
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                wintypes.DWORD, wintypes.HANDLE]
+    k32.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    delete, read_attributes, share_all, open_existing = 0x00010000, 0x80, 0x7, 3
+    as_itself, folders_too = 0x00200000, 0x02000000   # FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS
+    handle = k32.CreateFileW(str(path), delete | read_attributes, share_all, None, open_existing,
+                             as_itself | folders_too, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)   # closing it closes the handle
     try:
         st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise OSError(f"{path} is not a plain file")
+        mark = ctypes.c_ubyte(1)   # FILE_DISPOSITION_INFO: DeleteFile
+        if not k32.SetFileInformationByHandle(handle, 4, ctypes.byref(mark), 1):   # FileDispositionInfo
+            raise ctypes.WinError(ctypes.get_last_error())
     finally:
-        os.close(fd)
+        os.close(fd)   # the system deletes the file this handle opened
     return (st.st_dev, st.st_ino) if st.st_nlink == 1 else None
 
 

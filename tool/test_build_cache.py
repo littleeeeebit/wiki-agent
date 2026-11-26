@@ -232,6 +232,25 @@ def test_the_file_removed_is_the_one_looked_at_whatever_its_name_holds_meanwhile
     assert not aside.exists() and at.read_bytes() == b"y" * 100   # the one looked at went; its replacement stays
 
 
+@pytest.mark.parametrize("kind", ["junction", "symlink", "folder"])
+def test_a_file_removal_never_follows_nor_takes_what_is_not_a_plain_file(tmp_path, kind):
+    outside, at = tmp_path / "outside", tmp_path / "entry"
+    outside.mkdir()
+    (outside / "f").write_bytes(b"x")
+    if kind == "junction":
+        link(at, outside)
+    elif kind == "symlink":
+        try:
+            os.symlink(outside / "f", at)   # what a file's name could become before its removal opens it
+        except OSError as exc:
+            pytest.skip(f"symbolic links need a privilege here: {exc}")
+    else:
+        at.mkdir()
+    with pytest.raises(OSError):
+        build_cache.removed(at)
+    assert os.path.lexists(at) and (outside / "f").read_bytes() == b"x"   # refused before anything was marked
+
+
 def test_a_folder_that_fails_partway_keeps_what_already_went(tmp_path):
     tree = tmp_path / "tree"
     cache(tree, "a", 300)

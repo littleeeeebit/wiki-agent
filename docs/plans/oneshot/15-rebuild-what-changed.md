@@ -38,7 +38,9 @@ The `vtuber-ko-dub` run's work-turn log
   by its identity, a file linked more than once counted once. Only counted
   files a removal itself freed come off that count: each it removed, through
   that file's own handle so the file removed is the one looked at, as its last
-  link, in whichever cache that was. A cache that moved, would not go, or
+  link, in whichever cache that was. The handle opens the entry itself, never
+  what a link there points at, and anything but a plain file is refused before
+  it is marked for deletion. A cache that moved, would not go, or
   could not be read stays counted, and a removal that fails partway keeps what
   went and leaves the next its turn, so what is left is an estimate that the
   next turn's end counts again.
