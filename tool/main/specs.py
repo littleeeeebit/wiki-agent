@@ -65,7 +65,7 @@ STATE = re.compile(r"정리됨|작업 중|PR #\d+|리뷰 대기|리뷰 R\d+|고�
 
 # A named block at the end of an answer: a fenced block whose info string is
 # its name. A block cut off before its closing fence is not one.
-BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report|test-cleanup|pr-summary|escalation|guidance|split)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
+BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report|test-cleanup|pr-summary|escalation|guidance)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 
 REPORT_AGAIN = ("The specification is now revision {rev}, and your last answer had no `done-report`. "
                 "Do not claim completion while an independent prerequisite review or another dependency is pending. "
