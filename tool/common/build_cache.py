@@ -16,9 +16,9 @@ folder with a file open in it cannot be renamed or removed (discovery only gathe
   deleted by the system when its handle closes, so no pin is ever removed by name. The folder is checked again once
   its pin holds, and a link met anywhere goes as a link. A cache whose name no longer holds the folder measured is
   left.
-- Only bytes a removal itself freed are taken off the count: each file it removed as that file's last link, never
-  more than that cache was counted at. A cache moved or held meanwhile stays counted. What is left is an estimate;
-  the next turn's end counts again.
+- Every file is counted once by its identity, a file linked more than once too. Only counted files a removal itself
+  freed come off the count: each it removed as that file's last link, in whichever cache that was. A cache moved or
+  held meanwhile stays counted. What is left is an estimate; the next turn's end counts again.
 
 Elsewhere an open file pins nothing, and the oneshot builds on Windows, so nothing is trimmed there.
 """
@@ -131,25 +131,25 @@ def unlinked(path) -> None:
         os.rmdir(path)   # a junction, or a link to a folder
 
 
-def wiped(path: Path, ident: os.stat_result | None = None) -> int:
+def wiped(path: Path, ident: os.stat_result | None = None) -> set:
     """`path`, inside a pinned real folder, removed folder by folder, each under its own pin; what will not go (a file
     something holds, a folder whose pin name is taken) stays. Only the real folder `ident` names, when given: a link in
-    its place goes as a link, and another folder there is left. The bytes it really freed: those of each file it
-    removed as that file's last link."""
+    its place goes as a link, and another folder there is left. Which files it really freed, by `(st_dev, st_ino)`:
+    each it removed as that file's last link, since another link keeps its bytes on the disk."""
 
     if linked(path):
         unlinked(path)
-        return 0
+        return set()
     try:
         fd = pin(path)   # from here `path` stays the folder it is now
     except OSError:
-        return 0
-    freed = 0
+        return set()
+    freed = set()
     try:
         if linked(path):   # replaced just before the pin: only the pin went through, and goes with its handle
-            return 0
+            return freed
         if ident is not None and not os.path.samestat(os.stat(path), ident):   # another folder took its name
-            return 0
+            return freed
         for e in os.scandir(path):
             if e.name == PIN:
                 continue
@@ -157,11 +157,12 @@ def wiped(path: Path, ident: os.stat_result | None = None) -> int:
                 if linked(e.path):
                     unlinked(e.path)
                 elif e.is_dir(follow_symlinks=False):
-                    freed += wiped(Path(e.path), None)
+                    freed |= wiped(Path(e.path), None)
                 else:
                     st = os.lstat(e.path)
                     os.unlink(e.path)
-                    freed += st.st_size if st.st_nlink == 1 else 0   # another link keeps its bytes on the disk
+                    if st.st_nlink == 1:
+                        freed.add((st.st_dev, st.st_ino))
             except OSError:
                 pass
     finally:
@@ -173,15 +174,17 @@ def wiped(path: Path, ident: os.stat_result | None = None) -> int:
     return freed
 
 
-def measured(path, seen: set | None = None) -> tuple[int, float, os.stat_result | None]:
+def measured(path, seen: dict | None = None, mine: dict | None = None) -> tuple[int, float, os.stat_result | None]:
     """The bytes under the real folder `path`, when its newest file was written, and which folder it is; nothing once
     it is gone. Each folder is read under its own pin, held while its children are, so every folder read is the one
     checked; a link at `path` is refused, and none inside is followed. Files' times only: a pin changes its folder's
     own time, never a file's, and rustc writes files each time it compiles that crate. Only for a build folder this
-    trim holds the lock of: a pin in a running build's session folder would block rustc. A file linked more than once
-    (rustc links a session's files into the next) counts once across everything measured with the same `seen`."""
+    trim holds the lock of: a pin in a running build's session folder would block rustc. Each file it counts goes into
+    `mine` by `(st_dev, st_ino)` with its size, and one already in `seen` or `mine` is not counted again: rustc links
+    a session's files into the next."""
 
-    seen = set() if seen is None else seen
+    seen = {} if seen is None else seen
+    mine = {} if mine is None else mine
     try:
         fd = pin(path)
     except FileNotFoundError:
@@ -194,16 +197,14 @@ def measured(path, seen: set | None = None) -> tuple[int, float, os.stat_result 
             if e.name == PIN:
                 continue
             if e.is_dir(follow_symlinks=False) and not is_junction(e.path):
-                more, when, _ = measured(e.path, seen)
+                more, when, _ = measured(e.path, seen, mine)
                 total, newest = total + more, max(newest, when)
             elif e.is_file(follow_symlinks=False):
                 st = os.lstat(e.path)
-                newest = max(newest, st.st_mtime)
-                if st.st_nlink > 1:
-                    if (st.st_dev, st.st_ino) in seen:
-                        continue
-                    seen.add((st.st_dev, st.st_ino))
-                total += st.st_size
+                newest, file = max(newest, st.st_mtime), (st.st_dev, st.st_ino)
+                if file not in seen and file not in mine:
+                    mine[file] = st.st_size
+                    total += st.st_size
         return total, newest, os.stat(path)
     finally:
         os.close(fd)
@@ -224,11 +225,12 @@ def pruned(tree: Path, cap: int = CAP) -> int:
     return freed
 
 
-def counted(incs: list[Path]) -> tuple[list, bool]:
-    """Every cache in the pinned `incremental` folders, `(newest file, bytes, path, which folder)`, each linked file
-    counted once, and whether one could not be read."""
+def counted(incs: list[Path]) -> tuple[list, dict, bool]:
+    """Every cache in the pinned `incremental` folders, `(newest file, bytes, path, which folder)`; every file counted,
+    by `(st_dev, st_ino)`, with its size, each once; and whether one could not be read. A cache that cannot be read
+    whole adds none of its files."""
 
-    found, short, seen = [], False, set()
+    found, files, short = [], {}, False
     for inc in incs:
         try:
             entries = folders(inc)
@@ -237,14 +239,17 @@ def counted(incs: list[Path]) -> tuple[list, bool]:
             short = True
             continue
         for e in entries:
+            mine = {}
             try:
-                bytes_, when, ident = measured(e.path, seen)
-                if ident is not None:
-                    found.append((when, bytes_, Path(e.path), ident))
+                bytes_, when, ident = measured(e.path, files, mine)
             except OSError as exc:
                 errorlog.record("build-cache", exc, path=e.path)
                 short = True
-    return found, short
+                continue
+            if ident is not None:
+                found.append((when, bytes_, Path(e.path), ident))
+                files.update(mine)
+    return found, files, short
 
 
 def trimmed(tree: Path, cap: int) -> int:
@@ -268,15 +273,19 @@ def trimmed(tree: Path, cap: int) -> int:
             except OSError as exc:
                 errorlog.record("build-cache", exc, path=str(build))
                 partial = True
-        # One count, then the oldest go until what is left of it fits. Only what a removal itself freed is taken off,
-        # never more than that cache was counted at: a cache that will not go, or moved away meanwhile, stays counted.
-        # What is left is an estimate of the count, and the next turn's end counts again.
-        sized, short = counted(incs)   # what cannot be read is in no count: never credited, never removed
+        # One count, then the oldest go until what is left of it fits. Only counted files a removal itself freed come
+        # off, wherever their last link was: a cache that will not go, or moved away meanwhile, stays counted. What is
+        # left is an estimate of the count, and the next turn's end counts again.
+        sized, files, short = counted(incs)   # what cannot be read is in no count: never credited, never removed
         total, freed = sum(c[1] for c in sized), 0
-        for _, bytes_, cache, ident in sorted(sized, key=lambda c: c[0]):   # oldest first
+        for _, _, cache, ident in sorted(sized, key=lambda c: c[0]):   # oldest first
             if total <= cap:
                 break
-            gone = min(wiped(cache, ident), bytes_)
+            try:
+                gone = sum(files.pop(f) for f in wiped(cache, ident) if f in files)
+            except OSError as exc:   # this one could not be read to remove: the next still gets its turn
+                errorlog.record("build-cache", exc, path=str(cache))
+                continue
             total, freed = total - gone, freed + gone
         partial = partial or short
         for exc in unread:   # a folder discovery could not read: the count may be short of the disk

@@ -34,12 +34,13 @@ The `vtuber-ko-dub` run's work-turn log
   the path down to the build folder before that path is checked against the
   root the trim began on. Each folder below is read and removed under its own
   pin, a file the trim creates and the system deletes when its handle closes,
-  held while its children are read. The caches are counted once, a file
-  linked more than once counted once. Only bytes a removal itself freed come
-  off that count: each file it removed as that file's last link, never more
-  than that cache was counted at. A cache that moved, would not go, or could
-  not be read stays counted, so what is left is an estimate that the next
-  turn's end counts again.
+  held while its children are read. The caches are counted once, every file
+  by its identity, a file linked more than once counted once. Only counted
+  files a removal itself freed come off that count: each it removed as that
+  file's last link, in whichever cache that was. A cache that moved, would not
+  go, or could not be read stays counted, and a removal that fails leaves the
+  next its turn, so what is left is an estimate that the next turn's end
+  counts again.
   Discovery is a provisional scan for names: it pins nothing, since a pin
   changes its folder's time and a build script may watch a source folder's
   time, so it may list a folder a junction swapped in meanwhile. Every name it

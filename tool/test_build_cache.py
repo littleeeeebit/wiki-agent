@@ -103,7 +103,7 @@ def test_a_build_cargo_holds_is_left_whole_and_unread_and_a_cache_that_will_not_
     real = build_cache.wiped
     try:
         build_cache.lock(fd, True)
-        with patch.object(build_cache, "wiped", lambda c, i: 0 if c.name == "stuck" else real(c, i)):   # held open
+        with patch.object(build_cache, "wiped", lambda c, i: set() if c.name == "stuck" else real(c, i)):   # held open
             assert build_cache.pruned(tree, cap=200) == 100   # only what really went; the busy build not read
         assert caches(tree) == ["new", "running", "stuck"]   # the held build untouched, the next one taken instead
     finally:
@@ -138,8 +138,8 @@ def test_a_cache_unreadable_is_left_and_the_rest_still_trimmed(tmp_path):
     for name, age in (("a", 300), ("b", 200), ("c", 100)):
         cache(tree, name, age)
     real = build_cache.measured
-    with patch.object(build_cache, "measured", lambda p, seen=None: (_ for _ in ()).throw(PermissionError("denied"))
-                      if Path(p).name == "a" else real(p, seen)):
+    with patch.object(build_cache, "measured", lambda p, *a: (_ for _ in ()).throw(PermissionError("denied"))
+                      if Path(p).name == "a" else real(p, *a)):
         assert build_cache.pruned(tree, cap=100) == 100   # `a` in no count; of the rest, the oldest went
     assert caches(tree) == ["a", "c"]
 
@@ -169,6 +169,52 @@ def test_a_file_linked_into_the_next_session_is_counted_and_freed_once(tmp_path)
     os.link(s1 / "f", s1.parent / "s-2" / "f")   # as rustc carries a session's files into the next
     assert build_cache.pruned(tree, cap=100) == 100   # `old` is 100 bytes on the disk, not 200: `new` stays
     assert caches(tree) == ["new"]
+
+
+def test_a_file_linked_from_two_caches_is_freed_where_its_last_link_goes(tmp_path):
+    tree = tmp_path / "tree"
+    cache(tree, "a", 300)
+    cache(tree, "b", 200)
+    cache(tree, "c", 100)
+    inc = tree / "target/debug/incremental"
+    os.unlink(inc / "b/s-1/f")
+    os.link(inc / "a/s-1/f", inc / "b/s-1/f")   # one 100-byte file in both: counted with `a`
+    assert build_cache.pruned(tree, cap=100) == 100   # freed when `b` went, though counted with `a`: `c` stays
+    assert caches(tree) == ["c"]
+
+
+def test_a_cache_that_cannot_be_read_whole_hides_none_of_anothers_files(tmp_path):
+    tree = tmp_path / "tree"
+    cache(tree, "a", 300)
+    cache(tree, "b", 200)
+    inc, real = tree / "target/debug/incremental", build_cache.measured
+    os.unlink(inc / "b/s-1/f")
+    os.link(inc / "a/s-1/f", inc / "b/s-1/f")   # the same file in both
+    (inc / "a/s-2").mkdir()
+
+    def measured(p, *a):   # `a` counts the shared file, then cannot read its second session
+        if Path(p).name == "s-2":
+            raise PermissionError("denied")
+        return real(p, *a)
+    with patch.object(build_cache, "measured", measured):
+        # `b` still counts it, so it goes; its last link stays in `a`, so nothing on the disk was freed
+        assert build_cache.pruned(tree, cap=0) == 0
+    assert caches(tree) == ["a"]
+
+
+def test_a_removal_that_fails_leaves_the_next_its_turn_and_keeps_what_went(tmp_path):
+    tree = tmp_path / "tree"
+    for name, age in (("a", 300), ("b", 200), ("c", 100)):
+        cache(tree, name, age)
+    real = build_cache.wiped
+
+    def wiped(c, i):
+        if c.name == "b":
+            raise PermissionError("denied")
+        return real(c, i)
+    with patch.object(build_cache, "wiped", wiped):
+        assert build_cache.pruned(tree, cap=0) == 200   # `a` and `c` went and count; `b` could not be read to remove
+    assert caches(tree) == ["b"]
 
 
 def test_a_folder_measured_is_the_one_its_children_are_read_in(tmp_path):
