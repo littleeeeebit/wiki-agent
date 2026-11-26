@@ -284,6 +284,26 @@ def test_a_file_another_handle_still_holds_is_never_counted_as_freed(tmp_path):
     assert not at.exists()   # gone once the last handle closed
 
 
+def test_a_file_whose_going_cannot_be_checked_stays(tmp_path):
+    at = tmp_path / "f"
+    at.write_bytes(b"x" * 100)
+    with patch.object(build_cache, "final", side_effect=OSError(5, "Access is denied")):
+        with pytest.raises(OSError):
+            build_cache.removed(at)
+    assert at.read_bytes() == b"x" * 100   # the mark taken back: it stays, and is not counted as freed
+    os.unlink(at)   # nothing left pending on it
+
+
+def test_only_a_name_known_to_be_missing_counts_as_gone(tmp_path):
+    at = tmp_path / "f"
+    assert build_cache.gone(str(at))
+    at.write_bytes(b"x")
+    assert not build_cache.gone(str(at))
+    at.unlink()
+    with patch("os.lstat", side_effect=PermissionError(13, "denied")):   # a share that went away, say
+        assert not build_cache.gone(str(at))
+
+
 def test_a_handle_no_descriptor_took_is_closed_at_once(tmp_path):
     at = tmp_path / "f"
     at.write_bytes(b"x")

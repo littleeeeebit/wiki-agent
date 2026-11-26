@@ -133,14 +133,8 @@ def unlinked(path) -> None:
         os.rmdir(path)   # a junction, or a link to a folder
 
 
-def removed(path) -> tuple | None:
-    """The plain file at `path` removed through its own handle, so the file removed is the one looked at, whatever its
-    name holds meanwhile. The entry is opened as itself, never followed: a link or any other reparse point there is
-    refused before anything is marked for deletion, and only then is that same handle marked. Its `(st_dev, st_ino)`
-    when that was its last link, since another keeps its bytes on the disk."""
-
+def kernel32():
     import ctypes
-    import msvcrt
     from ctypes import wintypes
 
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -148,6 +142,57 @@ def removed(path) -> tuple | None:
     k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
                                 wintypes.DWORD, wintypes.HANDLE]
     k32.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    k32.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    return k32
+
+
+def marked(k32, handle, delete: bool) -> None:
+    """`handle`'s file marked for deletion once no handle holds it, or the mark taken back. The legacy disposition: a
+    file marked this way keeps its name until it is really gone, and cannot be renamed meanwhile."""
+
+    import ctypes
+
+    mark = ctypes.c_ubyte(int(delete))   # FILE_DISPOSITION_INFO: DeleteFile
+    if not k32.SetFileInformationByHandle(handle, 4, ctypes.byref(mark), 1):   # FileDispositionInfo
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def final(k32, handle) -> str:
+    """Where `handle`'s file is now."""
+
+    import ctypes
+
+    name = ctypes.create_unicode_buffer(32768)
+    if not k32.GetFinalPathNameByHandleW(handle, name, len(name), 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return name.value
+
+
+def gone(path: str) -> bool:
+    """Whether nothing is at `path`, known for sure: a lookup that fails for any other reason is not an answer."""
+
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def removed(path) -> tuple | None:
+    """The plain file at `path` removed through its own handle, so the file removed is the one looked at, whatever its
+    name holds meanwhile. The entry is opened as itself, never followed: a link or any other reparse point there is
+    refused before anything is marked for deletion, and only then is that same handle marked. If where the file is
+    cannot then be read, the mark is taken back and the file stays. Its `(st_dev, st_ino)` only when that was its last
+    link and it is known to be gone; held by another handle, or not known, nothing is claimed."""
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    k32 = kernel32()
     delete, read_attributes, share_all, open_existing = 0x00010000, 0x80, 0x7, 3
     as_itself, folders_too = 0x00200000, 0x02000000   # FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS
     handle = k32.CreateFileW(str(path), delete | read_attributes, share_all, None, open_existing,
@@ -157,26 +202,23 @@ def removed(path) -> tuple | None:
     try:
         fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)   # from here closing it closes the handle
     except OSError:
-        k32.CloseHandle(wintypes.HANDLE(handle))   # no descriptor took it: never left open
+        k32.CloseHandle(handle)   # no descriptor took it: never left open
         raise
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
             raise OSError(f"{path} is not a plain file")
-        mark = ctypes.c_ubyte(1)   # FILE_DISPOSITION_INFO: DeleteFile
-        if not k32.SetFileInformationByHandle(handle, 4, ctypes.byref(mark), 1):   # FileDispositionInfo
-            raise ctypes.WinError(ctypes.get_last_error())
-        name = ctypes.create_unicode_buffer(32768)   # where the file is now: pending deletion, it cannot move
-        k32.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
-        if not k32.GetFinalPathNameByHandleW(handle, name, len(name), 0):
-            raise ctypes.WinError(ctypes.get_last_error())
+        marked(k32, handle, True)
+        try:
+            where = final(k32, handle)   # marked, it cannot move from here
+        except OSError:
+            marked(k32, handle, False)   # its going could not be checked: it stays
+            raise
     finally:
         os.close(fd)   # the system deletes the file this handle opened, once no handle holds it
-    # Marked this way, a file keeps its name until it is really gone, and cannot be renamed meanwhile: that name gone
-    # now means its bytes are. Still there, another handle holds it (or a new file took the name): nothing freed yet.
-    if os.path.lexists(name.value):
-        return None
-    return (st.st_dev, st.st_ino) if st.st_nlink == 1 else None
+    # Its name gone now means its bytes are. Still there, another handle holds it (or a new file took the name), and a
+    # lookup that fails tells nothing: then nothing is claimed.
+    return (st.st_dev, st.st_ino) if st.st_nlink == 1 and gone(where) else None
 
 
 def wiped(path: Path, ident: os.stat_result | None = None, freed: set | None = None) -> set:
