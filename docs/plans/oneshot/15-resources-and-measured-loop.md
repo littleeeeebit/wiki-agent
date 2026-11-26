@@ -26,7 +26,7 @@ watches them only when they want to.
 | --- | --- |
 | Prompt or enforcement | Both. The prompt says it, and a check makes it so |
 | What an agent knows | The machine's CPU, RAM, GPU and disks, and at each run the load now: CPU, RAM, VRAM and what holds the GPU |
-| A heavy command that cannot run now | It waits in a queue rather than failing. Codex cannot start a call in the background, so there it runs at once or is refused; this part is for the owner to confirm with the plan |
+| A heavy command that cannot run now | It waits in a queue rather than failing, on every agent: Claude, DeepSeek (which runs on the Claude CLI) and Codex |
 | Orphans from queueing | Not left by the queue: Windows ends what a queue runner started when the runner ends, a place in the queue is held only by a live process, and a runner ends with the shell and the session that started it |
 | Waits | No wait or timeout is shortened anywhere ([moved commands](../../../operator/decide-moved-background-commands.md)) |
 | Who measures | Only the server, on the real program. The build asks the server for a measurement and never runs the measurement script itself |
@@ -144,7 +144,12 @@ idle server would never move, so this case never queues. On 2026-11-26 at
 10:03 it refuses `sim_why.py`, run by the product runtime's Python, while
 `vtuber-serve.exe` (pid 3032) is on the list.
 
-### The queue, on Claude
+### The queue, on Claude and DeepSeek
+
+DeepSeek runs on the Claude CLI against DeepSeek's endpoint
+(`agent/deepseek.py`), with the same tools and hooks, so everything in this
+section holds for it unchanged, and its tests run it once as a DeepSeek
+session.
 
 1. Every check judges the call as the agent wrote it: `deny`, `guard` and
    the rest run first, on the repaired command and its working directory,
@@ -169,20 +174,42 @@ idle server would never move, so this case never queues. On 2026-11-26 at
    by neither is not held, the same as today. The moved-command page gains
    this case.
 
-On Codex the shell tool has no background start, and a rewrite there comes
-only with `allow`, after which the approval policy still decides. So a
-Codex GPU job is wrapped in the runner with `--now`, and the runner decides
-in one step under the queue mutex (below). First, no live place may wait.
-Then it tries the lease without waiting. Only once it owns the lease does it
-read the holder note, and judges the whole note as any holder does (below):
-a note that names any process still alive or proven nothing, or a floor
-that does not hold, makes it release the lease again; a note whose every
-named process has exited it clears, as the lease's owner. Then it holds the lease for the command's whole
-run in the foreground. A place published after that step waits on the lease
-like any other. If any condition fails it runs nothing and exits, naming
-which: the head and how many places wait, the lease held, the leftover
-holder, or the memory short. A Codex GPU job never waits, so no Codex
-timeout counts a wait.
+### The queue, on Codex
+
+Codex queues as Claude does. Its shell tool in 0.166, `exec_command`, has no
+timeout that ends a command: it waits up to the call's `yield_time_ms`
+(10,000 ms by default), then returns a session id for a command still
+running, which keeps running as a background terminal while the agent goes
+on and reads it with `write_stdin` (the tool's own declaration, in the
+2026-11-26 rollouts). So no Codex timeout counts a wait either.
+
+1. The same checks judge the call first. A GPU job they let through is
+   wrapped, last, in `codex_pretool`, in the same `tool/gpu_run.py`. Codex
+   takes the rewrite only with `allow`, after which its approval policy
+   still decides, as for any call today. The context says it queued, that
+   the call returns a session id while it waits, and that its output names
+   its place.
+2. The runner waits for its place in the foreground of its own exec
+   session, and runs the job there once it is the head and holds the lease.
+   It watches the shell that session started and the Codex process, as on
+   Claude, so a `/stop` of the terminal or the end of the session ends it
+   the normal way.
+3. Codex has no hook that holds the agent's other tools while a call is
+   still running, as `background_left` does on Claude. ponytail: a Codex
+   agent can go on to other work while its GPU job waits; a second GPU job
+   it starts queues behind the first, and the own-holder refusal stops one
+   that would share the GPU with its own idle server. Holding Codex there
+   needs a Codex hook on `write_stdin` and on the turn's end.
+4. A Codex command that runs under the sandbox's separate account cannot
+   join the queue (below). Its runner, started under that account, runs
+   nothing and says so, and that it must run outside the sandbox
+   (`require_escalated`), which the approval policy then asks the owner
+   about. The app's own Codex cells run with full
+   access, so this touches the owner's sandboxed sessions only.
+5. Before 15a is built, a real Codex 0.166 transcript is checked for the
+   two facts the queue relies on: a command still running past its yield
+   comes back as a session id and is not ended, and it survives the end of
+   its turn. If either fails, 15a stops there and goes to the owner.
 
 ### The queue's order and the lease
 
@@ -424,11 +451,12 @@ Tests show:
 - on one worktree, an owner's turn after a build turn and a build turn
   after an owner's turn each starting the CLI again, marked only for the
   build;
-- Codex admitted with `--now` holding the lease for its run, refused when a
-  place waits, when a place is published during its step, for a leftover
-  note and for the floor, and two Codex runners racing while the first
-  drains, its note left in place, and refused for a note whose root has
-  exited while a child it names lives;
+- a Codex GPU job wrapped by `codex_pretool`, waiting for its place past
+  its yield as a running exec session, run once it is the head, ended by a
+  `/stop` of its terminal and by the session's end, and a sandboxed Codex
+  runner running nothing with its reason; a DeepSeek session's GPU job
+  queued as Claude's; a holder waiting on a note whose root has exited
+  while a child it names lives;
 - a proof failed on the job's count with every known member gone writing
   `inconclusive`, the queue stopping on it with its line, and running again
   once the owner deletes the note; a missed join with a named member still
@@ -720,5 +748,5 @@ The full gate passes once after the reviewer allows the merge.
 
 | # | Step | Status |
 | --- | --- | --- |
-| 15a | The machine line, the load line, the two GPU-job kinds, the session's own processes and the refusal behind them, the Claude queue and the Codex run-now-or-refuse, the lease and the queue's order shared with the server's launches, the runner, the owner's data folder refused and watched over every build turn and server launch, the prompt section | Not started |
+| 15a | The machine line, the load line, the two GPU-job kinds, the session's own processes and the refusal behind them, the queue on Claude, DeepSeek and Codex, the lease and the queue's order shared with the server's launches, the runner, the owner's data folder refused and watched over every build turn and server launch, the prompt section | Not started |
 | 15b | The check that gates it, `measure-request` and the trial measurement with its own state and card, the build's own measurement refused, the logs for the next note, three launches on their own desktop and muted, [보기], the pages rewritten | Not started |
