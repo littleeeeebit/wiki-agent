@@ -17,8 +17,9 @@ folder with a file open in it cannot be renamed or removed (discovery only gathe
   its pin holds, and a link met anywhere goes as a link. A cache whose name no longer holds the folder measured is
   left.
 - Every file is counted once by its identity, a file linked more than once too. Only counted files a removal itself
-  freed come off the count: each it removed as that file's last link, in whichever cache that was. A cache moved or
-  held meanwhile stays counted. What is left is an estimate; the next turn's end counts again.
+  freed come off the count: each it removed, through that file's own handle, as its last link, in whichever cache
+  that was, kept as it goes. A cache moved or held meanwhile stays counted. What is left is an estimate; the next
+  turn's end counts again.
 
 Elsewhere an open file pins nothing, and the oneshot builds on Windows, so nothing is trimmed there.
 """
@@ -131,20 +132,33 @@ def unlinked(path) -> None:
         os.rmdir(path)   # a junction, or a link to a folder
 
 
-def wiped(path: Path, ident: os.stat_result | None = None) -> set:
+def removed(path) -> tuple | None:
+    """The file at `path` removed through its own handle, so the file removed is the one looked at, whatever its name
+    holds meanwhile: the system deletes the file the handle opened once it closes. Its `(st_dev, st_ino)` when that
+    was its last link, since another keeps its bytes on the disk."""
+
+    fd = os.open(path, os.O_RDONLY | os.O_TEMPORARY)
+    try:
+        st = os.fstat(fd)
+    finally:
+        os.close(fd)
+    return (st.st_dev, st.st_ino) if st.st_nlink == 1 else None
+
+
+def wiped(path: Path, ident: os.stat_result | None = None, freed: set | None = None) -> set:
     """`path`, inside a pinned real folder, removed folder by folder, each under its own pin; what will not go (a file
     something holds, a folder whose pin name is taken) stays. Only the real folder `ident` names, when given: a link in
-    its place goes as a link, and another folder there is left. Which files it really freed, by `(st_dev, st_ino)`:
-    each it removed as that file's last link, since another link keeps its bytes on the disk."""
+    its place goes as a link, and another folder there is left. Each file it really freed goes into `freed` as it
+    goes, so what went is kept even if a folder fails partway; `freed` is returned."""
 
+    freed = set() if freed is None else freed
     if linked(path):
         unlinked(path)
-        return set()
+        return freed
     try:
         fd = pin(path)   # from here `path` stays the folder it is now
     except OSError:
-        return set()
-    freed = set()
+        return freed
     try:
         if linked(path):   # replaced just before the pin: only the pin went through, and goes with its handle
             return freed
@@ -157,12 +171,9 @@ def wiped(path: Path, ident: os.stat_result | None = None) -> set:
                 if linked(e.path):
                     unlinked(e.path)
                 elif e.is_dir(follow_symlinks=False):
-                    freed |= wiped(Path(e.path), None)
-                else:
-                    st = os.lstat(e.path)
-                    os.unlink(e.path)
-                    if st.st_nlink == 1:
-                        freed.add((st.st_dev, st.st_ino))
+                    wiped(Path(e.path), None, freed)
+                elif (file := removed(e.path)) is not None:
+                    freed.add(file)
             except OSError:
                 pass
     finally:
@@ -281,11 +292,12 @@ def trimmed(tree: Path, cap: int) -> int:
         for _, _, cache, ident in sorted(sized, key=lambda c: c[0]):   # oldest first
             if total <= cap:
                 break
+            went = set()
             try:
-                gone = sum(files.pop(f) for f in wiped(cache, ident) if f in files)
-            except OSError as exc:   # this one could not be read to remove: the next still gets its turn
+                wiped(cache, ident, went)
+            except OSError as exc:   # it failed partway: what went still counts, and the next gets its turn
                 errorlog.record("build-cache", exc, path=str(cache))
-                continue
+            gone = sum(files.pop(f) for f in went if f in files)
             total, freed = total - gone, freed + gone
         partial = partial or short
         for exc in unread:   # a folder discovery could not read: the count may be short of the disk

@@ -103,7 +103,7 @@ def test_a_build_cargo_holds_is_left_whole_and_unread_and_a_cache_that_will_not_
     real = build_cache.wiped
     try:
         build_cache.lock(fd, True)
-        with patch.object(build_cache, "wiped", lambda c, i: set() if c.name == "stuck" else real(c, i)):   # held open
+        with patch.object(build_cache, "wiped", lambda c, i, *f: set() if c.name == "stuck" else real(c, i, *f)):   # held open
             assert build_cache.pruned(tree, cap=200) == 100   # only what really went; the busy build not read
         assert caches(tree) == ["new", "running", "stuck"]   # the held build untouched, the next one taken instead
     finally:
@@ -122,11 +122,11 @@ def test_a_cache_moved_away_for_another_entry_is_never_counted_as_freed(tmp_path
     (outside / "f").write_bytes(b"x" * 10)
     inc, real = tree / "target/debug/incremental", build_cache.wiped
 
-    def swapped(c, ident):   # after it was measured: moved to another name in the same folder, something in its place
+    def swapped(c, ident, *f):   # after it was measured: moved to another name in the same folder, something in its place
         if c.name == "old":
             os.rename(c, inc / "kept")
             link(c, outside) if junction else c.mkdir()
-        return real(c, ident)
+        return real(c, ident, *f)
     with patch.object(build_cache, "wiped", swapped):
         assert build_cache.pruned(tree, cap=100) == 100   # what was in its name freed nothing; `new` went instead
     # a junction goes as itself, never its target; another folder in its name is not the one counted, and stays
@@ -150,11 +150,11 @@ def test_a_session_moved_out_of_a_cache_is_never_counted_as_freed(tmp_path):
     cache(tree, "new", 100)
     inc, real = tree / "target/debug/incremental", build_cache.wiped
 
-    def moved(c, ident):   # after it was measured: its session moved to a cache of another name, the folder kept
+    def moved(c, ident, *f):   # after it was measured: its session moved to a cache of another name, the folder kept
         if c.name == "old":
             (inc / "elsewhere").mkdir()
             os.rename(c / "s-1", inc / "elsewhere" / "s-1")
-        return real(c, ident)
+        return real(c, ident, *f)
     with patch.object(build_cache, "wiped", moved):
         assert build_cache.pruned(tree, cap=100) == 100   # the emptied folder freed nothing, so `new` went too
     assert caches(tree) == ["elsewhere"]
@@ -208,13 +208,57 @@ def test_a_removal_that_fails_leaves_the_next_its_turn_and_keeps_what_went(tmp_p
         cache(tree, name, age)
     real = build_cache.wiped
 
-    def wiped(c, i):
+    def wiped(c, i, *f):
         if c.name == "b":
             raise PermissionError("denied")
-        return real(c, i)
+        return real(c, i, *f)
     with patch.object(build_cache, "wiped", wiped):
         assert build_cache.pruned(tree, cap=0) == 200   # `a` and `c` went and count; `b` could not be read to remove
     assert caches(tree) == ["b"]
+
+
+def test_the_file_removed_is_the_one_looked_at_whatever_its_name_holds_meanwhile(tmp_path):
+    at, aside = tmp_path / "f", tmp_path / "aside"
+    at.write_bytes(b"x" * 100)
+    first, real = os.lstat(at), os.fstat
+
+    def fstat(fd):   # while its handle is open: the file moved away, another put in its name
+        st = real(fd)
+        os.rename(at, aside)
+        at.write_bytes(b"y" * 100)
+        return st
+    with patch("os.fstat", fstat):
+        assert build_cache.removed(at) == (first.st_dev, first.st_ino)
+    assert not aside.exists() and at.read_bytes() == b"y" * 100   # the one looked at went; its replacement stays
+
+
+def test_a_folder_that_fails_partway_keeps_what_already_went(tmp_path):
+    tree = tmp_path / "tree"
+    cache(tree, "a", 300)
+    cache(tree, "b", 100)
+    a = tree / "target/debug/incremental/a"
+    (a / "s-2").mkdir()
+    (a / "s-2" / "g").write_bytes(b"x" * 100)
+    os.utime(a / "s-2" / "g", (time.time() - 300, time.time() - 300))
+    real_scandir, real_counted, wiping = os.scandir, build_cache.counted, []
+
+    def counted(incs):
+        out = real_counted(incs)
+        wiping.append(True)
+        return out
+
+    def scandir(path):   # removing `a`: its first session goes, then its listing fails
+        entries = list(real_scandir(path))
+        if not (wiping and Path(path) == a):
+            return iter(entries)
+
+        def partway():
+            yield next(e for e in entries if e.name == "s-1")
+            raise PermissionError("denied")
+        return partway()
+    with patch("os.scandir", scandir), patch.object(build_cache, "counted", counted):
+        assert build_cache.pruned(tree, cap=200) == 100   # the session that went counts: 200 left, so `b` stays
+    assert caches(tree) == ["a", "b"] and not (a / "s-1").exists()
 
 
 def test_a_folder_measured_is_the_one_its_children_are_read_in(tmp_path):

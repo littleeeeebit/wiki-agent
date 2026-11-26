@@ -36,11 +36,12 @@ The `vtuber-ko-dub` run's work-turn log
   pin, a file the trim creates and the system deletes when its handle closes,
   held while its children are read. The caches are counted once, every file
   by its identity, a file linked more than once counted once. Only counted
-  files a removal itself freed come off that count: each it removed as that
-  file's last link, in whichever cache that was. A cache that moved, would not
-  go, or could not be read stays counted, and a removal that fails leaves the
-  next its turn, so what is left is an estimate that the next turn's end
-  counts again.
+  files a removal itself freed come off that count: each it removed, through
+  that file's own handle so the file removed is the one looked at, as its last
+  link, in whichever cache that was. A cache that moved, would not go, or
+  could not be read stays counted, and a removal that fails partway keeps what
+  went and leaves the next its turn, so what is left is an estimate that the
+  next turn's end counts again.
   Discovery is a provisional scan for names: it pins nothing, since a pin
   changes its folder's time and a build script may watch a source folder's
   time, so it may list a folder a junction swapped in meanwhile. Every name it
