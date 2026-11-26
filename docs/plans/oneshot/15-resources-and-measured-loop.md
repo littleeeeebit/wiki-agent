@@ -199,15 +199,28 @@ on and reads it with `write_stdin` (the tool's own declaration, in the
    its own place, `Local\wiki-agent-gpu-stop-<counter>`, and ends its
    command the normal way when it is set, waiting or running (the runner
    section says when a stop is seen). The stop is one exact command, which
-   the runner's output and the context print in full: the hub's own Python
-   and the hub's absolute `tool\gpu_run.py`, then `--stop <counter>`, so it
-   works from any worktree. The classifier never counts that exact command
-   as a GPU job, so it is never queued or refused behind the job it stops.
-   It refuses a place whose `.who` file (below) names another session than
-   the caller's. It waits until the place is gone and says whether the
-   command had started. On Claude the stop is `TaskStop`, which
-   `background_left` already lets through while it holds a wrapped call;
-   `--stop` is for Codex, which has no such hold.
+   the runner prints in full as its first output line, once it has its
+   place: the hub's own Python and the hub's absolute `tool\gpu_run.py`,
+   then `--stop <counter>`, so it works from any worktree. The hook's
+   context, written before the place exists, says only that this line is
+   where the stop command is. The classifier never counts that exact
+   command as a GPU job, so it is never queued or refused behind the job it
+   stops. It refuses a place whose `.who` file (below) names another
+   session than the caller's. After it sets the event it waits until the
+   place is no longer live, by the queue's own rule (the place file opens,
+   so no process holds it), and removes a dead place itself under the queue
+   mutex, so it returns even if the runner died after the signal and no one
+   else joins the queue. It says only that the place is gone; whether the
+   command had started is the runner's own last output line (`stopped
+   before start` or `stopped after start`), and a runner that died writes
+   none, which the stop's answer then says.
+   A job the agent started outside the sandbox (`require_escalated`) has
+   its runner under the owner's account, and is stopped by a call with the
+   same `require_escalated`, which the runner's line says; a stop run under
+   the sandbox account cannot open the place and says so.
+   On Claude the stop is `TaskStop`, which `background_left` already lets
+   through while it holds a wrapped call; `--stop` is for Codex, which has
+   no such hold.
 4. Codex has no hook that holds the agent's other tools while a call is
    still running, as `background_left` does on Claude. ponytail: a Codex
    agent can go on to other work while its GPU job waits; a second GPU job
@@ -362,8 +375,8 @@ One protocol serves the runners and the server alike, in
   at once, and the runner ends the job then; between that check and the end
   of the job the command can run for as long as Windows takes to report the
   exit. So a stop set while the runner waits prevents the command's first
-  instruction, and `--stop` reports `started` only for one set after the
-  check. On a server launch, an accepted stop
+  instruction, and the runner writes `stopped after start` only for one set
+  after the check. On a server launch, an accepted stop
   and the resume are serialized by the existing launch gate
   (`desktop_session`), so an accepted stop either comes before the resume
   and nothing runs, or after it and ends the job.
@@ -521,8 +534,12 @@ Tests show:
   children ended), a stop set between admission and the resume check
   preventing the command's first instruction, `--stop` run from a product
   worktree and with a CUDA Python first on `PATH` neither queued nor
-  refused, `--stop` refused for another session's place, ended by the
-  session's end, and a sandboxed Codex runner
+  refused, `--stop` refused for another session's place, `--stop`
+  returning after the runner dies past the signal with no one else in the
+  queue, the runner's `stopped before start` and `stopped after start`
+  lines, a job started with `require_escalated` stopped by the same
+  session's escalated `--stop`, ended by the session's end, and a
+  sandboxed Codex runner
   running nothing with its reason, the escalation hint only where the
   policy can ask;
 - a successful Codex build report with a live GPU job that ends only when
