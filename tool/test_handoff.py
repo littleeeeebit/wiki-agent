@@ -360,6 +360,20 @@ def test_a_stop_while_the_author_answers_applies_nothing_and_sends_nothing(task)
     assert specs.load("proj", sid)["escalations"][-1]["answer"]["kind"] == "stopped"
 
 
+def test_a_repeated_guidance_is_a_new_answer_owed_to_the_loop(task):
+    """PR #453 round 1: uncapped, the author can give the same guidance twice on one revision. An owed record
+    equal to the last made the loop miss the second, ask for a report instead, and stop with it still owed."""
+    repo, sid = task
+    specs.update("proj", sid, state="고치는 중 R1")
+    owed = []
+    with patch.object(handoff, "ask", return_value=block("guidance", {"text": "Go on."})), \
+         patch("main.loop.asked"), patch.object(specs, "again"):
+        for _ in range(2):
+            assert specs._check(repo, Run(), block("escalation", ESCALATION))() is None
+            owed.append(specs.load("proj", sid)["handoff_owed"])
+    assert owed[0]["text"] == owed[1]["text"] and owed[0] != owed[1]
+
+
 def test_a_review_loop_takes_the_authors_revision_and_sends_its_turn_itself(task):
     """Held for the person, the author's revision never took effect while a review loop ran."""
     repo, sid = task
@@ -372,7 +386,8 @@ def test_a_review_loop_takes_the_authors_revision_and_sends_its_turn_itself(task
         assert specs._check(repo, Run(), block("escalation", ESCALATION))() is None
         spec = specs.load("proj", sid)
         assert (spec["rev"], spec["goal"], spec["state"]) == (2, "Another goal", "고치는 중 R1") and not asked.called
-        assert spec["handoff_owed"] == {"kind": "spec-update", "rev": 2, "report_at": None}   # `loop.handed` sends it
+        assert spec["handoff_owed"] == {"kind": "spec-update", "rev": 2, "report_at": None,   # `loop.handed` sends it
+                                        "at": spec["escalations"][-1]["ts"]}
         # The revision's own save carries its answer and the delivery it owes: none stands without the other.
         revised = [s for s in saves if s["rev"] == 2]
         assert revised and all(s.get("handoff_owed") and s.get("escalations") for s in revised)

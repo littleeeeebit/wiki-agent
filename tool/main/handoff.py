@@ -389,7 +389,9 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
         if name == "guidance":
             if not isinstance(value, dict) or not isinstance(value.get("text"), str) or not value["text"].strip():
                 raise ValueError("`guidance` 는 {\"text\": ...} 여야 한다")
-            owed = {"kind": name, "rev": spec["rev"], "text": value["text"]}
+            # `at`, the escalation's own moment: a reply that repeats the last one's text is still a new one
+            # to deliver (the loop tells owed answers apart by equality, `loop.handed`).
+            owed = {"kind": name, "rev": spec["rev"], "text": value["text"], "at": entry["ts"]}
             # One write: a loop's answer is never saved without the delivery it owes (`loop.handed`).
             spec = specs.update(spec["repo"], spec["id"], escalations=history, **(
                 {"handoff_owed": {**owed, "report_at": spec.get("report_at")}} if looping else {})) or spec
@@ -402,7 +404,7 @@ def applied(repo: Path, path: Path, run, spec: dict, past: list[dict], entry: di
                 current = specs.load(spec["repo"], spec["id"])
                 if run.halt.is_set():
                     return stopped(spec, run, [*past, {**entry, "answer": {"kind": "stopped", "value": value}}])
-                owed = {"kind": name, "rev": current["rev"] + 1}
+                owed = {"kind": name, "rev": current["rev"] + 1, "at": entry["ts"]}
                 # Saved by the revision itself: it never stands without its escalation or the delivery it owes.
                 current["escalations"] = history
                 if looping:

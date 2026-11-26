@@ -89,8 +89,10 @@ a stop condition ends with an `escalation` block instead of redesigning, and
 the server asks the author in a read-only turn for `guidance` or a
 `spec-update`; work that has to land first becomes earlier done items of the
 same task in its own branch, never a separate prerequisite card. No count of
-such answers stops the task; only a spec with no author on record waits for
-the person. The implementer's own
+such answers stops the task. The card waits for the person only when no author
+is on record, the author's round trip fails or its answer cannot be applied, a
+prerequisite review is running, or the answer would change a oneshot's
+approved design. The implementer's own
 `spec-update` never moves the goal or these fields.
 
 PR publication, including planner handoff, stops before review. The person
