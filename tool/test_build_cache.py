@@ -103,7 +103,7 @@ def test_a_build_cargo_holds_is_left_whole_and_unread_and_a_cache_that_will_not_
     real = build_cache.wiped
     try:
         build_cache.lock(fd, True)
-        with patch.object(build_cache, "wiped", lambda c, i: True if c.name == "stuck" else real(c, i)):   # held open
+        with patch.object(build_cache, "wiped", lambda c, i: None if c.name == "stuck" else real(c, i)):   # held open
             assert build_cache.pruned(tree, cap=200) == 100   # only what really went; the busy build not read
         assert caches(tree) == ["new", "running", "stuck"]   # the held build untouched, the next one taken instead
     finally:
@@ -123,14 +123,30 @@ def test_a_cache_moved_away_for_another_entry_is_never_counted_as_freed(tmp_path
     inc, real = tree / "target/debug/incremental", build_cache.wiped
 
     def swapped(c, ident):   # after it was measured: moved to another name in the same folder, something in its place
-        if c.name == "old":
+        if c.name == "old" and not (inc / "kept").exists():   # once
             os.rename(c, inc / "kept")
             link(c, outside) if junction else c.mkdir()
         return real(c, ident)
     with patch.object(build_cache, "wiped", swapped):
-        assert build_cache.pruned(tree, cap=100) == 100   # only `new` really went
-    # a junction goes as itself; another folder at its name is not the one measured, and stays
-    assert caches(tree) == (["kept"] if junction else ["kept", "old"]) and (outside / "f").exists()
+        assert build_cache.pruned(tree, cap=100) == 100   # only `new` really went; `kept` is counted where it went
+    # a junction goes as itself, never its target; the empty folder in its name is a cache of its own, and goes
+    assert caches(tree) == ["kept"] and (outside / "f").exists()
+
+
+def test_a_session_moved_out_of_a_cache_is_counted_where_it_went(tmp_path):
+    tree = tmp_path / "tree"
+    cache(tree, "old", 300)
+    cache(tree, "new", 100)
+    inc, real = tree / "target/debug/incremental", build_cache.wiped
+
+    def moved(c, ident):   # after it was measured: its session moved to a cache of another name, the folder kept
+        if c.name == "old":
+            (inc / "elsewhere").mkdir()
+            os.rename(c / "s-1", inc / "elsewhere" / "s-1")
+        return real(c, ident)
+    with patch.object(build_cache, "wiped", moved):
+        assert build_cache.pruned(tree, cap=100) == 100   # the emptied folder freed nothing; the moved bytes counted
+    assert caches(tree) == ["new"]   # where they went, still the oldest, they went next
 
 
 def test_a_folder_measured_is_the_one_its_children_are_read_in(tmp_path):
@@ -170,7 +186,6 @@ def test_a_link_in_a_caches_place_is_never_read_nor_counted_as_freed(tmp_path):
     link(at, outside)
     with pytest.raises(OSError):
         build_cache.measured(at)
-    assert build_cache.left(at, 100, os.stat(tmp_path)) == 100   # moved away, a link in its name: nothing freed
 
 
 def test_a_trim_that_fails_never_raises_into_the_turns_end(tmp_path):

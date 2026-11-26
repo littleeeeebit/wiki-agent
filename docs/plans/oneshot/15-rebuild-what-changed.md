@@ -30,14 +30,18 @@ The `vtuber-ko-dub` run's work-turn log
   folders only. It touches only a build folder whose Cargo lock it takes, so no
   Cargo build runs there meanwhile, whoever started it. One a build holds stays
   whole and unread for the next turn's end, and the count is logged as partial.
-  Nothing is deleted or read through a link or outside the worktree. The open lock file pins
+  No cache is measured or deleted through a link or outside the worktree. The open lock file pins
   the path down to the build folder before that path is checked against the
   root the trim began on. Each folder below is read and removed under its own
   pin, a file the trim creates and the system deletes when its handle closes,
-  held while its children are read. Only what really went counts toward the
-  bound: a cache whose name no longer holds the folder measured frees nothing.
-  Discovery only gathers names, and pins nothing, since a pin changes its
-  folder's time and a build script may watch a source folder's time. This relies on Windows keeping a
+  held while its children are read. After each removal the pinned
+  `incremental` folders are counted again, and only the drop counts as freed,
+  so a cache or session moved within them is still counted where it went.
+  Discovery is a provisional scan for names: it pins nothing, since a pin
+  changes its folder's time and a build script may watch a source folder's
+  time, so it may list a folder a junction swapped in meanwhile. Every name it
+  finds is checked under its lock's pin before any cache is counted or
+  deleted. This relies on Windows keeping a
   folder with an open file where it is; the oneshot builds on Windows, and
   elsewhere nothing is trimmed.
 - Gradle's caches are not bounded here; the prompts only ask the agent to

@@ -7,15 +7,15 @@ holds its worktree, the least recently used caches go until the rest fit under `
 
 Only a build folder whose Cargo lock this takes is touched, so no Cargo build runs in it meanwhile, whoever started
 it. A busy one is not even read, since a pin in a running build's session folder would block rustc; the count is then
-logged as partial. Nothing is deleted or read through a link or outside the worktree, because on Windows a folder
-with a file open in it cannot be renamed or removed:
+logged as partial. No cache is measured or deleted through a link or outside the worktree, because on Windows a
+folder with a file open in it cannot be renamed or removed (discovery only gathers names, each checked as below):
 
 - The lock's open file pins every folder from the worktree root down to the build folder. Only then is that path
   checked: the same root as when the trim began, and a real folder at every step.
 - Each folder below is read, and removed, under its own pin: a file created there, never one already there, and
   deleted by the system when its handle closes, so no pin is ever removed by name. The folder is checked again once
   its pin holds, and a link met anywhere goes as a link. A cache whose name no longer holds the folder measured is
-  credited nothing.
+  left. After each removal the pinned `incremental` folders are counted again, and only the drop is freed.
 
 Elsewhere an open file pins nothing, and the oneshot builds on Windows, so nothing is trimmed there.
 """
@@ -106,16 +106,17 @@ def held(stack: ExitStack, build: Path) -> bool:
     return True
 
 
-def pinned(stack: ExitStack, build: Path) -> list[Path]:
-    """The caches in `build`'s real `incremental`, kept where it is by an open pin file until `stack` closes."""
+def pinned(stack: ExitStack, build: Path) -> Path:
+    """`build`'s real `incremental`, kept where it is by an open pin file until `stack` closes. A link there raises:
+    the caller lets go of the pin at once."""
 
     inc = build / "incremental"
     if linked(inc):
-        return []
+        raise OSError(f"{inc} is a link")
     stack.callback(os.close, pin(inc))
     if linked(inc) or os.path.realpath(inc) != os.path.join(os.path.realpath(build), "incremental"):
-        return []   # replaced before the pin held it: only the pin went through, and goes with its handle
-    return [Path(e.path) for e in folders(inc)]
+        raise OSError(f"{inc} was replaced")   # before the pin held it: only the pin went through
+    return inc
 
 
 def unlinked(path) -> None:
@@ -127,24 +128,22 @@ def unlinked(path) -> None:
         os.rmdir(path)   # a junction, or a link to a folder
 
 
-def wiped(path: Path, ident: os.stat_result | None = None) -> bool:
+def wiped(path: Path, ident: os.stat_result | None = None) -> None:
     """`path`, inside a pinned real folder, removed folder by folder, each under its own pin; what will not go (a file
-    something holds, a folder whose pin name is taken) stays. False when `path` was no longer that real folder, the
-    one `ident` names when given: a link in its place goes as a link, another folder there is left, and a missing name
-    goes nowhere. Then nothing of it was freed."""
+    something holds, a folder whose pin name is taken) stays. Only the real folder `ident` names, when given: a link in
+    its place goes as a link, and another folder there is left."""
 
     if linked(path):
-        unlinked(path)
-        return False
+        return unlinked(path)
     try:
         fd = pin(path)   # from here `path` stays the folder it is now
     except FileNotFoundError:
-        return False
+        return
     try:
         if linked(path):   # replaced just before the pin: only the pin went through, and goes with its handle
-            return False
+            return
         if ident is not None and not os.path.samestat(os.stat(path), ident):   # another folder took its name
-            return False
+            return
         for e in os.scandir(path):
             if e.name == PIN:
                 continue
@@ -163,7 +162,6 @@ def wiped(path: Path, ident: os.stat_result | None = None) -> bool:
         os.rmdir(path)   # its parent still pinned: a link put here meanwhile goes as a link
     except OSError:
         pass
-    return True
 
 
 def measured(path) -> tuple[int, float, os.stat_result | None]:
@@ -210,17 +208,27 @@ def pruned(tree: Path, cap: int = CAP) -> int:
     return freed
 
 
-def left(cache: Path, before: int, ident: os.stat_result) -> int:
-    """What is left of `cache`, the folder `ident` names, once its removal ran: between none and all of it. Gone, it
-    left nothing; unreadable, a link or another folder at its name, it counts as all still there."""
+def counted(incs: list[Path]) -> tuple[list, bool]:
+    """Every cache in the pinned `incremental` folders, `(newest file, bytes, path, which folder)`, and whether one
+    could not be read."""
 
-    try:
-        rest, _, now = measured(cache)
-    except OSError:
-        return before
-    if now is not None and not os.path.samestat(now, ident):
-        return before
-    return min(max(rest, 0), before)
+    found, short = [], False
+    for inc in incs:
+        try:
+            entries = folders(inc)
+        except OSError as exc:
+            errorlog.record("build-cache", exc, path=str(inc))
+            short = True
+            continue
+        for e in entries:
+            try:
+                bytes_, when, ident = measured(e.path)
+                if ident is not None:
+                    found.append((when, bytes_, Path(e.path), ident))
+            except OSError as exc:
+                errorlog.record("build-cache", exc, path=e.path)
+                short = True
+    return found, short
 
 
 def trimmed(tree: Path, cap: int) -> int:
@@ -228,7 +236,7 @@ def trimmed(tree: Path, cap: int) -> int:
         return 0
     root, unread = os.stat(tree), []
     with ExitStack() as stack:
-        sized, partial = [], False
+        incs, partial = [], False
         for build in builds(tree, unread):   # names only: each is checked under its own lock's pin before any use
             if not real(tree, root, build):
                 continue
@@ -239,34 +247,30 @@ def trimmed(tree: Path, cap: int) -> int:
                         continue
                     if not mine:   # a build is using it: left whole, and not read, so its share of the disk is unknown
                         raise OSError(f"{build} is building: its caches are not counted")
-                    caches = pinned(one, build)
+                    incs.append(pinned(one, build))
                     stack.enter_context(one.pop_all())
             except OSError as exc:
                 errorlog.record("build-cache", exc, path=str(build))
                 partial = True
-                continue
-            for cache in caches:
-                try:
-                    bytes_, when, ident = measured(cache)
-                    if ident is not None:
-                        sized.append((when, bytes_, cache, ident))
-                except OSError as exc:
-                    errorlog.record("build-cache", exc, path=str(cache))
-                    partial = True
-        total, freed = sum(c[1] for c in sized), 0
-        for _, bytes_, cache, ident in sorted(sized, key=lambda c: c[0]):   # oldest first
-            if total <= cap:
+        # Every removal is followed by a fresh count of the pinned folders, and only the drop in that count is freed:
+        # a session or cache moved within them meanwhile is still counted where it went.
+        # ponytail: re-measures every cache per removal, O(caches²); a worktree holds tens of them.
+        sized, short = counted(incs)
+        tried, start = set(), sum(c[1] for c in sized)
+        total = start
+        while total > cap:
+            rest = [c for c in sorted(sized, key=lambda c: c[0]) if (c[3].st_dev, c[3].st_ino) not in tried]
+            if not rest:   # every one tried: what is left would not go, for the next turn's end
                 break
+            _, _, cache, ident = rest[0]   # the oldest not yet tried
+            tried.add((ident.st_dev, ident.st_ino))
             try:
-                real_one = wiped(cache, ident)
+                wiped(cache, ident)
             except OSError as exc:
                 errorlog.record("build-cache", exc, path=str(cache))
-                real_one = True   # what of it went, if any, is measured below
-            if not real_one:   # moved away, another folder, a link or nothing in its place: none of it freed
-                partial = True
-                continue
-            gone = bytes_ - left(cache, bytes_, ident)   # what really went: one that would not go leaves the next its turn
-            total, freed = total - gone, freed + gone
+            sized, more = counted(incs)
+            short, total = short or more, sum(c[1] for c in sized)
+        freed, partial = max(start - total, 0), partial or short
         for exc in unread:   # a folder discovery could not read: the count may be short of the disk
             errorlog.record("build-cache", exc, path=str(tree))
         partial = partial or bool(unread)
