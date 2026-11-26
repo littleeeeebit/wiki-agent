@@ -294,8 +294,9 @@ def ending(path: Path) -> bool:
 
 
 def record(path: Path) -> tuple[str, dict] | None:
-    """The oneshot run whose worktree is `path`, read now; an empty or zeroed record (a power loss) is no run. Raises
-    when the folder or a record cannot be read: a refused read is never "no run" (`specs.load` and `glob` hide one)."""
+    """The oneshot run whose worktree is `path`, read now. Raises when the folder or a record cannot be read: a
+    refused read is never "no run" (`specs.load` and `glob` both hide one). An empty or zeroed record (a power
+    loss, realtime-screen-translator 11-22) refuses only its own tree; it once refused every turn everywhere."""
 
     key = path.resolve()
     with specs._files:
@@ -304,10 +305,15 @@ def record(path: Path) -> tuple[str, dict] | None:
         except FileNotFoundError:
             return None
         for entry in entries:
-            try:   # an empty or zeroed record reads as JSON `null`
-                spec = json.loads((Path(entry.path) / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8").strip("\0 \t\r\n") or "null")
+            try:
+                text = (Path(entry.path) / f"{oneshot.BRANCH}.json").read_text(encoding="utf-8")
             except FileNotFoundError:
                 continue
+            if not text.strip("\0 \t\r\n"):   # lost: only its own tree (`specs.owner`'s layout) stays closed
+                if (key.name, key.parent.name) == (oneshot.BRANCH, f"{entry.name}-worktrees"):
+                    raise HTTPException(409, f"`{entry.name}` 의 원샷 실행 기록이 비어 있다 — 되살리기 전에는 이 작업트리에서 턴을 열지 않는다")
+                continue
+            spec = json.loads(text)
             if isinstance(spec, dict) and spec.get("worktree") and Path(spec["worktree"]).resolve() == key:
                 return entry.name, spec
     return None

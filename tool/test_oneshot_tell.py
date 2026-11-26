@@ -550,20 +550,26 @@ def test_a_retold_tests_turn_may_find_a_planned_test_passing_but_never_skipped(w
     assert "건너뛴" in oneshot_build.red(spec, skipped, again=True)
 
 
-def test_a_record_that_holds_nothing_refuses_no_turn(tmp_path):
+def test_a_record_that_holds_nothing_refuses_only_its_own_tree(tmp_path):
     """realtime-screen-translator: a power loss zeroed one repository's record, and every turn anywhere was
-    refused with "실행 기록을 읽거나 고치지 못했다". A record with content that does not parse still refuses."""
+    refused with "실행 기록을 읽거나 고치지 못했다". Its own tree stays closed (its turn would carry no secrets'
+    mask, PR #455 round 1); a record with content that does not parse, a trailing NUL included, still refuses."""
     tree = tmp_path / "tree"
     (tmp_path / "specs" / "ok").mkdir(parents=True)
     (tmp_path / "specs" / "ok" / f"{oneshot.BRANCH}.json").write_text(
         f'{{"worktree": "{tree.as_posix()}"}}', encoding="utf-8")
     zeroed = tmp_path / "specs" / "zeroed" / f"{oneshot.BRANCH}.json"
     zeroed.parent.mkdir()
+    own = tmp_path / "zeroed-worktrees" / oneshot.BRANCH
     with patch.object(specs, "SPECS", tmp_path / "specs"):
         for nothing in (b"\0" * 4096, b"", b" \r\n"):
             zeroed.write_bytes(nothing)
             assert oneshot_build.record(tmp_path / "elsewhere") is None
             assert oneshot_build.record(tree)[0] == "ok"
-        zeroed.write_bytes(b'{"worktree": ')
-        with pytest.raises(ValueError):
-            oneshot_build.record(tmp_path / "elsewhere")   # every record is read for a tree no run owns
+            with pytest.raises(HTTPException) as refused:
+                oneshot_build.record(own)
+            assert refused.value.status_code == 409 and "zeroed" in refused.value.detail
+        for broken in (b'{"worktree": ', b'{"worktree": "x"}\0'):
+            zeroed.write_bytes(broken)
+            with pytest.raises(ValueError):
+                oneshot_build.record(tmp_path / "elsewhere")   # every record is read for a tree no run owns
