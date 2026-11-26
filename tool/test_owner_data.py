@@ -132,6 +132,78 @@ def test_a_failed_wait_is_never_taken_for_a_clean_window(tree, monkeypatch):
     assert result["state"] == "incomplete" and "감시가 멈췄다" in owner_data.reason(result)
 
 
+def test_a_failed_wait_at_a_checkpoint_is_never_taken_for_caught_up(tree, monkeypatch):
+    real = owner_data._k32
+
+    class Failing:   # the kernel, but the tree watch sees a sync only between batches, and its checkpoint fails
+        def __init__(self):
+            self.k, self.handles, self.events = real(), set(), set()
+
+        def __getattr__(self, name):
+            return getattr(self.k, name)
+
+        def CreateFileW(self, path, *rest):  # noqa: N802 -- the kernel's own name
+            handle = self.k.CreateFileW(path, *rest)
+            if path == str(tree):
+                self.handles.add(handle)
+            return handle
+
+        def ReadDirectoryChangesW(self, handle, *rest):  # noqa: N802
+            if handle in self.handles:
+                self.events.add(rest[-2]._obj.event)
+            return self.k.ReadDirectoryChangesW(handle, *rest)
+
+        def WaitForMultipleObjects(self, n, handles, *rest):  # noqa: N802
+            return self.k.WaitForMultipleObjects(2 if handles[0] in self.events else n, handles, *rest)
+
+        def WaitForSingleObject(self, handle, ms):  # noqa: N802
+            return 0xFFFFFFFF if ms == 100 else self.k.WaitForSingleObject(handle, ms)
+
+    monkeypatch.setattr(owner_data, "_k32", Failing)
+    watch, going = owner_data.Watch(owner_data.roots(tree), tree), threading.Event()
+    out = tree / "target" / "debug"
+    out.mkdir(parents=True)
+    writer = threading.Thread(target=lambda: [(out / "o.rlib").write_bytes(b"x") for _ in iter(going.is_set, True)])
+    writer.start()
+    try:
+        time.sleep(0.3)   # a stream: the sync is seen between batches, and the checkpoint's wait fails
+        result = watch.settled()
+    finally:
+        going.set()
+        writer.join(10)
+    assert result["state"] == "incomplete" and "감시가 멈췄다" in owner_data.reason(result)
+    watch.close()
+
+
+def test_a_read_that_completes_while_the_close_cancels_it_is_still_read(tree, tmp_path, monkeypatch):
+    local, real = tmp_path / "AppData" / "Local", owner_data._k32
+
+    class Late:   # the kernel, but the base watch's cancel comes too late: its read completes instead
+        def __init__(self):
+            self.k, self.handles = real(), set()
+
+        def __getattr__(self, name):
+            return getattr(self.k, name)
+
+        def CreateFileW(self, path, *rest):  # noqa: N802
+            handle = self.k.CreateFileW(path, *rest)
+            if path == str(local):
+                self.handles.add(handle)
+            return handle
+
+        def CancelIoEx(self, handle, overlapped):  # noqa: N802
+            return True if handle in self.handles else self.k.CancelIoEx(handle, overlapped)
+
+    monkeypatch.setattr(owner_data, "_k32", Late)
+    watch = owner_data.Watch(owner_data.roots(tree), tree)
+    closing = threading.Thread(target=lambda: setattr(closing, "result", watch.close()))
+    closing.start()
+    time.sleep(0.3)   # the close has asked every watch to stop
+    (local / "com.example.budget").mkdir()   # a protected root made as the base watch's read is ended
+    closing.join(15)
+    assert closing.result["state"] == "changed"
+
+
 def test_a_root_named_during_the_window_is_covered(tree, tmp_path):
     local, conf = tmp_path / "AppData" / "Local", tree / "src-tauri" / "tauri.conf.json"
     watch = owner_data.Watch(owner_data.roots(tree))

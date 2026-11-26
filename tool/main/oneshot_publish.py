@@ -33,7 +33,7 @@ def body(spec: dict, head: str) -> str:
     return "\n".join(lines)
 
 
-def unready(spec: dict, path: Path) -> str:
+def unready(spec: dict, path: Path, halt=None) -> str:
     """Why the branch may not be pushed now, or empty: once PR #1 exists, a push goes up only while that draft is
     the branch's open pull request, since a push moves whichever one is open on it. The lookup at the pull request
     write checks the number again, for a draft closed while the push ran. A pull request open on the branch that
@@ -49,6 +49,8 @@ def unready(spec: dict, path: Path) -> str:
             seen = specs.sh(["gh", "pr", "view", str(found[0]), "--json", "isDraft"], path, 60)
             if seen.returncode:
                 return f"PR #{found[0]} 이 초안인지 확인하지 못했다 — {specs.said(seen)}"
+            if halt is not None and halt.is_set():   # a Stop while it was read: nothing on GitHub changes after it
+                return "사람이 멈춤 — PR 을 바꾸지 않았다"
             undo = None if json.loads(seen.stdout).get("isDraft") else \
                 specs.sh(["gh", "pr", "ready", str(found[0]), "--undo"], path, 60)
             if undo is not None and undo.returncode:

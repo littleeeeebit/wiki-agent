@@ -344,6 +344,32 @@ class Watch:
                 return
             with self.lock:
                 self.syncs.append(entry)
+            def batch(n: int) -> None:   # one completed read of `n` bytes
+                if n == 0:   # the buffer overflowed: what changed is not known
+                    if mode == "tree":   # every config is read again at the next read; the watch goes on
+                        with self.lock:
+                            self.lost = True
+                    else:
+                        self._changed(None)
+                    return
+                if mode == "tree" and CONF not in buffer.raw[:n].lower():   # a build's own writes
+                    return
+                for name in _names(buffer.raw[:n]):
+                    if mode == "root":
+                        self._changed(folder / name)
+                    elif mode == "base":
+                        self._named(folder, name)
+                    elif _conf(Path(name)):
+                        self._reread(folder / name)
+
+            def cancelled() -> None:   # the pending read ended; one that completed meanwhile is read as any other
+                k.CancelIoEx(handle, ctypes.byref(overlapped))
+                size = w.DWORD()
+                if k.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(size), True):
+                    batch(size.value)
+                elif (error := ctypes.get_last_error()) != 995:   # ERROR_OPERATION_ABORTED: cancelled with nothing
+                    self._fail(f"`{folder}` 의 마지막 변경을 읽지 못했다 (Windows error {error})")
+
             # A stream of changes keeps the event signalled, so a stop or sync seen between batches (`owed`) is
             # answered once a read issued after it caught up: after its batch (`due`), or when nothing came.
             owed, due = set(), set()
@@ -358,10 +384,13 @@ class Watch:
                     self._fail(f"`{folder}` 의 변경을 읽지 못했다 (Windows error {ctypes.get_last_error()})")
                     return
                 ready.set()
-                if owed and k.WaitForSingleObject(event, 100) != 0:   # caught up: nothing before them is unread
-                    if "stop" in owed:
-                        k.CancelIoEx(handle, ctypes.byref(overlapped))
-                        k.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(w.DWORD()), True)
+                if owed and (waited := k.WaitForSingleObject(event, 100)) != 0:
+                    if waited != 0x102:   # the wait failed: nothing says what came before them was read
+                        self._fail(f"`{folder}` 의 감시가 멈췄다 (wait {waited:#x}, Windows error {ctypes.get_last_error()})")
+                        cancelled()
+                        return
+                    if "stop" in owed:   # caught up: nothing before them is unread
+                        cancelled()
                         return
                     acked.set()
                     owed = set()
@@ -370,33 +399,17 @@ class Watch:
                                                          0xFFFFFFFF)) == 2:
                     acked.set()
                 error, size = ctypes.get_last_error(), w.DWORD()
-                if found != 0:   # closing, or the wait failed: the read is cancelled and waited for first
-                    k.CancelIoEx(handle, ctypes.byref(overlapped))
-                    k.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(size), True)
+                if found != 0:   # closing, or the wait failed: the read is ended first, and read if it came
                     if found != 1:
                         self._fail(f"`{folder}` 의 감시가 멈췄다 (wait {found:#x}, Windows error {error})")
+                    cancelled()
                     return
                 if not k.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(size), False):
                     self._fail(f"`{folder}` 의 변경을 읽지 못했다 (Windows error {ctypes.get_last_error()})")
                     return
                 due, owed = owed, {name for name, h in (("stop", stop), ("sync", sync))
                                    if k.WaitForSingleObject(h, 0) == 0}
-                if size.value == 0:   # the buffer overflowed: what changed is not known
-                    if mode == "tree":   # every config is read again at the next read; the watch goes on
-                        with self.lock:
-                            self.lost = True
-                    else:
-                        self._changed(None)
-                    continue
-                if mode == "tree" and CONF not in buffer.raw[:size.value].lower():   # a build's own writes
-                    continue
-                for name in _names(buffer.raw[:size.value]):
-                    if mode == "root":
-                        self._changed(folder / name)
-                    elif mode == "base":
-                        self._named(folder, name)
-                    elif _conf(Path(name)):
-                        self._reread(folder / name)
+                batch(size.value)
         finally:
             with self.lock:
                 if entry in self.syncs:

@@ -369,10 +369,33 @@ def test_a_stop_during_the_push_preflight_is_never_followed_by_a_push(finished, 
     with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
         check(tree, answer(report()))()
     run, remote = Run(), Remote()
-    monkeypatch.setattr(oneshot_publish, "unready", lambda spec, path: run.halt.set() or "")   # Stop meanwhile
+    monkeypatch.setattr(oneshot_publish, "unready", lambda spec, path, halt: run.halt.set() or "")   # Stop meanwhile
     with patch.object(specs, "sh", remote):
         oneshot_build.checked(tree, run, spec(), SUMMARIZED)
     assert not remote.pushes() and not remote.created()
+
+
+@pytest.mark.parametrize("when", ["view", "diff"])   # reading the draft's state, or the diff after the push
+def test_a_stop_during_publication_changes_nothing_on_github_after_it(finished, monkeypatch, when):
+    tree, sent = finished
+    readme(tree)
+    oneshot_spec.saved("budget", oneshot={"pr1": {"number": 7, "url": "https://github.com/o/proj/pull/7"}})
+    with patch.object(pr_text, "writing", lambda *a: "Write the pull request's text."):
+        check(tree, answer(report()))()
+    run, remote = Run(), Remote(draft=False)
+    open7 = listing(remote, 7)
+
+    def stopping(args, cwd, timeout=60):
+        if args[:3] == ["gh", "pr", "view"] if when == "view" else args[:3] == ["git", "diff", "--numstat"]:
+            run.halt.set()   # the owner's Stop, while this command runs
+        return open7(args, cwd, timeout)
+    with patch.object(specs, "sh", stopping):
+        oneshot_build.checked(tree, run, spec(), SUMMARIZED)
+    at = next(i for i, c in enumerate(remote.calls) if c[:3] == (["gh", "pr", "view"] if when == "view"
+                                                                 else ["git", "diff", "--numstat"]))
+    after = [c for c in remote.calls[at:] if c[:3] in (["gh", "pr", "ready"], ["gh", "pr", "edit"], ["gh", "pr", "create"])
+             or c[:2] == ["git", "push"]]
+    assert not after and (when == "diff" or not remote.pushes())
 
 
 def test_a_stop_while_s8_reads_its_watch_keeps_the_draft(finished, monkeypatch):

@@ -1563,28 +1563,35 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str, only
 def opened(repo: Path, path: Path, run, spec: dict):
     """Push and open a PR as the person's `gh`; find the next completed plan row.
     Check cancellation immediately before push and PR publication: an earlier
-    passing gate never authorizes publication after a person stops the turn."""
+    passing gate never authorizes publication after a person stops the turn.
+    All of it under `run.saving`, as `work.stop` orders with it: a Stop past a
+    check waits for the publication, and none starts once the Stop returned."""
+
+    with getattr(run, "saving", threading.Lock()):
+        return _opened(repo, path, run, spec)
+
+
+def _opened(repo: Path, path: Path, run, spec: dict):
 
     sid, branch = spec["id"], branch_of(spec)
     if run.halt.is_set():
         return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
     from . import oneshot_publish   # it imports this module
-    if spec.get("oneshot") and (why := oneshot_publish.unready(spec, path)):   # its draft, never a ready one
+    if spec.get("oneshot") and (why := oneshot_publish.unready(spec, path, run.halt)):   # its draft, never a ready one
         return failed(run, spec, why)
-    with getattr(run, "saving", threading.Lock()):   # as `work.stop` orders: one past this check waits for the push
-        if run.halt.is_set():   # again: the preflight above talks to GitHub, and a Stop may have come meanwhile
-            return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
-        note(run, f"push · origin {branch}")
-        pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch])
+    if run.halt.is_set():   # again: the preflight above talks to GitHub, and a Stop may have come meanwhile
+        return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
+    note(run, f"push · origin {branch}")
+    pushed = prerequisite_review.push(path, spec, ["git", "push", "-u", "origin", branch])
     if pushed.returncode:
         return failed(run, spec, f"push 실패 — {said(pushed)}")
     base = base_of(spec, path)
     if base.returncode or not base.stdout.strip():
         return failed(run, spec, f"기본 브랜치를 모른다 — {said(base)}")
-    if run.halt.is_set():
-        return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
     try:
         files = sh(["git", "diff", "--numstat", f"origin/{base.stdout.strip()}...HEAD"], path)
+        if run.halt.is_set():   # right before the pull request is written: nothing on GitHub changes after a Stop
+            return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
         o = spec.get("oneshot") or {}   # a oneshot's opens as a draft: it leaves draft after its watch's read
         n, url = pull_request(path, branch, base.stdout.strip(), pr_text.title_of(spec),
                               body_of(spec, "" if files.returncode else files.stdout), (o.get("pr1") or {}).get("number"),
