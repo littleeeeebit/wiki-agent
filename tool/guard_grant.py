@@ -202,6 +202,28 @@ def plan_root(top: Path, spec: dict) -> Path | None:
     return top / root if contained(str(top / root), [str(top)]) else top
 
 
+def run_folder(repo: str) -> Path:
+    """A oneshot run's stage folder, as `main.oneshot.folder` places it, without importing the server."""
+
+    from common.paths import DATA, RESOURCES
+
+    old = RAW / "oneshot" / f"spec-{repo}"
+    if DATA != RESOURCES:
+        return old
+    new = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local/share") / "wiki-agent-data/oneshot" / old.name
+    return old if old.is_dir() and not new.exists() else new
+
+
+def measure_agent(cwd: Path) -> Path | None:
+    """The run's `measure-app\\agent` for the oneshot checkout `cwd`, or `None` outside one."""
+
+    found = layout(Path(cwd).resolve())
+    if found is None:
+        return None
+    top, gitdir, _, main = found
+    return run_folder(main.name) / "measure-app" / "agent" if task_spec(top, gitdir, main).get("oneshot") else None
+
+
 def live(spec: dict) -> bool:
     """Whether the spec opens its checkout's adapter now: a survey's or a slot spec's grant (`True`) for all its
     turns, a oneshot turn's (its token, `oneshot_build.send`) only while that turn is the run's `inflight`, so a
@@ -225,6 +247,8 @@ def grant(cwd: Path, payload: dict) -> Grant | None:
         return None
     spec = task_spec(top, gitdir, main)
     roots = [plan_root(top, spec) or top, *temps()]
+    if spec.get("oneshot") and os.environ.get("WIKI_AGENT_ROLE") == "build":
+        roots.append(run_folder(main.name) / "measure-app" / "agent")   # where its own launches keep their data
     if payload.get("transcript_path"):
         roots.append(Path(str(payload["transcript_path"])).parent / "memory")
     remotes = remote_hosts(common)

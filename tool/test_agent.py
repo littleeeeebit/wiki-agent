@@ -1114,7 +1114,7 @@ def test_nothing_the_provider_starts_escapes_its_job(tree, tmp_path):
     with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
             [sys.executable, "-X", "utf8", "-c", MARKS.replace("MARKED", repr(str(marked)))], **kw)), \
          patch.object(chat_session, "cli_command", side_effect=lambda name: [name]), \
-         patch.object(chat_session, "contained", side_effect=lambda proc: time.sleep(1) or late(proc)):
+         patch.object(chat_session, "contained", side_effect=lambda proc, name=None: time.sleep(1) or late(proc, name)):
         try:
             session.ensure()
             assert session._events.get(timeout=10)["task_id"] == "bg-1"

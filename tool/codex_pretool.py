@@ -17,11 +17,21 @@ def verdict(payload: dict) -> dict | None:
     except Exception:  # noqa: BLE001 -- `craft/hooks-fail-open`
         fixed, notes = payload, []
     answer = refusal(fixed, "codex") or checked(fixed)
-    if fixed is payload or ((answer or {}).get("hookSpecificOutput") or {}).get("permissionDecision") == "deny":
+    if ((answer or {}).get("hookSpecificOutput") or {}).get("permissionDecision") == "deny":
         return answer
-    answer = answer or {}
-    output = answer.setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})
-    output.update(permissionDecision="allow", updatedInput=fixed["tool_input"])
+    # Last, on the call every check let through: the load line, and a GPU job refused or queued (`gpu_job`).
+    import gpu_job
+
+    gpu = gpu_job.verdict(fixed, "codex")
+    if gpu and gpu["hookSpecificOutput"].get("permissionDecision") == "deny":
+        return gpu
+    queued = gpu and gpu["hookSpecificOutput"].pop("updatedInput", None)
+    notes += [gpu["hookSpecificOutput"]["additionalContext"]] if gpu else []
+    if fixed is payload and not queued and not notes:
+        return answer
+    output = (answer := answer or {}).setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})
+    if fixed is not payload or queued:
+        output.update(permissionDecision="allow", updatedInput=queued or fixed["tool_input"])
     output["additionalContext"] = "\n\n".join(filter(None, [output.get("additionalContext"), *notes]))
     return answer
 
@@ -35,7 +45,10 @@ def checked(payload: dict) -> dict | None:
     import markdown_emphasis
     import memory_words
 
-    denied = host_boundary.verdict(payload) or deny.verdict(payload, "codex") or guard.verdict(payload, host="codex")
+    import owner_data
+
+    denied = host_boundary.verdict(payload) or deny.verdict(payload, "codex") or guard.verdict(payload, host="codex") \
+        or owner_data.verdict(payload)
     if denied:
         return denied
     dialect = guard.shell_command(payload, "codex")[2]  # PowerShell on Windows: its strings are its own

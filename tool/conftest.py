@@ -35,6 +35,16 @@ if os.name == "nt" and os.environ.get("TEMP"):
     os.environ["TMPDIR"] = os.environ["TEMP"]
     tempfile.tempdir = None
 
+# The machine's GPU queue and its load (`gpu_queue`, `machine`): a queue of the tests' own, never the owner's,
+# whose real jobs a test would wait behind, and a machine with room, so no test waits on the real floor. A test
+# of the queue gives each case a folder of its own. A session marker the tests were started under goes too.
+os.environ["WIKI_AGENT_GPU_HOME"] = tempfile.mkdtemp(prefix="wiki-gpu-")
+_load = Path(tempfile.mkdtemp(prefix="wiki-load-")) / "load.json"
+_load.write_text('{"cpu": 1.0, "ram": [1, 32], "gpus": [], "holders": []}', encoding="utf-8")
+os.environ["WIKI_AGENT_LOAD_FILE"] = str(_load)
+for _name in ("WIKI_AGENT_JOB", "WIKI_AGENT_ROLE"):
+    os.environ.pop(_name, None)
+
 os.environ["WIKI_USER_HOME"] = tempfile.mkdtemp(prefix="wiki-home-")
 os.environ["WIKI_DATA_HOME"] = tempfile.mkdtemp(prefix="wiki-data-")
 

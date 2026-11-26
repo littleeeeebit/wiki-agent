@@ -738,6 +738,8 @@ def run_argv(words: list, ctx) -> tuple[set, object]:
     """Effects of running `words[0]` with the rest as its arguments, and where a `cd` moves to."""
     if not words:
         return set(), None
+    if ctx.programs is not None:
+        ctx.programs.append(([w.text for w in words], sorted(c for c in ctx.cwds if c)))
     raw, args = words[0].text, words[1:]
     if words[0].why:
         return top(f"{words[0].why} as the command name"), None

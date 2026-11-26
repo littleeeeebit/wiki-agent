@@ -34,8 +34,11 @@ from pydantic import BaseModel
 
 from common import masked
 
-from . import (oneshot, oneshot_build, oneshot_measure_app as product, oneshot_needs, oneshot_publish,
-               oneshot_spec, release, runtime, specs, work)
+import gpu_queue
+import owner_data
+
+from . import (oneshot, oneshot_build, oneshot_measure_app as product, oneshot_needs, oneshot_owner_data,
+               oneshot_publish, oneshot_spec, release, runtime, specs, work)
 from .oneshot_kept import (CLIPS, LAUNCHER, MAX_CLIPS, clips_of, committed, fresh,  # noqa: F401
                            RUNNING, input_report, kept_from, label_of, launched, plain, shown, spelled, strict, tail)
 from .oneshot_measure_plan import (HEALTH, IID, MAX_MINUTES, MAX_SERVE_SECONDS, MID, OPS, PLAN,  # noqa: F401
@@ -120,8 +123,10 @@ def serve_check(path: Path, run, spec: dict) -> str:
         plan = planned(path, spec, "HEAD")   # the plan the commit holds, as the measurement reads it
         env, hide = env_of(spec, plan)
         log = Path(tempfile.mkdtemp(prefix="oneshot-serve-")) / "serve.log"
-        try:
-            with product.started(spec, plan, path, {**env, product.MODE: "auto"}, run.halt, log, hide, "auto"):
+        try:   # a server launch: its GPU place and lease first, the floor too, before its deadline starts
+            with gpu_queue.launched("serve_check", run.halt, say=lambda line: specs.note(run, line)) as holder, \
+                    product.started(spec, plan, path, {**env, product.MODE: "auto"}, run.halt, log, hide, "auto",
+                                    holder=holder):
                 pass   # only its health address is read, with the program on the owner's screen as always
         finally:
             error = None
@@ -243,9 +248,12 @@ def measure(repo: str, mode: str | None = None) -> None:
         # The card's while it runs, this worker's alone (`halt`, fresh per start): its cut-off once the script starts.
         RUNNING[repo] = {"n": n, "head": o["built_head"], "mode": how, "ts": record["ts"], "cut": None, "ended": False,
                          "halt": halt}
-        try:
-            with product.started(now, plan, tree, env, halt, raw / "serve.log", hide, how,
-                                 (passed or {}).get("build")) as build:
+        watch, roots = oneshot_owner_data.measured(tree)   # the owner's real folders, over the whole measurement
+        try:   # the GPU lease before the launch and the script's deadline; the owner's round skips the floor
+            with gpu_queue.launched(f"measure {n}", halt, floor=how != "owner",
+                                    ahead=lambda count: RUNNING[repo].update(gpu=count or None)) as holder, \
+                    product.started(now, plan, tree, env, halt, raw / "serve.log", hide, how,
+                                    (passed or {}).get("build"), holder=holder) as build:
                 if build:   # the frozen copy measured: the owner's measurement starts this one, never a new one
                     record["build"] = build
                 limit = plan["measure"]["minutes"] * 60 + 300
@@ -261,6 +269,7 @@ def measure(repo: str, mode: str | None = None) -> None:
         except Exception as exc:   # unforeseen: a masked owner stop once the folder is dealt with
             failed = exc
         finally:
+            seen = owner_data.reason(watch.close(), roots)   # a change fails this measurement as a metric does
             try:
                 found = report_of(raw, plan, hide)
             finally:
@@ -282,6 +291,8 @@ def measure(repo: str, mode: str | None = None) -> None:
                                          else "서버가 꺼져 실측이 멈췄다 — 다시 켠 뒤 [실측 시작]을 누른다", hide))
             return None
         found = found if not cut else {"error": cut}
+        if seen:
+            found = {**found, "error": "; ".join(filter(None, [found.get("error"), seen]))}
         record |= found | {"clips": clips_of(out, hide), "code": code}
         # The server's own measurement judges only what needs no person; the owner's judges every metric.
         judged = [m for m in found.get("metrics") or [] if how == "owner" or not m["person"]]

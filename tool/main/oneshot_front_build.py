@@ -19,7 +19,7 @@ from pathlib import Path
 from wiki import slots_for
 
 from . import oneshot, oneshot_build, oneshot_desktop, oneshot_desktop_look, oneshot_device, oneshot_look, \
-    oneshot_needs, oneshot_screens as screens, oneshot_spec, runtime, specs
+    oneshot_needs, oneshot_owner_data, oneshot_screens as screens, oneshot_spec, runtime, specs
 from .oneshot_profile import DEVICES, environment, kinds_of, schema, shape
 from .oneshot_sheet import KIND_NAMES
 
@@ -224,6 +224,8 @@ def built_front(path: Path, run, spec: dict, final: str) -> str:
     if (now := oneshot_build.head(path)) != verdict["head"] or specs.dirty(path):
         return (f"앱을 띄워 찍는 동안 작업트리가 바뀌었다 — HEAD `{now[:12]}`, 게이트는 `{verdict['head'][:12]}`. "
                 "`live_cmd` 와 앱은 추적하는 파일을 바꾸지 않는다")
+    if seen := oneshot_owner_data.read(spec["repo"]):   # the build and the looks ran: judged before any save
+        return seen
     # The critic reads which owed checks the PC app's passed look ran; a look that failed or never got there, none.
     looks = [*(o.get("looks") or []), {"round": n, "head": verdict["head"], "findings": findings,
                                        **({"build": build["identity"], "freeze": build["freeze"], "proven": proven,

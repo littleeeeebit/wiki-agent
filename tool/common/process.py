@@ -84,7 +84,7 @@ def resumed(proc: subprocess.Popen) -> None:
         raise OSError(f"could not resume process {proc.pid}")
 
 
-def contained(proc: subprocess.Popen):
+def contained(proc: subprocess.Popen, name: str | None = None):
     """A Windows job holding `proc` and all it starts; closing it, or this
     process dying, kills them all. `taskkill /T` cannot find a descendant
     whose parent already exited; the job can. None on failure.
@@ -101,7 +101,7 @@ def contained(proc: subprocess.Popen):
             return proc.pid if os.getpgid(proc.pid) == proc.pid else None
         except OSError:
             return None
-    job = _k32.CreateJobObjectW(None, None)
+    job = _k32.CreateJobObjectW(None, name)   # `name`: a hook inside it opens it to read its members
     limits = _Limits(flags=0x2000)   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     if job and _k32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)) \
             and _k32.AssignProcessToJobObject(job, int(proc._handle)):

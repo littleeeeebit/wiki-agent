@@ -124,7 +124,8 @@ function Measuring({ repo, view, busy, act }: { repo: string; view: SpecView; bu
       {run ? (
         <p className="tabular-nums">
           {clock(run.ts)}에 시작 · {span(gone)} 지났다{minutes > 0 && <> · 보통 약 {minutes}분 걸린다</>}
-          {run.ended ? ' · 재기는 끝났고 프로그램을 닫고 결과를 모으는 중' : run.cut ? '' : ' · 프로그램을 띄우는 중'}
+          {run.ended ? ' · 재기는 끝났고 프로그램을 닫고 결과를 모으는 중' : run.cut ? ''
+            : run.gpu != null ? ` · GPU 대기 중 — 앞에 ${run.gpu}개` : ' · 프로그램을 띄우는 중'}
           {late && run.cut && <span className="text-wait"> — 예상보다 오래 걸린다. {clock(run.cut)}까지 끝나지 않으면 서버가 끊고 실패로 센다.</span>}
         </p>
       ) : <p>PR #1 초안과 넣은 값을 확인하는 중이다. 곧 시작한다.</p>}

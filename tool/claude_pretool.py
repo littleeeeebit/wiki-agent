@@ -7,6 +7,9 @@ what Claude made of the separate answers: any `deny` denies, and the
 denial's reason Claude showed depended on which process finished first; here
 it is the first in `MEMBERS`, the order `codex_pretool` already uses.
 
+After them, on a call none of them denied, `gpu_job` adds the machine's load and refuses or queues a GPU job;
+a queued call goes back as `updatedInput` in the background.
+
 Before them `command_repair` fixes what it can (`powershell`, a pytest run
 piped into a filter); the checks judge the fixed command and it goes back
 as `updatedInput`.
@@ -24,7 +27,7 @@ import json
 from pathlib import Path
 import sys
 
-MEMBERS = ("host_boundary.py", "deny.py", "guard.py", "edit_as_diff.py", "memory_words.py",
+MEMBERS = ("host_boundary.py", "deny.py", "guard.py", "owner_data.py", "edit_as_diff.py", "memory_words.py",
            "markdown_emphasis.py", "english_progress.py", "background_left.py")
 
 
@@ -61,8 +64,17 @@ def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
         if answer:
             answers.append(answer)
     denied = [a for a in answers if (a.get("hookSpecificOutput") or {}).get("permissionDecision") == "deny"]
+    queued = None
     if not denied:
         answers += [{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": n}} for n in notes]
+        # Last, on the call every check let through: the load line, and a GPU job refused or queued (`gpu_job`).
+        import gpu_job
+
+        if gpu := gpu_job.verdict(payload, "claude"):
+            if gpu["hookSpecificOutput"].get("permissionDecision") == "deny":
+                return gpu
+            queued = gpu["hookSpecificOutput"].pop("updatedInput", None)
+            answers.append(gpu)
     if not answers:
         return None
     out = json.loads(json.dumps(denied[0] if denied else {}))
@@ -72,7 +84,9 @@ def verdict(payload: dict, without: frozenset = frozenset()) -> dict | None:
     contexts = [c for a in answers if (c := (a.get("hookSpecificOutput") or {}).get("additionalContext"))]
     if contexts:
         out.setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})["additionalContext"] = "\n\n".join(contexts)
-    if payload is not given and not denied:
+    if queued is not None:
+        out["hookSpecificOutput"]["updatedInput"] = queued
+    elif payload is not given and not denied:
         out["hookSpecificOutput"]["updatedInput"] = payload["tool_input"]
     return out
 

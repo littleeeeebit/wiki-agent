@@ -144,7 +144,8 @@ export type MeasureView = {
   /** The measurement running now (`oneshot_kept.shown`): its number, whose, its start in epoch seconds, while its
    *  script runs when the server cuts it, and once it ended (`ended`, the report being collected); null while the
    *  server still sets it up. */
-  running?: { n: number; mode: 'auto' | 'owner'; ts: number; cut: number | null; ended: boolean } | null
+  // `gpu`: places ahead in the machine's GPU queue while the measurement waits for its turn, else null
+  running?: { n: number; mode: 'auto' | 'owner'; ts: number; cut: number | null; ended: boolean; gpu?: number | null } | null
 }
 /** An area the builder and the review could not both meet (`oneshot_review.conflicted`). */
 export type Conflict = {

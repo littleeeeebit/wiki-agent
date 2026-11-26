@@ -29,7 +29,7 @@ from common import errorlog, masked, shell
 from wiki import slots_for
 
 from . import github_release, oneshot_build, oneshot_calls, oneshot_ci, oneshot_device, oneshot_needs, oneshot_publish, oneshot_spec
-from . import pr_text, release, release_desktop, specs
+from . import oneshot_owner_data, pr_text, release, release_desktop, specs
 from .oneshot_profile import kinds_of
 from .query import ROOT
 
@@ -289,7 +289,8 @@ def readied(path: Path, run, spec: dict, final: str) -> str:
     why = "raised"   # until the later checks answer: a raise keeps it, and the copies go with it
     try:
         why = oneshot_build.held(path, run, spec, verdict) or bool(
-            {"android", "desktop"} & set(kinds_of(o))) and release_checked(path, spec, head, run.halt, frozen, hide)
+            {"android", "desktop"} & set(kinds_of(o))) and release_checked(path, spec, head, run.halt, frozen, hide) \
+            or oneshot_owner_data.read(spec["repo"])   # the final gate and the release build ran: before any save
     finally:
         for copy in frozen.values() if why else ():   # failed or raised: no copy is ever kept
             if copy.get("path"):

@@ -47,9 +47,21 @@ writer. A command whose process has ended holds
 nothing, as when a resumed session's earlier process ended without a notice.
 Elsewhere nothing shows a held file, so nothing is held.
 
+## A GPU job the hook queued
+
+A GPU job (`tool/gpu_job.py`) is wrapped into the machine's GPU queue, and on
+Claude and DeepSeek the hook also sets `run_in_background`, since a queued job
+can wait longer than any timeout. The agent did not choose that background
+start, so it is held the same way as a command a timeout moved. It is found by
+either record: a call whose input carries the runner's `gpu_run.py --hold`,
+or a background start whose call did not ask for one. Its output lists the
+queue's lines (`[gpu queue] ...`), and the job ends with the turn even if
+nobody decides it. On Codex the wrapped job waits in the foreground and prints
+the command that takes it out of the queue, so there is nothing to hold.
+
 ## What it does not do
 
-It bounds no wait and shortens no timeout. A command started with
-`run_in_background` is a choice the agent already made, so the check leaves
-it alone. Ending what a finished turn left behind belongs to that turn's
+It bounds no wait and shortens no timeout. A command the agent itself started
+with `run_in_background` is a choice it already made, so the check leaves it
+alone. Ending what a finished turn left behind belongs to that turn's
 process job (`ChatSession`), not to this check.

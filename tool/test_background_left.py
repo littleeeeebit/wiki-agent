@@ -257,3 +257,30 @@ def test_a_command_counts_as_running_only_while_its_output_file_is_held_open(tmp
 def test_no_transcript_or_one_it_cannot_read_lets_the_call_through(tmp_path):
     assert verdict({"tool_name": "Bash"}) is None
     assert not denied(tmp_path / "missing.jsonl")
+
+
+# -- 15a: a GPU job the hook queued --------------------------------------------------
+
+WRAPPED = "'C:/py/python.exe' C:/hub/tool/gpu_run.py --hold --shell \"$(cat /proc/$$/winpid)\" --session 1:2 ZWNobw=="
+
+
+@pytest.mark.parametrize("given", [{"command": "python train.py"}, {"command": WRAPPED, "run_in_background": True},
+                                   {"command": WRAPPED.replace("C:/hub/tool/gpu_run.py", "'C:/my hub/tool/gpu_run.py'"),
+                                    "run_in_background": True}],
+                         ids=["recorded-as-written", "marker", "quoted-marker"])
+def test_a_queued_gpu_job_holds_every_other_tool_until_decided(tmp_path, given):
+    path = transcript(tmp_path, used("Bash", "run-gpu1", **given), moved("gpu1", timed_out=False))
+    assert left(path) == ["gpu1"] and denied(path)
+    reason = verdict({"tool_name": "Bash", "transcript_path": str(path)})["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert "GPU 작업 gpu1" in reason and "TaskStop" in reason
+    appended(path, used("TaskStop", "stop-1", task_id="gpu1"), answered("stop-1", False))
+    assert not denied(path)
+
+
+def test_an_agents_own_background_call_stays_exempt_beside_a_queued_one(tmp_path):
+    path = transcript(tmp_path, used("Bash", "run-own", command="python serve.py", run_in_background=True),
+                      moved("own", timed_out=False))
+    assert left(path) == [] and not denied(path)
+    appended(path, used("PowerShell", "run-gpu2", command="& python train.py"), moved("gpu2", timed_out=False))
+    assert left(path) == ["gpu2"]

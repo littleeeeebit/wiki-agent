@@ -60,28 +60,35 @@ def folder(spec: dict) -> Path:
 
 
 def started(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide: dict, mode: str,
-            passed: dict | None = None):
+            passed: dict | None = None, holder=None):
     """What the measurement runs, started for the block, which gets the frozen build or `None`: the PC program in
     a run that builds one (`owner` starting the build the server's own measurement `passed`), else the backend.
-    The program is on the owner's screen whenever it runs, the build's health check included."""
+    The program is on the owner's screen whenever it runs, the build's health check included. `holder` is the
+    GPU lease's (`gpu_queue.launched`), told the root and the end proof."""
 
     if "app" in plan:
-        return running(spec, plan, tree, env, halt, log, hide, mode, passed)
+        return running(spec, plan, tree, env, halt, log, hide, mode, passed, holder)
     return served(oneshot_build.run_as(plan["serve"]["command"], spec["oneshot"], tree), tree, env,
-                  plan["serve"]["health"], plan["serve"]["seconds"], halt, log, hide)
+                  plan["serve"]["health"], plan["serve"]["seconds"], halt, log, hide, holder)
 
 
 # -- Starting the backend, in a run without a PC app ----------------------------------------------------
 
 @contextmanager
-def served(command: str, path: Path, env: dict, health: str, seconds: int, halt, log: Path, hide: dict):
+def served(command: str, path: Path, env: dict, health: str, seconds: int, halt, log: Path, hide: dict,
+           holder=None):
     """The backend started in a job of its own and answering `health` with 200, for the block; `ValueError` with
-    the end of its log when it exits, or does not answer in `seconds`. Killed with everything it started after."""
+    the end of its log when it exits, or does not answer in `seconds`. Killed with everything it started after.
+    On Windows its job is `owned_job`'s, ended with that proof; `holder` (`gpu_queue.Holder`) is told its root
+    before it runs and the proof after."""
 
     if answers(health):   # whatever answers now is not the backend about to start
         raise ValueError(f"`{health}` 에 이미 다른 프로그램이 답한다 — 그 프로그램을 끄거나 `serve` 의 포트를 바꾼다")
     argv, use_shell = shell.launch("gate", command=command)
     log.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        yield from owned_backend(argv, path, env, health, seconds, halt, log, hide, holder)
+        return
     with log.open("w+", encoding="utf-8", errors="replace") as output:
         proc = subprocess.Popen(argv, shell=use_shell, cwd=path, env={**env, "PYTHONUNBUFFERED": "1"},
                                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
@@ -90,23 +97,8 @@ def served(command: str, path: Path, env: dict, health: str, seconds: int, halt,
                                    process.background_options().get("creationflags", 0) | process.SUSPENDED})
         job = process.contained(proc)
         try:
-            if os.name == "nt" and not job:
-                proc.kill()
-                raise ValueError("백엔드 프로세스를 묶어 둘 수 없었다")
             process.resumed(proc)
-            deadline = time.monotonic() + seconds
-            while True:
-                if halt.is_set():
-                    raise ValueError("사람이 멈췄다")
-                if proc.poll() is not None:
-                    raise ValueError(f"`serve.command` 가 떠 있지 않고 끝났다 (종료 코드 {proc.returncode}) — {tail(log, hide)}")
-                if answers(health) == 200:
-                    if not owned(proc, health):
-                        raise ValueError(f"`{health}` 에 답한 것이 띄운 백엔드가 아니다 — 같은 포트를 쓰는 다른 프로그램을 끈다")
-                    break
-                if time.monotonic() > deadline:
-                    raise ValueError(f"백엔드가 {seconds}초 안에 `{health}` 에 200 으로 답하지 않았다 — {tail(log, hide)}")
-                time.sleep(1)
+            answering(proc.poll, lambda: owned(proc, health), health, seconds, halt, log, hide)
             yield
         finally:
             process.terminated(job) if job else proc.kill()
@@ -114,6 +106,56 @@ def served(command: str, path: Path, env: dict, health: str, seconds: int, halt,
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+def answering(code, mine, health: str, seconds: int, halt, log: Path, hide: dict) -> None:
+    """Until the started backend answers `health` with 200 from a process `mine` vouches for; `ValueError` when
+    `code()` reads its exit, a stop, another program answering, or `seconds` passing."""
+
+    deadline = time.monotonic() + seconds
+    while True:
+        if halt.is_set():
+            raise ValueError("사람이 멈췄다")
+        if (ended := code()) is not None:
+            raise ValueError(f"`serve.command` 가 떠 있지 않고 끝났다 (종료 코드 {ended}) — {tail(log, hide)}")
+        if answers(health) == 200:
+            if not mine():
+                raise ValueError(f"`{health}` 에 답한 것이 띄운 백엔드가 아니다 — 같은 포트를 쓰는 다른 프로그램을 끈다")
+            return
+        if time.monotonic() > deadline:
+            raise ValueError(f"백엔드가 {seconds}초 안에 `{health}` 에 200 으로 답하지 않았다 — {tail(log, hide)}")
+        time.sleep(1)
+
+
+def owned_backend(argv: list[str], path: Path, env: dict, health: str, seconds: int, halt, log: Path, hide: dict,
+                  holder=None):
+    """`served` on Windows: created inside an owned job from its first instruction, its end proven, never a zero
+    count taken for an end. The GPU holder's note names its root before it runs and gets the proof."""
+
+    import owned_job
+
+    try:
+        import psutil  # noqa: F401  (`vouched` reads the listeners with it)
+    except ImportError:
+        raise ValueError("psutil 이 설치되지 않았다 — `pip install -r requirements-chat.txt` 로 다시 설치한다") from None
+    job = owned_job.Job()
+    try:
+        with log.open("wb") as output:
+            try:
+                root = job.start(argv, path, {**env, "PYTHONUNBUFFERED": "1"}, None, output,
+                                 before_resume=holder.root if holder is not None else None)
+            except owned_job.Refused as exc:
+                raise ValueError(f"백엔드 프로세스를 묶어 둘 수 없었다 — {exc}") from None
+        try:
+            answering(lambda: job.code(root), lambda: vouched({m["pid"] for m in job.members()}, health),
+                      health, seconds, halt, log, hide)
+            yield
+        finally:
+            proof = job.end(END_SECONDS)
+            if holder is not None:
+                holder.ended(proof)
+    finally:
+        job.close()
 
 
 def answers(health: str) -> int | None:
@@ -276,7 +318,7 @@ def changed(build) -> str:
 
 @contextmanager
 def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide: dict, mode: str,
-            passed: dict | None = None):
+            passed: dict | None = None, holder=None):
     """The frozen program started with the measurement's environment and answering `health` with 200 from a
     socket its job holds, for the block, which gets the frozen build; `ValueError` with the end of its log when it
     exits or does not answer in time. `auto` freezes the built HEAD's copy anew; `owner` starts the copy the
@@ -315,7 +357,8 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
         with desktop_session.look(root / "looks", f"measure-{mode}-{uuid.uuid4().hex[:12]}", disposable=True) as look:
             try:
                 try:
-                    look.start("app", argv, copy / launch["cwd"], extra, halt=halt, output=output.writer)
+                    look.start("app", argv, copy / launch["cwd"], extra, halt=halt, output=output.writer,
+                               **({"ready": lambda: holder.root(look.record["jobs"]["app"]["root"])} if holder else {}))
                 except owned_job.Unrunnable as exc:   # Windows would not run this program: the build's to fix
                     raise ValueError(f"PC 프로그램을 띄우지 못했다 — {masked(str(exc), hide)}") from None
                 finally:
@@ -343,6 +386,8 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
                 look.observe()
                 job = look.jobs.get("app")
                 end = job.end(END_SECONDS) if job is not None else {"clean": True}
+                if holder is not None and job is not None:
+                    holder.ended(end)
                 try:   # only the masked text is ever written, here, for the kept folder
                     log.parent.mkdir(parents=True, exist_ok=True)
                     log.write_text(output.text(5), encoding="utf-8")
@@ -359,6 +404,10 @@ def running(spec: dict, plan: dict, tree: Path, env: dict, halt, log: Path, hide
     except desktop_session.Halted:   # stopped before the program ran: never started
         raise ValueError("사람이 멈췄다") from None
     except desktop_session.Refused as exc:   # the desktop, never the build: opening it or cleaning it up
+        if holder is not None and holder.proof is None and "look" in locals():   # never ended: its members stay noted
+            jobs = look.record["jobs"]
+            holder.ended({**((jobs.get("app") or {}).get("proof") or {"total": None, "joined": 0}), "clean": False},
+                         [m for entry in jobs.values() for m in entry["members"]])
         raise RuntimeError(f"PC 프로그램의 데스크톱을 열거나 치우지 못했다 — {masked(str(exc), hide)}. 남은 것은 "
                            f"`{root / 'looks'}` 에 있다 — 손으로 지운 뒤 다시 시작한다") from exc
     finally:

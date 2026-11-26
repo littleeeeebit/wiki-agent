@@ -124,6 +124,9 @@ def _blocks(message: dict) -> list[dict]:
     return content if isinstance(content, list) else []
 
 
+JOB_PREFIX = "Local\\wiki-agent-session-"   # + `job_uuid`: the CLI's named job, read by the GPU hook
+
+
 # Every session with a provider running, whoever made it — a one-off explanation
 # belongs to no registry — and whether new providers may start.
 _live: weakref.WeakSet = weakref.WeakSet()
@@ -223,6 +226,7 @@ class ChatSession:
         self._resume: str | None = resume
         self._proc: subprocess.Popen | None = None
         self._job = None   # `_proc`'s Windows job: its background shells end with it
+        self.job_uuid = ""   # names `_proc`'s job, `JOB_PREFIX` + it, and its GPU mark (`gpu_queue.wrapped`)
         self._prompt: str | None = None   # `_proc`'s system prompt file, removed with it
         # `settled(answer)`: the answer closes the work. Background tasks still
         # running after one are left over, not awaited (`_drain`).
@@ -429,8 +433,12 @@ class ChatSession:
                     file.write(self.system + self.asking)
                 cmd += ["--system-prompt-file" if self.isolated else "--append-system-prompt-file", prompt]
             cmd = [*cli_command(cmd[0]), *cmd[1:]]
+            # The job is named so the pretool hook inside it can read the session's own processes and mark a GPU
+            # job it queued (`gpu_job`); a fresh name per process, so a closed one's mark is never this one's.
+            self.job_uuid = uuid.uuid4().hex
+            named = {**self._env, "WIKI_AGENT_JOB": JOB_PREFIX + self.job_uuid}
             proc = subprocess.Popen(
-                cmd, cwd=str(self.repo), env=deepseek.environment(self.model, self._env),
+                cmd, cwd=str(self.repo), env=deepseek.environment(self.model, named),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, encoding="utf-8",
                 errors="replace", bufsize=1, creationflags=SUSPENDED, start_new_session=os.name != "nt",
@@ -443,7 +451,7 @@ class ChatSession:
         # leaves the shell's child running (2.1.291). Whatever ends this
         # process ends them through the job, or elsewhere its process group
         # (`stop`, `close`). Started suspended, so nothing escapes the job.
-        job = contained(proc)
+        job = contained(proc, JOB_PREFIX + self.job_uuid)
         # Published as a pair under `_halting`, which `stop` holds while it
         # uses the job: a closed handle's number goes to the next job made.
         # The prompt goes with them: a late `close` removes its own process's file only.

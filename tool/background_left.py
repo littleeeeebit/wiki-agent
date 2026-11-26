@@ -17,6 +17,13 @@ an error decides nothing. A command still counts as running only while its
 output file is held open: one a process that has since ended left behind, as
 a resumed session's are, holds nothing. Only Windows shows a held file, so
 elsewhere nothing is held.
+
+A GPU job the pretool hook queued (`gpu_job`) is held the same way. Claude
+Code records the call's input as the agent wrote it, not as the hook rewrote
+it, so a wrapped call is found by the runner's marker in the recorded command
+or else by a shell call recorded without `run_in_background` whose result
+starts a background task. A call the agent itself sent to the background stays
+exempt.
 """
 
 from __future__ import annotations
@@ -32,6 +39,13 @@ from pathlib import Path
 
 DECIDING = frozenset({"Yield", "Monitor", "TaskStop", "TaskOutput", "Read"})
 WRITTEN_TO = re.compile(r"Output is being written to: (.+?\.output)")
+SHELLS = frozenset({"Bash", "PowerShell"})
+MARKER = re.compile(r"gpu_run\.py'? --hold")   # the GPU runner's wrapper (`gpu_job.wrapped`)
+QUEUED = """GPU 작업 {ids} 이(가) GPU 줄에서 백그라운드로 돌고 있는데, 아직 기다리지도 멈추지도 않았다.
+GPU 작업은 한 번에 하나만 돈다. 결과를 읽지 않고 다음 일로 넘어가지 않는다.
+
+결과가 필요하면 Yield 로 기다리거나 출력 파일을 Read 한다. 필요 없으면 TaskStop 으로 멈춘다.
+그 뒤에 이 호출을 다시 한다."""
 STATE = Path(tempfile.gettempdir()) / "wiki-agent-background-left"
 LIVENESS = os.name == "nt"   # where a running command's held output file can be seen (`running`)
 REASON = """명령 {ids} 이(가) 시간 제한을 넘어 백그라운드로 넘어갔는데, 아직 기다리지도 멈추지도 않았다.
@@ -56,6 +70,9 @@ class Scan:
     mark: str = ""
     tasks: dict[str, dict] = field(default_factory=dict)
     deciding: dict[str, list[str]] = field(default_factory=dict)
+    # Shell calls waiting for their result, by tool use id: whether the recorded command carries the GPU runner's
+    # marker, and whether the agent asked for the background itself.
+    calls: dict[str, dict] = field(default_factory=dict)
 
     def undecided(self) -> dict[str, str]:
         """Tasks no deciding call has succeeded on or is still waiting on, with their output files."""
@@ -72,16 +89,23 @@ class Scan:
         except ValueError:
             return
         result = entry.get("toolUseResult")
-        moved = str(result["backgroundTaskId"]) if isinstance(result, dict) and result.get("backgroundTaskId") \
-            and result.get("timedOutAfterMs") else ""
-        output = ""
+        started = str(result["backgroundTaskId"]) if isinstance(result, dict) and result.get("backgroundTaskId") else ""
+        moved, kind, output = "", "moved", ""
         content = (entry.get("message") or {}).get("content")
         for block in content if isinstance(content, list) else []:
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "tool_use" and entry.get("type") == "assistant":
                 self.decide(block)
+                self.call(block)
             elif block.get("type") == "tool_result":
+                call = self.calls.pop(str(block.get("tool_use_id")), None)
+                if started and result.get("timedOutAfterMs"):
+                    moved = started
+                elif started and call and (call["marker"] or not call["background"]):
+                    # The hook queued a GPU job and sent it to the background (`gpu_job`): Claude Code records the
+                    # input as the agent wrote it, so the background start is what shows the wrap.
+                    moved, kind = started, "gpu"
                 if moved and (named := WRITTEN_TO.search(_text(block.get("content")))):
                     output = named.group(1)
                 for task in self.deciding.pop(str(block.get("tool_use_id")), []):
@@ -90,7 +114,14 @@ class Scan:
                         # A call that failed or was refused decided nothing; one that went through decided it.
                         state["decided"] = state["decided"] or not block.get("is_error")
         if moved:
-            self.tasks[moved] = {"output": output, "decided": False, "open": 0}
+            self.tasks[moved] = {"output": output, "decided": False, "open": 0, "kind": kind}
+
+    def call(self, block: dict) -> None:
+        if block.get("name") not in SHELLS:
+            return
+        given = block.get("input") if isinstance(block.get("input"), dict) else {}
+        self.calls[str(block.get("id"))] = {"marker": bool(MARKER.search(str(given.get("command") or ""))),
+                                            "background": bool(given.get("run_in_background"))}
 
     def decide(self, block: dict) -> None:
         name, given = block.get("name"), json.dumps(block.get("input") or {})
@@ -199,13 +230,16 @@ def verdict(payload: dict) -> dict | None:
     if payload.get("tool_name") in DECIDING or not payload.get("transcript_path"):
         return None
     try:
-        ids = left(Path(str(payload["transcript_path"])))
+        scan = scanned(Path(str(payload["transcript_path"])))
     except OSError:
         return None
+    ids = [task for task, output in scan.undecided().items() if running(output)]
     if not ids:
         return None
-    output = {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-              "permissionDecisionReason": REASON.format(ids=", ".join(ids))}
+    gpu = [t for t in ids if scan.tasks[t].get("kind") == "gpu"]
+    moved = [t for t in ids if t not in gpu]
+    reason = "\n\n".join(text.format(ids=", ".join(group)) for text, group in ((REASON, moved), (QUEUED, gpu)) if group)
+    output = {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}
     return {"hookSpecificOutput": output, "systemMessage": f"백그라운드로 넘어간 명령 결정 필요: {', '.join(ids)}"}
 
 

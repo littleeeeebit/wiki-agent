@@ -523,12 +523,14 @@ class Answer(BaseModel):
     picks: list[list[int] | None] | None = None   # each question's picked options by index; `None` where typed
 
 
-def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSession:
+def session(path: Path, model: str, effort: str, fast: bool = False, role: str | None = None) -> ChatSession:
     """The worktree's write session, started if there is none.
 
     Another model of the same CLI reconnects with `--resume`. Another CLI is
     a new conversation — neither can resume the other's. A worktree a spec
     owns gets the spec as its system prompt, every time a session is made.
+    `role` is its `WIKI_AGENT_ROLE` (`build` from a oneshot build's send); a
+    cached CLI of another role starts again, as for changed secrets.
     """
 
     from . import oneshot_needs, release_repair, specs  # they import this module
@@ -536,7 +538,8 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
     spec = specs.owner(path)
     # A oneshot's session carries the owner's secrets, and starts again when they change (`oneshot_needs.agent`).
     secrets, hide = oneshot_needs.agent(spec)
-    env = {**release_repair.unshared(spec).get("env", {}), **secrets, **({SECRETS_HELD: "1"} if hide else {})}
+    env = {**release_repair.unshared(spec).get("env", {}), **secrets, **({SECRETS_HELD: "1"} if hide else {}),
+           **({"WIKI_AGENT_ROLE": role} if role else {})}
     # A refactoring card's work cell was fixed at its survey's start, a oneshot's at its run's: nothing moves it.
     if any(((spec or {}).get(k) or {}).get(f) for k, f in (("refactor", "roles"), ("oneshot", "models"))):
         model, effort, fast = spec["cell"]["model"], spec["cell"]["effort"], spec["cell"].get("fast", False)
@@ -899,6 +902,8 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False, rep
         finally:
             from . import oneshot_needs   # a failed, stopped or person's turn: its history checked while it holds the tree
             then = then if oneshot_needs.settle(path, run, final, moving=bool(then)) else None   # refused: stops
+            from . import oneshot_owner_data   # a build turn that never reached its check: its data watch read here
+            oneshot_owner_data.settle(run, path)
             # Released before the end is told, so a screen that sees the end
             # can send the next instruction at once.
             release()

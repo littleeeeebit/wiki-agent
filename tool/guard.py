@@ -70,6 +70,8 @@ class Ctx:
     # name -> literal the script assigned before here; a read-only view, shared rather than copied per command
     consts: Mapping = field(default_factory=dict, compare=False)
     sink: object = field(default=None, compare=False)   # a list collecting nested shell strings, or None
+    # a list collecting each program run, as (its words, the directories it may run in), or None (`gpu_job`)
+    programs: object = field(default=None, compare=False)
     repo: str = ""                      # the checkout `remotes` were read from, "" when none was
 
     def deeper(self, d: str | None = None, fresh: bool = True, **kw) -> "Ctx":

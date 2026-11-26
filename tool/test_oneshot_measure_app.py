@@ -425,7 +425,8 @@ def test_the_builds_health_check_runs_the_program_on_the_owners_screen_too(at_me
         yield None
     with patch.object(product, "started", started):
         assert measure.serve_check(tree, run, spec()) == ""
-    assert asked == [{}]   # nothing asks for the program out of sight: no run of it is hidden (plan 13f)
+    # Nothing asks for the program out of sight: no run of it is hidden (plan 13f). Only the GPU lease's holder.
+    assert [set(k) for k in asked] == [{"holder"}]
     job, looked = Job(), {}
     answers = iter([None, 200])
     with patch.dict(sys.modules, desktop_session=session(tmp_path, job, looked)), \

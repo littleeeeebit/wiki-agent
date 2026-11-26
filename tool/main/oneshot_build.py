@@ -28,7 +28,8 @@ from common import errorlog, masked
 from common.powershell_syntax import syntax
 from fastapi import HTTPException
 
-from . import connect, oneshot, oneshot_android, oneshot_calls, oneshot_needs, oneshot_spec, refactor_run, runtime, specs, work
+from . import (connect, oneshot, oneshot_android, oneshot_calls, oneshot_needs, oneshot_owner_data, oneshot_spec,
+               refactor_run, runtime, specs, work)
 from .oneshot_profile import charged, environment, held as kind_held, kinds_of, shape, tool_key, tooled, turn_stage
 from .query import ROOT, _lock as work_lock, hold
 
@@ -247,6 +248,11 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
         if o.get("working") == "retell" or owner().due(o):
             owner().start(store, held)   # the hold goes on to the rewrite, or back when one already runs
             return
+        if oneshot_owner_data.leftover(repo, o):   # a server stopped mid-turn: that window was never watched
+            held()
+            store.stop("block", oneshot_owner_data.LEFTOVER)
+            return
+        note = o.get("owner_note")
 
     def release() -> None:   # the grant and the closing block go before the tree does: the next turn there,
         try:   # a person's included, never finds them set (`work.run_turn` lets go first)
@@ -264,20 +270,22 @@ def send(repo: str, stage: str, text: str, held=None) -> None:
     try:
         due = getattr(text, "refusal", None)   # bound to this turn alone
         cfg = oneshot.role_config("build", store)
-        chat = work.session(path, cfg["model"], cfg["effort"])
+        chat = work.session(path, cfg["model"], cfg["effort"], False, "build")   # a build session, marked (plan 15a)
         turn = Turn(chat, repo, stage, codex)
         with oneshot._lock:   # one step against `unstuck`, which reads and clears an ended turn's marks under it
             store.put(working=stage, stopped=None, turn_head=head(path),   # the HEAD the turn starts on, for `checked`
                       inflight={"role": stage, "codex": codex, "sent": time.time(), "turn": turn.token},
-                      sent_refusal=due and {**due, "turn": turn.token})
+                      sent_refusal=due and {**due, "turn": turn.token}, owner_note=None)
             grant = stage in GRANTS and GRANTS[stage](spec)   # set as the turn starts, a resumed one included, naming
             if grant or spec.get("adapter"):   # the turn: it opens the adapter only while that turn is `inflight`
                 oneshot_spec.saved(repo, adapter=turn.token if grant else False)   # (`guard_grant.live`); its end clears it
+        text = oneshot_owner_data.begin(repo, path, store, turn.token, text, note)   # watched from before the send
         work.begin(path, chat, text, release, turn)
     except BaseException as exc:
         try:
             if turn is not None:
                 turn.unsent()
+                oneshot_owner_data.close(repo, store, turn.token)   # nothing ran in that window
         finally:
             release()
         store.stop("restart" if runtime.stopping.is_set() else "block",
@@ -457,7 +465,7 @@ def tests_text(spec: dict) -> str:
         .replace("{profile}", environment(spec["oneshot"])).replace("{tools}", tools_text(spec["oneshot"])) \
         .replace("{needs}", oneshot_needs.told(spec))
     return owner().tests_told(spec["oneshot"], text.replace("{toolchain}", toolchain_text(spec)) if kind == "android"
-                              else text)
+                              else text) + oneshot_owner_data.resources_text(spec)
 
 
 # Every build turn ends on the real measurement it must be ready for (`oneshot_measure`).
@@ -471,7 +479,7 @@ def build_text(spec: dict) -> str:
         .replace("{contract}", "\n".join(f"- `{f}`" for f in o["contract"])).replace("{tools}", tools_text(o)) \
         .replace("{needs}", oneshot_needs.told(spec))
     return owner().told(o, text.replace("{toolchain}", toolchain_text(spec)) if kind == "android" else text) \
-        + "\n" + MEASURE_CONTRACT
+        + "\n" + MEASURE_CONTRACT + oneshot_owner_data.resources_text(spec)
 
 
 def begin(repo: str) -> None:
@@ -484,7 +492,8 @@ def begin(repo: str) -> None:
 def resume(repo: str) -> None:
     if stopped_for_kind(repo):
         return
-    spec = oneshot_spec.saved(repo, oneshot={"attempts": 0})   # the owner's resume starts the attempts afresh
+    oneshot_owner_data.cleared(repo)   # an unwatched window is the owner's to judge: their resume clears it
+    spec = oneshot_spec.saved(repo, oneshot={"attempts": 0, "owner_watch": None})   # the attempts start afresh
     stage = turn_stage(spec["oneshot"])
     send(repo, stage, STAGES[stage][2](spec))
 
@@ -773,8 +782,18 @@ def checked(path: Path, run, spec: dict, final: str):
     repo, stage = spec["repo"], turn_stage(spec["oneshot"])
     if getattr(run, "person", False) or stage not in STAGES:   # scanned at the turn's end (`oneshot_needs.settle`)
         return None
+    oneshot_owner_data.gpu_boundary(run.chat)   # before any check runs a server command
     hide = getattr(run.chat, "hide", None)
     why = oneshot_needs.leaked(path, spec, hide, final)   # before any check reads it; again at the turn's end
+    why = why or oneshot_owner_data.read(repo)   # the build session's own window, before any check runs or saves
+    try:
+        return judged_turn(path, run, spec, final, stage, hide, why)
+    finally:   # a way out that did not judge the watch (a hand-over, a question, a raise): closed and told
+        oneshot_owner_data.joined(repo, run)
+
+
+def judged_turn(path: Path, run, spec: dict, final: str, stage: str, hide, why: str):
+    repo = spec["repo"]
     if not why and (hand := HANDOVERS.get(stage)) and hand[0](spec):
         return hand[1](path, run, spec, final)
     if not why and stage in owner().OPEN and specs.asks(final):   # the owner answers it in the work log (`oneshot_tell`)
@@ -793,6 +812,7 @@ def checked(path: Path, run, spec: dict, final: str):
         if hide:   # the caller logs and notes what it catches: it gets the masked reason, never the values
             raise RuntimeError(why) from None
         raise
+    why = oneshot_owner_data.joined(repo, run, why)   # judged before the outcome is written: a failed gate says it too
     why = why and type(why)(masked(why, hide))   # a check's reason can quote what the turn wrote; an `Again` stays one
     if not why:
         run.passed = True   # what follows moves the run on: the turn's end scan (`oneshot_needs.settle`) gates it
@@ -857,6 +877,8 @@ def tested(path: Path, run, spec: dict, final: str = "") -> str:
         return "계획 테스트 사례가 `contract` 에 없는 파일에서 나왔다 — " + ", ".join(outside[:10])
     if (snapshot(path, moved), head(path), changed(path, o["design_head"])) != before:
         return "계획 테스트를 돌리는 동안 작업트리가 바뀌었다"
+    if seen := oneshot_owner_data.read(spec["repo"]):   # the contract-test command ran: judged before any save
+        return seen
     gate = " && ".join([runner["command"].replace("{report}", REPORT), *runner["after"]])
     adapter = path / ".wiki" / "adapter.toml"
     try:   # every table but `[slots]` is kept as written; one that is there but unreadable is never replaced
@@ -910,8 +932,8 @@ def built(path: Path, run, spec: dict, final: str) -> str:
     if not verdict["ok"]:
         return f"게이트 실패 — {verdict['reason']}\n{verdict['tail']}"
     if why := held(path, run, spec, verdict, lambda found: sent.ran(found, answers, o, path)) \
-            or oneshot_measure.serve_check(path, run, spec):
-        return why
+            or oneshot_measure.serve_check(path, run, spec) or oneshot_owner_data.read(spec["repo"]):
+        return why   # the gate and the health check ran: the watch is judged before the stage is saved
     # `working` names PR #1's push before its worker starts: a server that dies in between leaves it for `recover`.
     oneshot_spec.saved(spec["repo"], oneshot={"stage": "measure", "built_head": verdict["head"], "attempts": 0,
                                               "working": "publish", "fix": None, **sent.passed(path, o, answers)})

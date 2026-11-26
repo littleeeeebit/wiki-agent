@@ -238,6 +238,14 @@ def report(repo: Path, checkout: Path | None = None) -> str:
     """
 
     deadline = time.monotonic() + BUDGET
+    # The machine's size, read once per boot (WMI takes seconds): beside the rest, and left out if late.
+    import threading
+
+    import machine
+
+    size: list[str] = []
+    reader = threading.Thread(target=lambda: size.append(machine.size_line()), daemon=True)
+    reader.start()
 
     body, stale = active_page(repo)
     open_plans = [] if body else plans(repo)
@@ -263,6 +271,9 @@ def report(repo: Path, checkout: Path | None = None) -> str:
         "",
         f"## Branch\n\n{branch_line(checkout or repo)}",
     ]
+    reader.join(max(0.0, deadline - time.monotonic()))
+    if size and size[0]:
+        lines.append(f"\n## Machine\n\n{size[0]}")
     if body:
         lines.append("\n## In progress\n")
         lines.append(body)

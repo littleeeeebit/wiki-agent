@@ -52,7 +52,7 @@ def parents() -> dict[int, int]:
     return found
 
 
-def _described(k, w, handle, pid: int) -> dict | None:
+def _described(k, w, handle, pid: int, tree: dict[int, int] | None = None) -> dict | None:
     times = [w.FILETIME() for _ in range(4)]
     image, size, code = ctypes.create_unicode_buffer(32768), w.DWORD(32768), w.DWORD()
     if not k.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]) \
@@ -60,22 +60,24 @@ def _described(k, w, handle, pid: int) -> dict | None:
             or not k.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != 259:   # STILL_ACTIVE
         return None
     created = times[0].dwHighDateTime << 32 | times[0].dwLowDateTime
-    return {"pid": pid, "created": created, "exe": os.path.normcase(image.value), "parent": parents().get(pid, 0)}
+    return {"pid": pid, "created": created, "exe": os.path.normcase(image.value),
+            "parent": (parents() if tree is None else tree).get(pid, 0)}
 
 
-def identity(pid: int, handle=None) -> dict | None:
+def identity(pid: int, handle=None, tree: dict[int, int] | None = None) -> dict | None:
     """A live process's stable identity: pid, creation time (FILETIME ticks), image path (case-folded) and
     the parent pid recorded at its creation. `None` once it has exited or cannot be read. `handle` reads a
-    process this one started, whose handle it holds."""
+    process this one started, whose handle it holds; `tree`, a `parents()` snapshot already taken, saves a
+    caller that walks several processes a snapshot per process."""
 
     k, w = _kernel()
     if handle is not None:
-        return _described(k, w, int(handle), pid)
+        return _described(k, w, int(handle), pid, tree)
     opened = k.OpenProcess(QUERY, False, pid)
     if not opened:
         return None
     try:
-        return _described(k, w, opened, pid)
+        return _described(k, w, opened, pid, tree)
     finally:
         k.CloseHandle(opened)
 
