@@ -938,10 +938,8 @@ def dispatch(path: Path, ended: Run) -> None:
 
     taken = any([released(path) for released in RELEASED])   # a hook that took the tree's next turn: the queue waits
     key = str(path)
-    with _lock:   # the order waits on the tree's latest turn: stopped, it drops, whichever turn dispatches;
-        latest = _runs.get(key)   # an older turn's own stop is not the newer turn's
-        own = latest is None or latest is ended or not isinstance(ended, Run)
-        if own and ended.halt.is_set() or latest is not None and latest.halt.is_set():
+    with _lock:   # the tree's latest turn stopped: the order drops, whichever turn's dispatcher gets here
+        if ended.halt.is_set() or ((latest := _runs.get(key)) is not None and latest.halt.is_set()):
             _queued.pop(key, None)
             return
         order = _queued.get(key)

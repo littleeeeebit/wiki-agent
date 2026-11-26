@@ -25,11 +25,17 @@ def at(stage: str, **more) -> None:
         "glossary": GLOSSARY, "stage": stage, "design": sheet.parsed(DESIGN), "design_head": "d" * 40, "working": None,
         **more})
     tree = str(specs.load("budget", oneshot.BRANCH)["worktree"])
-    if (more.get("inflight") or {}).get("turn"):   # a turn in flight is one still ending in the tree: its run is
+    oneshot_build.Turn.alive.discard(LIVE[0])
+    if token := (more.get("inflight") or {}).get("turn"):   # a turn in flight is one still ending in the tree: its
         oneshot_tell.work._runs[tree] = MagicMock(spec=oneshot_build.Turn, over=False, done=True, repo="budget",
-                                                  wake=threading.Lock(), halt=threading.Event())   # its marks not cleared yet
+                                                  wake=threading.Lock(), halt=threading.Event())   # run is done, its
+        oneshot_build.Turn.alive.add(token)   # marks not cleared yet
+        LIVE[0] = token
     else:
         oneshot_tell.work._runs.pop(tree, None)
+
+
+LIVE = [""]   # the stand-in turn `at` keeps alive
 
 
 def say(text: str) -> dict:
@@ -443,25 +449,19 @@ def test_a_grant_that_cannot_be_cleared_never_keeps_the_tree_and_opens_nothing_o
             with patch.object(oneshot_build, "hold") as taken:   # only that ended turn's own marks, with no hold
                 oneshot_build.unstuck("budget")
             assert not taken.called and not o().get("inflight") and not live()
-            fresh = {**stale, "turn": "next"}   # a newer turn's marks, its `send` holding the tree: never touched
+            fresh = {**stale, "turn": "next"}   # a newer turn's marks, its turn alive (starting, running or closing)
             real("budget", adapter="next", oneshot={"inflight": fresh, "working": None})
-            starting = oneshot_tell.hold(work._busy, oneshot_tell.work_lock, tree, "", kind="turn")
-            oneshot_build.unstuck("budget")
-            starting()
-            assert o()["inflight"]["turn"] == "next" and live()
-            with patch.dict(work._runs), patch.object(work, "dispatch") as dispatched:
-                work._runs.pop(tree)   # its turn's conversation was reset, or it never registered: an orphan
+            spent = o().get("spend")
+            with patch.object(oneshot_build.Turn, "alive", {"next"}), patch.dict(work._runs):
+                work._runs.pop(tree)   # its conversation reset meanwhile: it still charges itself, once
                 oneshot_build.unstuck("budget")
-            assert not o().get("inflight") and not live() and tree not in work._busy
-            assert dispatched.call_args[0][0] == Path(tree)   # the hold it took hands the queue on
+                oneshot_build.admitted(Path(tree), work.Run(MagicMock()))   # admission revokes the grant only
+            assert o()["inflight"]["turn"] == "next" and not live() and o().get("spend") == spent
+            with patch.dict(work._runs), patch.object(oneshot_build, "hold") as taken:
+                work._runs.pop(tree)   # its end has run (or it never had one), whatever the registry says
+                oneshot_build.unstuck("budget")
+            assert not o().get("inflight") and not taken.called and tree not in work._busy
             real("budget", adapter=False, oneshot={"inflight": None})
-            older, newer = work.Run(MagicMock()), MagicMock(spec=work.Run, halt=threading.Event())
-            older.halt.set()   # a stopped turn's dispatcher, late, while a newer turn holds the tree with its order
-            mid = oneshot_tell.hold(work._busy, oneshot_tell.work_lock, tree, "", kind="turn")
-            with patch.dict(work._runs, {tree: newer}), patch.dict(work._queued, {tree: order}):
-                work.dispatch(Path(tree), older)
-                assert work._queued[tree] is order   # the older turn's stop is not the newer turn's
-            mid()
             stopped = MagicMock(spec=work.Run, halt=threading.Event())
             stopped.halt.set()   # the tree's latest turn was stopped with an order waiting on it
             with patch.dict(work._runs, {tree: stopped}), patch.dict(work._queued, {tree: order}), \

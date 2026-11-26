@@ -49,10 +49,13 @@ class Turn(work.Run):
     """A work turn the oneshot sent: charged to the run's ledger when it ends,
     and a turn that ended without reaching its check stops the stage with the reason."""
 
+    alive: set[str] = set()   # the tokens of turns whose end has not run yet, whatever their conversation does
+
     def __init__(self, chat, repo: str, stage: str, codex: bool) -> None:
         super().__init__(chat, task=True)
         self.repo, self.stage, self.codex, self.checked = repo, stage, codex, False
         self.token = uuid.uuid4().hex   # names this turn's `inflight`, so a late end clears only its own
+        Turn.alive.add(self.token)   # before `send` writes it: a token on record no live turn holds is stale
         self.sender = threading.get_ident()   # `work.begin` ends a turn it could not start on this thread
         self.ended = threading.Event()
         self.over = False   # its end has run, whatever it managed to write (`ending`)
@@ -74,6 +77,7 @@ class Turn(work.Run):
             self.closing()
         finally:
             self.over = True
+            Turn.alive.discard(self.token)
 
     def closing(self) -> None:
         super().finish()
@@ -109,6 +113,7 @@ class Turn(work.Run):
                     store.put(inflight=None)
         finally:
             self.over = True
+            Turn.alive.discard(self.token)
 
 
 def stopped_for_kind(repo: str) -> bool:
@@ -312,11 +317,11 @@ def reclaimed(path: Path, run=None, gone: str | None = None) -> None:
     """Clear the marks a build turn's end failed to clear, once that turn is gone.
 
     Revoke its grant and, on a run nothing works on, charge the turn once as cut, in one save, under the lock
-    `send` writes a new turn's marks under. With `gone`, only that turn's marks: its end has run, so they are
-    stale whoever holds the tree. Without it the caller holds the tree, so no turn of the run is starting.
-    Raise when the record cannot be read or saved: nothing is opened on a guess."""
+    `send` writes a new turn's marks under. Only a turn whose end has run (not in `Turn.alive`) is charged
+    here: one still closing, its conversation reset or not, charges itself. With `gone`, only that turn's
+    marks. Raise when the record cannot be read or saved: nothing is opened on a guess."""
 
-    if ending(path) and work._runs.get(str(path)) is not run:   # its end dispatches the queue
+    if gone is None and ending(path) and work._runs.get(str(path)) is not run:   # its end dispatches the queue
         raise HTTPException(409, "앞선 빌드 턴이 아직 끝나는 중이다 — 끝나면 기다리던 지시가 이어 간다")
     mine = getattr(run, "token", None)
     with oneshot._lock:   # `Turn.finish` writes its marks under it
@@ -329,11 +334,12 @@ def reclaimed(path: Path, run=None, gone: str | None = None) -> None:
         def stale(token) -> bool:
             return bool(token) and token != mine and gone in (None, token)
 
-        import guard_grant   # the guard's own rule for what is open
+        import guard_grant   # the guard's own rule for what is open; a grant goes once its turn let the tree go
         fields = {"adapter": False} if isinstance(grant, str) and stale(grant) and guard_grant.live(spec) else {}
-        if stale(flight.get("turn")) and not o.get("working"):
+        ended = stale(token := flight.get("turn")) and token not in Turn.alive
+        if ended and not o.get("working"):
             fields["oneshot"] = oneshot.settled(o)
-        elif stale(flight.get("turn")) and o["working"] == flight.get("role"):
+        elif ended and o["working"] == flight.get("role"):
             fields["oneshot"] = {**oneshot.settled(o), "working": None, "stopped": {   # its end failed before its stop
                 "reason": "block", "detail": "작업 턴이 끝났지만 그 끝을 기록하지 못했다 — [재개]로 다시 보낸다",
                 "state": o.get("stage")}}
@@ -356,32 +362,19 @@ def admitted(path: Path, run) -> None:
 def unstuck(repo: str) -> None:
     """For `[재개]` and the owner's answer: clear the marks a build turn left that could not clear them.
 
-    The tree's registered turn whose end has run (`over`) has its own token cleared with no hold, so a run's
-    follow-up never finds its tree taken; a new turn writes its own under the same lock. A token no registered
-    turn holds (its turn never registered, or its conversation was reset) is told from a turn still starting by
-    the tree's hold, which `send` keeps from before it writes the token; that hold hands the queue on after."""
+    A token on record that no live turn holds (`Turn.alive`: its end has run, or its turn never got one) is
+    cleared, by that token alone, under the lock a new turn writes its own under. No hold is taken, so a run's
+    follow-up never finds its tree taken, and a turn still closing, its conversation reset or not, is left to
+    charge itself."""
 
     spec = oneshot_spec.spec_of(repo)
     tree, token = Path(spec["worktree"]), (spec["oneshot"].get("inflight") or {}).get("turn")
-    turn = work._runs.get(str(tree))
-    try:
-        if isinstance(turn, Turn) and turn.over:
-            reclaimed(tree, gone=turn.token)
-    except Exception as exc:
-        errorlog.record("oneshot-grant", exc, repo=repo)
-    if not token or ending(tree) or isinstance(turn, Turn) and turn.token == token:
-        return   # nothing left, a turn still ending clears its own, or it was cleared just above
-    try:
-        release = hold(work._busy, work_lock, str(tree), "", kind="turn")
-    except HTTPException:   # a turn is starting or running there: its own end clears its marks
+    if not token or token in Turn.alive:
         return
     try:
         reclaimed(tree, gone=token)
     except Exception as exc:
         errorlog.record("oneshot-grant", exc, repo=repo)
-    finally:
-        release()
-        work.dispatch(tree, SimpleNamespace(halt=runtime.stopping, turn=""))   # an order its hold kept waiting
 
 
 def idle(path: Path) -> None:
