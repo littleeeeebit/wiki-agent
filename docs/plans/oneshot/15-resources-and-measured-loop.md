@@ -493,8 +493,12 @@ sign that a result answers the steer rather than coming from before it:
 Claude can replay the steer and then send the old result
 (`test_a_closing_answer_does_not_drop_a_steer_already_read`). So a steered
 turn that closes with `measure-request` while background tasks run waits
-for them, and the card shows the turn waiting on them. Its request is read
-when the turn ends, and the trial is dispatched then. ponytail: a helper
+for them, and the card shows the turn waiting on them. A request counts
+only in the turn's final accepted answer, the text `work` hands the check,
+as every closing block does today; an earlier answer the session held back
+is never read for one. So the build prompt says to put the block, or repeat
+it, in the answer it gives after its background work has settled. A final
+answer without it starts no trial. ponytail: a helper
 that never ends holds such a turn until the owner stops it in the work
 panel, and a stopped turn's request is dropped, so the next build turn asks
 again; narrowing it needs a provider signal tying a result to the steer it
@@ -688,8 +692,9 @@ Tests show:
   GPU runner with a child still run: the turn settles, closing the CLI ends
   them with the runner's note left standing, and the trial waits on that
   note and then runs; a steered turn closing with `measure-request` still
-  waiting for its background tasks, its request dispatched when they end,
-  and the existing old-result-after-replay test unchanged;
+  waiting for its background tasks, a final answer after them that repeats
+  the request starting a trial and one that omits it starting none, and the
+  existing old-result-after-replay test unchanged;
 - a contract whose `{out}` is not in its chain's last command refused with
   the reason;
 - each spelling of the variable refused, the contract's command refused as
