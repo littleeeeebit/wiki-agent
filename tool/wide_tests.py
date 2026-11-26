@@ -108,22 +108,24 @@ def joined(command: str, posix: bool) -> str:
     drops `\\` and the newline, so a word may go on across it; PowerShell's backtick and newline part words); a
     quoted or escaped `#` stays text."""
 
-    out, at, glued = [], 0, -1   # `glued`: where the last quote or escape ended; a `#` right there is in a word
+    # Whether a `#` starts a word is read off the text joined so far, so a continuation the shell drops is no
+    # boundary of its own; `glued` is that text's length where a quote or an escape last ended.
+    out, at, glued = [], 0, -1
     while m := READ[posix].search(command, at):
         out.append(command[at:m.start()])
-        start, at = m.start(), m.end()
+        at, text = m.end(), "".join(out)
         if m["hash"]:
-            if start == 0 or (command[start - 1] in " \t\r\n;&|(" and glued != start):
-                end = command.find("\n", start)
+            if (not text or text[-1] in " \t\r\n;&|(") and glued != len(text):
+                end = command.find("\n", m.start())
                 at = len(command) if end < 0 else end   # the newline stays: it ends the comment's line
             else:
                 out.append("#")
-        elif m["escape"]:
-            out.append(("" if posix else " ") if m[0][1:] in ("\n", "\r\n") else m[0])
-            glued = at
+        elif m["escape"] and m[0][1:] in ("\n", "\r\n"):
+            out.append("" if posix else " ")
         else:
-            out.append(re.sub(r"\\\r?\n", "", m[0]) if posix and m[0].startswith('"') else m[0])
-            glued = at
+            piece = m[0] if m["escape"] or not (posix and m[0].startswith('"')) else re.sub(r"\\\r?\n", "", m[0])
+            out.append(piece)
+            glued = len(text) + len(piece)
     out.append(command[at:])
     return "".join(out)
 
@@ -210,7 +212,7 @@ def verdict(payload: dict) -> dict | None:
         return None
     posix = tool != "PowerShell"
     command = joined(str((payload.get("tool_input") or {}).get("command") or ""), posix)
-    if "pytest" not in command:
+    if "pytest" not in command.lower():   # Windows finds `PYTEST.EXE` as well
         return None
     for stage, folders in places(command, posix, Path(str(payload.get("cwd") or Path.cwd()))):
         try:

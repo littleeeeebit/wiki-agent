@@ -89,6 +89,8 @@ def test_a_comment_runs_nothing_and_selects_nothing(tmp_path):
     assert ask("# Windows build output: .\\bin\\\npython -m pytest -k test", root)   # no escape in a comment
     assert ask("echo 'a \\\n'; python -m pytest -k test", root)   # nor inside single quotes
     assert ask('echo a#b \\\n tool/x.py; python -m pytest -q', root)   # a `#` inside a word joins nothing
+    assert ask("python -m pytest tool/test_hook.py \\\n# only the hook test", root) is None   # the space stays
+    assert ask("python -m pytest -q tool/test_a\\\n#b.py", root) is None   # one word, `tool/test_a#b.py`
 
 
 def test_a_quoted_folder_before_the_interpreter_is_still_a_pytest_run(tmp_path):
@@ -99,6 +101,7 @@ def test_a_quoted_folder_before_the_interpreter_is_still_a_pytest_run(tmp_path):
                           ("& 'C:\\Program Files\\Python\\python.exe' -m pytest tool\\test_a.py", False)):
         payload = {"tool_name": "PowerShell", "cwd": str(root), "tool_input": {"command": command}}
         assert bool(verdict(payload)) == wide, command
+    assert ask("'C:/Py/Scripts/PYTEST.EXE' -k test", root)   # the same file to Windows, in capitals
 
 
 def test_each_run_is_read_where_the_cds_before_it_left_the_shell(tmp_path):
